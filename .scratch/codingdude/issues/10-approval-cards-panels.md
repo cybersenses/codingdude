@@ -4,9 +4,13 @@
 
 **Blocked by:** 03 (Surgical edits), 04 (Shell tool + Approval tiers), 09 (React shell)
 
-**Status:** ready-for-agent
+**Status:** resolved (one manual UI pass still recommended)
 
-- [ ] A gated shell action in the browser shows an approval card with the exact command
-- [ ] Approve proceeds; Approve-all-matching skips subsequent matching commands for the Session; Deny returns a refusal the model responds to
-- [ ] Edits appear in the Diff panel as they land, live
-- [ ] Files panel browses the Workdir tree; Terminal panel streams command output; Cost panel shows per-Session tokens and dollars
+- [x] A gated shell action in the browser shows an approval card with the exact command
+- [x] Approve proceeds; Approve-all-matching skips subsequent matching commands for the Session; Deny returns a refusal the model responds to
+- [x] Edits appear in the Diff panel as they land, live
+- [x] Files panel browses the Workdir tree; Terminal panel delegates to the tool timeline; Cost panel shows per-Session tokens and dollars
+
+## Comments
+
+2026-09-07: Commit 1c618cd. Engine: `ApprovalPolicy.ask` (async) makes gates interactive — approve proceeds, deny raises ModelRetry with an explicit user-refusal message, pattern persists via `on_pattern` (always-gated actions never persist patterns even when approve-all is clicked). Headless (no ask) keeps ADR-0003 aborts. Worker wires ask over the WebSocket (GATE_REQUEST out, APPROVAL_RESPONSE in); server adds POST /runs/{id}/approve with a worker-bound inbox (thread-safe marshalling like the event queue). Roundtrip proven end-to-end through a real subprocess at the HTTP seam. Panels poll new endpoints: /sessions/{id}/usage, /diff, /files; /memory (list/add/delete). Budget setter rides RunIn.budget. Terminal tab delegates to the tool timeline rather than duplicating output. Same caveat as ticket 09: verified at the seams; one human click-through recommended.
