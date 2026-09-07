@@ -109,3 +109,15 @@ def apply_provider_keys(config: Config) -> None:
         os.environ.setdefault('DEEPSEEK_API_KEY', config.providers.deepseek)
     if config.providers.zai:
         os.environ.setdefault('ZAI_API_KEY', config.providers.zai)
+
+
+def load_project_config(workdir: Path) -> dict:
+    """Per-project overrides from `.codingdude.toml` in the Workdir (currently: shell)."""
+    path = workdir / '.codingdude.toml'
+    if not path.exists():
+        return {}
+    raw = tomllib.loads(path.read_text(encoding='utf-8'))
+    out = {}
+    if 'shell' in raw.get('shell', {}):
+        out['shell'] = raw['shell']['shell']
+    return out

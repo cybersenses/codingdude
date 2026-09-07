@@ -4,10 +4,14 @@
 
 **Blocked by:** 02 (Read-only tracer bullet)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] A scripted run surgically modifies a target function in a temp Workdir without rewriting the rest of the file
-- [ ] A search/replace whose old-content doesn't match returns a retry-visible failure; the file is untouched
-- [ ] New files and their parent directories are created through the same tooling
-- [ ] Whole-file fallback path works and is exercised in tests
-- [ ] Every edit surfaces as a structured change event (path, before/after) on the event stream
+- [x] A scripted run surgically modifies a target function in a temp Workdir without rewriting the rest of the file
+- [x] A search/replace whose old-content doesn't match returns a retry-visible failure; the file is untouched
+- [x] New files and their parent directories are created through the same tooling
+- [x] Whole-file fallback path works and is exercised in tests
+- [x] Every edit surfaces as a structured change event (path, before/after) on the event stream
+
+## Comments
+
+2026-09-07: Commit 5b73c7d. edit_file demands a unique exact match (0 or >1 matches raise ModelRetry with self-correction hints); write_file is confined to new/empty files and refuses to clobber non-empty ones. Edits emit EditChange(path, before, after) via Engine.run(on_event=...) — the future UI's diff feed. Also: provider keys can now come from [providers] in config.toml (env vars still win).

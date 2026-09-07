@@ -1,0 +1,57 @@
+"""Approval tiers (per the spec's static table): auto / gated+pattern / always-gated.
+
+- APPROVED: reads, searches, in-Workdir edits, local git reads, and benign shell
+  utilities — runs without asking.
+- NEEDS_GATE: ordinary shell commands. One approval can cover the rest of the
+  Session via a Pattern Approval (the command's leading token).
+- DENIED: remote mutations and destructive operations. Never unlocked by a
+  pattern — only by `--yolo` (the explicit full-off switch, ADR-0003).
+"""
+
+from dataclasses import dataclass, field
+import re
+
+APPROVED = 'approved'
+NEEDS_GATE = 'needs_gate'
+DENIED = 'denied'
+
+# Commands that run without a gate: read-only / dev-loop conveniences.
+AUTO_SHELL = re.compile(
+    r'^(ls|dir|cat|head|tail|pwd|echo|which|where|find|tree|wc|file|stat|'
+    r'git (status|log|diff|show|branch(?!.*-D))|node --version|python --version)\b'
+)
+
+# The always-gated tier: remote mutations and destructive operations.
+ALWAYS_GATED = re.compile(
+    r'^(git (push|remote|clean|reset --hard)|gh (pr|repo|release|api)|'
+    r'rm |rmdir|del |rd |remove-item|mv |move |format |shutdown|taskkill)'
+    r'|(^|[;&|]\s*)sudo\b',
+    re.IGNORECASE,
+)
+
+
+@dataclass
+class ApprovalPolicy:
+    """Session-scoped approval state. Thread-safe enough for one run at a time."""
+
+    yolo: bool = False
+    patterns: set[str] = field(default_factory=set)
+
+    def approve_pattern(self, pattern: str) -> None:
+        self.patterns.add(pattern)
+
+    def decide(self, command: str) -> str:
+        if self.yolo:
+            return APPROVED
+        stripped = command.strip()
+        if ALWAYS_GATED.match(stripped):
+            return DENIED
+        if stripped.split()[0] in self.patterns:
+            return APPROVED
+        if AUTO_SHELL.match(stripped):
+            return APPROVED
+        return NEEDS_GATE
+
+    def pattern_for(self, command: str) -> str:
+        """The Pattern Approval a user implicitly grants by approving this command."""
+        return command.strip().split()[0]

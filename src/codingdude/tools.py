@@ -7,6 +7,7 @@ from typing import Callable
 from pydantic_ai import ModelRetry
 from pydantic_ai.toolsets import FunctionToolset
 
+from .approvals import DENIED, NEEDS_GATE
 from .events import EditChange
 
 MAX_READ_BYTES = 256 * 1024
@@ -110,3 +111,41 @@ def build_toolset(workdir: Path, on_edit: EditEmitter | None = None) -> Function
         return f'wrote {path}'
 
     return FunctionToolset([list_dir, read_file, grep, glob, edit_file, write_file])
+
+
+class GateRequired(Exception):
+    """A shell command needs Approval; the run pauses/aborts per ADR-0003."""
+
+    def __init__(self, command: str):
+        self.command = command
+        super().__init__(f'gate required for: {command}')
+
+
+def build_shell_toolset(workdir: Path, policy, shell_bin: str = 'bash') -> FunctionToolset:
+    """The shell tool, gated by the ApprovalPolicy."""
+
+    def shell(command: str, timeout: int = 120) -> str:
+        decision = policy.decide(command)
+        if decision == NEEDS_GATE:
+            raise GateRequired(command)
+        if decision == DENIED:
+            raise ModelRetry(
+                f'Command refused: {command!r} is in the always-gated tier (remote '
+                'mutations and destructive operations). It can only run with '
+                'explicit user consent (yolo mode).'
+            )
+        import subprocess
+
+        if shell_bin == 'powershell':
+            argv = ['powershell', '-NoProfile', '-Command', command]
+        else:
+            argv = ['bash', '-c', command]
+        result = subprocess.run(
+            argv, cwd=workdir, capture_output=True, text=True, timeout=timeout
+        )
+        output = (result.stdout + result.stderr).strip()
+        if len(output) > 8000:
+            output = output[:4000] + '\n...\n' + output[-4000:]
+        return f'exit code: {result.returncode}\n{output}'
+
+    return FunctionToolset([shell])

@@ -16,7 +16,7 @@ from pydantic_ai.models.fallback import FallbackModel
 from .config import Config
 from .db import Database
 from .messages import decode_messages, encode_messages
-from .tools import build_toolset
+from .tools import GateRequired, build_shell_toolset, build_toolset
 
 INSTRUCTIONS = (
     'You are CodingDude, a personal coding agent working in a repository. '
@@ -48,10 +48,19 @@ def _strip_provider_prefix(model: str) -> str:
 
 
 @dataclass(frozen=True)
+class GateRequest:
+    """A shell command the agent wanted to run; the user must decide."""
+
+    command: str
+
+
+@dataclass(frozen=True)
 class RunOutcome:
     session_id: str
     output: str
     model_name: str
+    status: str = 'complete'  # 'complete' | 'gate_aborted'
+    gate: GateRequest | None = None
 
 
 class Engine:
@@ -101,6 +110,7 @@ class Engine:
         session_id: str | None = None,
         model: Model | str | None = None,
         on_event: Callable[[object], None] | None = None,
+        approvals=None,
     ) -> RunOutcome:
         if session_id is None:
             session_id = self._db.create_session(workdir, title=prompt[:80])
@@ -109,12 +119,27 @@ class Engine:
 
         resolved = model or self.build_model()
         model_name = getattr(resolved, 'model_name', str(resolved))
-        agent: Agent = Agent(
-            model=resolved,
-            instructions=INSTRUCTIONS,
-            toolsets=[build_toolset(workdir, on_edit=on_event)],
-        )
-        result = await agent.run(prompt, message_history=history or None)
+        toolsets = [build_toolset(workdir, on_edit=on_event)]
+        if approvals is not None:
+            from .config import load_project_config
+
+            project_shell = load_project_config(workdir).get(
+                'shell', self._config.shell.default
+            )
+            toolsets.append(build_shell_toolset(workdir, approvals, shell_bin=project_shell))
+        agent: Agent = Agent(model=resolved, instructions=INSTRUCTIONS, toolsets=toolsets)
+        try:
+            result = await agent.run(prompt, message_history=history or None)
+        except GateRequired as gate:
+            # ADR-0003: unattended runs abort on gates. The Session keeps its
+            # prior turns; after approval the next run re-issues the command.
+            return RunOutcome(
+                session_id=session_id,
+                output=f'gate required: {gate.command}',
+                model_name=model_name,
+                status='gate_aborted',
+                gate=GateRequest(command=gate.command),
+            )
 
         self._db.append_messages(session_id, encode_messages(list(result.new_messages())))
         usage = result.usage
