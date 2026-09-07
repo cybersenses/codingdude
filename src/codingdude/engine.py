@@ -172,6 +172,9 @@ class Engine:
                 toolsets.append(build_delegation_toolset(workdir, subagent))
 
             toolsets.append(build_web_toolset())
+            from .ast_tools import build_ast_toolset
+
+            toolsets.append(build_ast_toolset(workdir))
             instructions = INSTRUCTIONS
             agent_md = workdir / 'AGENT.md'
             if agent_md.exists():
