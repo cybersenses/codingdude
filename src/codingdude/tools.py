@@ -17,8 +17,10 @@ SKIP_DIRS = {'.git', '.venv', 'node_modules', '__pycache__', '.mypy_cache', '.py
 EditEmitter = Callable[[EditChange], None]
 
 
-def build_toolset(workdir: Path, on_edit: EditEmitter | None = None) -> FunctionToolset:
-    """Build the toolset bound to a Workdir (via closure)."""
+def build_toolset(
+    workdir: Path, on_edit: EditEmitter | None = None, read_only: bool = False
+) -> FunctionToolset:
+    """Build the toolset bound to a Workdir (via closure). read_only strips edits."""
 
     def resolve(path: str) -> Path:
         target = (workdir / path).resolve()
@@ -110,7 +112,10 @@ def build_toolset(workdir: Path, on_edit: EditEmitter | None = None) -> Function
         emit_edit(path, existed, content)
         return f'wrote {path}'
 
-    return FunctionToolset([list_dir, read_file, grep, glob, edit_file, write_file])
+    tools: list[Callable] = [list_dir, read_file, grep, glob]
+    if not read_only:
+        tools += [edit_file, write_file]
+    return FunctionToolset(tools)
 
 
 class GateRequired(Exception):
@@ -149,3 +154,28 @@ def build_shell_toolset(workdir: Path, policy, shell_bin: str = 'bash') -> Funct
         return f'exit code: {result.returncode}\n{output}'
 
     return FunctionToolset([shell])
+
+
+def build_delegation_toolset(workdir: Path, subagent_model) -> FunctionToolset:
+    """The `delegate` tool: spawn a read-only Subagent on the cheap model.
+
+    Subagents never see edit/write/shell/delegation tools, so Delegation
+    can't route around Approval tiers.
+    """
+
+    async def delegate(task: str) -> str:
+        from pydantic_ai import Agent
+
+        sub_agent: Agent = Agent(
+            model=subagent_model,
+            instructions=(
+                'You are a CodingDude Subagent doing read-only research for the '
+                'main agent. Investigate the task with the file tools and answer '
+                'with your findings, concisely.'
+            ),
+            toolsets=[build_toolset(workdir, read_only=True)],
+        )
+        result = await sub_agent.run(task)
+        return str(result.output)
+
+    return FunctionToolset([delegate])

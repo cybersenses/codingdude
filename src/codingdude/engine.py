@@ -16,7 +16,12 @@ from pydantic_ai.models.fallback import FallbackModel
 from .config import Config
 from .db import Database
 from .messages import decode_messages, encode_messages
-from .tools import GateRequired, build_shell_toolset, build_toolset
+from .tools import (
+    GateRequired,
+    build_delegation_toolset,
+    build_shell_toolset,
+    build_toolset,
+)
 
 INSTRUCTIONS = (
     'You are CodingDude, a personal coding agent working in a repository. '
@@ -109,6 +114,16 @@ class Engine:
 
             return infer_model(primary)
 
+    def _build_subagent_model(self) -> Model | None:
+        """The cheap model Subagents run on; None if its provider isn't configured."""
+        try:
+            from pydantic_ai.models import infer_model
+
+            return infer_model(self._config.models.subagent)
+        except Exception as exc:  # noqa: BLE001 — missing credentials etc.
+            print(f'warning: subagent model unavailable ({exc}); delegation disabled', file=sys.stderr)
+            return None
+
     async def run(
         self,
         *,
@@ -118,6 +133,7 @@ class Engine:
         model: Model | str | None = None,
         on_event: Callable[[object], None] | None = None,
         approvals=None,
+        subagent_model: Model | None = None,
     ) -> RunOutcome:
         if session_id is None:
             session_id = self._db.create_session(workdir, title=prompt[:80])
@@ -143,7 +159,13 @@ class Engine:
                 project_shell = load_project_config(workdir).get(
                     'shell', self._config.shell.default
                 )
-                toolsets.append(build_shell_toolset(workdir, approvals, shell_bin=project_shell))
+                toolsets.append(
+                    build_shell_toolset(workdir, approvals, shell_bin=project_shell)
+                )
+
+            subagent = subagent_model or self._build_subagent_model()
+            if subagent is not None:
+                toolsets.append(build_delegation_toolset(workdir, subagent))
 
             instructions = INSTRUCTIONS
             agent_md = workdir / 'AGENT.md'
