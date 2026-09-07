@@ -77,6 +77,7 @@ class Engine:
         db: Database,
         compaction_threshold: int | None = None,
         extraction_model: Model | None = None,
+        budget_cap_usd: float | None = None,
     ):
         self._config = config
         self._db = db
@@ -84,6 +85,8 @@ class Engine:
         self._compaction_threshold = compaction_threshold
         # Cheap model that extracts missed facts into Memory post-session.
         self._extraction_model = extraction_model
+        # Optional hard-stop on session spend. Survives --yolo by design.
+        self._budget_cap_usd = budget_cap_usd
 
     def build_model(
         self, main: Model | str | None = None, fallback: Model | str | None = None
@@ -148,6 +151,7 @@ class Engine:
             created_session = False
 
         try:
+            self._check_budget(session_id)
             resolved = model if isinstance(model, Model) else self.build_model()
             model_name = getattr(resolved, 'model_name', str(resolved))
 
@@ -240,6 +244,7 @@ class Engine:
         )
         if self._extraction_model is not None:
             await self._extract_memory(session_id, workdir)
+        self._check_budget(session_id)
         return RunOutcome(
             session_id=session_id,
             output=result.output,
@@ -279,6 +284,18 @@ class Engine:
         pattern = policy.pattern_for(command)
         self._db.record_pattern_approval(session_id, pattern)
         return pattern
+
+    def _check_budget(self, session_id: str) -> None:
+        """Hard-stop the session once spend crosses the cap (off by default;
+        never bypassed by --yolo)."""
+        if self._budget_cap_usd is None:
+            return
+        from .exceptions import BudgetExceeded
+
+        totals = self._db.session_usage(session_id)
+        spent = totals.get('cost_usd') or 0.0
+        if spent >= self._budget_cap_usd:
+            raise BudgetExceeded(spent_usd=spent, cap_usd=self._budget_cap_usd)
 
     async def _maybe_compact(self, history, resolved: Model, on_event):
         """Compact old turns into a summary when history passes the threshold.

@@ -96,8 +96,11 @@ async def run(args) -> int:
                     # the full exchange when RUN_FINISHED lands.
                     await ws.send(json.dumps({'type': 'RUN_FINISHED'}))
             except Exception as exc:  # noqa: BLE001 — reported to the UI, not crashed
+                from .exceptions import BudgetExceeded
+
                 await ws.send(json.dumps({
                     'type': 'RUN_ERROR',
+                    'code': 'budget' if isinstance(exc, BudgetExceeded) else 'error',
                     'message': str(exc),
                 }))
 

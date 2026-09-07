@@ -11,6 +11,7 @@ from . import __version__
 from .config import config_home, load_config
 from .db import Database
 from .engine import Engine
+from .exceptions import BudgetExceeded
 
 
 def run_headless(
@@ -22,7 +23,7 @@ def run_headless(
     approvals=None,
 ) -> int:
     """One-shot Headless Run (ADR-0003). Returns a process exit code:
-    0 success, 1 failure, 2 gate-aborted."""
+    0 success, 1 failure, 2 gate-aborted, 3 budget-exceeded."""
     try:
         coro = engine.run(
             prompt=prompt,
@@ -41,6 +42,9 @@ def run_headless(
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                 outcome = pool.submit(asyncio.run, coro).result()
+    except BudgetExceeded as exc:
+        print(f'budget stop: {exc}', file=sys.stderr)
+        return 3
     except Exception as exc:  # noqa: BLE001 — a failed run is an exit code, not a traceback
         print(f'error: {exc}', file=sys.stderr)
         return 1
@@ -66,6 +70,7 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument('--workdir', type=Path, default=Path.cwd())
     run.add_argument('--model', default=None, help='model override, e.g. openai:gpt-5-mini')
     run.add_argument('--yolo', action='store_true', help='run without approval gates (ADR-0003)')
+    run.add_argument('--budget', type=float, default=None, help='session spend cap in USD (hard stop)')
     serve_cmd = sub.add_parser('serve', help='start the web server + UI')
     serve_cmd.add_argument('--port', type=int, default=8765)
 
@@ -80,7 +85,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     config = load_config()
-    engine = Engine(config=config, db=Database.connect(config_home()))
+    engine = Engine(
+        config=config,
+        db=Database.connect(config_home()),
+        budget_cap_usd=args.budget,
+    )
     from .approvals import ApprovalPolicy
 
     return run_headless(
