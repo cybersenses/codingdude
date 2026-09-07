@@ -179,3 +179,18 @@ def build_delegation_toolset(workdir: Path, subagent_model) -> FunctionToolset:
         return str(result.output)
 
     return FunctionToolset([delegate])
+
+
+def build_web_toolset() -> FunctionToolset:
+    """Web search (DuckDuckGo, no key) and page fetch, from pydantic-ai's built-ins.
+
+    Local URLs are allowed — tests and self-hosted docs are legitimate targets.
+    """
+    from pydantic_ai.common_tools.duckduckgo import duckduckgo_search_tool
+    from pydantic_ai.common_tools.web_fetch import web_fetch_tool
+    from pydantic_ai.toolsets import RenamedToolset
+
+    inner = FunctionToolset(
+        [duckduckgo_search_tool(), web_fetch_tool(allow_local_urls=True)]
+    )
+    return RenamedToolset(inner, {'duckduckgo_search': 'web_search'})

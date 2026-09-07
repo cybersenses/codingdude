@@ -21,6 +21,7 @@ from .tools import (
     build_delegation_toolset,
     build_shell_toolset,
     build_toolset,
+    build_web_toolset,
 )
 
 INSTRUCTIONS = (
@@ -167,6 +168,7 @@ class Engine:
             if subagent is not None:
                 toolsets.append(build_delegation_toolset(workdir, subagent))
 
+            toolsets.append(build_web_toolset())
             instructions = INSTRUCTIONS
             agent_md = workdir / 'AGENT.md'
             if agent_md.exists():
