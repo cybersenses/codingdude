@@ -41,7 +41,8 @@ def build_ast_toolset(workdir: Path) -> FunctionToolset:
     """AST-accurate navigation for Python; graceful degradation for other languages."""
 
     def _check_python(path: str) -> None:
-        if not str(path).endswith('.py'):
+        target = (workdir / path).resolve()
+        if target.is_file() and target.suffix != '.py':
             raise ModelRetry(
                 f'{path} is not a Python file. AST tools currently support Python '
                 'only; use grep for other languages.'

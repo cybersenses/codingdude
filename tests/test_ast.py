@@ -8,6 +8,7 @@ from helpers import scripted
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
+    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -38,7 +39,7 @@ def call_tool_then_answer(tool_name: str, args: dict, check):
             str(p.content)
             for m in messages
             for p in m.parts
-            if isinstance(p, (ToolReturnPart, TextPart))
+            if isinstance(p, (ToolReturnPart, RetryPromptPart, TextPart))
         ]
         return ModelResponse(parts=[TextPart(content=check('\n'.join(returns)))])
 
