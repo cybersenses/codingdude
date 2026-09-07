@@ -1,0 +1,3 @@
+# Headless Runs abort on gated actions instead of auto-approving
+
+When CodingDude runs headless (`codingdude run "task"`), an Approval-gated action (shell command, remote mutation, anything outside the Workdir, deletions) aborts the Run with a report of what it wanted to do — it does not prompt (there is no UI) and does not auto-approve. Full autonomy requires passing `--yolo` explicitly, and even then the Budget Cap (if set) still hard-stops the run. The principle: unattended is not unsupervised; opting out of oversight must be an explicit act, never a side effect of choosing the scripting entry point.
