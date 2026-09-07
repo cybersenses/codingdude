@@ -12,6 +12,7 @@ from typing import Callable
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
 from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.toolsets import AbstractToolset
 
 from .config import Config
 from .db import Database
@@ -153,7 +154,9 @@ class Engine:
                     session_id, [encode_messages([m]) for m in history]
                 )
 
-            toolsets = [build_toolset(workdir, on_edit=on_event)]
+            toolsets: list[AbstractToolset] = [
+                build_toolset(workdir, on_edit=on_event)
+            ]
             if approvals is not None:
                 from .config import load_project_config
 
