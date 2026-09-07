@@ -4,11 +4,15 @@
 
 **Blocked by:** 02 (Read-only tracer bullet)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] A scripted run runs an approved shell command and reads its output (exit code, stdout/stderr, truncated)
-- [ ] A gated shell action in a headless run aborts with a report of the exact command; exit code differs from success and from failure
-- [ ] Injecting an Approval plus Pattern Approval at the engine seam lets all matching commands run for the rest of the Session
-- [ ] An always-gated action (e.g. `git push`) is not unlocked by any pattern approval
-- [ ] `--yolo` executes gated actions without pausing
-- [ ] Shell is Git Bash by default; a per-project config selects PowerShell
+- [x] A scripted run runs an approved shell command and reads its output (exit code, stdout/stderr, truncated)
+- [x] A gated shell action in a headless run aborts with a report of the exact command; exit code differs from success and from failure (2 vs 0/1)
+- [x] Injecting an Approval plus Pattern Approval at the engine seam lets all matching commands run for the rest of the Session
+- [x] An always-gated action (e.g. `git push`) is not unlocked by any pattern approval
+- [x] `--yolo` executes gated actions without pausing
+- [x] Shell is Git Bash by default; a per-project config selects PowerShell
+
+## Comments
+
+2026-09-07: Commit e491217. ApprovalPolicy encodes the tier table (auto-shell regex / pattern set / always-gated regex); patterns are the command's leading token and can never unlock the always-gated tier — only yolo does. The shell tool is only attached to the agent when an ApprovalPolicy is provided, so read-only contexts don't expose it. Per-project `.codingdude.toml` (shell = "powershell") overrides the default.

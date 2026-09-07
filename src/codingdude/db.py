@@ -113,6 +113,29 @@ class Database:
         )
         self._conn.commit()
 
+    def replace_messages(self, session_id: str, payloads: list[str]) -> None:
+        """Overwrite the session's message list (used by compaction)."""
+        self._conn.execute(
+            'DELETE FROM messages WHERE session_id = ?', (session_id,)
+        )
+        for seq, payload in enumerate(payloads):
+            self._conn.execute(
+                'INSERT INTO messages (session_id, seq, payload) VALUES (?, ?, ?)',
+                (session_id, seq, payload),
+            )
+        self._conn.execute(
+            'UPDATE sessions SET updated_at = ? WHERE session_id = ?', (_now(), session_id)
+        )
+        self._conn.commit()
+
+    def delete_session(self, session_id: str) -> None:
+        for table in ('messages', 'approvals', 'usage'):
+            self._conn.execute(
+                f'DELETE FROM {table} WHERE session_id = ?', (session_id,)
+            )
+        self._conn.execute('DELETE FROM sessions WHERE session_id = ?', (session_id,))
+        self._conn.commit()
+
     def load_messages(self, session_id: str) -> list[str]:
         rows = self._conn.execute(
             'SELECT payload FROM messages WHERE session_id = ? ORDER BY seq',

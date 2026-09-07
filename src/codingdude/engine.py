@@ -64,9 +64,16 @@ class RunOutcome:
 
 
 class Engine:
-    def __init__(self, config: Config, db: Database):
+    def __init__(
+        self,
+        config: Config,
+        db: Database,
+        compaction_threshold: int | None = None,
+    ):
         self._config = config
         self._db = db
+        # History payload size (chars) after which old turns are compacted.
+        self._compaction_threshold = compaction_threshold
 
     def build_model(
         self, main: Model | str | None = None, fallback: Model | str | None = None
@@ -114,32 +121,58 @@ class Engine:
     ) -> RunOutcome:
         if session_id is None:
             session_id = self._db.create_session(workdir, title=prompt[:80])
+            created_session = True
+        else:
+            created_session = False
 
-        history = decode_messages(self._db.load_messages(session_id))
-
-        resolved = model or self.build_model()
-        model_name = getattr(resolved, 'model_name', str(resolved))
-        toolsets = [build_toolset(workdir, on_edit=on_event)]
-        if approvals is not None:
-            from .config import load_project_config
-
-            project_shell = load_project_config(workdir).get(
-                'shell', self._config.shell.default
-            )
-            toolsets.append(build_shell_toolset(workdir, approvals, shell_bin=project_shell))
-        agent: Agent = Agent(model=resolved, instructions=INSTRUCTIONS, toolsets=toolsets)
         try:
-            result = await agent.run(prompt, message_history=history or None)
-        except GateRequired as gate:
-            # ADR-0003: unattended runs abort on gates. The Session keeps its
-            # prior turns; after approval the next run re-issues the command.
-            return RunOutcome(
-                session_id=session_id,
-                output=f'gate required: {gate.command}',
-                model_name=model_name,
-                status='gate_aborted',
-                gate=GateRequest(command=gate.command),
+            resolved = model if isinstance(model, Model) else self.build_model()
+            model_name = getattr(resolved, 'model_name', str(resolved))
+
+            history = decode_messages(self._db.load_messages(session_id))
+            history, compacted = await self._maybe_compact(history, resolved, on_event)
+            if compacted:
+                self._db.replace_messages(
+                    session_id, [encode_messages([m]) for m in history]
+                )
+
+            toolsets = [build_toolset(workdir, on_edit=on_event)]
+            if approvals is not None:
+                from .config import load_project_config
+
+                project_shell = load_project_config(workdir).get(
+                    'shell', self._config.shell.default
+                )
+                toolsets.append(build_shell_toolset(workdir, approvals, shell_bin=project_shell))
+
+            instructions = INSTRUCTIONS
+            agent_md = workdir / 'AGENT.md'
+            if agent_md.exists():
+                instructions += (
+                    '\n\nProject Context (AGENT.md, follow these instructions):\n'
+                    + agent_md.read_text(encoding='utf-8', errors='replace')
+                )
+
+            agent: Agent = Agent(
+                model=resolved, instructions=instructions, toolsets=toolsets
             )
+            try:
+                result = await agent.run(prompt, message_history=history or None)
+            except GateRequired as gate:
+                # ADR-0003: unattended runs abort on gates. The Session keeps
+                # its prior turns; after approval the next run re-issues.
+                return RunOutcome(
+                    session_id=session_id,
+                    output=f'gate required: {gate.command}',
+                    model_name=model_name,
+                    status='gate_aborted',
+                    gate=GateRequest(command=gate.command),
+                )
+        except Exception:
+            # A run that died before producing anything leaves no husk Session.
+            if created_session and not self._db.load_messages(session_id):
+                self._db.delete_session(session_id)
+            raise
 
         self._db.append_messages(session_id, encode_messages(list(result.new_messages())))
         usage = result.usage
@@ -156,3 +189,44 @@ class Engine:
             output=result.output,
             model_name=model_name,
         )
+
+    async def _maybe_compact(self, history, resolved: Model, on_event):
+        """Compact old turns into a summary when history passes the threshold.
+
+        Returns (history, compacted?) — compacted True means history changed.
+        """
+        if not self._compaction_threshold or len(history) < 3:
+            return history, False
+        total = sum(len(encode_messages([m])) for m in history)
+        if total <= self._compaction_threshold:
+            return history, False
+
+        from pydantic_ai.messages import ModelRequest, UserPromptPart
+
+        old, keep = history[:-1], history[-1:]
+        digest = '\n'.join(
+            f'- {p.content}'
+            for m in old
+            for p in m.parts
+            if hasattr(p, 'content') and p.content
+        )
+        summarizer: Agent = Agent(model=resolved)
+        summary_result = await summarizer.run(
+            'Summarize the key facts and decisions of this conversation '
+            f'for continuity, in at most 200 words:\n\n{digest[:8000]}'
+        )
+        summary = summary_result.output
+        compacted = [
+            ModelRequest(
+                parts=[UserPromptPart(content=f'[Earlier conversation, compacted]\n{summary}')]
+            )
+        ] + keep
+        if on_event:
+            from .events import CompactionCheckpoint
+
+            on_event(
+                CompactionCheckpoint(
+                    kind='compaction', summarized_messages=len(old), summary=summary
+                )
+            )
+        return compacted, True

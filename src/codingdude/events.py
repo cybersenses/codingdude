@@ -11,3 +11,12 @@ class EditChange:
     path: str
     before: str
     after: str
+
+
+@dataclass(frozen=True)
+class CompactionCheckpoint:
+    """Old history was compacted; visible marker in the timeline."""
+
+    kind: str  # 'compaction'
+    summarized_messages: int
+    summary: str
