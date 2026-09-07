@@ -1,18 +1,23 @@
-"""Read-only coding tools: list, read, grep, glob — all confined to the Workdir."""
+"""Coding tools: list, read, grep, glob, plus surgical edits — all confined to the Workdir."""
 
 import re
 from pathlib import Path
+from typing import Callable
 
 from pydantic_ai import ModelRetry
 from pydantic_ai.toolsets import FunctionToolset
+
+from .events import EditChange
 
 MAX_READ_BYTES = 256 * 1024
 MAX_GREP_RESULTS = 50
 SKIP_DIRS = {'.git', '.venv', 'node_modules', '__pycache__', '.mypy_cache', '.pytest_cache'}
 
+EditEmitter = Callable[[EditChange], None]
 
-def build_toolset(workdir: Path) -> FunctionToolset:
-    """Build the read-only toolset bound to a Workdir (via closure)."""
+
+def build_toolset(workdir: Path, on_edit: EditEmitter | None = None) -> FunctionToolset:
+    """Build the toolset bound to a Workdir (via closure)."""
 
     def resolve(path: str) -> Path:
         target = (workdir / path).resolve()
@@ -67,4 +72,41 @@ def build_toolset(workdir: Path) -> FunctionToolset:
         )
         return '\n'.join(matches) or '(no matches)'
 
-    return FunctionToolset([list_dir, read_file, grep, glob])
+    def emit_edit(path: str, before: str, after: str) -> None:
+        if on_edit:
+            on_edit(EditChange(kind='edit', path=path, before=before, after=after))
+
+    def edit_file(path: str, old_text: str, new_text: str) -> str:
+        """Replace `old_text` with `new_text` — the match must be unique."""
+        target = resolve(path)
+        before = target.read_text(encoding='utf-8', errors='replace')
+        count = before.count(old_text)
+        if count == 0:
+            raise ModelRetry(
+                f'old_text not found in {path}. Re-read the file and copy the '
+                'exact text to replace, including whitespace.'
+            )
+        if count > 1:
+            raise ModelRetry(
+                f'old_text appears more than once in {path} ({count} times). '
+                'Include more surrounding context so the match is unique.'
+            )
+        after = before.replace(old_text, new_text, 1)
+        target.write_text(after, encoding='utf-8')
+        emit_edit(path, before, after)
+        return f'edited {path}'
+
+    def write_file(path: str, content: str) -> str:
+        """Create a new file (with parent dirs). Existing non-empty files must use edit_file."""
+        target = resolve(path)
+        if target.exists() and target.read_text(encoding='utf-8', errors='replace').strip():
+            raise ModelRetry(
+                f'{path} already exists and is not empty — use edit_file to change it.'
+            )
+        existed = target.read_text(encoding='utf-8', errors='replace') if target.exists() else ''
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding='utf-8')
+        emit_edit(path, existed, content)
+        return f'wrote {path}'
+
+    return FunctionToolset([list_dir, read_file, grep, glob, edit_file, write_file])

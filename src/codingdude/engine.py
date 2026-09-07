@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import os
 import sys
+from typing import Callable
 
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
@@ -99,6 +100,7 @@ class Engine:
         workdir: Path,
         session_id: str | None = None,
         model: Model | str | None = None,
+        on_event: Callable[[object], None] | None = None,
     ) -> RunOutcome:
         if session_id is None:
             session_id = self._db.create_session(workdir, title=prompt[:80])
@@ -108,7 +110,9 @@ class Engine:
         resolved = model or self.build_model()
         model_name = getattr(resolved, 'model_name', str(resolved))
         agent: Agent = Agent(
-            model=resolved, instructions=INSTRUCTIONS, toolsets=[build_toolset(workdir)]
+            model=resolved,
+            instructions=INSTRUCTIONS,
+            toolsets=[build_toolset(workdir, on_edit=on_event)],
         )
         result = await agent.run(prompt, message_history=history or None)
 

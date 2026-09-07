@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 def _default_config_toml(lineup: ModelLineup) -> str:
@@ -37,9 +37,16 @@ class ShellConfig:
 
 
 @dataclass(frozen=True)
+class ProviderKeys:
+    deepseek: str | None = None
+    zai: str | None = None
+
+
+@dataclass(frozen=True)
 class Config:
     models: ModelLineup
     shell: ShellConfig
+    providers: ProviderKeys = field(default_factory=ProviderKeys)
 
     @classmethod
     def defaults(cls) -> 'Config':
@@ -50,6 +57,7 @@ class Config:
                 fallback='zai:glm-5.3',
             ),
             shell=ShellConfig(default='bash'),
+            providers=ProviderKeys(),
         )
 
 
@@ -77,7 +85,8 @@ def load_config(home: Path | None = None) -> Config:
     raw = tomllib.loads(config_path.read_text(encoding='utf-8'))
     models = raw.get('models', {})
     shell = raw.get('shell', {})
-    return Config(
+    providers = raw.get('providers', {})
+    config = Config(
         models=ModelLineup(
             main=models.get('main', defaults.models.main),
             subagent=models.get('subagent', defaults.models.subagent),
@@ -85,4 +94,18 @@ def load_config(home: Path | None = None) -> Config:
             fallback_base_url=models.get('fallback_base_url', defaults.models.fallback_base_url),
         ),
         shell=ShellConfig(default=shell.get('default', defaults.shell.default)),
+        providers=ProviderKeys(
+            deepseek=providers.get('deepseek'),
+            zai=providers.get('zai'),
+        ),
     )
+    apply_provider_keys(config)
+    return config
+
+
+def apply_provider_keys(config: Config) -> None:
+    """Config-stored keys are the low-precedence fallback; env vars win."""
+    if config.providers.deepseek:
+        os.environ.setdefault('DEEPSEEK_API_KEY', config.providers.deepseek)
+    if config.providers.zai:
+        os.environ.setdefault('ZAI_API_KEY', config.providers.zai)
