@@ -25,6 +25,10 @@ class ModelLineup:
     main: str
     subagent: str
     fallback: str
+    # Optional endpoint override for the fallback provider, e.g. the GLM
+    # coding-plan endpoint (https://api.z.ai/api/coding/paas/v4) for
+    # coding-plan keys that are not valid against the normal Z.AI API.
+    fallback_base_url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -78,6 +82,7 @@ def load_config(home: Path | None = None) -> Config:
             main=models.get('main', defaults.models.main),
             subagent=models.get('subagent', defaults.models.subagent),
             fallback=models.get('fallback', defaults.models.fallback),
+            fallback_base_url=models.get('fallback_base_url', defaults.models.fallback_base_url),
         ),
         shell=ShellConfig(default=shell.get('default', defaults.shell.default)),
     )

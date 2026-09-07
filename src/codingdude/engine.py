@@ -5,6 +5,8 @@ Both frontends (web worker, headless CLI) drive this identical seam.
 
 from dataclasses import dataclass
 from pathlib import Path
+import os
+import sys
 
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
@@ -22,6 +24,28 @@ INSTRUCTIONS = (
 )
 
 
+def _zai_fallback(model_name: str, base_url: str | None) -> Model:
+    """Build the ZAI fallback model, optionally pointed at a custom endpoint."""
+    from openai import AsyncOpenAI
+
+    from pydantic_ai.providers.zai import ZaiProvider
+
+    api_key = os.environ.get('ZAI_API_KEY')
+    client = (
+        AsyncOpenAI(api_key=api_key, base_url=base_url)
+        if base_url
+        else AsyncOpenAI(api_key=api_key)
+    )
+    provider = ZaiProvider(openai_client=client)
+    from pydantic_ai.models.zai import ZaiModel
+
+    return ZaiModel(model_name, provider=provider)
+
+
+def _strip_provider_prefix(model: str) -> str:
+    return model.split(':', 1)[1] if ':' in model else model
+
+
 @dataclass(frozen=True)
 class RunOutcome:
     session_id: str
@@ -37,11 +61,36 @@ class Engine:
     def build_model(
         self, main: Model | str | None = None, fallback: Model | str | None = None
     ) -> Model:
-        """Wrap the primary model with the configured failover."""
-        return FallbackModel(
-            main or self._config.models.main,
-            fallback or self._config.models.fallback,
-        )
+        """Wrap the primary model with the configured failover.
+
+        The fallback is a safety net, not a requirement: if its provider
+        credentials are missing, it is dropped with a warning instead of
+        blocking every run.
+        """
+        primary = main or self._config.models.main
+        fallback_name = fallback or self._config.models.fallback
+        try:
+            if isinstance(fallback_name, str) and (
+                self._config.models.fallback_base_url
+                and fallback_name.startswith('zai:')
+            ):
+                fallback_model = _zai_fallback(
+                    _strip_provider_prefix(fallback_name),
+                    self._config.models.fallback_base_url,
+                )
+                return FallbackModel(primary, fallback_model)
+            return FallbackModel(primary, fallback_name)
+        except Exception as exc:  # noqa: BLE001 — any provider-construction failure
+            print(
+                f'warning: fallback model unavailable ({exc}); '
+                'running without failover',
+                file=sys.stderr,
+            )
+            if isinstance(primary, Model):
+                return primary
+            from pydantic_ai.models import infer_model
+
+            return infer_model(primary)
 
     async def run(
         self,

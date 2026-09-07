@@ -30,4 +30,7 @@ export ZAI_API_KEY=...        # failover model
 | `models.main` | `deepseek:deepseek-v4-pro` |
 | `models.subagent` | `deepseek:deepseek-v4-flash` |
 | `models.fallback` | `zai:glm-5.3` |
+| `models.fallback_base_url` | *(unset)* — set to `https://api.z.ai/api/coding/paas/v4` for GLM coding-plan keys |
 | `shell.default` | `bash` (Git Bash) or `powershell` |
+
+API keys come from the environment: `DEEPSEEK_API_KEY`, `ZAI_API_KEY`.
