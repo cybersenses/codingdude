@@ -176,6 +176,9 @@ class Engine:
                 toolsets.append(
                     build_shell_toolset(workdir, approvals, shell_bin=project_shell)
                 )
+            from .tools import build_git_toolset
+
+            toolsets.append(build_git_toolset(workdir, approvals))
 
             subagent = subagent_model or self._build_subagent_model()
             if subagent is not None:

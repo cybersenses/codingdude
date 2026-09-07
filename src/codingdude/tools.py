@@ -211,3 +211,74 @@ def build_web_toolset() -> 'AbstractToolset':
         [duckduckgo_search_tool(), web_fetch_tool(allow_local_urls=True)]
     )
     return RenamedToolset(inner, {'web_search': 'duckduckgo_search'})
+
+
+def build_git_toolset(workdir: Path, policy) -> FunctionToolset:
+    """Git/GitHub tools under the tier table: reads auto, commit/branch gated,
+    push/PR always-gated (never pattern-unlockable)."""
+
+    def _run(argv: list[str], timeout: int = 60, use_shell: bool = False) -> str:
+        import subprocess
+
+        result = subprocess.run(
+            argv, cwd=workdir, capture_output=True, text=True, timeout=timeout,
+            shell=use_shell,
+        )
+        out = (result.stdout + result.stderr).strip()
+        return f'exit {result.returncode}\n{out}' if out else f'exit {result.returncode}'
+
+    def git_status() -> str:
+        return _run(['git', 'status', '--porcelain', '-b'])
+
+    def git_log(limit: int = 20) -> str:
+        return _run(['git', 'log', '--oneline', f'-n{limit}'])
+
+    def git_diff(path: str = '') -> str:
+        argv = ['git', 'diff']
+        if path:
+            argv += ['--', path]
+        return _run(argv)
+
+    def _gate(command: str) -> None:
+        from .approvals import DENIED, NEEDS_GATE
+
+        decision = policy.decide(command)
+        if decision in (NEEDS_GATE, DENIED):
+            raise GateRequired(command)
+
+    def git_commit(message: str) -> str:
+        _gate('git commit')
+        import subprocess
+
+        subprocess.run(['git', 'add', '-A'], cwd=workdir, capture_output=True, text=True)
+        result = subprocess.run(
+            ['git', 'commit', '-m', message], cwd=workdir, capture_output=True, text=True
+        )
+        detail = (result.stdout + result.stderr).strip()
+        if result.returncode != 0:
+            return f'commit failed: {detail}'
+        return f'committed: {detail}'
+
+    def git_branch(name: str) -> str:
+        _gate('git branch')
+        return _run(['git', 'checkout', '-b', name])
+
+    def git_push(remote: str = 'origin', branch: str = 'main') -> str:
+        _gate('git push')  # always-gated: only yolo unlocks
+        return _run(['git', 'push', remote, branch])
+
+    def gh_pr_create(title: str, body: str) -> str:
+        _gate('gh pr create')  # always-gated: only yolo unlocks
+        # shell=True so Windows resolves gh (and test stubs) via PATH
+        return _run(
+            ['gh', 'pr', 'create', '--title', title, '--body', body, '--fill'],
+            use_shell=True,
+        )
+
+    def gh_pr_view(number: int) -> str:
+        _gate('gh pr view')  # always-gated: only yolo unlocks
+        return _run(['gh', 'pr', 'view', str(number)], use_shell=True)
+
+    return FunctionToolset(
+        [git_status, git_log, git_diff, git_commit, git_branch, git_push, gh_pr_create, gh_pr_view]
+    )
