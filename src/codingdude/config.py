@@ -1,21 +1,23 @@
 """CodingDude configuration: model lineup and shell, stored under the home directory."""
 
+from __future__ import annotations
+
 import os
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-DEFAULT_CONFIG_TOML = """\
-# CodingDude configuration. Edit freely; missing values fall back to defaults.
-[models]
-main = "deepseek:deepseek-v4-pro"
-subagent = "deepseek:deepseek-v4-flash"
-fallback = "zai:glm-5.3"
-
-[shell]
-# "bash" (Git Bash) or "powershell"
-default = "bash"
-"""
+def _default_config_toml(lineup: ModelLineup) -> str:
+    return (
+        '# CodingDude configuration. Edit freely; missing values fall back to defaults.\n'
+        '[models]\n'
+        f'main = "{lineup.main}"\n'
+        f'subagent = "{lineup.subagent}"\n'
+        f'fallback = "{lineup.fallback}"\n\n'
+        '[shell]\n'
+        '# "bash" (Git Bash) or "powershell"\n'
+        'default = "bash"\n'
+    )
 
 
 @dataclass(frozen=True)
@@ -63,7 +65,9 @@ def load_config(home: Path | None = None) -> Config:
 
     if not config_path.exists():
         home.mkdir(parents=True, exist_ok=True)
-        config_path.write_text(DEFAULT_CONFIG_TOML, encoding='utf-8')
+        config_path.write_text(
+            _default_config_toml(defaults.models), encoding='utf-8'
+        )
         return defaults
 
     raw = tomllib.loads(config_path.read_text(encoding='utf-8'))

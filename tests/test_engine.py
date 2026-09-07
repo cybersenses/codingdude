@@ -1,18 +1,11 @@
 """Engine seam: scripted FunctionModel runs persist messages and usage."""
 
-from codingdude.config import load_config
-from codingdude.db import Database
-from codingdude.engine import Engine
 from codingdude.messages import decode_messages
 from helpers import say, scripted
 from pydantic_ai.messages import ModelResponse, TextPart
 
 
-async def test_scripted_run_persists_session(home, workdir):
-    config = load_config()
-    db = Database.connect(home)
-    engine = Engine(config=config, db=db)
-
+async def test_scripted_run_persists_session(engine, db, workdir):
     outcome = await engine.run(
         prompt='say the thing', workdir=workdir, model=scripted(say('Hello from model'))
     )
@@ -26,11 +19,7 @@ async def test_scripted_run_persists_session(home, workdir):
     assert usage['requests'] >= 1
 
 
-async def test_second_run_on_session_sees_history(home, workdir):
-    config = load_config()
-    db = Database.connect(home)
-    engine = Engine(config=config, db=db)
-
+async def test_second_run_on_session_sees_history(engine, workdir):
     first = await engine.run(
         prompt='first', workdir=workdir, model=scripted(say('first-answer'))
     )

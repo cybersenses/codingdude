@@ -4,10 +4,14 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] `codingdude` installs and runs as the CLI name; the old prototype code is gone
-- [ ] Repo is a git repository with an initial commit
-- [ ] First run creates the config directory and SQLite database without manual steps
-- [ ] Engine-seam harness (FunctionModel + temp Workdir fixtures) runs a scripted turn and the messages appear in the database
-- [ ] A scripted run against a dead primary model transparently failsover to the fallback model
+- [x] `codingdude` installs and runs as the CLI name; the old prototype code is gone
+- [x] Repo is a git repository with an initial commit
+- [x] First run creates the config directory and SQLite database without manual steps
+- [x] Engine-seam harness (FunctionModel + temp Workdir fixtures) runs a scripted turn and the messages appear in the database
+- [x] A scripted run against a dead primary model transparently failsover to the fallback model
+
+## Comments
+
+2026-09-07: Implemented in commit b4950f7. 11 tests green (engine seam, config, db, failover, cli), mypy clean. `CODEDUDE_HOME` env var added for test isolation. Model resolution is lazy (providers require API keys at construction), so the engine takes an injectable model for tests and builds FallbackModel from config in production.

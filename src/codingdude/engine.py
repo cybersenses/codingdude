@@ -16,8 +16,8 @@ from .messages import decode_messages, encode_messages
 
 INSTRUCTIONS = (
     'You are CodingDude, a personal coding agent working in a repository. '
-    'Use tools to explore, edit files and run commands to complete the task. '
-    'Prefer minimal, targeted edits. When done, summarize what you changed and why.'
+    'Complete the task using the tools available to you. '
+    'When done, summarize what you did and why.'
 )
 
 
@@ -56,6 +56,7 @@ class Engine:
         history = decode_messages(self._db.load_messages(session_id))
 
         resolved = model or self.build_model()
+        model_name = getattr(resolved, 'model_name', str(resolved))
         agent: Agent = Agent(model=resolved, instructions=INSTRUCTIONS)
         result = await agent.run(prompt, message_history=history or None)
 
@@ -63,7 +64,7 @@ class Engine:
         usage = result.usage
         self._db.record_usage(
             session_id,
-            model=getattr(resolved, 'model_name', str(resolved)),
+            model=model_name,
             requests=usage.requests or 0,
             input_tokens=usage.input_tokens or 0,
             output_tokens=usage.output_tokens or 0,
@@ -72,5 +73,5 @@ class Engine:
         return RunOutcome(
             session_id=session_id,
             output=result.output,
-            model_name=getattr(resolved, 'model_name', str(resolved)),
+            model_name=model_name,
         )
