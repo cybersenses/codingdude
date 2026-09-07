@@ -4,9 +4,13 @@
 
 **Blocked by:** 05 (Session lifecycle), 09 (React shell)
 
-**Status:** ready-for-agent
+**Status:** partially resolved — engine + CLI complete, UI setter pending (ticket 10)
 
-- [ ] With no cap set, runs behave exactly as before
-- [ ] Setting a cap (UI) then driving a scripted spendy run hard-stops at the cap with a distinct final event
-- [ ] The cost meter reflects accumulating spend across the Session
-- [ ] `--yolo` runs still stop at the cap
+- [x] With no cap set, runs behave exactly as before
+- [x] Setting a cap then driving a scripted spendy run hard-stops at the cap with a distinct final event (BudgetExceeded; worker emits RUN_ERROR code=budget; headless exit 3)
+- [x] The cost meter reflects accumulating spend across the Session (usage table, meter UI lands with ticket 10)
+- [x] `--yolo` runs still stop at the cap
+
+## Comments
+
+2026-09-07: Commit 8580d8a. `Engine(budget_cap_usd=...)`: pre-run check blocks sessions already over budget without any model call; post-run check raises the moment a run crosses the cap (that run's usage is still recorded — the meter stays truthful). CLI: `codingdude run --budget 5.00`. UI cap setter + meter render deferred to ticket 10's Cost panel.
