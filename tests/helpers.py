@@ -12,4 +12,13 @@ def say(text: str):
 
 
 def scripted(fn) -> FunctionModel:
-    return FunctionModel(fn, model_name='scripted')
+    """A FunctionModel from a sync responder, with a matching stream function."""
+
+    async def stream_fn(messages, info):
+        response = fn(messages, info)
+        for part in response.parts:
+            if hasattr(part, 'content') and isinstance(part.content, str):
+                yield part.content
+                return
+
+    return FunctionModel(fn, stream_function=stream_fn, model_name='scripted')

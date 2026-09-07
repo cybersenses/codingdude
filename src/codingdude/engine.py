@@ -136,6 +136,7 @@ class Engine:
         on_event: Callable[[object], None] | None = None,
         approvals=None,
         subagent_model: Model | None = None,
+        emit: Callable[[dict], None] | None = None,
     ) -> RunOutcome:
         if session_id is None:
             session_id = self._db.create_session(workdir, title=prompt[:80])
@@ -187,7 +188,12 @@ class Engine:
                 model=resolved, instructions=instructions, toolsets=toolsets
             )
             try:
-                result = await agent.run(prompt, message_history=history or None)
+                if emit is None:
+                    result = await agent.run(prompt, message_history=history or None)
+                else:
+                    result = await self._run_streaming(
+                        agent, prompt, history, model_name, emit
+                    )
             except GateRequired as gate:
                 # ADR-0003: unattended runs abort on gates. The Session keeps
                 # its prior turns; after approval the next run re-issues.
@@ -260,3 +266,57 @@ class Engine:
                 )
             )
         return compacted, True
+
+    async def _run_streaming(self, agent, prompt, history, model_name, emit):
+        """Run the agent, emitting AG-UI-shaped events for the UI layer."""
+        from pydantic_ai.messages import (
+            PartDeltaEvent,
+            PartStartEvent,
+            TextPart,
+            TextPartDelta,
+            ToolCallEvent,
+        )
+        from pydantic_ai._agent_graph import CallToolsNode
+
+        emit({'type': 'RUN_STARTED'})
+        async with agent.iter(prompt, message_history=history or None) as run:
+            async for node in run:
+                if agent.is_model_request_node(node):
+                    emit({'type': 'TEXT_MESSAGE_START', 'role': 'assistant'})
+                    async with node.stream(run.ctx) as stream:
+                        async for event in stream:
+                            if isinstance(event, PartStartEvent) and isinstance(
+                                event.part, TextPart
+                            ):
+                                emit({
+                                    'type': 'TEXT_MESSAGE_CONTENT',
+                                    'delta': event.part.content,
+                                })
+                            elif isinstance(event, PartDeltaEvent):
+                                delta = event.delta
+                                if isinstance(delta, TextPartDelta) and delta.content_delta:
+                                    emit({
+                                        'type': 'TEXT_MESSAGE_CONTENT',
+                                        'delta': delta.content_delta,
+                                    })
+                                elif (
+                                    hasattr(delta, 'args_delta')
+                                    and delta.args_delta
+                                ):
+                                    emit({
+                                        'type': 'TOOL_CALL_ARGS',
+                                        'delta': delta.args_delta,
+                                    })
+                    emit({'type': 'TEXT_MESSAGE_END'})
+                elif isinstance(node, CallToolsNode):
+                    async with node.stream(run.ctx) as stream:
+                        async for event in stream:
+                            if isinstance(event, ToolCallEvent):
+                                emit({
+                                    'type': 'TOOL_CALL_END',
+                                    'tool_name': event.part.tool_name,
+                                    'result': str(event.result)[:2000],
+                                })
+            result = run.result
+        # NB: terminal RUN_FINISHED is emitted by the worker after persistence.
+        return result
