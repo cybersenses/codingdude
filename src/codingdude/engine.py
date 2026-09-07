@@ -156,11 +156,13 @@ class Engine:
                 )
 
             toolsets: list[AbstractToolset] = [
-                build_toolset(workdir, on_edit=on_event)
+                build_toolset(workdir, on_edit=on_event, approvals=approvals)
             ]
             if approvals is not None:
                 from .config import load_project_config
 
+                # Pattern Approvals are session-scoped: load what past runs saved.
+                approvals.patterns.update(self._db.session_patterns(session_id))
                 project_shell = load_project_config(workdir).get(
                     'shell', self._config.shell.default
                 )
@@ -225,6 +227,15 @@ class Engine:
             output=result.output,
             model_name=model_name,
         )
+
+    def approve_pattern(self, session_id: str, command: str) -> str:
+        """Record a Pattern Approval for the rest of the Session (UI calls this)."""
+        from .approvals import ApprovalPolicy
+
+        policy = ApprovalPolicy()
+        pattern = policy.pattern_for(command)
+        self._db.record_pattern_approval(session_id, pattern)
+        return pattern
 
     async def _maybe_compact(self, history, resolved: Model, on_event):
         """Compact old turns into a summary when history passes the threshold.

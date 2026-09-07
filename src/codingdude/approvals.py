@@ -16,9 +16,10 @@ NEEDS_GATE = 'needs_gate'
 DENIED = 'denied'
 
 # Commands that run without a gate: read-only / dev-loop conveniences.
+# NOTE: git branch *creation* is deliberately not auto (spec story 19).
 AUTO_SHELL = re.compile(
     r'^(ls|dir|cat|head|tail|pwd|echo|which|where|find|tree|wc|file|stat|'
-    r'git (status|log|diff|show|branch(?!.*-D))|node --version|python --version)\b'
+    r'git (status|log|diff|show)|node --version|python --version)\b'
 )
 
 # The always-gated tier: remote mutations and destructive operations.
@@ -27,6 +28,12 @@ ALWAYS_GATED = re.compile(
     r'rm |rmdir|del |rd |remove-item|mv |move |format |shutdown|taskkill)'
     r'|(^|[;&|]\s*)sudo\b',
     re.IGNORECASE,
+)
+
+# Heuristic for commands reaching outside the Workdir (home dirs, parent dirs,
+# absolute paths). Best-effort by nature — the file tools are the hard boundary.
+OUTSIDE_WORKDIR = re.compile(
+    r'(\.\./|~/|~\\\\|(?:[A-Za-z]:\\\\)|/(?:home|Users|etc|var|tmp)/)',
 )
 
 
@@ -44,7 +51,7 @@ class ApprovalPolicy:
         if self.yolo:
             return APPROVED
         stripped = command.strip()
-        if ALWAYS_GATED.match(stripped):
+        if ALWAYS_GATED.match(stripped) or OUTSIDE_WORKDIR.search(stripped):
             return DENIED
         if stripped.split()[0] in self.patterns:
             return APPROVED

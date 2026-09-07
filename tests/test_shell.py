@@ -95,8 +95,9 @@ async def test_gate_approval_via_pattern_completes(engine, workdir):
     )
     assert outcome.status == 'gate_aborted'
 
-    policy = ApprovalPolicy()
-    policy.approve_pattern('printf')
+    # Pattern Approval is session-scoped: recorded once, picked up by later
+    # runs on this Session even with a fresh policy object.
+    engine.approve_pattern(outcome.session_id, 'printf hello-from-shell')
     outcome2 = await engine.run(
         prompt='greet again',
         workdir=workdir,
@@ -104,10 +105,22 @@ async def test_gate_approval_via_pattern_completes(engine, workdir):
         model=shell_then_answer('printf hello-from-shell', lambda r: (
             'saw-output' if any('hello-from-shell' in x for x in r) else 'no-output'
         )),
-        approvals=policy,
+        approvals=ApprovalPolicy(),
     )
     assert outcome2.status == 'complete'
     assert outcome2.output == 'saw-output'
+
+
+async def test_always_gated_aborts_headless_run(engine, workdir):
+    """DENIED commands abort with a report like gates do — not a silent retry."""
+    outcome = await engine.run(
+        prompt='ship it',
+        workdir=workdir,
+        model=shell_then_answer('git push origin main', lambda r: 'nope'),
+        approvals=ApprovalPolicy(),
+    )
+    assert outcome.status == 'gate_aborted'
+    assert 'git push' in outcome.gate.command
 
 
 async def test_default_run_has_no_shell_tool(engine, workdir):

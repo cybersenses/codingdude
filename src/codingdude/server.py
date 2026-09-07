@@ -27,6 +27,7 @@ from pydantic import BaseModel
 
 from .config import config_home
 from .db import Database
+from .events import TERMINAL_EVENTS
 
 HOST = '127.0.0.1'  # localhost only, by design
 
@@ -34,7 +35,9 @@ HOST = '127.0.0.1'  # localhost only, by design
 class RunChannel:
     """Bridges worker WebSocket events to SSE subscribers."""
 
-    def __init__(self):
+    def __init__(self, run_id: str, registry: dict):
+        self.run_id = run_id
+        self.registry = registry
         self.queue: asyncio.Queue = asyncio.Queue()
         self.worker: subprocess.Popen | None = None
 
@@ -42,11 +45,14 @@ class RunChannel:
         self.queue.put_nowait(event)
 
     async def sse(self):
-        while True:
-            event = await self.queue.get()
-            yield f'data: {json.dumps(event)}\n\n'
-            if event.get('type') in ('RUN_FINISHED', 'RUN_ERROR', 'RUN_CANCELLED'):
-                return
+        try:
+            while True:
+                event = await self.queue.get()
+                yield f'data: {json.dumps(event)}\n\n'
+                if event.get('type') in TERMINAL_EVENTS:
+                    return
+        finally:
+            self.registry.pop(self.run_id, None)
 
 
 def create_app(
@@ -117,15 +123,12 @@ def create_app(
 
     @app.post('/sessions/{session_id}/runs')
     def start_run(session_id: str, body: RunIn, _: None = Depends(authorize)) -> dict:
-        row = db._conn.execute(
-            'SELECT workdir FROM sessions WHERE session_id = ?', (session_id,)
-        ).fetchone()
-        if row is None:
+        workdir = db.session_workdir(session_id)
+        if workdir is None:
             raise HTTPException(status_code=404, detail='no such session')
-        workdir = row['workdir']
 
         run_id = secrets.token_urlsafe(8)
-        channel = RunChannel()
+        channel = RunChannel(run_id, channels)
         channels[run_id] = channel
 
         cmd = [

@@ -12,6 +12,8 @@ import sys
 
 import websockets
 
+from .events import TERMINAL_EVENTS
+
 
 async def _resolve_model(name: str | None):
     if not name:
@@ -66,7 +68,7 @@ async def run(args) -> int:
             while True:
                 event = await queue.get()
                 await ws.send(json.dumps(event))
-                if event.get('type') in ('RUN_FINISHED', 'RUN_ERROR'):
+                if event.get('type') in TERMINAL_EVENTS:
                     return
 
         async def runner():

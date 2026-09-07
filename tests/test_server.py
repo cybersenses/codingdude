@@ -10,6 +10,7 @@ import httpx
 import pytest
 import uvicorn
 
+from codingdude.events import TERMINAL_EVENTS
 from codingdude.server import create_app
 
 
@@ -58,7 +59,7 @@ def collect_sse(base, run_id, timeout=30) -> list[dict]:
             if line.startswith('data: '):
                 event = json.loads(line.removeprefix('data: '))
                 events.append(event)
-                if event.get('type') in ('RUN_FINISHED', 'RUN_ERROR', 'RUN_CANCELLED'):
+                if event.get('type') in TERMINAL_EVENTS:
                     return events
     return events
 
@@ -139,4 +140,41 @@ def test_cancel_kills_worker(server, tmp_path):
     events = collect_sse(base, run_id, timeout=10)
     assert events[-1]['type'] == 'RUN_CANCELLED'
     # Server is still alive afterwards.
+    assert httpx.get(f'{base}/health', timeout=5).status_code == 200
+
+
+def test_worker_crash_leaves_session_resumable(server, tmp_path):
+    app, base = server
+    workdir = tmp_path / 'proj4'
+    workdir.mkdir()
+    session_id = create_session(base, workdir)
+
+    # First run completes and persists.
+    r = httpx.post(
+        f'{base}/sessions/{session_id}/runs',
+        json={'prompt': 'say hi', 'model': 'codingdude-test:echo'},
+        headers=auth(),
+        timeout=30,
+    )
+    collect_sse(base, r.json()['run_id'])
+
+    # Second run: hard-kill the worker mid-flight (a crash, not a cancel).
+    r = httpx.post(
+        f'{base}/sessions/{session_id}/runs',
+        json={'prompt': 'ponder', 'model': 'codingdude-test:sleep'},
+        headers=auth(),
+        timeout=30,
+    )
+    run_id = r.json()['run_id']
+    time.sleep(3)
+    worker = app.state.channels[run_id].worker
+    worker.kill()
+    worker.wait(timeout=10)
+
+    # The Session survives with its prior turns; server stays healthy.
+    messages = httpx.get(
+        f'{base}/sessions/{session_id}/messages', headers=auth(), timeout=10
+    )
+    assert messages.status_code == 200
+    assert len(messages.json()) >= 2
     assert httpx.get(f'{base}/health', timeout=5).status_code == 200

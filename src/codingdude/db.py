@@ -138,6 +138,28 @@ class Database:
         self._conn.execute('DELETE FROM sessions WHERE session_id = ?', (session_id,))
         self._conn.commit()
 
+    def record_pattern_approval(self, session_id: str, pattern: str) -> None:
+        self._conn.execute(
+            'INSERT INTO approvals (session_id, tool_name, args, pattern, status, created_at)'
+            " VALUES (?, 'shell', '', ?, 'approved', ?)",
+            (session_id, pattern, _now()),
+        )
+        self._conn.commit()
+
+    def session_patterns(self, session_id: str) -> list[str]:
+        rows = self._conn.execute(
+            "SELECT DISTINCT pattern FROM approvals"
+            " WHERE session_id = ? AND status = 'approved' AND pattern != ''",
+            (session_id,),
+        ).fetchall()
+        return [r['pattern'] for r in rows]
+
+    def session_workdir(self, session_id: str) -> str | None:
+        row = self._conn.execute(
+            'SELECT workdir FROM sessions WHERE session_id = ?', (session_id,)
+        ).fetchone()
+        return row['workdir'] if row else None
+
     def load_messages(self, session_id: str) -> list[str]:
         rows = self._conn.execute(
             'SELECT payload FROM messages WHERE session_id = ? ORDER BY seq',

@@ -18,9 +18,16 @@ EditEmitter = Callable[[EditChange], None]
 
 
 def build_toolset(
-    workdir: Path, on_edit: EditEmitter | None = None, read_only: bool = False
+    workdir: Path,
+    on_edit: EditEmitter | None = None,
+    read_only: bool = False,
+    approvals=None,
 ) -> FunctionToolset:
-    """Build the toolset bound to a Workdir (via closure). read_only strips edits."""
+    """Build the toolset bound to a Workdir (via closure). read_only strips edits.
+
+    `approvals` (an ApprovalPolicy) gates AGENT.md edits — the Project Context
+    changes only with explicit consent (spec story 26).
+    """
 
     def resolve(path: str) -> Path:
         target = (workdir / path).resolve()
@@ -79,8 +86,21 @@ def build_toolset(
         if on_edit:
             on_edit(EditChange(kind='edit', path=path, before=before, after=after))
 
+    def _guard_project_context(path: str) -> None:
+        """AGENT.md is the user's Project Context — edits always need a gate."""
+        if Path(path).name.lower() != 'agent.md':
+            return
+        if approvals is None:
+            raise ModelRetry(
+                f'{path} is the Project Context; editing it requires the approval '
+                'system, which is not active in this run.'
+            )
+        if not approvals.yolo:
+            raise GateRequired(f'edit {path}')
+
     def edit_file(path: str, old_text: str, new_text: str) -> str:
         """Replace `old_text` with `new_text` — the match must be unique."""
+        _guard_project_context(path)
         target = resolve(path)
         before = target.read_text(encoding='utf-8', errors='replace')
         count = before.count(old_text)
@@ -101,12 +121,13 @@ def build_toolset(
 
     def write_file(path: str, content: str) -> str:
         """Create a new file (with parent dirs). Existing non-empty files must use edit_file."""
+        _guard_project_context(path)
         target = resolve(path)
-        if target.exists() and target.read_text(encoding='utf-8', errors='replace').strip():
+        existed = target.read_text(encoding='utf-8', errors='replace') if target.exists() else ''
+        if existed.strip():
             raise ModelRetry(
                 f'{path} already exists and is not empty — use edit_file to change it.'
             )
-        existed = target.read_text(encoding='utf-8', errors='replace') if target.exists() else ''
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding='utf-8')
         emit_edit(path, existed, content)
@@ -131,14 +152,10 @@ def build_shell_toolset(workdir: Path, policy, shell_bin: str = 'bash') -> Funct
 
     def shell(command: str, timeout: int = 120) -> str:
         decision = policy.decide(command)
-        if decision == NEEDS_GATE:
+        if decision in (NEEDS_GATE, DENIED):
+            # Both pause/abort the run per ADR-0003; the difference is that a
+            # DENIED (always-gated) command can never be pattern-approved.
             raise GateRequired(command)
-        if decision == DENIED:
-            raise ModelRetry(
-                f'Command refused: {command!r} is in the always-gated tier (remote '
-                'mutations and destructive operations). It can only run with '
-                'explicit user consent (yolo mode).'
-            )
         import subprocess
 
         if shell_bin == 'powershell':

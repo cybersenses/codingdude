@@ -4,7 +4,7 @@ A personal, single-user coding agent built with [pydantic-ai](https://ai.pydanti
 
 ## Status
 
-Ticket 01 (Foundations) complete: package skeleton, config, SQLite persistence, engine seam with a scripted-model test harness, and model failover wiring. See `.scratch/codingdude/` for the spec and tickets.
+Tickets 01–08 and 15 complete: engine seam with scripted-model test harness, model failover (incl. GLM coding-plan endpoint), file tools + surgical edits with change events, shell tool with Approval tiers + Pattern Approval, session lifecycle (AGENT.md, compaction, cleanup), delegation to read-only subagents, web search/fetch, AST navigation, and the web server + per-run worker subprocess + SSE (AG-UI shape). Next: tickets 09–14, 16–17 (React UI, approval cards, memory, budget cap, git/gh, MCP, embeddings, durable-exec spike). See `.scratch/codingdude/`.
 
 ## Setup
 
