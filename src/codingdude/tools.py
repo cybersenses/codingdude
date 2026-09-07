@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Callable
 
 from pydantic_ai import ModelRetry
-from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 
 from .approvals import DENIED, NEEDS_GATE
 from .events import EditChange
@@ -181,7 +181,7 @@ def build_delegation_toolset(workdir: Path, subagent_model) -> FunctionToolset:
     return FunctionToolset([delegate])
 
 
-def build_web_toolset() -> FunctionToolset:
+def build_web_toolset() -> 'AbstractToolset':
     """Web search (DuckDuckGo, no key) and page fetch, from pydantic-ai's built-ins.
 
     Local URLs are allowed — tests and self-hosted docs are legitimate targets.
@@ -193,4 +193,4 @@ def build_web_toolset() -> FunctionToolset:
     inner = FunctionToolset(
         [duckduckgo_search_tool(), web_fetch_tool(allow_local_urls=True)]
     )
-    return RenamedToolset(inner, {'duckduckgo_search': 'web_search'})
+    return RenamedToolset(inner, {'web_search': 'duckduckgo_search'})
