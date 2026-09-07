@@ -178,3 +178,49 @@ def test_worker_crash_leaves_session_resumable(server, tmp_path):
     assert messages.status_code == 200
     assert len(messages.json()) >= 2
     assert httpx.get(f'{base}/health', timeout=5).status_code == 200
+
+
+def test_interactive_approval_roundtrip(server, tmp_path):
+    """Gate → GATE_REQUEST over SSE → approve → run completes."""
+    import time as _t
+
+    app, base = server
+    workdir = tmp_path / 'proj5'
+    workdir.mkdir()
+    session_id = create_session(base, workdir)
+    r = httpx.post(
+        f'{base}/sessions/{session_id}/runs',
+        json={'prompt': 'run the gated thing', 'model': 'codingdude-test:gated'},
+        headers=auth(),
+        timeout=30,
+    )
+    run_id = r.json()['run_id']
+
+    seen = []
+    decision_sent = {'done': False}
+    with httpx.stream(
+        'GET', f'{base}/runs/{run_id}/events', headers=auth(), timeout=30
+    ) as resp:
+        for line in resp.iter_lines():
+            if not line.startswith('data: '):
+                continue
+            event = json.loads(line.removeprefix('data: '))
+            seen.append(event)
+            if event['type'] == 'GATE_REQUEST' and not decision_sent['done']:
+                _t.sleep(0.2)  # let the worker settle into its wait
+                rr = httpx.post(
+                    f'{base}/runs/{run_id}/approve',
+                    json={'decision': 'approve'},
+                    headers=auth(),
+                    timeout=10,
+                )
+                assert rr.status_code == 200, rr.text
+                decision_sent['done'] = True
+            if event['type'] in TERMINAL_EVENTS:
+                break
+
+    types = [e['type'] for e in seen]
+    assert 'GATE_REQUEST' in types
+    assert types[-1] == 'RUN_FINISHED'
+    contents = ''.join(e.get('delta', '') for e in seen if e['type'] == 'TEXT_MESSAGE_CONTENT')
+    assert 'gated-ran' in contents

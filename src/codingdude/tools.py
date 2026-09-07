@@ -147,15 +147,37 @@ class GateRequired(Exception):
         super().__init__(f'gate required for: {command}')
 
 
+async def _resolve_gate(policy, command: str, always: bool = False) -> None:
+    """Resolve a gated action: ask the user (interactive) or abort (headless).
+
+    - no ask callback → GateRequired (headless abort, ADR-0003)
+    - 'approve' → run once
+    - 'pattern' → approve for the session; on always-gated actions the pattern
+      is never persisted (only this one run goes through)
+    - 'deny' → ModelRetry so the model knows the user said no
+    """
+    if policy is None or policy.ask is None:
+        raise GateRequired(command)
+    answer = await policy.ask(command)
+    if answer == 'deny':
+        raise ModelRetry(
+            f'User DENIED this action: {command}. Do not retry it unchanged; '
+            'continue the task another way or ask the user what to do instead.'
+        )
+    if answer == 'pattern' and not always:
+        pattern = command.strip().split()[0]
+        policy.approve_pattern(pattern)
+        if policy.on_pattern:
+            policy.on_pattern(pattern)
+
+
 def build_shell_toolset(workdir: Path, policy, shell_bin: str = 'bash') -> FunctionToolset:
     """The shell tool, gated by the ApprovalPolicy."""
 
-    def shell(command: str, timeout: int = 120) -> str:
+    async def shell(command: str, timeout: int = 120) -> str:
         decision = policy.decide(command)
         if decision in (NEEDS_GATE, DENIED):
-            # Both pause/abort the run per ADR-0003; the difference is that a
-            # DENIED (always-gated) command can never be pattern-approved.
-            raise GateRequired(command)
+            await _resolve_gate(policy, command, always=decision == DENIED)
         import subprocess
 
         if shell_bin == 'powershell':
@@ -239,15 +261,15 @@ def build_git_toolset(workdir: Path, policy) -> FunctionToolset:
             argv += ['--', path]
         return _run(argv)
 
-    def _gate(command: str) -> None:
+    async def _gate(command: str, always: bool = False) -> None:
         from .approvals import DENIED, NEEDS_GATE
 
         decision = policy.decide(command)
         if decision in (NEEDS_GATE, DENIED):
-            raise GateRequired(command)
+            await _resolve_gate(policy, command, always=always or decision == DENIED)
 
-    def git_commit(message: str) -> str:
-        _gate('git commit')
+    async def git_commit(message: str) -> str:
+        await _gate('git commit')
         import subprocess
 
         subprocess.run(['git', 'add', '-A'], cwd=workdir, capture_output=True, text=True)
@@ -259,24 +281,24 @@ def build_git_toolset(workdir: Path, policy) -> FunctionToolset:
             return f'commit failed: {detail}'
         return f'committed: {detail}'
 
-    def git_branch(name: str) -> str:
-        _gate('git branch')
+    async def git_branch(name: str) -> str:
+        await _gate('git branch')
         return _run(['git', 'checkout', '-b', name])
 
-    def git_push(remote: str = 'origin', branch: str = 'main') -> str:
-        _gate('git push')  # always-gated: only yolo unlocks
+    async def git_push(remote: str = 'origin', branch: str = 'main') -> str:
+        await _gate('git push', always=True)  # always-gated: only explicit consent
         return _run(['git', 'push', remote, branch])
 
-    def gh_pr_create(title: str, body: str) -> str:
-        _gate('gh pr create')  # always-gated: only yolo unlocks
+    async def gh_pr_create(title: str, body: str) -> str:
+        await _gate('gh pr create', always=True)
         # shell=True so Windows resolves gh (and test stubs) via PATH
         return _run(
             ['gh', 'pr', 'create', '--title', title, '--body', body, '--fill'],
             use_shell=True,
         )
 
-    def gh_pr_view(number: int) -> str:
-        _gate('gh pr view')  # always-gated: only yolo unlocks
+    async def gh_pr_view(number: int) -> str:
+        await _gate('gh pr view', always=True)
         return _run(['gh', 'pr', 'view', str(number)], use_shell=True)
 
     return FunctionToolset(

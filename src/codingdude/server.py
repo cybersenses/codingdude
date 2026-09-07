@@ -39,6 +39,7 @@ class RunChannel:
         self.run_id = run_id
         self.registry = registry
         self.queue: asyncio.Queue = asyncio.Queue()
+        self.inbox: asyncio.Queue = asyncio.Queue()  # server → worker (approvals)
         self.worker: subprocess.Popen | None = None
         self.loop: asyncio.AbstractEventLoop | None = None
 
@@ -49,6 +50,12 @@ class RunChannel:
             self.loop.call_soon_threadsafe(self.queue.put_nowait, event)
         else:
             self.queue.put_nowait(event)
+
+    def send_to_worker(self, message: dict) -> None:
+        if self.loop is not None:
+            self.loop.call_soon_threadsafe(self.inbox.put_nowait, message)
+        else:
+            self.inbox.put_nowait(message)
 
     async def sse(self):
         self.loop = asyncio.get_running_loop()
@@ -88,6 +95,7 @@ def create_app(
         prompt: str
         model: str | None = None
         yolo: bool = False
+        budget: float | None = None
 
     @app.post('/sessions')
     def create_session(body: SessionIn, _: None = Depends(authorize)) -> dict:
@@ -149,9 +157,81 @@ def create_app(
             cmd += ['--model', body.model]
         if body.yolo:
             cmd.append('--yolo')
+        if body.budget is not None:
+            cmd += ['--budget', str(body.budget)]
         channel.worker = subprocess.Popen(cmd)
 
         return {'run_id': run_id}
+
+    class ApprovalIn(BaseModel):
+        decision: str  # 'approve' | 'pattern' | 'deny'
+
+    @app.post('/runs/{run_id}/approve')
+    def approve(run_id: str, body: ApprovalIn, _: None = Depends(authorize)) -> dict:
+        channel = channels.get(run_id)
+        if channel is None:
+            raise HTTPException(status_code=404, detail='no such run')
+        if body.decision not in ('approve', 'pattern', 'deny'):
+            raise HTTPException(status_code=422, detail='bad decision')
+        channel.send_to_worker({'type': 'APPROVAL_RESPONSE', 'decision': body.decision})
+        return {'sent': True}
+
+    @app.get('/sessions/{session_id}/usage')
+    def session_usage(session_id: str, _: None = Depends(authorize)) -> dict:
+        return db.session_usage(session_id)
+
+    @app.get('/sessions/{session_id}/diff')
+    def session_diff(session_id: str, _: None = Depends(authorize)) -> dict:
+        workdir = db.session_workdir(session_id)
+        if not workdir:
+            raise HTTPException(status_code=404, detail='no such session')
+        import subprocess
+
+        result = subprocess.run(
+            ['git', 'diff', 'HEAD'], cwd=workdir, capture_output=True, text=True, timeout=30
+        )
+        return {'diff': result.stdout}
+
+    @app.get('/sessions/{session_id}/files')
+    def session_files(session_id: str, _: None = Depends(authorize)) -> list[str]:
+        workdir = db.session_workdir(session_id)
+        if not workdir:
+            raise HTTPException(status_code=404, detail='no such session')
+        root = Path(workdir)
+        skip = {'.git', '.venv', 'node_modules', '__pycache__', '.mypy_cache', '.pytest_cache'}
+        out = []
+        for p in sorted(root.rglob('*')):
+            if any(part in skip for part in p.relative_to(root).parts):
+                continue
+            out.append(
+                ('d ' if p.is_dir() else '  ') + str(p.relative_to(root)).replace('\\', '/')
+            )
+            if len(out) >= 500:
+                break
+        return out
+
+    class MemoryIn(BaseModel):
+        content: str
+        scope: str = 'workdir'
+
+    @app.get('/memory')
+    def get_memory(_: None = Depends(authorize)) -> list[dict]:
+        from .memory import MemoryStore
+
+        return MemoryStore(db).all_entries()
+
+    @app.post('/memory')
+    def add_memory(body: MemoryIn, _: None = Depends(authorize)) -> dict:
+        from .memory import MemoryStore
+
+        entry_id = MemoryStore(db).add(body.content, scope=body.scope)
+        return {'id': entry_id}
+
+    @app.delete('/memory/{entry_id}')
+    def delete_memory(entry_id: int, _: None = Depends(authorize)) -> dict:
+        from .memory import MemoryStore
+
+        return {'deleted': MemoryStore(db).delete_id(entry_id)}
 
     @app.delete('/runs/{run_id}')
     def cancel_run(run_id: str, _: None = Depends(authorize)) -> dict:
@@ -197,12 +277,22 @@ def create_app(
         if channel is None:
             await ws.close(code=4404)
             return
+        channel.loop = asyncio.get_running_loop()
+
+        async def forward_inbox():
+            while True:
+                msg = await channel.inbox.get()
+                await ws.send_text(json.dumps(msg))
+
+        inbox_task = asyncio.create_task(forward_inbox())
         try:
             while True:
                 raw = await ws.receive_text()
                 channel.push(json.loads(raw))
         except WebSocketDisconnect:
             pass
+        finally:
+            inbox_task.cancel()
 
     @app.get('/health')
     def health() -> dict:

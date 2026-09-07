@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { api, getToken, setToken } from './api.js'
+import { api, call, getToken, setToken } from './api.js'
 
 // ---------- components ----------
 
@@ -87,7 +87,24 @@ function ToolTimeline({ events }) {
   )
 }
 
-function Chat({ messages, streaming, onStop }) {
+function ApprovalCard({ command, onDecide }) {
+  return (
+    <div className="my-2 rounded border border-amber-600 bg-amber-900/20 p-3">
+      <div className="mb-2 text-xs font-semibold text-amber-300">Approval needed</div>
+      <pre className="mb-2 overflow-x-auto rounded bg-neutral-950 p-2 font-mono text-xs text-neutral-200">{command}</pre>
+      <div className="flex gap-2">
+        <button className="rounded bg-emerald-700 px-3 py-1 text-xs text-white hover:bg-emerald-600"
+          onClick={() => onDecide('approve')}>Approve</button>
+        <button className="rounded bg-neutral-700 px-3 py-1 text-xs text-white hover:bg-neutral-600"
+          onClick={() => onDecide('pattern')}>Approve all matching</button>
+        <button className="rounded bg-red-800 px-3 py-1 text-xs text-white hover:bg-red-700"
+          onClick={() => onDecide('deny')}>Deny</button>
+      </div>
+    </div>
+  )
+}
+
+function Chat({ messages, streaming, onStop, onDecide }) {
   const bottomRef = useRef(null)
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -108,6 +125,7 @@ function Chat({ messages, streaming, onStop }) {
               {m.streaming && <span className="animate-pulse">▍</span>}
             </div>
             {m.toolEvents && <ToolTimeline events={m.toolEvents} />}
+            {m.gate && <ApprovalCard command={m.gate} onDecide={onDecide} />}
           </div>
         ))}
         {streaming && (
@@ -124,25 +142,78 @@ function Chat({ messages, streaming, onStop }) {
   )
 }
 
-function RightPanel({ placeholder }) {
-  const tabs = ['Diff', 'Files', 'Terminal', 'Cost']
-  const [tab, setTab] = useState('Cost')
+function RightPanel({ sessionId, refreshKey }) {
+  const tabs = ['Diff', 'Files', 'Terminal', 'Cost', 'Memory']
+  const [tab, setTab] = useState('Diff')
+  const [data, setData] = useState({})
+  useEffect(() => {
+    if (!sessionId) return
+    let stop = false
+    async function poll() {
+      try {
+        if (tab === 'Diff') setData({ diff: (await call(`/sessions/${sessionId}/diff`)).diff })
+        if (tab === 'Files') setData({ files: await call(`/sessions/${sessionId}/files`) })
+        if (tab === 'Cost') setData({ usage: await call(`/sessions/${sessionId}/usage`) })
+        if (tab === 'Memory') setData({ memory: await call('/memory') })
+      } catch { /* transient */ }
+      if (!stop) setTimeout(poll, 4000)
+    }
+    poll()
+    return () => { stop = true }
+  }, [sessionId, tab, refreshKey])
+
+  let body = <div className="text-neutral-600">nothing yet</div>
+  if (tab === 'Terminal') {
+    body = <div className="text-neutral-600">command output lives in the chat tool timeline</div>
+  } else if (tab === 'Diff' && data.diff) {
+    body = (
+      <pre className="whitespace-pre-wrap font-mono text-[10px] leading-tight">
+        {data.diff.split('\n').map((l, i) => (
+          <div key={i} className={l.startsWith('+') ? 'text-emerald-400' : l.startsWith('-') ? 'text-red-400' : 'text-neutral-500'}>{l}</div>
+        ))}
+      </pre>
+    )
+  } else if (tab === 'Files' && data.files) {
+    body = <pre className="whitespace-pre-wrap font-mono text-[10px] text-neutral-400">{data.files.join('\n')}</pre>
+  } else if (tab === 'Cost' && data.usage) {
+    const u = data.usage
+    body = (
+      <div className="space-y-1 text-neutral-300">
+        <div>requests: {u.requests ?? 0}</div>
+        <div>input tokens: {u.input_tokens ?? 0}</div>
+        <div>output tokens: {u.output_tokens ?? 0}</div>
+        <div className="text-emerald-400">cost: ${(u.cost_usd ?? 0).toFixed(4)}</div>
+      </div>
+    )
+  } else if (tab === 'Memory' && data.memory) {
+    body = (
+      <div className="space-y-1">
+        {data.memory.map((m) => (
+          <div key={m.id} className="flex items-start justify-between gap-1 rounded bg-neutral-900 p-1">
+            <span className="text-neutral-300">{m.content}</span>
+            <button
+              className="text-red-500 hover:text-red-300"
+              onClick={() => call(`/memory/${m.id}`, { method: 'DELETE' }).then(() => setData({ memory: data.memory.filter((x) => x.id !== m.id) }))}
+            >✕</button>
+          </div>
+        ))}
+      </div>
+    )
+  }
   return (
-    <aside className="w-80 shrink-0 border-l border-neutral-800 bg-neutral-950 p-3">
-      <div className="mb-2 flex gap-1">
+    <aside className="w-80 shrink-0 overflow-y-auto border-l border-neutral-800 bg-neutral-950 p-3">
+      <div className="mb-2 flex flex-wrap gap-1">
         {tabs.map((t) => (
           <button
             key={t}
-            className={`rounded px-2 py-1 text-xs ${
-              tab === t ? 'bg-neutral-800 text-emerald-300' : 'text-neutral-500 hover:text-neutral-300'
-            }`}
+            className={`rounded px-2 py-1 text-xs ${tab === t ? 'bg-neutral-800 text-emerald-300' : 'text-neutral-500 hover:text-neutral-300'}`}
             onClick={() => setTab(t)}
           >
             {t}
           </button>
         ))}
       </div>
-      <div className="text-xs text-neutral-500">{placeholder[tab]}</div>
+      <div className="text-xs">{body}</div>
     </aside>
   )
 }
@@ -156,8 +227,16 @@ export default function App() {
   const [messages, setMessages] = useState([])
   const [streaming, setStreaming] = useState(false)
   const [error, setError] = useState('')
+  const [refreshKey, setRefreshKey] = useState(0)
   const runRef = useRef(null)
   const esRef = useRef(null)
+
+  // Poll the panels while a run streams (diff/cost change live).
+  useEffect(() => {
+    if (!streaming) return
+    const t = setInterval(() => setRefreshKey((k) => k + 1), 4000)
+    return () => clearInterval(t)
+  }, [streaming])
 
   const refreshSessions = useCallback(async (wd) => {
     if (!wd) return
@@ -223,6 +302,8 @@ export default function App() {
                 ...(last.toolEvents || []),
                 { tool_name: ev.tool_name, result: ev.result },
               ]
+            if (ev.type === 'GATE_REQUEST') last.gate = ev.command
+            if (ev.type === 'TOOL_CALL_START' || ev.type === 'TOOL_CALL_END') last.gate = null
             if (ev.type === 'RUN_ERROR') setError(ev.message || 'run error')
             if (ev.type in { RUN_FINISHED: 1, RUN_ERROR: 1, RUN_CANCELLED: 1 }) {
               last.streaming = false
@@ -257,13 +338,6 @@ export default function App() {
     setStreaming(false)
   }
 
-  const placeholder = {
-    Diff: 'Working-tree diff appears here (ticket 10).',
-    Files: 'Workdir file tree appears here (ticket 10).',
-    Terminal: 'Command output streams here (ticket 10).',
-    Cost: 'Per-session tokens and cost appear here (ticket 10).',
-  }
-
   return (
     <div className="flex h-screen bg-neutral-900 text-neutral-200">
       <Sidebar
@@ -280,9 +354,16 @@ export default function App() {
       <main className="flex flex-1 flex-col overflow-hidden">
         {error && <div className="bg-red-900/50 px-4 py-1 text-xs text-red-300">{error}</div>}
         <Prompt onSend={send} disabled={!activeSession || streaming} />
-        <Chat messages={messages} streaming={streaming} onStop={stop} />
+        <Chat
+          messages={messages}
+          streaming={streaming}
+          onStop={stop}
+          onDecide={(decision) => {
+            if (runRef.current) api.approve(runRef.current, decision).catch((e) => setError(String(e.message)))
+          }}
+        />
       </main>
-      <RightPanel placeholder={placeholder} />
+      <RightPanel sessionId={activeSession} refreshKey={refreshKey} />
     </div>
   )
 }

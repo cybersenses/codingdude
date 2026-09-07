@@ -39,10 +39,17 @@ OUTSIDE_WORKDIR = re.compile(
 
 @dataclass
 class ApprovalPolicy:
-    """Session-scoped approval state. Thread-safe enough for one run at a time."""
+    """Session-scoped approval state. Thread-safe enough for one run at a time.
+
+    `ask`, when set, is an async callable(command) -> 'approve' | 'pattern' |
+    'deny'. Interactive frontends set it: a gate waits for the user's answer.
+    Without it (headless), gates abort the run per ADR-0003.
+    """
 
     yolo: bool = False
     patterns: set[str] = field(default_factory=set)
+    ask: object | None = None
+    on_pattern: object | None = None  # callable(pattern) — engine persists it
 
     def approve_pattern(self, pattern: str) -> None:
         self.patterns.add(pattern)

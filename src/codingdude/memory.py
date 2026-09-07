@@ -29,6 +29,11 @@ class MemoryStore:
         self._db._conn.commit()
         return cur.rowcount
 
+    def delete_id(self, entry_id: int) -> int:
+        cur = self._db._conn.execute('DELETE FROM memory WHERE id = ?', (entry_id,))
+        self._db._conn.commit()
+        return cur.rowcount
+
     def all_entries(self) -> list[dict]:
         rows = self._db._conn.execute(
             'SELECT id, scope, workdir, content, created_at FROM memory ORDER BY created_at DESC'

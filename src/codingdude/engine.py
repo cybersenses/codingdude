@@ -170,6 +170,10 @@ class Engine:
 
                 # Pattern Approvals are session-scoped: load what past runs saved.
                 approvals.patterns.update(self._db.session_patterns(session_id))
+                # New pattern approvals persist for the rest of the Session.
+                approvals.on_pattern = (
+                    lambda pattern: self._db.record_pattern_approval(session_id, pattern)
+                )
                 project_shell = load_project_config(workdir).get(
                     'shell', self._config.shell.default
                 )
@@ -344,11 +348,12 @@ class Engine:
     async def _run_streaming(self, agent, prompt, history, model_name, emit):
         """Run the agent, emitting AG-UI-shaped events for the UI layer."""
         from pydantic_ai.messages import (
+            FunctionToolCallEvent,
+            FunctionToolResultEvent,
             PartDeltaEvent,
             PartStartEvent,
             TextPart,
             TextPartDelta,
-            ToolCallEvent,
         )
         from pydantic_ai._agent_graph import CallToolsNode
 
@@ -385,11 +390,18 @@ class Engine:
                 elif isinstance(node, CallToolsNode):
                     async with node.stream(run.ctx) as stream:
                         async for event in stream:
-                            if isinstance(event, ToolCallEvent):
+                            if isinstance(event, FunctionToolCallEvent):
+                                emit({
+                                    'type': 'TOOL_CALL_START',
+                                    'tool_name': event.part.tool_name,
+                                    'args': event.part.args,
+                                })
+                            elif isinstance(event, FunctionToolResultEvent):
+                                result = event.part
                                 emit({
                                     'type': 'TOOL_CALL_END',
-                                    'tool_name': event.part.tool_name,
-                                    'result': str(event.result)[:2000],
+                                    'tool_name': result.tool_name,
+                                    'result': str(result.content)[:2000],
                                 })
             result = run.result
         # NB: terminal RUN_FINISHED is emitted by the worker after persistence.
