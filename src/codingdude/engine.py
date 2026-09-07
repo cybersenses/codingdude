@@ -13,11 +13,12 @@ from pydantic_ai.models.fallback import FallbackModel
 from .config import Config
 from .db import Database
 from .messages import decode_messages, encode_messages
+from .tools import build_toolset
 
 INSTRUCTIONS = (
     'You are CodingDude, a personal coding agent working in a repository. '
-    'Complete the task using the tools available to you. '
-    'When done, summarize what you did and why.'
+    'Use the file tools (list_dir, read_file, grep, glob) to explore the codebase. '
+    'Complete the task, then summarize what you found or did.'
 )
 
 
@@ -57,7 +58,9 @@ class Engine:
 
         resolved = model or self.build_model()
         model_name = getattr(resolved, 'model_name', str(resolved))
-        agent: Agent = Agent(model=resolved, instructions=INSTRUCTIONS)
+        agent: Agent = Agent(
+            model=resolved, instructions=INSTRUCTIONS, toolsets=[build_toolset(workdir)]
+        )
         result = await agent.run(prompt, message_history=history or None)
 
         self._db.append_messages(session_id, encode_messages(list(result.new_messages())))
