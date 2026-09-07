@@ -40,7 +40,11 @@ async def _resolve_model(name: str | None):
             await _aio.sleep(60)
             return MR(parts=[TP(content='finally')])
 
-        return FunctionModel(sleepy, model_name='test-sleep')
+        async def sleepy_stream(messages, info):
+            await _aio.sleep(60)
+            yield 'finally'
+
+        return FunctionModel(sleepy, stream_function=sleepy_stream, model_name='test-sleep')
     from pydantic_ai.models import infer_model
 
     return infer_model(name)

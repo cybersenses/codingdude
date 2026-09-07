@@ -66,8 +66,15 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument('--workdir', type=Path, default=Path.cwd())
     run.add_argument('--model', default=None, help='model override, e.g. openai:gpt-5-mini')
     run.add_argument('--yolo', action='store_true', help='run without approval gates (ADR-0003)')
+    serve_cmd = sub.add_parser('serve', help='start the web server + UI')
+    serve_cmd.add_argument('--port', type=int, default=8765)
 
     args = parser.parse_args(argv)
+    if args.command == 'serve':
+        from .server import serve
+
+        serve(port=args.port)
+        return 0
     if args.command != 'run':
         parser.print_help()
         return 0

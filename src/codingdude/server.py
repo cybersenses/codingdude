@@ -40,11 +40,18 @@ class RunChannel:
         self.registry = registry
         self.queue: asyncio.Queue = asyncio.Queue()
         self.worker: subprocess.Popen | None = None
+        self.loop: asyncio.AbstractEventLoop | None = None
 
     def push(self, event: dict) -> None:
-        self.queue.put_nowait(event)
+        # Sync endpoints run in threadpool threads: marshal onto the loop once
+        # a consumer is attached, before that rely on single-producer safety.
+        if self.loop is not None:
+            self.loop.call_soon_threadsafe(self.queue.put_nowait, event)
+        else:
+            self.queue.put_nowait(event)
 
     async def sse(self):
+        self.loop = asyncio.get_running_loop()
         try:
             while True:
                 event = await self.queue.get()
@@ -157,8 +164,19 @@ def create_app(
         return {'cancelled': run_id}
 
     @app.get('/runs/{run_id}/events')
-    async def run_events(run_id: str, request: Request) -> StreamingResponse:
-        authorize(request)
+    async def run_events(
+        run_id: str, request: Request, token_q: str = Query('', alias='token')
+    ) -> StreamingResponse:
+        # Header auth is primary; a query token supports EventSource (no headers).
+        auth_header = request.headers.get('authorization', '')
+        if not (
+            auth_header == f'Bearer {token}' or token_q == token
+        ):
+            raise HTTPException(status_code=401, detail='invalid token')
+        host = request.client.host if request.client else ''
+        local = ('127.0.0.1', '::1') + (('testclient',) if allow_testclient else ())
+        if host not in local:
+            raise HTTPException(status_code=403, detail='local only')
         channel = channels.get(run_id)
         if channel is None:
             raise HTTPException(status_code=404, detail='no such run')
@@ -189,6 +207,13 @@ def create_app(
     @app.get('/health')
     def health() -> dict:
         return {'ok': True}
+
+    # Serve the built frontend when it exists (single-command deployment).
+    dist = Path(__file__).resolve().parents[2] / 'frontend' / 'dist'
+    if dist.exists():
+        from fastapi.staticfiles import StaticFiles
+
+        app.mount('/', StaticFiles(directory=dist, html=True), name='ui')
 
     app.state.token = token
     app.state.db = db
