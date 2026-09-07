@@ -76,11 +76,14 @@ class Engine:
         config: Config,
         db: Database,
         compaction_threshold: int | None = None,
+        extraction_model: Model | None = None,
     ):
         self._config = config
         self._db = db
         # History payload size (chars) after which old turns are compacted.
         self._compaction_threshold = compaction_threshold
+        # Cheap model that extracts missed facts into Memory post-session.
+        self._extraction_model = extraction_model
 
     def build_model(
         self, main: Model | str | None = None, fallback: Model | str | None = None
@@ -178,12 +181,25 @@ class Engine:
             from .ast_tools import build_ast_toolset
 
             toolsets.append(build_ast_toolset(workdir))
+
+            from .memory import MemoryStore, build_memory_toolset
+
+            store = MemoryStore(self._db)
+            toolsets.append(build_memory_toolset(store, str(workdir)))
+
             instructions = INSTRUCTIONS
             agent_md = workdir / 'AGENT.md'
             if agent_md.exists():
                 instructions += (
                     '\n\nProject Context (AGENT.md, follow these instructions):\n'
                     + agent_md.read_text(encoding='utf-8', errors='replace')
+                )
+            relevant = store.retrieve(str(workdir), query=prompt)
+            if relevant:
+                lines = '\n'.join(f'- {e["content"]}' for e in relevant)
+                instructions += (
+                    '\n\nMemory (durable facts from earlier sessions; respect them):\n'
+                    + lines
                 )
 
             agent: Agent = Agent(
@@ -222,11 +238,38 @@ class Engine:
             output_tokens=usage.output_tokens or 0,
             cost_usd=float(usage.cost) if usage.cost is not None else None,
         )
+        if self._extraction_model is not None:
+            await self._extract_memory(session_id, workdir)
         return RunOutcome(
             session_id=session_id,
             output=result.output,
             model_name=model_name,
         )
+
+    async def _extract_memory(self, session_id: str, workdir: Path) -> None:
+        """Post-session pass: bank durable facts the run didn't explicitly remember."""
+        from pydantic_ai import Agent
+
+        from .memory import MemoryStore
+
+        transcript = '\n'.join(self._db.load_messages(session_id))[:12000]
+        agent: Agent = Agent(model=self._extraction_model)
+        try:
+            result = await agent.run(
+                'From this conversation transcript, extract durable facts worth '
+                'remembering for future sessions (preferences, project facts, '
+                'decisions). One fact per line, no numbering. Return only lines '
+                'worth keeping — if none, return nothing.\n\n' + transcript
+            )
+        except Exception:  # noqa: BLE001 — extraction must never fail a run
+            return
+        store = MemoryStore(self._db)
+        known = {e['content'] for e in store.all_entries()}
+        for line in result.output.splitlines():
+            fact = line.strip().lstrip('-•* ')
+            if fact and fact not in known:
+                store.add(fact, scope='workdir', workdir=str(workdir))
+                known.add(fact)
 
     def approve_pattern(self, session_id: str, command: str) -> str:
         """Record a Pattern Approval for the rest of the Session (UI calls this)."""
