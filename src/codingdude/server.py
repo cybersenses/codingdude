@@ -19,6 +19,7 @@ from fastapi import (
     HTTPException,
     Query,
     Request,
+    Response,
     WebSocket,
     WebSocketDisconnect,
 )
@@ -82,13 +83,33 @@ def create_app(
     channels: dict[str, RunChannel] = {}
 
     def authorize(request: Request) -> None:
-        auth = request.headers.get('authorization', '')
-        if not auth.startswith('Bearer ') or auth.removeprefix('Bearer ') != token:
+        """Bearer header (headless/tests), session cookie (browser login),
+        or query param (EventSource) all authenticate."""
+        auth_header = request.headers.get('authorization', '')
+        cookie = request.cookies.get('cd_session', '')
+        query_token = request.query_params.get('token', '')
+        if auth_header != f'Bearer {token}' and cookie != token and query_token != token:
             raise HTTPException(status_code=401, detail='invalid token')
         host = request.client.host if request.client else ''
         local = ('127.0.0.1', '::1') + (('testclient',) if allow_testclient else ())
         if host not in local:
             raise HTTPException(status_code=403, detail='local only')
+
+    class LoginIn(BaseModel):
+        password: str
+
+    @app.post('/login')
+    def login(body: LoginIn) -> Response:
+        if body.password != token:
+            raise HTTPException(status_code=401, detail='wrong password')
+        # The cookie holds the same secret as the bearer token: localhost-only,
+        # HttpOnly so page JS can't read it, same-origin by construction.
+        response = Response(content='{"ok": true}', media_type='application/json')
+        response.set_cookie(
+            'cd_session', token, httponly=True, samesite='lax', path='/',
+            max_age=365 * 24 * 3600,
+        )
+        return response
 
     class SessionIn(BaseModel):
         workdir: str
@@ -273,11 +294,15 @@ def create_app(
     async def run_events(
         run_id: str, request: Request, token_q: str = Query('', alias='token')
     ) -> StreamingResponse:
-        # Header auth is primary; a query token supports EventSource (no headers).
+        # Cookie (browser login), bearer header, or query token all authenticate.
+        cookie = request.cookies.get('cd_session', '')
         auth_header = request.headers.get('authorization', '')
-        if not (
-            auth_header == f'Bearer {token}' or token_q == token
-        ):
+        ok = (
+            cookie == token
+            or auth_header == f'Bearer {token}'
+            or token_q == token
+        )
+        if not ok:
             raise HTTPException(status_code=401, detail='invalid token')
         host = request.client.host if request.client else ''
         local = ('127.0.0.1', '::1') + (('testclient',) if allow_testclient else ())

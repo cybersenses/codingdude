@@ -1,4 +1,6 @@
-// Thin API client for the codingdude server. Token lives in localStorage.
+// Thin API client for the codingdude server.
+// Auth: the server sets an HttpOnly session cookie at /login; all requests
+// send it automatically (same-origin).
 
 export function getToken() {
   return (localStorage.getItem('codingdude-token') || '').trim()
@@ -8,12 +10,21 @@ export function setToken(token) {
   localStorage.setItem('codingdude-token', token.trim())
 }
 
-function headers() {
-  return { Authorization: `Bearer ${getToken()}`, 'Content-Type': 'application/json' }
+export async function login(password) {
+  const res = await fetch('/api/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password }),
+  })
+  if (!res.ok) throw new Error('wrong password')
 }
 
 export async function call(path, options = {}) {
-  const res = await fetch(`/api${path}`, { headers: headers(), ...options })
+  const res = await fetch(`/api${path}`, { headers: { 'Content-Type': 'application/json' }, ...options })
+  if (res.status === 401) {
+    window.dispatchEvent(new Event('cd-unauthorized'))
+    throw new Error('not logged in')
+  }
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${await res.text()}`)
   return res.json()
 }
@@ -37,6 +48,6 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ disabled }),
     }),
-  // EventSource cannot send headers; the server accepts the token as a query param.
-  eventStreamUrl: (runId) => `/api/runs/${runId}/events?token=${encodeURIComponent(getToken())}`,
+  eventStreamUrl: (runId) =>
+    `/api/runs/${runId}/events?token=${encodeURIComponent(getToken())}`,
 }

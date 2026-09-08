@@ -1,7 +1,43 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { api, call, getToken, setToken } from './api.js'
+import { api, call, login } from './api.js'
 
 // ---------- components ----------
+
+function Login({ onLoggedIn }) {
+  const [password, setPassword] = useState('')
+  const [err, setErr] = useState('')
+  return (
+    <div className="flex h-screen items-center justify-center bg-neutral-900">
+      <form
+        className="w-80 rounded-lg border border-neutral-800 bg-neutral-950 p-6"
+        onSubmit={async (e) => {
+          e.preventDefault()
+          setErr('')
+          try {
+            await login(password)
+            onLoggedIn()
+          } catch {
+            setErr('wrong password')
+          }
+        }}
+      >
+        <h1 className="mb-4 text-center text-lg font-bold text-emerald-400">CodingDude</h1>
+        <input
+          type="password"
+          className="mb-3 w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
+          placeholder="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          autoFocus
+        />
+        {err && <div className="mb-2 text-xs text-red-400">{err}</div>}
+        <button className="w-full rounded bg-emerald-700 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-600">
+          Log in
+        </button>
+      </form>
+    </div>
+  )
+}
 
 function Sidebar({ workdir, setWorkdir, sessions, activeSession, onSelect, onNewSession }) {
   return (
@@ -38,27 +74,7 @@ function Sidebar({ workdir, setWorkdir, sessions, activeSession, onSelect, onNew
           </button>
         ))}
       </div>
-      <TokenBox />
     </aside>
-  )
-}
-
-function TokenBox() {
-  const [value, setValue] = useState(getToken())
-  return (
-    <label className="text-xs text-neutral-500">
-      Server token
-      <input
-        className="mt-1 w-full rounded border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-400"
-        type="password"
-        value={value}
-        onChange={(e) => {
-          setValue(e.target.value)
-          setToken(e.target.value)
-        }}
-        placeholder="paste token"
-      />
-    </label>
   )
 }
 
@@ -245,6 +261,7 @@ function RightPanel({ sessionId, refreshKey }) {
 // ---------- app ----------
 
 export default function App() {
+  const [loggedIn, setLoggedIn] = useState(false)
   const [workdir, setWorkdir] = useState(localStorage.getItem('codingdude-workdir') || '')
   const [sessions, setSessions] = useState([])
   const [activeSession, setActiveSession] = useState(null)
@@ -252,13 +269,15 @@ export default function App() {
   const [streaming, setStreaming] = useState(false)
   const [error, setError] = useState('')
   const [refreshKey, setRefreshKey] = useState(0)
-  const [eventLog, setEventLog] = useState([])
   const runRef = useRef(null)
   const esRef = useRef(null)
 
-  function debugLog(msg) {
-    setEventLog((l) => [...l.slice(-8), msg])
-  }
+  // Any 401 from the API bounces back to the login screen.
+  useEffect(() => {
+    const onUnauthorized = () => setLoggedIn(false)
+    window.addEventListener('cd-unauthorized', onUnauthorized)
+    return () => window.removeEventListener('cd-unauthorized', onUnauthorized)
+  }, [])
 
   // Poll the panels while a run streams (diff/cost change live).
   useEffect(() => {
@@ -271,14 +290,15 @@ export default function App() {
     if (!wd) return
     try {
       setSessions(await api.listSessions(wd))
+      setError('')
     } catch (e) {
       setError(String(e.message))
     }
   }, [])
 
   useEffect(() => {
-    refreshSessions(workdir)
-  }, [workdir, refreshSessions])
+    if (loggedIn) refreshSessions(workdir)
+  }, [loggedIn, workdir, refreshSessions])
 
   async function loadMessages(sessionId) {
     // Server messages are the canonical history; render them as chat turns.
@@ -322,7 +342,6 @@ export default function App() {
         esRef.current = es
         es.onmessage = (e) => {
           const ev = JSON.parse(e.data)
-          debugLog(ev.type)
           setMessages((msgs) => {
             const copy = [...msgs]
             const last = { ...copy[copy.length - 1] }
@@ -369,6 +388,18 @@ export default function App() {
     if (runRef.current) api.cancelRun(runRef.current).catch(() => {})
     esRef.current?.close()
     setStreaming(false)
+  }
+
+  if (!loggedIn) {
+    return (
+      <Login
+        onLoggedIn={() => {
+          setLoggedIn(true)
+          setError('')
+          refreshSessions(workdir)
+        }}
+      />
+    )
   }
 
   return (
