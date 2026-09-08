@@ -66,7 +66,10 @@ class RunChannel:
                 if event.get('type') in TERMINAL_EVENTS:
                     return
         finally:
-            self.registry.pop(self.run_id, None)
+            # Reap only dead runs: a live worker must stay cancellable even if
+            # the browser's EventSource dropped (reconnect, refresh, sleep).
+            if self.worker is None or self.worker.poll() is not None:
+                self.registry.pop(self.run_id, None)
 
 
 def create_app(
