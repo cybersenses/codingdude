@@ -236,6 +236,29 @@ def create_app(
 
         return {'deleted': MemoryStore(db).delete_id(entry_id)}
 
+    @app.get('/mcp')
+    def get_mcp(session_id: str, _: None = Depends(authorize)) -> list[dict]:
+        from .mcp_config import list_mcp_servers
+
+        workdir = db.session_workdir(session_id)
+        if not workdir:
+            raise HTTPException(status_code=404, detail='no such session')
+        return list_mcp_servers(home, Path(workdir))
+
+    class McpToggleIn(BaseModel):
+        disabled: bool
+
+    @app.post('/mcp/{name}/toggle')
+    def toggle_mcp(name: str, body: McpToggleIn, session_id: str, _: None = Depends(authorize)) -> dict:
+        from .mcp_config import set_mcp_disabled
+
+        workdir = db.session_workdir(session_id)
+        if not workdir:
+            raise HTTPException(status_code=404, detail='no such session')
+        if not set_mcp_disabled(home, Path(workdir), name, body.disabled):
+            raise HTTPException(status_code=404, detail='no such server')
+        return {'name': name, 'disabled': body.disabled}
+
     @app.delete('/runs/{run_id}')
     def cancel_run(run_id: str, _: None = Depends(authorize)) -> dict:
         channel = channels.get(run_id)

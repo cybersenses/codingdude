@@ -143,7 +143,7 @@ function Chat({ messages, streaming, onStop, onDecide }) {
 }
 
 function RightPanel({ sessionId, refreshKey }) {
-  const tabs = ['Diff', 'Files', 'Terminal', 'Cost', 'Memory']
+  const tabs = ['Diff', 'Files', 'Terminal', 'Cost', 'Memory', 'MCP']
   const [tab, setTab] = useState('Diff')
   const [data, setData] = useState({})
   useEffect(() => {
@@ -155,6 +155,7 @@ function RightPanel({ sessionId, refreshKey }) {
         if (tab === 'Files') setData({ files: await call(`/sessions/${sessionId}/files`) })
         if (tab === 'Cost') setData({ usage: await call(`/sessions/${sessionId}/usage`) })
         if (tab === 'Memory') setData({ memory: await call('/memory') })
+        if (tab === 'MCP') setData({ mcp: await api.listMcp(sessionId) })
       } catch { /* transient */ }
       if (!stop) setTimeout(poll, 4000)
     }
@@ -162,9 +163,32 @@ function RightPanel({ sessionId, refreshKey }) {
     return () => { stop = true }
   }, [sessionId, tab, refreshKey])
 
+  async function toggleServer(name, disabled) {
+    await api.toggleMcp(sessionId, name, disabled).catch((e) => setError)
+    setData({ mcp: await api.listMcp(sessionId) })
+  }
+
   let body = <div className="text-neutral-600">nothing yet</div>
   if (tab === 'Terminal') {
     body = <div className="text-neutral-600">command output lives in the chat tool timeline</div>
+  } else if (tab === 'MCP' && data.mcp) {
+    body = (
+      <div className="space-y-1">
+        {data.mcp.length === 0 && <div className="text-neutral-600">no MCP servers configured</div>}
+        {data.mcp.map((s) => (
+          <div key={s.name} className="flex items-center justify-between rounded bg-neutral-900 p-1">
+            <span className={s.disabled ? 'text-neutral-600 line-through' : 'text-neutral-300'}>
+              {s.name} <span className="text-neutral-600">({s.config.command})</span>
+            </span>
+            <button
+              className={s.disabled ? 'text-emerald-500 hover:text-emerald-300' : 'text-red-500 hover:text-red-300'}
+              onClick={() => toggleServer(s.name, !s.disabled)}
+            >{s.disabled ? 'enable' : 'disable'}</button>
+          </div>
+        ))}
+        <div className="text-neutral-600">config: ~/.codingdude/mcp.json (global) + .codingdude/mcp.json (project)</div>
+      </div>
+    )
   } else if (tab === 'Diff' && data.diff) {
     body = (
       <pre className="whitespace-pre-wrap font-mono text-[10px] leading-tight">

@@ -31,6 +31,12 @@ export const api = {
   cancelRun: (runId) => call(`/runs/${runId}`, { method: 'DELETE' }),
   approve: (runId, decision) =>
     call(`/runs/${runId}/approve`, { method: 'POST', body: JSON.stringify({ decision }) }),
+  listMcp: (sessionId) => call(`/mcp?session_id=${sessionId}`),
+  toggleMcp: (sessionId, name, disabled) =>
+    call(`/mcp/${encodeURIComponent(name)}/toggle?session_id=${sessionId}`, {
+      method: 'POST',
+      body: JSON.stringify({ disabled }),
+    }),
   // EventSource cannot send headers; the server accepts the token as a query param.
   eventStreamUrl: (runId) => `/api/runs/${runId}/events?token=${encodeURIComponent(getToken())}`,
 }

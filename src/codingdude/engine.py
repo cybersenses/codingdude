@@ -193,6 +193,10 @@ class Engine:
 
             toolsets.append(build_ast_toolset(workdir))
 
+            from .mcp_config import load_merged_mcp_toolsets
+
+            toolsets.extend(load_merged_mcp_toolsets(self._config_home(), workdir))
+
             from .memory import MemoryStore, build_memory_toolset
 
             store = MemoryStore(self._db)
@@ -282,6 +286,11 @@ class Engine:
             if fact and fact not in known:
                 store.add(fact, scope='workdir', workdir=str(workdir))
                 known.add(fact)
+
+    def _config_home(self) -> Path:
+        from .config import config_home
+
+        return config_home()
 
     def approve_pattern(self, session_id: str, command: str) -> str:
         """Record a Pattern Approval for the rest of the Session (UI calls this)."""
