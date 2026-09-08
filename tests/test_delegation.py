@@ -1,7 +1,6 @@
 """Engine seam: delegation to read-only subagents on the cheap model."""
 
 from helpers import scripted
-
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,

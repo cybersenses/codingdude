@@ -11,7 +11,6 @@ MAX_RESULTS = 50
 
 
 def _python_files(root: Path, path: str = '.'):
-    import re
 
     target = (root / path).resolve()
     if target.is_file():

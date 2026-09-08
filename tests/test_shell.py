@@ -1,10 +1,7 @@
 """Engine seam: shell tool, approval tiers, pattern approval, headless gates."""
 
-from dataclasses import dataclass, field
 
 from helpers import scripted
-
-from codingdude.approvals import APPROVED, DENIED, NEEDS_GATE, ApprovalPolicy
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
@@ -13,6 +10,8 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
 )
+
+from codingdude.approvals import APPROVED, DENIED, NEEDS_GATE, ApprovalPolicy
 
 
 def shell_then_answer(command: str, answer_check):

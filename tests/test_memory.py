@@ -1,8 +1,6 @@
 """Engine seam: Memory — remember/forget tools, retrieval injection, extraction."""
 
 from helpers import scripted
-
-from codingdude.memory import MemoryStore
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
@@ -10,6 +8,8 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
 )
+
+from codingdude.memory import MemoryStore
 
 
 def call_then_answer(tool_name: str, args: dict, check):

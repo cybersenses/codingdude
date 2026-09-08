@@ -8,8 +8,8 @@
   pattern — only by `--yolo` (the explicit full-off switch, ADR-0003).
 """
 
-from dataclasses import dataclass, field
 import re
+from dataclasses import dataclass, field
 
 APPROVED = 'approved'
 NEEDS_GATE = 'needs_gate'

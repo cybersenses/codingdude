@@ -3,8 +3,6 @@
 import subprocess
 
 from helpers import scripted
-
-from codingdude.approvals import ApprovalPolicy
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
@@ -12,6 +10,8 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
 )
+
+from codingdude.approvals import ApprovalPolicy
 
 
 def git(workdir, *args):

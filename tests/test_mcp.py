@@ -60,13 +60,18 @@ def test_disabled_server_yields_no_toolset(home, workdir):
 
 async def test_engine_uses_mcp_tool(home, workdir):
     setup_configs(home, workdir)
+    from helpers import scripted
+    from pydantic_ai.messages import (
+        ModelMessage,
+        ModelResponse,
+        TextPart,
+        ToolCallPart,
+        ToolReturnPart,
+    )
+
     from codingdude.config import load_config
     from codingdude.db import Database
     from codingdude.engine import Engine
-    from helpers import scripted
-    from pydantic_ai.messages import (
-        ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart,
-    )
 
     def mcp_caller(messages: list[ModelMessage], info):
         names = sorted(t.name for t in (info.model_request_parameters.function_tools or []))

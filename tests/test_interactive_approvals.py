@@ -1,11 +1,6 @@
 """Engine seam: interactive approvals — the async `ask` callback flow."""
 
 from helpers import scripted
-
-from codingdude.approvals import ApprovalPolicy
-from codingdude.db import Database
-from codingdude.config import load_config
-from codingdude.engine import Engine
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
@@ -14,6 +9,11 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
 )
+
+from codingdude.approvals import ApprovalPolicy
+from codingdude.config import load_config
+from codingdude.db import Database
+from codingdude.engine import Engine
 
 
 def shell_then_answer(command: str, answer_check):
@@ -126,7 +126,7 @@ async def test_ask_on_always_gated_pattern_never_persists(home, workdir):
 
 
 def git_init(workdir):
-    import subprocess, os
+    import subprocess
     subprocess.run(['git', 'init', '-b', 'main'], cwd=workdir, capture_output=True)
 
 

@@ -1,7 +1,6 @@
 """Engine seam: AGENT.md project context, compaction, empty-session cleanup."""
 
 from helpers import scripted
-
 from pydantic_ai.messages import ModelResponse, TextPart
 
 
@@ -46,8 +45,9 @@ async def test_compaction_replaces_old_history_past_threshold(engine, workdir, h
     session_id = db.create_session(workdir, title='long session')
 
     # Stuff history with large past messages.
-    from codingdude.messages import encode_messages
     from pydantic_ai.messages import ModelRequest, UserPromptPart
+
+    from codingdude.messages import encode_messages
 
     big = 'x' * 500
     for i in range(5):

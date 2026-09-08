@@ -1,14 +1,15 @@
 """Coding tools: list, read, grep, glob, plus surgical edits — all confined to the Workdir."""
 
 import re
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from pydantic_ai import ModelRetry
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 
 from .approvals import DENIED, NEEDS_GATE
 from .directives import project_directives_guard
+from .errors import GateRequired
 from .events import EditChange
 
 MAX_READ_BYTES = 256 * 1024
@@ -138,14 +139,6 @@ def build_toolset(
     if not read_only:
         tools += [edit_file, write_file]
     return FunctionToolset(tools)
-
-
-class GateRequired(Exception):
-    """A shell command needs Approval; the run pauses/aborts per ADR-0003."""
-
-    def __init__(self, command: str):
-        self.command = command
-        super().__init__(f'gate required for: {command}')
 
 
 async def _resolve_gate(policy, command: str, always: bool = False) -> None:

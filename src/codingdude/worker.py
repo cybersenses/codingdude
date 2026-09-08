@@ -9,6 +9,7 @@ dies alone and kill = cancel.
 import argparse
 import asyncio
 import json
+import logging
 import sys
 
 import websockets
@@ -21,8 +22,8 @@ async def _resolve_model(name: str | None):
         return None
     # Test hook: deterministic scripted models so subprocess tests need no keys.
     if name == 'codingdude-test:echo':
-        from pydantic_ai.models.function import FunctionModel
         from pydantic_ai.messages import ModelResponse, TextPart
+        from pydantic_ai.models.function import FunctionModel
 
         def echo(messages, info):
             return ModelResponse(parts=[TextPart(content='worker-echo-ok')])
@@ -34,8 +35,9 @@ async def _resolve_model(name: str | None):
     if name == 'codingdude-test:sleep':
         import asyncio as _aio
 
+        from pydantic_ai.messages import ModelResponse as MR
+        from pydantic_ai.messages import TextPart as TP
         from pydantic_ai.models.function import FunctionModel
-        from pydantic_ai.messages import ModelResponse as MR, TextPart as TP
 
         async def sleepy(messages, info):
             await _aio.sleep(60)
@@ -47,13 +49,17 @@ async def _resolve_model(name: str | None):
 
         return FunctionModel(sleepy, stream_function=sleepy_stream, model_name='test-sleep')
     if name == 'codingdude-test:gated':
-        from pydantic_ai.models.function import FunctionModel
         from pydantic_ai.messages import (
             ModelResponse as MR,
+        )
+        from pydantic_ai.messages import (
             TextPart as TP,
+        )
+        from pydantic_ai.messages import (
             ToolCallPart,
             ToolReturnPart,
         )
+        from pydantic_ai.models.function import FunctionModel
 
         def gated(messages, info):
             return gated_response(messages)
@@ -217,6 +223,7 @@ def main(argv=None) -> int:
     try:
         return asyncio.run(run(args))
     except Exception as exc:  # noqa: BLE001 — last-resort report
+        logging.getLogger(__name__).exception('worker failed')
         print(f'worker error: {exc}', file=sys.stderr)
         return 1
 

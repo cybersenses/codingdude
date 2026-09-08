@@ -3,7 +3,6 @@
 from dataclasses import dataclass
 
 from helpers import scripted
-
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,

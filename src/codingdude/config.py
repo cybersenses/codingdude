@@ -7,6 +7,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+
 def _default_config_toml(lineup: ModelLineup) -> str:
     return (
         '# CodingDude configuration. Edit freely; missing values fall back to defaults.\n'
@@ -49,7 +50,7 @@ class Config:
     providers: ProviderKeys = field(default_factory=ProviderKeys)
 
     @classmethod
-    def defaults(cls) -> 'Config':
+    def defaults(cls) -> Config:
         return cls(
             models=ModelLineup(
                 main='deepseek:deepseek-v4-pro',

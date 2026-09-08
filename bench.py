@@ -17,10 +17,11 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from pydantic_ai.messages import ModelResponse, TextPart
+
 from codingdude.config import load_config
 from codingdude.db import Database
 from codingdude.engine import Engine
-from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 
 sys.path.insert(0, str(Path(__file__).parent / 'tests'))
 from helpers import scripted

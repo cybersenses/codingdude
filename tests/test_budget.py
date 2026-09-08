@@ -1,17 +1,16 @@
 """Engine seam: Budget Cap — optional hard stop on session spend."""
 
 import pytest
-
 from helpers import scripted
+from pydantic_ai.messages import ModelResponse, TextPart
+from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.usage import RunUsage
 
 from codingdude.approvals import ApprovalPolicy
 from codingdude.config import Config, ModelLineup, ShellConfig
 from codingdude.db import Database
 from codingdude.engine import Engine
 from codingdude.exceptions import BudgetExceeded
-from pydantic_ai.messages import ModelResponse, TextPart
-from pydantic_ai.models.function import FunctionModel
-from pydantic_ai.usage import RunUsage
 
 
 def costly(text: str, cost: float) -> FunctionModel:

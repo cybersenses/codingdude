@@ -3,18 +3,16 @@
 import json
 
 from helpers import scripted
+from pydantic_ai.messages import (
+    ModelResponse,
+    TextPart,
+    ToolReturnPart,
+)
 
 from codingdude.config import load_config
 from codingdude.db import Database
 from codingdude.engine import Engine
 from codingdude.skills import SkillRegistry
-from pydantic_ai.messages import (
-    ModelMessage,
-    ModelResponse,
-    TextPart,
-    ToolCallPart,
-    ToolReturnPart,
-)
 
 
 def write_skill(base, name, description, body):
@@ -64,7 +62,6 @@ async def test_load_skill_tool_fetches_body(home, workdir):
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='load_skill', args={'name': 'tdd'})]
             )
-        from pydantic_ai.messages import ToolReturnPart
         returns = [
             str(p.content)
             for m in messages

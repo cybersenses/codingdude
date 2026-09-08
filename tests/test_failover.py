@@ -1,7 +1,6 @@
 """Failover: a dead primary model transparently falls back."""
 
 from helpers import say, scripted
-
 from pydantic_ai.exceptions import ModelAPIError
 
 

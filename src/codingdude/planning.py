@@ -155,10 +155,11 @@ def build_planning_toolset(
 async def _run_review(db, session_id: str, review_model, plan: dict) -> str:
     """Review pass: diff + plan + directives checklist → findings (or '')."""
     import subprocess
+
     from pydantic_ai import Agent
 
-    from .directives import build_directive_layers
     from .config import config_home
+    from .directives import build_directive_layers
 
     workdir = db.session_workdir(session_id)
     diff = ''

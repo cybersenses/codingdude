@@ -1,10 +1,7 @@
 """Engine seam: AST tools — find_definition / find_references via tree-sitter."""
 
-import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from helpers import scripted
-
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,

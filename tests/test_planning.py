@@ -1,14 +1,7 @@
 """Engine seam: planning — propose/approve/deny, step tracking, auto review."""
 
-import pytest
 
 from helpers import scripted
-
-from codingdude.approvals import ApprovalPolicy
-from codingdude.config import load_config
-from codingdude.db import Database
-from codingdude.engine import Engine
-from codingdude.planning import PlanStore
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
@@ -17,6 +10,12 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
 )
+
+from codingdude.approvals import ApprovalPolicy
+from codingdude.config import load_config
+from codingdude.db import Database
+from codingdude.engine import Engine
+from codingdude.planning import PlanStore
 
 STEPS = ['write the module', 'write the test', 'run the test']
 

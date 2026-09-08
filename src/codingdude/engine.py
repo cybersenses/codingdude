@@ -3,11 +3,11 @@
 Both frontends (web worker, headless CLI) drive this identical seam.
 """
 
+import logging
+import os
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-import os
-import sys
-from typing import Callable
 
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
@@ -35,7 +35,6 @@ INSTRUCTIONS = (
 def _zai_fallback(model_name: str, base_url: str | None) -> Model:
     """Build the ZAI fallback model, optionally pointed at a custom endpoint."""
     from openai import AsyncOpenAI
-
     from pydantic_ai.providers.zai import ZaiProvider
 
     api_key = os.environ.get('ZAI_API_KEY')
@@ -52,6 +51,9 @@ def _zai_fallback(model_name: str, base_url: str | None) -> Model:
 
 def _strip_provider_prefix(model: str) -> str:
     return model.split(':', 1)[1] if ':' in model else model
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -114,11 +116,7 @@ class Engine:
                 return FallbackModel(primary, fallback_model)
             return FallbackModel(primary, fallback_name)
         except Exception as exc:  # noqa: BLE001 — any provider-construction failure
-            print(
-                f'warning: fallback model unavailable ({exc}); '
-                'running without failover',
-                file=sys.stderr,
-            )
+            logger.warning('fallback model unavailable (%s); running without failover', exc)
             if isinstance(primary, Model):
                 return primary
             from pydantic_ai.models import infer_model
@@ -132,7 +130,7 @@ class Engine:
 
             return infer_model(self._config.models.subagent)
         except Exception as exc:  # noqa: BLE001 — missing credentials etc.
-            print(f'warning: subagent model unavailable ({exc}); delegation disabled', file=sys.stderr)
+            logger.warning('subagent model unavailable (%s); delegation disabled', exc)
             return None
 
     async def run(
@@ -400,6 +398,7 @@ class Engine:
 
     async def _run_streaming(self, agent, prompt, history, model_name, emit):
         """Run the agent, emitting AG-UI-shaped events for the UI layer."""
+        from pydantic_ai._agent_graph import CallToolsNode
         from pydantic_ai.messages import (
             FunctionToolCallEvent,
             FunctionToolResultEvent,
@@ -408,7 +407,6 @@ class Engine:
             TextPart,
             TextPartDelta,
         )
-        from pydantic_ai._agent_graph import CallToolsNode
 
         emit({'type': 'RUN_STARTED'})
         async with agent.iter(prompt, message_history=history or None) as run:

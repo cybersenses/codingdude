@@ -1,14 +1,13 @@
 """Directives: global rules injected into every run, budget-capped, gate-protected."""
 
-import pytest
 
 from helpers import scripted
+from pydantic_ai.messages import ModelResponse, TextPart
 
 from codingdude.config import load_config
 from codingdude.db import Database
-from codingdude.directives import DIRECTIVES_FILENAME, DIRECTIVES_BUDGET, build_directive_layers
+from codingdude.directives import DIRECTIVES_BUDGET, DIRECTIVES_FILENAME, build_directive_layers
 from codingdude.engine import Engine
-from pydantic_ai.messages import ModelResponse, TextPart
 
 
 def instruction_echo(messages, info):

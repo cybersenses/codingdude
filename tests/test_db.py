@@ -2,9 +2,10 @@
 
 from pathlib import Path
 
+from pydantic_ai.messages import ModelResponse, TextPart
+
 from codingdude.db import Database
 from codingdude.messages import decode_messages, encode_messages
-from pydantic_ai.messages import ModelResponse, TextPart
 
 
 def test_schema_created_on_first_use(home):

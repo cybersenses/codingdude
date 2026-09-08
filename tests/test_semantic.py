@@ -4,18 +4,16 @@ The embedder is injectable: tests use a deterministic fake so no provider or
 model download is needed.
 """
 
-import json
 
 import pytest
-
 from helpers import scripted
+from pydantic_ai.messages import ModelResponse, TextPart
 
 from codingdude.config import load_config
 from codingdude.db import Database
 from codingdude.engine import Engine
 from codingdude.memory import MemoryStore
 from codingdude.semantic import FakeEmbedder, SemanticIndex
-from pydantic_ai.messages import ModelResponse, TextPart
 
 
 @pytest.fixture

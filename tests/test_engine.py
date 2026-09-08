@@ -1,8 +1,9 @@
 """Engine seam: scripted FunctionModel runs persist messages and usage."""
 
-from codingdude.messages import decode_messages
 from helpers import say, scripted
 from pydantic_ai.messages import ModelResponse, TextPart
+
+from codingdude.messages import decode_messages
 
 
 async def test_scripted_run_persists_session(engine, db, workdir):

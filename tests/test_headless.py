@@ -1,6 +1,5 @@
 """Headless Run: exit codes distinguish success from failure."""
 
-import pytest
 
 from helpers import say, scripted
 

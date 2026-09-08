@@ -8,6 +8,7 @@ those events to browser-facing SSE in AG-UI shape and persists state to SQLite
 
 import asyncio
 import json
+import logging
 import secrets
 import subprocess
 import sys
@@ -144,8 +145,8 @@ def create_app(
     def session_messages(session_id: str, _: None = Depends(authorize)) -> list[dict]:
         import time as _time
 
-        from pydantic_core import ValidationError
         from pydantic_ai.messages import ModelMessagesTypeAdapter
+        from pydantic_core import ValidationError
 
         from .messages import decode_messages
 
@@ -400,6 +401,7 @@ def serve(host: str = HOST, port: int = 8765) -> None:
 
     app = create_app(token=token)
     app.state.port = port
+    logging.getLogger(__name__).info('codingdude server on http://%s:%s', host, port)
     print(f'codingdude server on http://{host}:{port} token={token}')
     uvicorn.run(app, host=host, port=port, log_level='warning')
 

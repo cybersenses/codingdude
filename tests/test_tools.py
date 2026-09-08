@@ -1,7 +1,6 @@
 """Engine seam: the scripted model drives real read-only tools on a temp Workdir."""
 
 from helpers import scripted
-
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
