@@ -1,0 +1,88 @@
+Traceback (most recent call last):
+  File "G:\pydantic\bench.py", line 163, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "G:\pydantic\bench.py", line 159, in main
+    return asyncio.run(run_benchmark(live=live))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\norma\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\asyncio\runners.py", line 195, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "C:\Users\norma\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\norma\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\asyncio\base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "G:\pydantic\bench.py", line 143, in run_benchmark
+    outcome = await engine.run(
+              ^^^^^^^^^^^^^^^^^
+  File "G:\pydantic\src\codingdude\engine.py", line 288, in run
+    result = await agent.run(prompt, message_history=history or None)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "G:\pydantic\.venv\Lib\site-packages\pydantic_ai\agent\abstract.py", line 664, in run
+    node = await agent_run.next(node)  # pyright: ignore[reportArgumentType]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "G:\pydantic\.venv\Lib\site-packages\pydantic_ai\run.py", line 476, in next
+    return await self._run_node_with_hooks(node, self._stream_and_advance)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "G:\pydantic\.venv\Lib\site-packages\pydantic_ai\run.py", line 398, in _run_node_with_hooks
+    return await self._wrap_and_advance(run_context, node, step_fn)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "G:\pydantic\.venv\Lib\site-packages\pydantic_ai\run.py", line 345, in _wrap_and_advance
+    result = await step_fn(node)
+             ^^^^^^^^^^^^^^^^^^^
+  File "G:\pydantic\.venv\Lib\site-packages\pydantic_ai\run.py", line 490, in _stream_and_advance
+    return await self._advance_graph(node)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "G:\pydantic\.venv\Lib\site-packages\pydantic_ai\run.py", line 319, in _advance_graph
+    task = await self._graph_run.next(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "G:\pydantic\.venv\Lib\site-packages\pydantic_graph\graph_builder.py", line 584, in next
+    return await anext(self)
+           ^^^^^^^^^^^^^^^^^
+  File "G:\pydantic\.venv\Lib\site-packages\pydantic_graph\graph_builder.py", line 561, in __anext__
+    raise self._next.error
+  File "G:\pydantic\.venv\Lib\site-packages\pydantic_graph\graph_builder.py", line 860, in _run_tracked_task
+    result = await self._run_task(t_)
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "G:\pydantic\.venv\Lib\site-packages\pydantic_graph\graph_builder.py", line 911, in _run_task
+    output = await node.call(step_context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "G:\pydantic\.venv\Lib\site-packages\pydantic_graph\step.py", line 253, in _call_node
+    return await node.run(GraphRunContext(state=ctx.state, deps=ctx.deps))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "G:\pydantic\.venv\Lib\site-packages\pydantic_ai\_agent_graph.py", line 1172, in run
+    return await self._make_request(ctx)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "G:\pydantic\.venv\Lib\site-packages\pydantic_ai\_agent_graph.py", line 1473, in _make_request
+    model_response = await model_handler(request_context)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "G:\pydantic\.venv\Lib\site-packages\pydantic_ai\_agent_graph.py", line 1450, in model_handler
+    response = await model_request(
+               ^^^^^^^^^^^^^^^^^^^^
+  File "G:\pydantic\.venv\Lib\site-packages\pydantic_ai\_agent_graph.py", line 1033, in model_request
+    new_response = await model.request(
+                   ^^^^^^^^^^^^^^^^^^^^
+  File "G:\pydantic\.venv\Lib\site-packages\pydantic_ai\models\function.py", line 171, in request
+    result = await _utils.run_in_executor(self.function, messages, agent_info)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "G:\pydantic\.venv\Lib\site-packages\pydantic_ai\_utils.py", line 200, in run_in_executor
+    return await run_sync(call_with_sync_agent_guard, abandon_on_cancel=_abandon_on_cancel.get())
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "G:\pydantic\.venv\Lib\site-packages\anyio\to_thread.py", line 65, in run_sync
+    return await get_async_backend().run_sync_in_worker_thread(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "G:\pydantic\.venv\Lib\site-packages\anyio\_backends\_asyncio.py", line 2706, in run_sync_in_worker_thread
+    return await future
+           ^^^^^^^^^^^^
+  File "G:\pydantic\.venv\Lib\site-packages\anyio\_backends\_asyncio.py", line 1100, in run
+    result = context.run(func, *args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "G:\pydantic\.venv\Lib\site-packages\pydantic_ai\_utils.py", line 187, in call_with_sync_agent_guard
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "G:\pydantic\bench.py", line 105, in fn
+    print('DBG zebra in instr:', 'ZEBRA-RULE' in text, '| env:', _os.environ.get('CODEDUDE_HOME'), file=sys.stderr)
+                                                                 ^^^
+NameError: name '_os' is not defined. Did you mean: '_os2'?

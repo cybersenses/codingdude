@@ -12,6 +12,7 @@ returns None on success or a failure string.
 """
 
 import asyncio
+import os
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -56,12 +57,23 @@ def _check_plan(outcome, workdir):
         return 'gate report should mention the plan'
 
 
+def _check_directive(outcome, workdir):
+    if 'zebra' not in outcome.output:
+        return 'directive in DIRECTIVES.md was not followed'
+
+
 TASKS = [
     GoldTask(
         name='edit-surgical',
         prompt='Change the greeting in app.py from "hi" to "hello". Use edit_file.',
         setup=_setup_edit_task,
         check=_check_edit,
+    ),
+    GoldTask(
+        name='directive-compliance',
+        prompt='say hi',
+        setup=lambda workdir: None,
+        check=_check_directive,
     ),
     GoldTask(
         name='plan-headless-abort',
@@ -87,6 +99,14 @@ def scripted_model_for(task_name: str, prompt: str):
                 )
             return ModelResponse(parts=[TextPart(content='done')])
         return scripted(fn)
+    if task_name == 'directive-compliance':
+        def fn(messages, info):
+            text = getattr(info, 'instructions', '') or ''
+            print('DBG zebra in instr:', 'ZEBRA-RULE' in text, '| env:', os.environ.get('CODEDUDE_HOME'), file=sys.stderr)
+            return ModelResponse(
+                parts=[TextPart(content='zebra' if 'ZEBRA-RULE' in text else 'no-directive')]
+            )
+        return scripted(fn)
     if task_name == 'plan-headless-abort':
         def fn(messages, info):
             if not any(p.part_kind == 'tool-call' for m in messages for p in m.parts):
@@ -109,6 +129,11 @@ async def run_benchmark(live: bool) -> int:
         home = Path(tempfile.mkdtemp())
         workdir = Path(tempfile.mkdtemp())
         task.setup(workdir)
+        if task.name == 'directive-compliance':
+            import os
+
+            os.environ['CODEDUDE_HOME'] = str(home)
+            (home / 'DIRECTIVES.md').write_text('Always end replies with ZEBRA-RULE.')
         engine = Engine(config=load_config(), db=Database.connect(home))
         model = None
         if not live:
