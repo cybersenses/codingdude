@@ -78,6 +78,7 @@ class Engine:
         compaction_threshold: int | None = None,
         extraction_model: Model | None = None,
         budget_cap_usd: float | None = None,
+        embedder=None,
     ):
         self._config = config
         self._db = db
@@ -87,6 +88,8 @@ class Engine:
         self._extraction_model = extraction_model
         # Optional hard-stop on session spend. Survives --yolo by design.
         self._budget_cap_usd = budget_cap_usd
+        # Optional embedder: enables the semantic_search tool + semantic Memory.
+        self.embedder = embedder
 
     def build_model(
         self, main: Model | str | None = None, fallback: Model | str | None = None
@@ -197,6 +200,13 @@ class Engine:
 
             toolsets.extend(load_merged_mcp_toolsets(self._config_home(), workdir))
 
+            if self.embedder is not None:
+                from .semantic import SemanticIndex, build_semantic_toolset
+
+                toolsets.append(
+                    build_semantic_toolset(workdir, SemanticIndex(self.embedder, self._db))
+                )
+
             from .memory import MemoryStore, build_memory_toolset
 
             store = MemoryStore(self._db)
@@ -209,9 +219,19 @@ class Engine:
                     '\n\nProject Context (AGENT.md, follow these instructions):\n'
                     + agent_md.read_text(encoding='utf-8', errors='replace')
                 )
-            relevant = store.retrieve(str(workdir), query=prompt)
+            if self.embedder is not None:
+                relevant = [
+                    content
+                    for content, _score in store.retrieve_semantic(
+                        self.embedder, str(workdir), query=prompt
+                    )
+                ]
+            else:
+                relevant = [
+                    e['content'] for e in store.retrieve(str(workdir), query=prompt)
+                ]
             if relevant:
-                lines = '\n'.join(f'- {e["content"]}' for e in relevant)
+                lines = '\n'.join(f'- {c}' for c in relevant)
                 instructions += (
                     '\n\nMemory (durable facts from earlier sessions; respect them):\n'
                     + lines

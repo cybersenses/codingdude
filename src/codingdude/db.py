@@ -48,6 +48,11 @@ CREATE TABLE IF NOT EXISTS usage (
     cost_usd REAL,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS embeddings (
+    path TEXT PRIMARY KEY,
+    content_hash TEXT NOT NULL,
+    vector TEXT NOT NULL
+);
 """
 
 

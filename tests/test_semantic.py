@@ -1,0 +1,112 @@
+"""Engine seam: embeddings — semantic memory retrieval and semantic code search.
+
+The embedder is injectable: tests use a deterministic fake so no provider or
+model download is needed.
+"""
+
+import json
+
+import pytest
+
+from helpers import scripted
+
+from codingdude.config import load_config
+from codingdude.db import Database
+from codingdude.engine import Engine
+from codingdude.memory import MemoryStore
+from codingdude.semantic import FakeEmbedder, SemanticIndex
+from pydantic_ai.messages import ModelResponse, TextPart
+
+
+@pytest.fixture
+def engine_ready(home):
+    """Engine with the offline FakeEmbedder wired in."""
+    engine = make_engine(home, FakeEmbedder(dimension=64))
+    return engine, MemoryStore(engine._db)
+
+
+def make_engine(home, embedder=None):
+    return Engine(
+        config=load_config(), db=Database.connect(home), embedder=embedder
+    )
+
+
+def test_fake_embedder_is_deterministic():
+    e = FakeEmbedder(dimension=8)
+    v1 = e.embed('banana apple')
+    v2 = e.embed('banana apple')
+    v3 = e.embed('zebra')
+    assert v1 == v2
+    assert v1 != v3
+
+
+async def test_semantic_memory_retrieval_finds_synonyms(engine_ready, workdir):
+    engine, store = engine_ready
+    store.add('the project refuses to use tabs; indentation is spaces only', scope='workdir', workdir=str(workdir))
+    store.add('user likes coffee', scope='global')
+
+    hits = store.retrieve_semantic(engine.embedder, str(workdir), query='whitespace policy for indentation', top_n=2)
+    contents = [c for c, _ in hits]
+    assert 'spaces only' in contents[0]
+
+
+async def test_semantic_code_search_tool_finds_concept(engine_ready, workdir):
+    engine, _ = engine_ready
+    (workdir / 'retry.py').write_text(
+        'def backoff_after_failure(attempt):\n    return min(2 ** attempt, 60)\n'
+    )
+    (workdir / 'greet.py').write_text('def greet(name):\n    return f"hi {name}"\n')
+
+    def searcher(messages, info):
+        if not any(
+            p.part_kind == 'tool-call' for m in messages for p in m.parts
+        ):
+            from pydantic_ai.messages import ToolCallPart
+
+            return ModelResponse(
+                parts=[ToolCallPart(
+                    tool_name='semantic_search',
+                    args={'query': 'delays after a failed operation'},
+                )]
+            )
+        from pydantic_ai.messages import ToolReturnPart
+
+        returns = [
+            str(p.content)
+            for m in messages
+            for p in m.parts
+            if isinstance(p, ToolReturnPart)
+        ]
+        return ModelResponse(
+            parts=[TextPart(content='found:' + ('retry.py' if any('retry.py' in r for r in returns) else 'nothing'))]
+        )
+
+    outcome = await engine.run(
+        prompt='semantic lookup', workdir=workdir, model=scripted(searcher)
+    )
+    assert outcome.output == 'found:retry.py'
+
+
+async def test_index_is_cached_by_content_hash(engine_ready, workdir):
+    engine, _ = engine_ready
+    index = SemanticIndex(engine.embedder, engine._db)
+    (workdir / 'a.py').write_text('x = 1\n')
+    index.index_workdir(workdir)
+    first = engine._db._conn.execute('SELECT COUNT(*) c FROM embeddings').fetchone()['c']
+    # Re-index with no changes: row count unchanged (cache hit).
+    index.index_workdir(workdir)
+    second = engine._db._conn.execute('SELECT COUNT(*) c FROM embeddings').fetchone()['c']
+    assert second == first
+
+    # Changed content updates in place rather than duplicating.
+    (workdir / 'a.py').write_text('x = 2\n')
+    index.index_workdir(workdir)
+    third = engine._db._conn.execute('SELECT COUNT(*) c FROM embeddings').fetchone()['c']
+    assert third == first
+    row = engine._db._conn.execute(
+        "SELECT content_hash FROM embeddings WHERE path = 'a.py'"
+    ).fetchone()
+    import hashlib
+
+    expected = hashlib.sha256(b'x = 2\n').hexdigest()
+    assert row['content_hash'] == expected

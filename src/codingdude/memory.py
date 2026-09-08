@@ -57,6 +57,20 @@ class MemoryStore:
         ranked = sorted(rows, key=score, reverse=True)
         return ranked[:top_n]
 
+    def retrieve_semantic(self, embedder, workdir: str | None, query: str, top_n: int = 10) -> list[tuple[str, float]]:
+        """Entries ranked by embedding similarity (scope = global + this Workdir)."""
+        from .semantic import cosine
+
+        rows = self._db._conn.execute(
+            'SELECT content FROM memory'
+            " WHERE scope = 'global' OR workdir = ?",
+            (workdir,),
+        ).fetchall()
+        qv = embedder.embed(query)
+        scored = [(r['content'], cosine(qv, embedder.embed(r['content']))) for r in rows]
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return scored[:top_n]
+
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
