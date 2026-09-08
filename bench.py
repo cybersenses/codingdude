@@ -12,7 +12,6 @@ returns None on success or a failure string.
 """
 
 import asyncio
-import os
 import sys
 import tempfile
 from dataclasses import dataclass

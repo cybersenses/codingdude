@@ -10,7 +10,7 @@ from pathlib import Path
 
 from pydantic_ai.toolsets import FunctionToolset
 
-from .tools import SKIP_DIRS, scrubbed_env
+from .tools import SKIP_DIRS
 
 JS_EXTENSIONS = {'.js', '.jsx', '.mjs', '.ts', '.tsx'}
 SKIP_NAMES = {'.git', '.venv', 'node_modules', '__pycache__', '.mypy_cache', '.pytest_cache', 'dist', '.next', 'build'}
@@ -45,7 +45,7 @@ async def _vulture_python(workdir: Path, path: str, min_confidence: int) -> str:
 
 def _tree_sitter_definitions_and_refs(source: bytes, lang_module) -> tuple[set[str], set[str], dict[str, list[tuple]]]:
     """Returns (defined, referenced, def_locations) for functions and classes."""
-    from tree_sitter import Language, Parser
+    from tree_sitter import Parser
 
     parser = Parser(lang_module)
     tree = parser.parse(source)

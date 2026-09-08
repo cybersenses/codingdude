@@ -176,7 +176,6 @@ async def _review_impl(db, session_id: str, review_model, checklist: str, plan) 
     import subprocess
 
     from pydantic_ai import Agent
-    from pydantic_ai.messages import ModelResponse, TextPart
 
     workdir = db.session_workdir(session_id)
     diff = ''
