@@ -102,7 +102,6 @@ def scripted_model_for(task_name: str, prompt: str):
     if task_name == 'directive-compliance':
         def fn(messages, info):
             text = getattr(info, 'instructions', '') or ''
-            print('DBG zebra in instr:', 'ZEBRA-RULE' in text, '| env:', os.environ.get('CODEDUDE_HOME'), file=sys.stderr)
             return ModelResponse(
                 parts=[TextPart(content='zebra' if 'ZEBRA-RULE' in text else 'no-directive')]
             )
