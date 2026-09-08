@@ -340,6 +340,17 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
     setData((d) => ({ ...d, mcp: m }))
   }
 
+  const [review, setReview] = useState(null) // {findings} | 'running'
+  async function runReview() {
+    setReview({ running: true })
+    try {
+      const r = await call(`/sessions/${sessionId}/review`, { method: 'POST' })
+      setReview({ findings: r.findings })
+    } catch (e) {
+      setReview({ findings: `review failed: ${e.message}` })
+    }
+  }
+
 
   async function editSkill(name) {
     const list = await call('/skills/detail')

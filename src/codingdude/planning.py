@@ -152,14 +152,31 @@ def build_planning_toolset(
     return FunctionToolset([propose_plan, update_step])
 
 
+async def review_diff_findings(db, session_id: str, config_home, review_model) -> str:
+    """On-demand review of the Session's working-tree diff (UI 'Run review')."""
+    from .config import config_home as _ch
+    from .directives import build_directive_layers
+
+    workdir = db.session_workdir(session_id)
+    checklist = build_directive_layers(_ch(), Path(workdir)) if workdir else ''
+    return await _review_impl(db, session_id, review_model, checklist, plan=None)
+
+
 async def _run_review(db, session_id: str, review_model, plan: dict) -> str:
     """Review pass: diff + plan + directives checklist → findings (or '')."""
+    from .config import config_home
+    from .directives import build_directive_layers
+
+    workdir = db.session_workdir(session_id)
+    checklist = build_directive_layers(config_home(), Path(workdir)) if workdir else ''
+    return await _review_impl(db, session_id, review_model, checklist, plan=plan)
+
+
+async def _review_impl(db, session_id: str, review_model, checklist: str, plan) -> str:
     import subprocess
 
     from pydantic_ai import Agent
-
-    from .config import config_home
-    from .directives import build_directive_layers
+    from pydantic_ai.messages import ModelResponse, TextPart
 
     workdir = db.session_workdir(session_id)
     diff = ''
@@ -168,17 +185,18 @@ async def _run_review(db, session_id: str, review_model, plan: dict) -> str:
             ['git', 'diff', 'HEAD'], cwd=workdir, capture_output=True, text=True, timeout=30
         )
         diff = diff_process.stdout
-    checklist = build_directive_layers(config_home(), Path(workdir)) if workdir else ''
 
     reviewer = Agent(model=review_model)
+    plan_section = ''
+    if plan:
+        plan_section = (
+            f'PLAN:\n{plan["goal"]}\n'
+            + '\n'.join(f"- {s['text']}" for s in plan['steps'])
+            + '\n\n'
+        )
     prompt = (
-        'You are a code reviewer. Review this diff against the plan and the '
-        'project directives. Report concrete findings only (bugs, standard '
-        'violations, missing tests), one per line prefixed "- ". If the work '
-        'is clean, return exactly: CLEAN\n\n'
-        f'PLAN:\n{plan["goal"]}\n'
-        + '\n'.join(f"- {s['text']}" for s in plan['steps'])
-        + f'\n\nDIRECTIVES:\n{checklist[:2000]}\n\nDIFF:\n{diff[:8000]}'
+        f'PLAN:\n{plan_section}'
+        f'DIRECTIVES:\n{checklist[:2000]}\n\nDIFF:\n{diff[:8000]}'
     )
     try:
         result = await reviewer.run(prompt)

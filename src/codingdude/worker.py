@@ -113,6 +113,11 @@ async def run(args) -> int:
         budget_cap_usd=args.budget,
         extraction_model=None,
     )
+    # Memory extraction runs on the cheap subagent model when configured.
+    try:
+        engine._extraction_model = await _resolve_model(config.models.subagent)
+    except Exception:  # noqa: BLE001 — extraction is best-effort
+        pass
     model = await _resolve_model(args.model)
 
     loop = asyncio.get_running_loop()

@@ -201,9 +201,10 @@ class Engine:
                 toolsets.append(
                     build_shell_toolset(workdir, approvals, shell_bin=project_shell)
                 )
-            from .tools import build_git_toolset
+            from .tools import build_coverage_toolset, build_git_toolset
 
             toolsets.append(build_git_toolset(workdir, approvals))
+            toolsets.append(build_coverage_toolset(workdir, approvals))
 
             subagent = subagent_model or self._build_subagent_model()
             if subagent is not None:
@@ -354,6 +355,15 @@ class Engine:
         from .config import config_home
 
         return config_home()
+
+    async def review_diff(self, session_id: str) -> str:
+        """On-demand review of the Session's working-tree diff (UI button)."""
+        from .planning import review_diff_findings
+
+        return await review_diff_findings(
+            self._db, session_id, self._config_home(),
+            self._extraction_model or self._build_subagent_model(),
+        )
 
     def approve_pattern(self, session_id: str, command: str) -> str:
         """Record a Pattern Approval for the rest of the Session (UI calls this)."""

@@ -340,3 +340,37 @@ def resolve_workdir_path(workdir: str | Path, path: str) -> tuple[Path | None, s
     except ValueError:
         return None, f'path {path!r} escapes the Workdir'
     return target, None
+
+
+
+
+def build_coverage_toolset(workdir: Path, policy) -> FunctionToolset:
+    """The `run_coverage` tool: execute the project's test suite with coverage
+    analysis and return per-file results with missing lines. Gated like shell
+    (it runs your tests), pattern-approvable under 'coverage'."""
+
+    async def run_coverage(source: str = '.') -> str:
+        from .approvals import NEEDS_GATE
+
+        command = f'python -m pytest --cov={source} --cov-report=term-missing -q'
+        decision = policy.decide(command)
+        if decision in (NEEDS_GATE, DENIED):
+            await _resolve_gate(policy, command, always=decision == DENIED)
+        import asyncio
+
+        proc = await asyncio.create_subprocess_exec(
+            'bash', '-c', command,
+            cwd=workdir, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE, env=scrubbed_env(),
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=600)
+        except TimeoutError:
+            proc.kill()
+            return 'exit code: -1 (coverage run timed out after 600s)'
+        out = (stdout.decode(errors='replace') + stderr.decode(errors='replace')).strip()
+        if len(out) > 6000:
+            out = out[:3000] + '\n...\n' + out[-3000:]
+        return f'exit code: {proc.returncode}\n{out}'
+
+    return FunctionToolset([run_coverage])

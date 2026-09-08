@@ -321,6 +321,19 @@ def create_app(
         target.write_text(body.content, encoding='utf-8')
         return {'saved': body.path, 'bytes': len(body.content)}
 
+    @app.post('/sessions/{session_id}/review')
+    async def run_review(session_id: str, _: None = Depends(authorize)) -> dict:
+        workdir = db.session_workdir(session_id)
+        if not workdir:
+            raise HTTPException(status_code=404, detail='no such session')
+        from .config import load_config
+        from .engine import Engine
+
+        eng = Engine(config=load_config(), db=db)
+        eng._extraction_model = eng._build_subagent_model()
+        findings = await eng.review_diff(session_id)
+        return {'findings': findings or 'CLEAN — no findings'}
+
     @app.get('/sessions/{session_id}/standards')
     def session_standards(session_id: str, _: None = Depends(authorize)) -> dict:
         """The active engineering methodology: directive layers + review checklist."""
