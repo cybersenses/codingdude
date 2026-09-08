@@ -888,13 +888,12 @@ export default function App() {
           }}
           onNewSession={newSession}
         />
-        {divider}
+        {dividerFor('right')}
         <main className="flex min-w-0 flex-1 flex-col">
           {error && <div className="bg-red-900/50 px-4 py-1 text-xs text-red-300">{error}</div>}
           <Prompt onSend={send} disabled={!activeSession || streaming} />
           <Chat messages={messages} streaming={streaming} onStop={stop} onDecide={decide} sessionId={activeSession} />
         </main>
-        {divider}
         {dividerFor('right')}
         <RightPanel
           width={rightWidth}
