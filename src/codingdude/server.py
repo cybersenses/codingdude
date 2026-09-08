@@ -296,7 +296,7 @@ def create_app(
         try:
             text = target.read_text(encoding='utf-8', errors='replace')[:500_000]
         except OSError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {
             'path': path,
             'content': text,
