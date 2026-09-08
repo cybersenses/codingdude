@@ -298,6 +298,14 @@ def create_app(
     def health() -> dict:
         return {'ok': True}
 
+    @app.middleware('http')
+    async def strip_api_prefix(request, call_next):
+        """The built frontend calls /api/... (its dev-proxy convention);
+        rewrite to the real routes when FastAPI serves it directly."""
+        if request.url.path.startswith('/api/'):
+            request.scope['path'] = request.url.path[len('/api'):]
+        return await call_next(request)
+
     # Serve the built frontend when it exists (single-command deployment).
     dist = Path(__file__).resolve().parents[2] / 'frontend' / 'dist'
     if dist.exists():
