@@ -326,9 +326,19 @@ def create_app(
 def serve(host: str = HOST, port: int = 8765) -> None:
     import uvicorn
 
-    app = create_app()
+    # Stable token: generated once, stored next to the config, reused across
+    # restarts so the browser only ever needs it once.
+    token_path = config_home() / 'server-token'
+    token_path.parent.mkdir(parents=True, exist_ok=True)
+    if token_path.exists():
+        token = token_path.read_text(encoding='utf-8').strip()
+    else:
+        token = secrets.token_urlsafe(16)
+        token_path.write_text(token, encoding='utf-8')
+
+    app = create_app(token=token)
     app.state.port = port
-    print(f'codingdude server on http://{host}:{port} token={app.state.token}')
+    print(f'codingdude server on http://{host}:{port} token={token}')
     uvicorn.run(app, host=host, port=port, log_level='warning')
 
 
