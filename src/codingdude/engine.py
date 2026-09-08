@@ -207,6 +207,15 @@ class Engine:
                     build_semantic_toolset(workdir, SemanticIndex(self.embedder, self._db))
                 )
 
+            from .planning import build_planning_toolset
+
+            toolsets.append(
+                build_planning_toolset(
+                    self._db, session_id, approvals, emit,
+                    review_model=self._extraction_model,
+                )
+            )
+
             from .skills import SkillRegistry, build_skills_toolset
 
             registry = SkillRegistry(self._config_home(), workdir)

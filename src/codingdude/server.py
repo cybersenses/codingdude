@@ -207,6 +207,13 @@ def create_app(
         channel.send_to_worker({'type': 'APPROVAL_RESPONSE', 'decision': body.decision})
         return {'sent': True}
 
+    @app.get('/sessions/{session_id}/plan')
+    def session_plan(session_id: str, _: None = Depends(authorize)) -> dict:
+        from .planning import PlanStore
+
+        plan = PlanStore(db).latest(session_id)
+        return plan or {}
+
     @app.get('/sessions/{session_id}/usage')
     def session_usage(session_id: str, _: None = Depends(authorize)) -> dict:
         return db.session_usage(session_id)

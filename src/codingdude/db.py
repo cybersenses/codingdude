@@ -53,6 +53,14 @@ CREATE TABLE IF NOT EXISTS embeddings (
     content_hash TEXT NOT NULL,
     vector TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS plans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES sessions(session_id),
+    goal TEXT NOT NULL,
+    steps TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 """
 
 

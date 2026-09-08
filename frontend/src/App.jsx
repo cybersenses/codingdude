@@ -120,7 +120,49 @@ function ApprovalCard({ command, onDecide }) {
   )
 }
 
-function Chat({ messages, streaming, onStop, onDecide }) {
+function PlanCard({ sessionId }) {
+  const [plan, setPlan] = useState(null)
+  useEffect(() => {
+    if (!sessionId) return
+    let stop = false
+    async function poll() {
+      try {
+        const p = await call(`/sessions/${sessionId}/plan`)
+        if (!stop) setPlan(p && p.goal ? p : null)
+      } catch { /* transient */ }
+      if (!stop) setTimeout(poll, 3000)
+    }
+    poll()
+    return () => { stop = true }
+  }, [sessionId])
+  if (!plan) return null
+  const statusColor = plan.status === 'rejected' ? 'text-red-400'
+    : plan.status === 'done' ? 'text-emerald-400' : 'text-amber-300'
+  return (
+    <div className="my-2 rounded border border-sky-700 bg-sky-900/20 p-3">
+      <div className="mb-1 flex items-center justify-between">
+        <span className="text-xs font-semibold text-sky-300">Plan — {plan.goal}</span>
+        <span className={`text-xs ${statusColor}`}>{plan.status}</span>
+      </div>
+      <ol className="space-y-0.5">
+        {plan.steps.map((s, i) => (
+          <li key={i} className="text-xs text-neutral-300">
+            {s.status === 'done' ? '☑' : '☐'} {s.text}
+          </li>
+        ))}
+      </ol>
+    </div>
+  )
+}
+
+function Chat({ messages, streaming, onStop, onDecide, sessionId }) {
+  const [pendingPlan, setPendingPlan] = useState(null)
+  // A gate whose command starts with "plan:" is a plan approval — poll the
+  // plan endpoint so the card renders the actual steps.
+  useEffect(() => {
+    const gate = messages.find((m) => m.gate && m.gate.startsWith('plan:'))
+    setPendingPlan(gate ? gate.gate : null)
+  }, [messages])
   const bottomRef = useRef(null)
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -141,7 +183,22 @@ function Chat({ messages, streaming, onStop, onDecide }) {
               {m.streaming && <span className="animate-pulse">▍</span>}
             </div>
             {m.toolEvents && <ToolTimeline events={m.toolEvents} />}
-            {m.gate && <ApprovalCard command={m.gate} onDecide={onDecide} />}
+            {m.review && (
+              <div className="my-1 rounded border border-purple-700 bg-purple-900/20 p-2 text-xs">
+                <div className="font-semibold text-purple-300">Reviewer findings</div>
+                <pre className="whitespace-pre-wrap text-neutral-300">{m.review}</pre>
+              </div>
+            )}
+            {m.gate && !m.gate.startsWith('plan:') && <ApprovalCard command={m.gate} onDecide={onDecide} />}
+            {m.gate && m.gate.startsWith('plan:') && sessionId && <PlanCard sessionId={sessionId} />}
+            {m.gate && m.gate.startsWith('plan:') && (
+              <div className="my-1 flex gap-2">
+                <button className="rounded bg-emerald-700 px-3 py-1 text-xs text-white hover:bg-emerald-600"
+                  onClick={() => onDecide('approve')}>Approve plan</button>
+                <button className="rounded bg-red-800 px-3 py-1 text-xs text-white hover:bg-red-700"
+                  onClick={() => onDecide('deny')}>Reject</button>
+              </div>
+            )}
           </div>
         ))}
         {streaming && (
@@ -360,6 +417,7 @@ export default function App() {
                 { tool_name: ev.tool_name, result: ev.result },
               ]
             if (ev.type === 'GATE_REQUEST') last.gate = ev.command
+            if (ev.type === 'REVIEW_FINDINGS') last.review = ev.findings
             // The gate card clears only when the tool actually finishes —
             // TOOL_CALL_START fires *before* the gate resolves, so clearing
             // on it would erase the card the moment it appears.
@@ -427,6 +485,7 @@ export default function App() {
         {error && <div className="bg-red-900/50 px-4 py-1 text-xs text-red-300">{error}</div>}
         <Prompt onSend={send} disabled={!activeSession || streaming} />
         <Chat
+          sessionId={activeSession}
           messages={messages}
           streaming={streaming}
           onStop={stop}
