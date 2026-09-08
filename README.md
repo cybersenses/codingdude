@@ -4,7 +4,7 @@ A personal, single-user coding agent built with [pydantic-ai](https://ai.pydanti
 
 ## Status
 
-**All 17 tickets complete** (76 tests, mypy clean). CodingDude: pydantic-ai engine with failover (DeepSeek → GLM coding-plan), file/search/edit/AST tools, tiered approvals with interactive cards, session lifecycle (AGENT.md, compaction), delegation, web tools, memory store, budget cap, git/gh tiered tools, MCP client, semantic (embedding) search, web server + per-run worker + SSE + React UI. Headless mode for scripting.
+**All 17 tickets + the uber-agent layer (tickets 18–22) complete** (87 tests, mypy clean). CodingDude: pydantic-ai engine with failover (DeepSeek → GLM coding-plan), file/search/edit/AST tools, tiered approvals with interactive cards, session lifecycle (AGENT.md, compaction), delegation, web tools, memory store, budget cap, git/gh tiered tools, MCP client, semantic search, planning mode (propose → approve → tracked steps → auto review), directives + skills (progressive disclosure), gold-task benchmark (`uv run python bench.py`), web server + per-run worker + SSE + React UI with login. Headless mode for scripting.
 
 ## Run
 
