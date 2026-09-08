@@ -14,7 +14,24 @@ from .events import EditChange
 
 MAX_READ_BYTES = 256 * 1024
 MAX_GREP_RESULTS = 50
+MAX_FILE_BYTES = 2 * 1024 * 1024  # grep: skip files larger than this
 SKIP_DIRS = {'.git', '.venv', 'node_modules', '__pycache__', '.mypy_cache', '.pytest_cache'}
+SECRET_MARKERS = ('KEY', 'TOKEN', 'SECRET', 'PASSWORD', 'CREDENTIAL')
+
+
+def scrubbed_env() -> dict:
+    """Child-process environment with secret-looking variables removed.
+
+    The shell tool must not hand provider keys to arbitrary commands. Windows
+    system vars (SYSTEMROOT etc.) are preserved so networking still works.
+    """
+    import os
+
+    return {
+        k: v
+        for k, v in os.environ.items()
+        if not any(marker in k.upper() for marker in SECRET_MARKERS) or k in ('SYSTEMROOT',)
+    }
 
 EditEmitter = Callable[[EditChange], None]
 
@@ -67,9 +84,8 @@ def build_toolset(
             ):
                 continue
             try:
-                for i, line in enumerate(
-                    f.read_text(encoding='utf-8', errors='replace').splitlines(), 1
-                ):
+                data = f.read_text(encoding='utf-8', errors='replace')[:MAX_FILE_BYTES]
+                for i, line in enumerate(data.splitlines(), 1):
                     if rx.search(line):
                         results.append(f'{f.relative_to(workdir)}:{i}: {line.strip()}')
                         if len(results) >= MAX_GREP_RESULTS:
@@ -172,19 +188,28 @@ def build_shell_toolset(workdir: Path, policy, shell_bin: str = 'bash') -> Funct
         decision = policy.decide(command)
         if decision in (NEEDS_GATE, DENIED):
             await _resolve_gate(policy, command, always=decision == DENIED)
-        import subprocess
+        import asyncio
 
         if shell_bin == 'powershell':
             argv = ['powershell', '-NoProfile', '-Command', command]
         else:
             argv = ['bash', '-c', command]
-        result = subprocess.run(
-            argv, cwd=workdir, capture_output=True, text=True, timeout=timeout
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
+            cwd=workdir,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=scrubbed_env(),
         )
-        output = (result.stdout + result.stderr).strip()
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except TimeoutError:
+            proc.kill()
+            return 'exit code: -1 (timed out)'
+        output = (stdout.decode(errors='replace') + stderr.decode(errors='replace')).strip()
         if len(output) > 8000:
             output = output[:4000] + '\n...\n' + output[-4000:]
-        return f'exit code: {result.returncode}\n{output}'
+        return f'exit code: {proc.returncode}\n{output}'
 
     return FunctionToolset([shell])
 
@@ -233,27 +258,36 @@ def build_git_toolset(workdir: Path, policy) -> FunctionToolset:
     """Git/GitHub tools under the tier table: reads auto, commit/branch gated,
     push/PR always-gated (never pattern-unlockable)."""
 
-    def _run(argv: list[str], timeout: int = 60, use_shell: bool = False) -> str:
-        import subprocess
+    async def _run(argv: list[str], timeout: int = 60, use_shell: bool = False) -> str:
+        import asyncio
 
-        result = subprocess.run(
-            argv, cwd=workdir, capture_output=True, text=True, timeout=timeout,
-            shell=use_shell,
-        )
-        out = (result.stdout + result.stderr).strip()
-        return f'exit {result.returncode}\n{out}' if out else f'exit {result.returncode}'
+        if use_shell:
+            # Windows resolves gh (and test stubs) through the shell's PATH.
+            proc = await asyncio.create_subprocess_shell(
+                ' '.join(argv), cwd=workdir, stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE, env=scrubbed_env(),
+            )
+        else:
+            proc = await asyncio.create_subprocess_exec(
+                *argv, cwd=workdir, stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE, env=scrubbed_env(),
+            )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        out = (stdout.decode(errors='replace') + stderr.decode(errors='replace')).strip()
+        code = proc.returncode if proc.returncode is not None else -1
+        return f'exit {code}\n{out}' if out else f'exit {code}'
 
-    def git_status() -> str:
-        return _run(['git', 'status', '--porcelain', '-b'])
+    async def git_status() -> str:
+        return await _run(['git', 'status', '--porcelain', '-b'])
 
-    def git_log(limit: int = 20) -> str:
-        return _run(['git', 'log', '--oneline', f'-n{limit}'])
+    async def git_log(limit: int = 20) -> str:
+        return await _run(['git', 'log', '--oneline', f'-n{limit}'])
 
-    def git_diff(path: str = '') -> str:
+    async def git_diff(path: str = '') -> str:
         argv = ['git', 'diff']
         if path:
             argv += ['--', path]
-        return _run(argv)
+        return await _run(argv)
 
     async def _gate(command: str, always: bool = False) -> None:
         from .approvals import DENIED, NEEDS_GATE
@@ -264,36 +298,31 @@ def build_git_toolset(workdir: Path, policy) -> FunctionToolset:
 
     async def git_commit(message: str) -> str:
         await _gate('git commit')
-        import subprocess
-
-        subprocess.run(['git', 'add', '-A'], cwd=workdir, capture_output=True, text=True)
-        result = subprocess.run(
-            ['git', 'commit', '-m', message], cwd=workdir, capture_output=True, text=True
-        )
-        detail = (result.stdout + result.stderr).strip()
-        if result.returncode != 0:
-            return f'commit failed: {detail}'
-        return f'committed: {detail}'
+        await _run(['git', 'add', '-A'])
+        out = await _run(['git', 'commit', '-m', message])
+        if 'commit failed' in out or 'exit 1' in out:
+            return f'commit failed: {out}'
+        return f'committed: {out.split(chr(10))[0]}'
 
     async def git_branch(name: str) -> str:
         await _gate('git branch')
-        return _run(['git', 'checkout', '-b', name])
+        return await _run(['git', 'checkout', '-b', name])
 
     async def git_push(remote: str = 'origin', branch: str = 'main') -> str:
         await _gate('git push', always=True)  # always-gated: only explicit consent
-        return _run(['git', 'push', remote, branch])
+        return await _run(['git', 'push', remote, branch])
 
     async def gh_pr_create(title: str, body: str) -> str:
         await _gate('gh pr create', always=True)
         # shell=True so Windows resolves gh (and test stubs) via PATH
-        return _run(
+        return await _run(
             ['gh', 'pr', 'create', '--title', title, '--body', body, '--fill'],
             use_shell=True,
         )
 
     async def gh_pr_view(number: int) -> str:
         await _gate('gh pr view', always=True)
-        return _run(['gh', 'pr', 'view', str(number)], use_shell=True)
+        return await _run(['gh', 'pr', 'view', str(number)], use_shell=True)
 
     return FunctionToolset(
         [git_status, git_log, git_diff, git_commit, git_branch, git_push, gh_pr_create, gh_pr_view]
