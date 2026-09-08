@@ -1,6 +1,37 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { api, call, checkAuth, login } from './api.js'
 
+export class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props)
+    this.state = { error: null }
+  }
+  static getDerivedStateFromError(error) {
+    return { error }
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="flex h-screen items-center justify-center bg-neutral-900 p-6">
+          <div className="max-w-lg rounded-lg border border-red-800 bg-neutral-950 p-6">
+            <h1 className="mb-2 text-lg font-bold text-red-400">UI crashed</h1>
+            <pre className="mb-4 whitespace-pre-wrap text-xs text-neutral-400">
+              {String(this.state.error)}
+            </pre>
+            <button
+              className="rounded bg-emerald-700 px-3 py-1 text-sm text-white"
+              onClick={() => location.reload()}
+            >
+              Reload
+            </button>
+          </div>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
 // ---------- components ----------
 
 function Login({ onLoggedIn }) {
@@ -318,7 +349,7 @@ function RightPanel({ sessionId, refreshKey }) {
 // ---------- app ----------
 
 export default function App() {
-  const [loggedIn, setLoggedIn] = useState(false)
+  const [loggedIn, setLoggedIn] = useState(null) // null = checking cookie
   const [workdir, setWorkdir] = useState(localStorage.getItem('codingdude-workdir') || '')
   const [sessions, setSessions] = useState([])
   const [activeSession, setActiveSession] = useState(null)
