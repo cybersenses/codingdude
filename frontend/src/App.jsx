@@ -246,34 +246,181 @@ function Chat({ messages, streaming, onStop, onDecide, sessionId }) {
   )
 }
 
+// ---------- file explorer ----------
+
+function TreeNode({ node, depth, onOpen }) {
+  const [open, setOpen] = useState(depth < 1)
+  if (node.type === 'dir') {
+    return (
+      <div>
+        <button
+          className="block w-full truncate text-left text-xs text-sky-300 hover:text-sky-200"
+          style={{ paddingLeft: depth * 10 + 4 }}
+          onClick={() => setOpen(!open)}
+        >
+          {open ? '▾' : '▸'} {node.name}
+        </button>
+        {open && node.children.map((c) => (
+          <TreeNode key={c.path} node={c} depth={depth + 1} onOpen={onOpen} />
+        ))}
+      </div>
+    )
+  }
+  return (
+    <button
+      className="block w-full truncate text-left text-xs text-neutral-300 hover:text-white"
+      style={{ paddingLeft: depth * 10 + 14 }}
+      onClick={() => onOpen(node.path)}
+      title={node.path}
+    >
+      {node.name}
+    </button>
+  )
+}
+
+function FileExplorer({ sessionId }) {
+  const [tree, setTree] = useState(null)
+  const [openPath, setOpenPath] = useState(null)
+  const [file, setFile] = useState(null) // {path, content, is_markdown}
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [saved, setSaved] = useState(false)
+
+  async function refresh() {
+    setTree(await call(`/sessions/${sessionId}/tree`))
+  }
+  useEffect(() => {
+    if (sessionId) refresh().catch(() => {})
+  }, [sessionId])
+
+  async function openFile(path) {
+    try {
+      const f = await call(`/sessions/${sessionId}/file?path=${encodeURIComponent(path)}`)
+      setFile(f)
+      setOpenPath(path)
+      setEditing(false)
+      setSaved(false)
+    } catch (e) {
+      setFile({ path, content: `cannot open: ${e.message}`, is_markdown: false })
+      setOpenPath(path)
+      setEditing(false)
+    }
+  }
+
+  async function save() {
+    await call(`/sessions/${sessionId}/file`, {
+      method: 'PUT',
+      body: JSON.stringify({ path: openPath, content: draft }),
+    })
+    setSaved(true)
+    setEditing(false)
+    const f = await call(`/sessions/${sessionId}/file?path=${encodeURIComponent(openPath)}`)
+    setFile(f)
+    setTimeout(() => setSaved(false), 2000)
+  }
+
+  return (
+    <div className="flex h-full flex-col gap-2">
+      <div className="max-h-48 overflow-y-auto rounded bg-neutral-900 p-1">
+        {tree ? tree.children.map((c) => (
+          <TreeNode key={c.path} node={c} depth={0} onOpen={openFile} />
+        )) : <div className="text-neutral-600">loading…</div>}
+      </div>
+      {openPath && (
+        <div className="flex min-h-0 flex-1 flex-col gap-1">
+          <div className="flex items-center justify-between">
+            <span className="truncate font-mono text-[10px] text-emerald-300">{openPath}</span>
+            <div className="flex gap-1">
+              {file?.is_markdown && !editing && (
+                <button
+                  className="rounded bg-neutral-700 px-2 py-0.5 text-[10px] text-white"
+                  onClick={() => setEditing(!editing)}
+                >{editing ? 'view' : 'edit'}</button>
+              )}
+              {!file?.is_markdown && (
+                <button
+                  className="rounded bg-neutral-700 px-2 py-0.5 text-[10px] text-white"
+                  onClick={() => { setDraft(file?.content || ''); setEditing(!editing) }}
+                >{editing ? 'cancel' : 'edit'}</button>
+              )}
+              {editing && (
+                <button
+                  className="rounded bg-emerald-700 px-2 py-0.5 text-[10px] text-white"
+                  onClick={save}
+                >save</button>
+              )}
+            </div>
+          </div>
+          {saved && <div className="text-[10px] text-emerald-400">saved ✓</div>}
+          {editing ? (
+            <textarea
+              className="min-h-0 flex-1 resize-none rounded border border-neutral-700 bg-neutral-900 p-2 font-mono text-[11px] text-neutral-200"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+            />
+          ) : file?.is_markdown ? (
+            <div className="min-h-0 flex-1 overflow-y-auto rounded bg-neutral-900 p-2 text-xs text-neutral-200">
+              <ReactMarkdown>{file.content}</ReactMarkdown>
+            </div>
+          ) : (
+            <pre className="min-h-0 flex-1 overflow-auto rounded bg-neutral-900 p-2 font-mono text-[11px] text-neutral-300">
+              {file?.content}
+            </pre>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function RightPanel({ sessionId, refreshKey }) {
-  const tabs = ['Diff', 'Files', 'Terminal', 'Cost', 'Memory', 'MCP']
+  const tabs = ['Diff', 'Files', 'Terminal', 'Cost', 'Memory', 'MCP', 'Standards']
   const [tab, setTab] = useState('Diff')
   const [data, setData] = useState({})
-  useEffect(() => {
-    if (!sessionId) return
-    let stop = false
-    async function poll() {
-      try {
-        if (tab === 'Diff') setData({ diff: (await call(`/sessions/${sessionId}/diff`)).diff })
-        if (tab === 'Files') setData({ files: await call(`/sessions/${sessionId}/files`) })
-        if (tab === 'Cost') setData({ usage: await call(`/sessions/${sessionId}/usage`) })
-        if (tab === 'Memory') setData({ memory: await call('/memory') })
-        if (tab === 'MCP') setData({ mcp: await api.listMcp(sessionId) })
-      } catch { /* transient */ }
-      if (!stop) setTimeout(poll, 4000)
-    }
-    poll()
-    return () => { stop = true }
-  }, [sessionId, tab, refreshKey])
+  const fileKey = `${refreshKey}`
 
   async function toggleServer(name, disabled) {
     await api.toggleMcp(sessionId, name, disabled).catch((e) => setError)
     setData({ mcp: await api.listMcp(sessionId) })
   }
 
+  // Standards poll (directives + review checklist) — the visible methodology.
+  useEffect(() => {
+    if (tab !== 'Standards' || !sessionId) return
+    let stop = false
+    call(`/sessions/${sessionId}/standards`)
+      .then((d) => { if (!stop) setData({ standards: d }) })
+      .catch(() => {})
+    return () => { stop = true }
+  }, [sessionId, tab, refreshKey])
+
   let body = <div className="text-neutral-600">nothing yet</div>
-  if (tab === 'Terminal') {
+  if (tab === 'Standards') {
+    const st = data.standards
+    body = st ? (
+      <div className="space-y-2">
+        <div>
+          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-400">
+            Active directives (enforced on every run)
+          </div>
+          <pre className="max-h-56 overflow-y-auto whitespace-pre-wrap rounded bg-neutral-900 p-2 text-[11px] text-neutral-300">
+            {st.layers || '(no DIRECTIVES.md / AGENT.md found — add rules to activate)'}
+          </pre>
+        </div>
+        <div>
+          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-purple-400">
+            Review checklist (applied before work is accepted)
+          </div>
+          <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded bg-neutral-900 p-2 text-[11px] text-neutral-400">
+            {st.review_checklist}
+          </pre>
+        </div>
+        <div className="text-[10px] text-neutral-600">
+          edit via {st.layers && st.layers.includes('AGENT.md') ? 'AGENT.md' : '~/.codingdude/DIRECTIVES.md'} — agent edits require your approval
+        </div>
+      </div>
+    ) : <div className="text-neutral-600">loading…</div>
+  } else if (tab === 'Terminal') {
     body = <div className="text-neutral-600">command output lives in the chat tool timeline</div>
   } else if (tab === 'MCP' && data.mcp) {
     body = (
@@ -301,8 +448,8 @@ function RightPanel({ sessionId, refreshKey }) {
         ))}
       </pre>
     )
-  } else if (tab === 'Files' && data.files) {
-    body = <pre className="whitespace-pre-wrap font-mono text-[10px] text-neutral-400">{data.files.join('\n')}</pre>
+  } else if (tab === 'Files') {
+    body = <FileExplorer sessionId={sessionId} />
   } else if (tab === 'Cost' && data.usage) {
     const u = data.usage
     body = (

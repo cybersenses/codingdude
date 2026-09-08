@@ -325,3 +325,18 @@ def build_git_toolset(workdir: Path, policy) -> FunctionToolset:
     return FunctionToolset(
         [git_status, git_log, git_diff, git_commit, git_branch, git_push, gh_pr_create, gh_pr_view]
     )
+
+
+def resolve_workdir_path(workdir: str | Path, path: str) -> tuple[Path | None, str | None]:
+    """Containment-checked path resolution for server-side file access.
+
+    Returns (path, None) or (None, error). Symlink-safe: both sides are
+    resolved before the containment check.
+    """
+    root = Path(workdir).resolve()
+    target = (root / path).resolve()
+    try:
+        target.relative_to(root)
+    except ValueError:
+        return None, f'path {path!r} escapes the Workdir'
+    return target, None

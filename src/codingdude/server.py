@@ -249,6 +249,93 @@ def create_app(
                 break
         return out
 
+    @app.get('/sessions/{session_id}/tree')
+    def session_tree(session_id: str, _: None = Depends(authorize)) -> dict:
+        """Nested file explorer tree (folders + files), Workdir-confined."""
+        workdir = db.session_workdir(session_id)
+        if not workdir:
+            raise HTTPException(status_code=404, detail='no such session')
+        root = Path(workdir)
+        skip = {'.git', '.venv', 'node_modules', '__pycache__', '.mypy_cache', '.pytest_cache', 'dist', '.next'}
+
+        def build(directory: Path, depth: int) -> list[dict]:
+            if depth > 8:
+                return []
+            nodes = []
+            try:
+                entries = sorted(directory.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))
+            except OSError:
+                return []
+            for entry in entries:
+                if entry.name in skip:
+                    continue
+                rel = entry.relative_to(root).as_posix()
+                if entry.is_dir():
+                    nodes.append({
+                        'name': entry.name, 'path': rel, 'type': 'dir',
+                        'children': build(entry, depth + 1),
+                    })
+                else:
+                    nodes.append({'name': entry.name, 'path': rel, 'type': 'file'})
+                if len(nodes) > 400:
+                    break
+            return nodes
+
+        return {'name': root.name, 'type': 'dir', 'path': '', 'children': build(root, 0)}
+
+    @app.get('/sessions/{session_id}/file')
+    def get_file(session_id: str, path: str, _: None = Depends(authorize)) -> dict:
+        from codingdude.tools import resolve_workdir_path
+
+        workdir = db.session_workdir(session_id)
+        if not workdir:
+            raise HTTPException(status_code=404, detail='no such session')
+        target, error = resolve_workdir_path(workdir, path)
+        if error or target is None:
+            raise HTTPException(status_code=400, detail=error or 'bad path')
+        try:
+            text = target.read_text(encoding='utf-8', errors='replace')[:500_000]
+        except OSError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return {
+            'path': path,
+            'content': text,
+            'is_markdown': path.lower().endswith(('.md', '.markdown')),
+        }
+
+    class FileSaveIn(BaseModel):
+        path: str
+        content: str
+
+    @app.put('/sessions/{session_id}/file')
+    def save_file(session_id: str, body: FileSaveIn, _: None = Depends(authorize)) -> dict:
+        from codingdude.tools import resolve_workdir_path
+
+        workdir = db.session_workdir(session_id)
+        if not workdir:
+            raise HTTPException(status_code=404, detail='no such session')
+        target, error = resolve_workdir_path(workdir, body.path)
+        if error or target is None:
+            raise HTTPException(status_code=400, detail=error or 'bad path')
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body.content, encoding='utf-8')
+        return {'saved': body.path, 'bytes': len(body.content)}
+
+    @app.get('/sessions/{session_id}/standards')
+    def session_standards(session_id: str, _: None = Depends(authorize)) -> dict:
+        """The active engineering methodology: directive layers + review checklist."""
+        from codingdude.directives import build_directive_layers
+        from codingdude.prompts import load_prompt
+
+        workdir = db.session_workdir(session_id)
+        if not workdir:
+            raise HTTPException(status_code=404, detail='no such session')
+        return {
+            'layers': build_directive_layers(home, Path(workdir)),
+            'review_checklist': load_prompt('review'),
+        }
+
+
     class MemoryIn(BaseModel):
         content: str
         scope: str = 'workdir'
