@@ -70,9 +70,9 @@ function Login({ onLoggedIn }) {
   )
 }
 
-function Sidebar({ workdir, setWorkdir, sessions, activeSession, onSelect, onNewSession }) {
+function Sidebar({ workdir, setWorkdir, sessions, activeSession, onSelect, onNewSession, width }) {
   return (
-    <aside className="flex w-64 shrink-0 flex-col gap-3 border-r border-neutral-800 bg-neutral-950 p-3">
+    <aside className="flex shrink-0 flex-col gap-3 border-r border-neutral-800 bg-neutral-950 p-3" style={{ width }}>
       <h1 className="text-lg font-bold text-emerald-400">CodingDude</h1>
       <label className="text-xs text-neutral-400">
         Workdir
@@ -313,7 +313,7 @@ function FileExplorer({ sessionId }) {
 }
 
 
-function RightPanel({ sessionId, refreshKey, diffBadge, tabRef }) {
+function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
   const tabs = ['Diff', 'Files', 'Terminal', 'Cost', 'Memory', 'MCP', 'Standards']
   const [tab, setTab] = useState('Diff')
   const [data, setData] = useState({})
@@ -416,7 +416,6 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef }) {
 
   let body = <div className="text-neutral-600">nothing yet</div>
   if (tab === 'Standards') {
-    const activeDirectives = standards ? standards.layers : ''
     const modes = ['directives', 'skills', 'checklist']
     body = (
       <div className="flex h-full flex-col gap-2">
@@ -551,7 +550,7 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef }) {
   }
 
   return (
-    <aside className="flex w-96 shrink-0 flex-col overflow-hidden border-l border-neutral-800 bg-neutral-950 p-3">
+    <aside className="flex shrink-0 flex-col overflow-hidden border-l border-neutral-800 bg-neutral-950 p-3" style={{ width }}>
       <div className="mb-2 flex flex-wrap gap-1">
         {tabs.map((t) => (
           <button
@@ -677,6 +676,48 @@ export default function App() {
   const [status, setStatus] = useState('idle')
   const runRef = useRef(null)
   const esRef = useRef(null)
+
+  // Resizable panes: widths persist across sessions.
+  const [sidebarWidth, setSidebarWidth] = useState(
+    () => Math.min(500, Math.max(180, parseInt(localStorage.getItem('cd-sidebar-w')) || 256))
+  )
+  const [rightWidth, setRightWidth] = useState(
+    () => Math.min(700, Math.max(280, parseInt(localStorage.getItem('cd-right-w')) || 384))
+  )
+
+  function dividerFor(which) {
+    return (
+      <div
+        data-pane={which}
+        className="w-1 shrink-0 cursor-col-resize bg-neutral-800 transition-colors hover:bg-emerald-600"
+        onMouseDown={(e) => {
+          e.preventDefault()
+          const startX = e.clientX
+          const startW = which === 'sidebar' ? sidebarWidth : rightWidth
+          document.body.style.userSelect = 'none'
+          function onMove(ev) {
+            if (which === 'sidebar') {
+              const w = Math.min(500, Math.max(180, startW + ev.clientX - startX))
+              setSidebarWidth(w)
+              localStorage.setItem('cd-sidebar-w', String(w))
+            } else {
+              const w = Math.min(700, Math.max(280, startW - (ev.clientX - startX)))
+              setRightWidth(w)
+              localStorage.setItem('cd-right-w', String(w))
+            }
+          }
+          function onUp() {
+            window.removeEventListener('mousemove', onMove)
+            window.removeEventListener('mouseup', onUp)
+            document.body.style.userSelect = ''
+          }
+          window.addEventListener('mousemove', onMove)
+          window.addEventListener('mouseup', onUp)
+        }}
+      />
+    )
+  }
+
 
   // Any 401 bounces back to the login screen.
   useEffect(() => {
@@ -834,7 +875,9 @@ export default function App() {
   return (
     <div className="flex h-screen flex-col bg-neutral-900 text-neutral-200">
       <div className="flex min-h-0 flex-1">
+        {dividerFor('sidebar')}
         <Sidebar
+          width={sidebarWidth}
           workdir={workdir}
           setWorkdir={setWorkdir}
           sessions={sessions}
@@ -845,12 +888,16 @@ export default function App() {
           }}
           onNewSession={newSession}
         />
+        {divider}
         <main className="flex min-w-0 flex-1 flex-col">
           {error && <div className="bg-red-900/50 px-4 py-1 text-xs text-red-300">{error}</div>}
           <Prompt onSend={send} disabled={!activeSession || streaming} />
           <Chat messages={messages} streaming={streaming} onStop={stop} onDecide={decide} sessionId={activeSession} />
         </main>
+        {divider}
+        {dividerFor('right')}
         <RightPanel
+          width={rightWidth}
           sessionId={activeSession}
           refreshKey={refreshKey}
           diffBadge={diffBadge}
