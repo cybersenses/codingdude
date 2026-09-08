@@ -15,7 +15,7 @@ from pydantic_ai import mcp
 
 def _load_config_file(path: Path) -> dict:
     if not path.exists():
-        return {}
+        return {'mcpServers': {}, 'disabled': []}
     raw = json.loads(path.read_text(encoding='utf-8'))
     return {'mcpServers': raw.get('mcpServers', {}), 'disabled': raw.get('disabled', [])}
 
