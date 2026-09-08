@@ -228,8 +228,13 @@ export default function App() {
   const [streaming, setStreaming] = useState(false)
   const [error, setError] = useState('')
   const [refreshKey, setRefreshKey] = useState(0)
+  const [eventLog, setEventLog] = useState([])
   const runRef = useRef(null)
   const esRef = useRef(null)
+
+  function debugLog(msg) {
+    setEventLog((l) => [...l.slice(-8), msg])
+  }
 
   // Poll the panels while a run streams (diff/cost change live).
   useEffect(() => {
@@ -293,6 +298,7 @@ export default function App() {
         esRef.current = es
         es.onmessage = (e) => {
           const ev = JSON.parse(e.data)
+          debugLog(ev.type)
           setMessages((msgs) => {
             const copy = [...msgs]
             const last = { ...copy[copy.length - 1] }
@@ -303,7 +309,10 @@ export default function App() {
                 { tool_name: ev.tool_name, result: ev.result },
               ]
             if (ev.type === 'GATE_REQUEST') last.gate = ev.command
-            if (ev.type === 'TOOL_CALL_START' || ev.type === 'TOOL_CALL_END') last.gate = null
+            // The gate card clears only when the tool actually finishes —
+            // TOOL_CALL_START fires *before* the gate resolves, so clearing
+            // on it would erase the card the moment it appears.
+            if (ev.type === 'TOOL_CALL_END') last.gate = null
             if (ev.type === 'RUN_ERROR') setError(ev.message || 'run error')
             if (ev.type in { RUN_FINISHED: 1, RUN_ERROR: 1, RUN_CANCELLED: 1 }) {
               last.streaming = false
@@ -359,6 +368,13 @@ export default function App() {
           streaming={streaming}
           onStop={stop}
           onDecide={(decision) => {
+            setMessages((msgs) => {
+              const copy = [...msgs]
+              const last = { ...copy[copy.length - 1] }
+              last.gate = null
+              copy[copy.length - 1] = last
+              return copy
+            })
             if (runRef.current) api.approve(runRef.current, decision).catch((e) => setError(String(e.message)))
           }}
         />
