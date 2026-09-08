@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { api, call, login } from './api.js'
+import { api, call, checkAuth, login } from './api.js'
 
 // ---------- components ----------
 
@@ -277,6 +277,14 @@ export default function App() {
     const onUnauthorized = () => setLoggedIn(false)
     window.addEventListener('cd-unauthorized', onUnauthorized)
     return () => window.removeEventListener('cd-unauthorized', onUnauthorized)
+  }, [])
+
+  // On load: an existing session cookie skips the login screen.
+  useEffect(() => {
+    checkAuth().then((ok) => {
+      setLoggedIn(ok)
+      if (ok) refreshSessions(workdir)
+    })
   }, [])
 
   // Poll the panels while a run streams (diff/cost change live).

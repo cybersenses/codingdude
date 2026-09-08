@@ -98,6 +98,13 @@ def create_app(
     class LoginIn(BaseModel):
         password: str
 
+    @app.get('/auth/check')
+    def auth_check(request: Request) -> dict:
+        cookie = request.cookies.get('cd_session', '')
+        if cookie == token:
+            return {'ok': True}
+        raise HTTPException(status_code=401, detail='not logged in')
+
     @app.post('/login')
     def login(body: LoginIn) -> Response:
         if body.password != token:

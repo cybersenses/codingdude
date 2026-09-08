@@ -19,6 +19,15 @@ export async function login(password) {
   if (!res.ok) throw new Error('wrong password')
 }
 
+export async function checkAuth() {
+  try {
+    const res = await fetch('/api/auth/check')
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
 export async function call(path, options = {}) {
   const res = await fetch(`/api${path}`, { headers: { 'Content-Type': 'application/json' }, ...options })
   if (res.status === 401) {
