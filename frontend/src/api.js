@@ -1,11 +1,11 @@
 // Thin API client for the codingdude server. Token lives in localStorage.
 
 export function getToken() {
-  return localStorage.getItem('codingdude-token') || ''
+  return (localStorage.getItem('codingdude-token') || '').trim()
 }
 
 export function setToken(token) {
-  localStorage.setItem('codingdude-token', token)
+  localStorage.setItem('codingdude-token', token.trim())
 }
 
 function headers() {
