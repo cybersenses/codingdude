@@ -335,6 +335,45 @@ def create_app(
             'review_checklist': load_prompt('review'),
         }
 
+    # ---- self-hosted configuration: directives + skills editable in the UI ----
+
+    @app.get('/directives')
+    def get_directives(_: None = Depends(authorize)) -> dict:
+        path = home / 'DIRECTIVES.md'
+        content = path.read_text(encoding='utf-8') if path.exists() else ''
+        return {'content': content, 'path': str(path)}
+
+    @app.put('/directives')
+    def put_directives(body: dict, _: None = Depends(authorize)) -> dict:
+        path = home / 'DIRECTIVES.md'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body.get('content', ''), encoding='utf-8')
+        return {'saved': str(path)}
+
+    @app.get('/skills/detail')
+    def get_skills_detail(_: None = Depends(authorize)) -> list[dict]:
+        from codingdude.skills import SkillRegistry
+
+        registry = SkillRegistry(home, home)  # global skills for management
+        return registry.detail()
+
+    @app.put('/skills/detail/{name}')
+    def put_skill(name: str, body: dict, _: None = Depends(authorize)) -> dict:
+        from codingdude.skills import SkillRegistry
+
+        registry = SkillRegistry(home, home)
+        saved_to = registry.save(name, body.get('description', ''), body.get('body', ''))
+        return {'saved': saved_to}
+
+    @app.delete('/skills/detail/{name}')
+    def delete_skill(name: str, _: None = Depends(authorize)) -> dict:
+        from codingdude.skills import SkillRegistry
+
+        registry = SkillRegistry(home, home)
+        if not registry.delete(name):
+            raise HTTPException(status_code=404, detail='no such skill')
+        return {'deleted': name}
+
 
     class MemoryIn(BaseModel):
         content: str

@@ -54,6 +54,26 @@ class SkillRegistry:
         skill = self._scan().get(name)
         return skill['body'] if skill else None
 
+    def detail(self) -> list[dict]:
+        return list(self._scan().values())
+
+    def save(self, name: str, description: str, body: str) -> str:
+        """Create/update a skill in the global skills directory."""
+        directory = self.home / 'skills' / name
+        directory.mkdir(parents=True, exist_ok=True)
+        meta = json.dumps({'name': name, 'description': description})
+        (directory / 'SKILL.md').write_text(f'{meta}\n\n{body.strip()}\n', encoding='utf-8')
+        return str(directory / 'SKILL.md')
+
+    def delete(self, name: str) -> bool:
+        import shutil
+
+        directory = self.home / 'skills' / name
+        if directory.exists():
+            shutil.rmtree(directory)
+            return True
+        return False
+
 
 def build_skills_toolset(registry: SkillRegistry) -> FunctionToolset:
     def load_skill(name: str) -> str:

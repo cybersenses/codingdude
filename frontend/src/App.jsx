@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
+import CodeEditor from './CodeEditor.jsx'
 import { api, call, checkAuth, login } from './api.js'
 
 export class ErrorBoundary extends React.Component {
@@ -32,8 +33,6 @@ export class ErrorBoundary extends React.Component {
     return this.props.children
   }
 }
-
-// ---------- components ----------
 
 function Login({ onLoggedIn }) {
   const [password, setPassword] = useState('')
@@ -73,7 +72,7 @@ function Login({ onLoggedIn }) {
 
 function Sidebar({ workdir, setWorkdir, sessions, activeSession, onSelect, onNewSession }) {
   return (
-    <aside className="w-64 shrink-0 border-r border-neutral-800 bg-neutral-950 p-3 flex flex-col gap-3">
+    <aside className="flex w-64 shrink-0 flex-col gap-3 border-r border-neutral-800 bg-neutral-950 p-3">
       <h1 className="text-lg font-bold text-emerald-400">CodingDude</h1>
       <label className="text-xs text-neutral-400">
         Workdir
@@ -152,7 +151,7 @@ function ApprovalCard({ command, onDecide }) {
   )
 }
 
-function PlanCard({ sessionId }) {
+function PlanCard({ sessionId, onDecide }) {
   const [plan, setPlan] = useState(null)
   useEffect(() => {
     if (!sessionId) return
@@ -183,71 +182,17 @@ function PlanCard({ sessionId }) {
           </li>
         ))}
       </ol>
+      {plan.status === 'approved' && onDecide && (
+        <div className="mt-2 flex gap-2">
+          <button className="rounded bg-emerald-700 px-3 py-1 text-xs text-white hover:bg-emerald-600"
+            onClick={() => onDecide('approve')}>Approve plan</button>
+          <button className="rounded bg-red-800 px-3 py-1 text-xs text-white hover:bg-red-700"
+            onClick={() => onDecide('deny')}>Reject</button>
+        </div>
+      )}
     </div>
   )
 }
-
-function Chat({ messages, streaming, onStop, onDecide, sessionId }) {
-  const [pendingPlan, setPendingPlan] = useState(null)
-  // A gate whose command starts with "plan:" is a plan approval — poll the
-  // plan endpoint so the card renders the actual steps.
-  useEffect(() => {
-    const gate = messages.find((m) => m.gate && m.gate.startsWith('plan:'))
-    setPendingPlan(gate ? gate.gate : null)
-  }, [messages])
-  const bottomRef = useRef(null)
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
-  return (
-    <div className="flex flex-1 flex-col overflow-hidden">
-      <div className="flex-1 space-y-3 overflow-y-auto p-4">
-        {messages.map((m, i) => (
-          <div key={i} className={m.role === 'user' ? 'text-right' : ''}>
-            <div
-              className={`inline-block max-w-[85%] whitespace-pre-wrap rounded-lg px-3 py-2 text-sm ${
-                m.role === 'user'
-                  ? 'bg-emerald-800 text-white'
-                  : 'bg-neutral-800 text-neutral-200'
-              }`}
-            >
-              {m.text}
-              {m.streaming && <span className="animate-pulse">▍</span>}
-            </div>
-            {m.toolEvents && <ToolTimeline events={m.toolEvents} />}
-            {m.review && (
-              <div className="my-1 rounded border border-purple-700 bg-purple-900/20 p-2 text-xs">
-                <div className="font-semibold text-purple-300">Reviewer findings</div>
-                <pre className="whitespace-pre-wrap text-neutral-300">{m.review}</pre>
-              </div>
-            )}
-            {m.gate && !m.gate.startsWith('plan:') && <ApprovalCard command={m.gate} onDecide={onDecide} />}
-            {m.gate && m.gate.startsWith('plan:') && sessionId && <PlanCard sessionId={sessionId} />}
-            {m.gate && m.gate.startsWith('plan:') && (
-              <div className="my-1 flex gap-2">
-                <button className="rounded bg-emerald-700 px-3 py-1 text-xs text-white hover:bg-emerald-600"
-                  onClick={() => onDecide('approve')}>Approve plan</button>
-                <button className="rounded bg-red-800 px-3 py-1 text-xs text-white hover:bg-red-700"
-                  onClick={() => onDecide('deny')}>Reject</button>
-              </div>
-            )}
-          </div>
-        ))}
-        {streaming && (
-          <button
-            className="rounded border border-red-700 px-2 py-1 text-xs text-red-400 hover:bg-red-900/30"
-            onClick={onStop}
-          >
-            ■ Stop
-          </button>
-        )}
-        <div ref={bottomRef} />
-      </div>
-    </div>
-  )
-}
-
-// ---------- file explorer ----------
 
 function TreeNode({ node, depth, onOpen }) {
   const [open, setOpen] = useState(depth < 1)
@@ -282,7 +227,7 @@ function TreeNode({ node, depth, onOpen }) {
 function FileExplorer({ sessionId }) {
   const [tree, setTree] = useState(null)
   const [openPath, setOpenPath] = useState(null)
-  const [file, setFile] = useState(null) // {path, content, is_markdown}
+  const [file, setFile] = useState(null)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
   const [saved, setSaved] = useState(false)
@@ -349,11 +294,9 @@ function FileExplorer({ sessionId }) {
           </div>
           {saved && <div className="text-[10px] text-emerald-400">saved ✓</div>}
           {editing ? (
-            <textarea
-              className="min-h-0 flex-1 resize-none rounded border border-neutral-700 bg-neutral-900 p-2 font-mono text-[11px] text-neutral-200"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-            />
+            <div className="min-h-0 flex-1 overflow-hidden rounded border border-neutral-700">
+              <CodeEditor path={openPath} value={draft} onChange={setDraft} height="100%" />
+            </div>
           ) : file?.is_markdown ? (
             <div className="min-h-0 flex-1 overflow-y-auto rounded bg-neutral-900 p-2 text-xs text-neutral-200">
               <ReactMarkdown>{file.content}</ReactMarkdown>
@@ -369,53 +312,202 @@ function FileExplorer({ sessionId }) {
   )
 }
 
-function RightPanel({ sessionId, refreshKey }) {
+
+function RightPanel({ sessionId, refreshKey, diffBadge, tabRef }) {
   const tabs = ['Diff', 'Files', 'Terminal', 'Cost', 'Memory', 'MCP', 'Standards']
   const [tab, setTab] = useState('Diff')
   const [data, setData] = useState({})
-  const fileKey = `${refreshKey}`
+
+  useEffect(() => {
+    if (!sessionId || tab === 'Files' || tab === 'Standards' || tab === 'Terminal') return
+    let stop = false
+    async function poll() {
+      try {
+        if (tab === 'Diff') { const r = await call(`/sessions/${sessionId}/diff`); setData((d) => ({ ...d, diff: r.diff })) }
+        if (tab === 'Cost') { const u = await call(`/sessions/${sessionId}/usage`); setData((d) => ({ ...d, usage: u })) }
+        if (tab === 'Memory') { const m = await call('/memory'); setData((d) => ({ ...d, memory: m })) }
+        if (tab === 'MCP') { const m = await api.listMcp(sessionId); setData((d) => ({ ...d, mcp: m })) }
+      } catch { /* transient */ }
+      if (!stop) setTimeout(poll, 4000)
+    }
+    poll()
+    return () => { stop = true }
+  }, [sessionId, tab])
 
   async function toggleServer(name, disabled) {
-    await api.toggleMcp(sessionId, name, disabled).catch((e) => setError)
-    setData({ mcp: await api.listMcp(sessionId) })
+    await api.toggleMcp(sessionId, name, disabled).catch(() => {})
+    const m = await api.listMcp(sessionId)
+    setData((d) => ({ ...d, mcp: m }))
   }
 
-  // Standards poll (directives + review checklist) — the visible methodology.
+
+  async function editSkill(name) {
+    const list = await call('/skills/detail')
+    const s = list.find((x) => x.name === name)
+    if (s) setEditingSkill(s)
+  }
+
+  async function saveSkill() {
+    if (!editingSkill?.name) return
+    await call(`/skills/detail/${encodeURIComponent(editingSkill.name)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ description: editingSkill.description, body: editingSkill.body }),
+    })
+    setEditingSkill(null)
+    setSkillSaved('saved')
+    setTimeout(() => setSkillSaved(''), 2000)
+  }
+
+  async function deleteSkill(name) {
+    await fetch(`/api/skills/detail/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${localStorage.getItem('codingdude-token') || ''}` },
+    }).then((r) => r.json())
+    setEditingSkill(null)
+  }
+
+  // Standards sub-tab state: directives editor, skills manager, review checklist.
+  const [stdMode, setStdMode] = useState('directives')
+  const [directivesDraft, setDirectivesDraft] = useState(null)
+  const [skillList, setSkillList] = useState(null)
+  const [reviewChecklist, setReviewChecklist] = useState(null)
+  const [editingSkill, setEditingSkill] = useState(null)
+  const [savedMsg, setSavedMsg] = useState('')
+
   useEffect(() => {
     if (tab !== 'Standards' || !sessionId) return
-    let stop = false
     call(`/sessions/${sessionId}/standards`)
-      .then((d) => { if (!stop) setData({ standards: d }) })
-      .catch(() => {})
-    return () => { stop = true }
-  }, [sessionId, tab, refreshKey])
+      .then((d) => setReviewChecklist(d.review_checklist))
+      .catch(() => setReviewChecklist('unavailable'))
+    call('/skills/detail').then(setSkillList).catch(() => setSkillList([]))
+    call('/directives')
+      .then((d) => setDirectivesDraft((cur) => cur ?? d.content))
+      .catch(() => setDirectivesDraft(''))
+  }, [tab, sessionId])
+
+  async function saveDirectives() {
+    await call('/directives', { method: 'PUT', body: JSON.stringify({ content: directivesDraft }) })
+    setSavedMsg('directives saved — enforced from the next run')
+    setTimeout(() => setSavedMsg(''), 2500)
+  }
+
+  async function startEditSkill(name) {
+    const list = await call('/skills/detail')
+    setEditingSkill(list.find((s) => s.name === name) || null)
+  }
+
+  async function saveSkill() {
+    if (!editingSkill?.name) return
+    await call(`/skills/detail/${encodeURIComponent(editingSkill.name)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ description: editingSkill.description, body: editingSkill.body }),
+    })
+    setEditingSkill(null)
+    call('/skills/detail').then(setSkillList).catch(() => {})
+  }
+
+  async function deleteSkill(name) {
+    await fetch(`/api/skills/detail/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${localStorage.getItem('codingdude-token') || ''}` },
+    }).then((r) => r.json())
+    setSkillList((list) => list.filter((s) => s.name !== name))
+  }
 
   let body = <div className="text-neutral-600">nothing yet</div>
   if (tab === 'Standards') {
-    const st = data.standards
-    body = st ? (
-      <div className="space-y-2">
-        <div>
-          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-400">
-            Active directives (enforced on every run)
+    const activeDirectives = standards ? standards.layers : ''
+    const modes = ['directives', 'skills', 'checklist']
+    body = (
+      <div className="flex h-full flex-col gap-2">
+        <div className="flex gap-1">
+          {modes.map((m) => (
+            <button
+              key={m}
+              className={`rounded px-2 py-0.5 text-[10px] uppercase tracking-wide ${stdMode === m ? 'bg-neutral-800 text-emerald-300' : 'text-neutral-500 hover:text-neutral-300'}`}
+              onClick={() => setStdMode(m)}
+            >{m}</button>
+          ))}
+        </div>
+        {savedMsg && <div className="rounded bg-emerald-900/40 px-2 py-1 text-[10px] text-emerald-300">{savedMsg}</div>}
+
+        {stdMode === 'directives' && (
+          <div className="flex min-h-0 flex-1 flex-col gap-1">
+            <div className="text-[10px] text-neutral-500">
+              ~/.codingdude/DIRECTIVES.md — enforced on every run (project AGENT.md adds on top)
+            </div>
+            <div className="min-h-0 flex-1 overflow-hidden rounded border border-neutral-700">
+              <CodeEditor
+                path="DIRECTIVES.md"
+                value={directivesDraft ?? ''}
+                onChange={setDirectivesDraft}
+                height="100%"
+              />
+            </div>
+            <button
+              className="self-start rounded bg-emerald-700 px-3 py-1 text-xs text-white hover:bg-emerald-600"
+              onClick={saveDirectives}
+            >Save directives</button>
           </div>
-          <pre className="max-h-56 overflow-y-auto whitespace-pre-wrap rounded bg-neutral-900 p-2 text-[11px] text-neutral-300">
-            {st.layers || '(no DIRECTIVES.md / AGENT.md found — add rules to activate)'}
-          </pre>
-        </div>
-        <div>
-          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-purple-400">
-            Review checklist (applied before work is accepted)
+        )}
+
+        {stdMode === 'skills' && !editingSkill && (
+          <div className="flex flex-1 flex-col gap-1 overflow-y-auto">
+            <button
+              className="self-start rounded bg-emerald-700 px-2 py-1 text-[10px] text-white"
+              onClick={() => setEditingSkill({ name: 'new-skill', description: '', body: '' })}
+            >+ new skill</button>
+            {skillList && skillList.map((s) => (
+              <div key={s.name} className="flex items-start justify-between gap-1 rounded bg-neutral-900 p-1">
+                <div className="min-w-0">
+                  <div className="text-xs text-neutral-200">{s.name}</div>
+                  <div className="truncate text-[10px] text-neutral-500">{s.description}</div>
+                </div>
+                <div className="flex shrink-0 gap-1">
+                  <button className="text-[10px] text-sky-400" onClick={() => startEditSkill(s.name)}>edit</button>
+                  <button className="text-[10px] text-red-500" onClick={() => deleteSkill(s.name)}>del</button>
+                </div>
+              </div>
+            ))}
           </div>
-          <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded bg-neutral-900 p-2 text-[11px] text-neutral-400">
-            {st.review_checklist}
+        )}
+
+        {stdMode === 'skills' && editingSkill && (
+          <div className="flex min-h-0 flex-1 flex-col gap-1">
+            <input
+              className="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-200"
+              value={editingSkill.name}
+              onChange={(e) => setEditingSkill({ ...editingSkill, name: e.target.value })}
+              placeholder="skill-name"
+            />
+            <input
+              className="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-200"
+              value={editingSkill.description}
+              onChange={(e) => setEditingSkill({ ...editingSkill, description: e.target.value })}
+              placeholder="when should the agent use this skill?"
+            />
+            <div className="min-h-0 flex-1 overflow-hidden rounded border border-neutral-700">
+              <CodeEditor
+                path={`${editingSkill.name}.md`}
+                value={editingSkill.body}
+                onChange={(v) => setEditingSkill({ ...editingSkill, body: v })}
+                height="100%"
+              />
+            </div>
+            <div className="flex gap-1">
+              <button className="rounded bg-emerald-700 px-3 py-1 text-xs text-white" onClick={saveSkill}>save skill</button>
+              <button className="rounded bg-neutral-700 px-3 py-1 text-xs text-white" onClick={() => setEditingSkill(null)}>cancel</button>
+            </div>
+          </div>
+        )}
+
+        {stdMode === 'checklist' && (
+          <pre className="min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap rounded bg-neutral-900 p-2 text-[11px] text-neutral-400">
+            {reviewChecklist ?? 'loading…'}
           </pre>
-        </div>
-        <div className="text-[10px] text-neutral-600">
-          edit via {st.layers && st.layers.includes('AGENT.md') ? 'AGENT.md' : '~/.codingdude/DIRECTIVES.md'} — agent edits require your approval
-        </div>
+        )}
       </div>
-    ) : <div className="text-neutral-600">loading…</div>
+    )
   } else if (tab === 'Terminal') {
     body = <div className="text-neutral-600">command output lives in the chat tool timeline</div>
   } else if (tab === 'MCP' && data.mcp) {
@@ -456,40 +548,121 @@ function RightPanel({ sessionId, refreshKey }) {
         <div className="text-emerald-400">cost: ${(u.cost_usd ?? 0).toFixed(4)}</div>
       </div>
     )
-  } else if (tab === 'Memory' && data.memory) {
-    body = (
-      <div className="space-y-1">
-        {data.memory.map((m) => (
-          <div key={m.id} className="flex items-start justify-between gap-1 rounded bg-neutral-900 p-1">
-            <span className="text-neutral-300">{m.content}</span>
-            <button
-              className="text-red-500 hover:text-red-300"
-              onClick={() => call(`/memory/${m.id}`, { method: 'DELETE' }).then(() => setData({ memory: data.memory.filter((x) => x.id !== m.id) }))}
-            >✕</button>
-          </div>
-        ))}
-      </div>
-    )
   }
+
   return (
-    <aside className="w-80 shrink-0 overflow-y-auto border-l border-neutral-800 bg-neutral-950 p-3">
+    <aside className="flex w-96 shrink-0 flex-col overflow-hidden border-l border-neutral-800 bg-neutral-950 p-3">
       <div className="mb-2 flex flex-wrap gap-1">
         {tabs.map((t) => (
           <button
             key={t}
-            className={`rounded px-2 py-1 text-xs ${tab === t ? 'bg-neutral-800 text-emerald-300' : 'text-neutral-500 hover:text-neutral-300'}`}
+            className={`relative rounded px-2 py-0.5 text-xs ${tab === t ? 'bg-neutral-800 text-emerald-300' : 'text-neutral-500 hover:text-neutral-300'}`}
             onClick={() => setTab(t)}
           >
             {t}
+            {t === 'Diff' && diffBadge && tab !== 'Diff' && (
+              <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
+            )}
           </button>
         ))}
       </div>
-      <div className="text-xs">{body}</div>
+      <div className="min-h-0 flex-1 overflow-y-auto text-xs">{body}</div>
     </aside>
   )
 }
 
-// ---------- app ----------
+function Chat({ messages, streaming, onStop, onDecide, sessionId }) {
+  const bottomRef = useRef(null)
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages])
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex-1 space-y-3 overflow-y-auto p-4">
+        {messages.map((m, i) => (
+          <div key={i} className={m.role === 'user' ? 'text-right' : ''}>
+            <div
+              className={`inline-block max-w-[85%] whitespace-pre-wrap rounded-lg px-3 py-2 text-sm ${
+                m.role === 'user' ? 'bg-emerald-800 text-white' : 'bg-neutral-800 text-neutral-200'
+              }`}
+            >
+              {m.text}
+              {m.streaming && <span className="animate-pulse">▍</span>}
+            </div>
+            {m.toolEvents && <ToolTimeline events={m.toolEvents} />}
+            {m.review && (
+              <div className="my-1 rounded border border-purple-700 bg-purple-900/20 p-2 text-xs">
+                <div className="font-semibold text-purple-300">Reviewer findings</div>
+                <pre className="whitespace-pre-wrap text-neutral-300">{m.review}</pre>
+              </div>
+            )}
+            {m.gate && !m.gate.startsWith('plan:') && <ApprovalCard command={m.gate} onDecide={onDecide} />}
+            {m.gate && m.gate.startsWith('plan:') && sessionId && (
+              <>
+                <PlanCard sessionId={sessionId} onDecide={onDecide} />
+                <div className="my-1 flex gap-2">
+                  <button className="rounded bg-emerald-700 px-3 py-1 text-xs text-white hover:bg-emerald-600"
+                    onClick={() => onDecide('approve')}>Approve plan</button>
+                  <button className="rounded bg-red-800 px-3 py-1 text-xs text-white hover:bg-red-700"
+                    onClick={() => onDecide('deny')}>Reject</button>
+                </div>
+              </>
+            )}
+          </div>
+        ))}
+        {streaming && (
+          <button
+            className="rounded border border-red-700 px-2 py-1 text-xs text-red-400 hover:bg-red-900/30"
+            onClick={onStop}
+          >
+            ■ Stop
+          </button>
+        )}
+        <div ref={bottomRef} />
+      </div>
+    </div>
+  )
+}
+
+function Prompt({ onSend, disabled }) {
+  const [text, setText] = useState('')
+  return (
+    <form
+      className="flex gap-2 border-b border-neutral-800 p-3"
+      onSubmit={(e) => {
+        e.preventDefault()
+        if (text.trim()) {
+          onSend(text.trim())
+          setText('')
+        }
+      }}
+    >
+      <textarea
+        className="flex-1 resize-none rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
+        rows={2}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault()
+            if (text.trim()) {
+              onSend(text.trim())
+              setText('')
+            }
+          }
+        }}
+        placeholder={disabled ? 'create or select a session first' : 'describe the task… (Enter to send, Shift+Enter for newline)'}
+        disabled={disabled}
+      />
+      <button
+        className="rounded bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-600 disabled:opacity-40"
+        disabled={disabled}
+      >
+        Send
+      </button>
+    </form>
+  )
+}
 
 export default function App() {
   const [loggedIn, setLoggedIn] = useState(null) // null = checking cookie
@@ -500,30 +673,25 @@ export default function App() {
   const [streaming, setStreaming] = useState(false)
   const [error, setError] = useState('')
   const [refreshKey, setRefreshKey] = useState(0)
+  const [diffBadge, setDiffBadge] = useState(false)
+  const [status, setStatus] = useState('idle')
   const runRef = useRef(null)
   const esRef = useRef(null)
 
-  // Any 401 from the API bounces back to the login screen.
+  // Any 401 bounces back to the login screen.
   useEffect(() => {
     const onUnauthorized = () => setLoggedIn(false)
     window.addEventListener('cd-unauthorized', onUnauthorized)
     return () => window.removeEventListener('cd-unauthorized', onUnauthorized)
   }, [])
 
-  // On load: an existing session cookie skips the login screen.
+  // An existing session cookie skips the login screen.
   useEffect(() => {
     checkAuth().then((ok) => {
       setLoggedIn(ok)
-      if (ok) refreshSessions(workdir)
+      if (ok) refreshSessions(localStorage.getItem('codingdude-workdir') || '')
     })
   }, [])
-
-  // Poll the panels while a run streams (diff/cost change live).
-  useEffect(() => {
-    if (!streaming) return
-    const t = setInterval(() => setRefreshKey((k) => k + 1), 4000)
-    return () => clearInterval(t)
-  }, [streaming])
 
   const refreshSessions = useCallback(async (wd) => {
     if (!wd) return
@@ -540,7 +708,6 @@ export default function App() {
   }, [loggedIn, workdir, refreshSessions])
 
   async function loadMessages(sessionId) {
-    // Server messages are the canonical history; render them as chat turns.
     const raw = await api.getMessages(sessionId)
     const turns = []
     for (const m of raw) {
@@ -570,8 +737,13 @@ export default function App() {
 
   function send(prompt) {
     if (!activeSession || streaming) return
-    setMessages((m) => [...m, { role: 'user', text: prompt }, { role: 'assistant', text: '', streaming: true, toolEvents: [] }])
+    setMessages((m) => [
+      ...m,
+      { role: 'user', text: prompt },
+      { role: 'assistant', text: '', streaming: true, toolEvents: [] },
+    ])
     setStreaming(true)
+    setStatus('running')
     setError('')
     api
       .startRun(activeSession, prompt)
@@ -585,23 +757,23 @@ export default function App() {
             const copy = [...msgs]
             const last = { ...copy[copy.length - 1] }
             if (ev.type === 'TEXT_MESSAGE_CONTENT') last.text += ev.delta
-            if (ev.type === 'TOOL_CALL_END')
-              last.toolEvents = [
-                ...(last.toolEvents || []),
-                { tool_name: ev.tool_name, result: ev.result },
-              ]
-            if (ev.type === 'GATE_REQUEST') last.gate = ev.command
+            if (ev.type === 'TOOL_CALL_END') {
+              last.toolEvents = [...(last.toolEvents || []), { tool_name: ev.tool_name, result: ev.result }]
+              last.gate = null
+              if (ev.tool_name === 'edit_file' || ev.tool_name === 'write_file') setDiffBadge(true)
+            }
+            if (ev.type === 'GATE_REQUEST') {
+              last.gate = ev.command
+              setStatus('waiting for approval')
+            }
             if (ev.type === 'REVIEW_FINDINGS') last.review = ev.findings
-            // The gate card clears only when the tool actually finishes —
-            // TOOL_CALL_START fires *before* the gate resolves, so clearing
-            // on it would erase the card the moment it appears.
-            if (ev.type === 'TOOL_CALL_END') last.gate = null
-            if (ev.type === 'RUN_ERROR') setError(ev.message || 'run error')
-            if (ev.type in { RUN_FINISHED: 1, RUN_ERROR: 1, RUN_CANCELLED: 1 }) {
+            if (['RUN_FINISHED', 'RUN_ERROR', 'RUN_CANCELLED'].includes(ev.type)) {
               last.streaming = false
+              setStatus(ev.type === 'RUN_ERROR' ? `error: ${ev.message || ''}` : 'finished')
+              if (ev.type === 'RUN_ERROR') setError(ev.message || 'run error')
               es.close()
               setStreaming(false)
-              loadMessages(activeSession) // canonical history replaces the stream
+              loadMessages(activeSession)
             }
             copy[copy.length - 1] = last
             return copy
@@ -628,6 +800,23 @@ export default function App() {
     if (runRef.current) api.cancelRun(runRef.current).catch(() => {})
     esRef.current?.close()
     setStreaming(false)
+    setStatus('stopped')
+  }
+
+  function decide(decision) {
+    setMessages((msgs) => {
+      const copy = [...msgs]
+      const last = { ...copy[copy.length - 1] }
+      last.gate = null
+      copy[copy.length - 1] = last
+      return copy
+    })
+    setStatus('running')
+    if (runRef.current) api.approve(runRef.current, decision).catch((e) => setError(String(e.message)))
+  }
+
+  if (loggedIn === null) {
+    return <div className="flex h-screen items-center justify-center bg-neutral-900 text-neutral-500">connecting…</div>
   }
 
   if (!loggedIn) {
@@ -643,69 +832,36 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen bg-neutral-900 text-neutral-200">
-      <Sidebar
-        workdir={workdir}
-        setWorkdir={setWorkdir}
-        sessions={sessions}
-        activeSession={activeSession}
-        onSelect={(id) => {
-          setActiveSession(id)
-          loadMessages(id).catch((e) => setError(String(e.message)))
-        }}
-        onNewSession={newSession}
-      />
-      <main className="flex flex-1 flex-col overflow-hidden">
-        {error && <div className="bg-red-900/50 px-4 py-1 text-xs text-red-300">{error}</div>}
-        <Prompt onSend={send} disabled={!activeSession || streaming} />
-        <Chat
-          sessionId={activeSession}
-          messages={messages}
-          streaming={streaming}
-          onStop={stop}
-          onDecide={(decision) => {
-            setMessages((msgs) => {
-              const copy = [...msgs]
-              const last = { ...copy[copy.length - 1] }
-              last.gate = null
-              copy[copy.length - 1] = last
-              return copy
-            })
-            if (runRef.current) api.approve(runRef.current, decision).catch((e) => setError(String(e.message)))
+    <div className="flex h-screen flex-col bg-neutral-900 text-neutral-200">
+      <div className="flex min-h-0 flex-1">
+        <Sidebar
+          workdir={workdir}
+          setWorkdir={setWorkdir}
+          sessions={sessions}
+          activeSession={activeSession}
+          onSelect={(id) => {
+            setActiveSession(id)
+            loadMessages(id).catch((e) => setError(String(e.message)))
           }}
+          onNewSession={newSession}
         />
-      </main>
-      <RightPanel sessionId={activeSession} refreshKey={refreshKey} />
+        <main className="flex min-w-0 flex-1 flex-col">
+          {error && <div className="bg-red-900/50 px-4 py-1 text-xs text-red-300">{error}</div>}
+          <Prompt onSend={send} disabled={!activeSession || streaming} />
+          <Chat messages={messages} streaming={streaming} onStop={stop} onDecide={decide} sessionId={activeSession} />
+        </main>
+        <RightPanel
+          sessionId={activeSession}
+          refreshKey={refreshKey}
+          diffBadge={diffBadge}
+        />
+      </div>
+      <footer className="flex items-center justify-between border-t border-neutral-800 bg-neutral-950 px-3 py-1 text-[10px] text-neutral-500">
+        <span>
+          {activeSession ? `session ${activeSession.slice(0, 8)}` : 'no session'} · {workdir || 'no workdir'}
+        </span>
+        <span className={streaming ? 'text-emerald-400' : ''}>{status}</span>
+      </footer>
     </div>
-  )
-}
-
-function Prompt({ onSend, disabled }) {
-  const [text, setText] = useState('')
-  return (
-    <form
-      className="flex gap-2 border-b border-neutral-800 p-3"
-      onSubmit={(e) => {
-        e.preventDefault()
-        if (text.trim()) {
-          onSend(text.trim())
-          setText('')
-        }
-      }}
-    >
-      <input
-        className="flex-1 rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        placeholder={disabled ? 'create or select a session first' : 'describe the task…'}
-        disabled={disabled}
-      />
-      <button
-        className="rounded bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-600 disabled:opacity-40"
-        disabled={disabled}
-      >
-        Send
-      </button>
-    </form>
   )
 }

@@ -85,3 +85,15 @@ The injection point for layers 1–2 is a **DirectiveCapability**: pydantic-ai's
 - Multi-agent debates/committees — expensive, hard to steer, low yield vs a disciplined plan-review loop.
 - Fine-tuning — directives + skills + review achieve steering without training.
 - Auto-updating standards from git history — seductive, unreliable; keep standards human-authored.
+
+---
+
+## NORTH STAR (user mandate, 2026-09-08)
+
+"We want to build the best in the world AI coding tool that will not produce slop. The way it works must be first in class and user experience counts a lot, but at its very heart it is a solid software engineering tool. Not a vibe coding tool."
+
+Implications, in priority order:
+1. Engineering rigor is the product: plan → standards → verify → review. No shortcuts that produce slop, ever, even when it would be faster.
+2. First-class UX is not optional: pro-grade editors (CodeMirror), real components, no clunky roll-your-own.
+3. Everything self-hosted: directives, skills, MCP, prompts editable inside the tool.
+4. Built single-user, designed world-class: clean abstractions now, multi-user later.
