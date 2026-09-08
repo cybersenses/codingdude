@@ -27,9 +27,9 @@ def scripted(fn) -> FunctionModel:
 
                     args = json.dumps(args)
                 yield {i: DeltaToolCall(name=part.tool_name, json_args=args)}
-                return
-            if hasattr(part, 'content') and isinstance(part.content, str):
+            elif hasattr(part, 'content') and isinstance(part.content, str):
                 yield part.content
-                return
+
+    return FunctionModel(fn, stream_function=stream_fn, model_name='scripted')
 
     return FunctionModel(fn, stream_function=stream_fn, model_name='scripted')

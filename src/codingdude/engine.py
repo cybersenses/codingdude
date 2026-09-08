@@ -25,11 +25,14 @@ from .tools import (
     build_web_toolset,
 )
 
-INSTRUCTIONS = (
-    'You are CodingDude, a personal coding agent working in a repository. '
-    'Use the file tools (list_dir, read_file, grep, glob) to explore the codebase. '
-    'Complete the task, then summarize what you found or did.'
-)
+
+def _base_instructions() -> str:
+    from .prompts import load_prompt
+
+    return load_prompt('base_instructions')
+
+
+INSTRUCTIONS = _base_instructions()
 
 
 def _zai_fallback(model_name: str, base_url: str | None) -> Model:
@@ -144,6 +147,7 @@ class Engine:
         approvals=None,
         subagent_model: Model | None = None,
         emit: Callable[[dict], None] | None = None,
+        trace: bool = True,
     ) -> RunOutcome:
         if session_id is None:
             session_id = self._db.create_session(workdir, title=prompt[:80])
@@ -151,12 +155,28 @@ class Engine:
         else:
             created_session = False
 
+        trace_file = self._config_home() / 'traces' / f'{session_id}.jsonl'
+
+        def traced(event: dict) -> None:
+            import json
+            from datetime import UTC as _UTC
+            from datetime import datetime as _dt
+
+            if trace:
+                trace_file.parent.mkdir(parents=True, exist_ok=True)
+                payload = json.dumps({'ts': _dt.now(_UTC).isoformat(), **event})
+                with open(trace_file, 'a', encoding='utf-8') as f:
+                    f.write(payload + '\n')
+            if emit:
+                emit(event)
+
         try:
             self._check_budget(session_id)
             resolved = model if isinstance(model, Model) else self.build_model()
             model_name = getattr(resolved, 'model_name', str(resolved))
 
             history = decode_messages(self._db.load_messages(session_id))
+            traced({'type': 'USER_PROMPT', 'text': prompt})
             history, compacted = await self._maybe_compact(history, resolved, on_event)
             if compacted:
                 self._db.replace_messages(
@@ -264,10 +284,11 @@ class Engine:
             )
             try:
                 if emit is None:
+                    # Non-streaming runs preserve full usage reporting (budget).
                     result = await agent.run(prompt, message_history=history or None)
                 else:
                     result = await self._run_streaming(
-                        agent, prompt, history, model_name, emit
+                        agent, prompt, history, model_name, traced
                     )
             except GateRequired as gate:
                 # ADR-0003: unattended runs abort on gates. The Session keeps

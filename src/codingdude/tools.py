@@ -224,13 +224,11 @@ def build_delegation_toolset(workdir: Path, subagent_model) -> FunctionToolset:
     async def delegate(task: str) -> str:
         from pydantic_ai import Agent
 
+        from .prompts import load_prompt
+
         sub_agent: Agent = Agent(
             model=subagent_model,
-            instructions=(
-                'You are a CodingDude Subagent doing read-only research for the '
-                'main agent. Investigate the task with the file tools and answer '
-                'with your findings, concisely.'
-            ),
+            instructions=load_prompt('delegation'),
             toolsets=[build_toolset(workdir, read_only=True)],
         )
         result = await sub_agent.run(task)
