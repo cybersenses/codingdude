@@ -332,18 +332,13 @@ function FileExplorer({ sessionId }) {
           <div className="flex items-center justify-between">
             <span className="truncate font-mono text-[10px] text-emerald-300">{openPath}</span>
             <div className="flex gap-1">
-              {file?.is_markdown && !editing && (
-                <button
-                  className="rounded bg-neutral-700 px-2 py-0.5 text-[10px] text-white"
-                  onClick={() => setEditing(!editing)}
-                >{editing ? 'view' : 'edit'}</button>
-              )}
-              {!file?.is_markdown && (
-                <button
-                  className="rounded bg-neutral-700 px-2 py-0.5 text-[10px] text-white"
-                  onClick={() => { setDraft(file?.content || ''); setEditing(!editing) }}
-                >{editing ? 'cancel' : 'edit'}</button>
-              )}
+              <button
+                className="rounded bg-neutral-700 px-2 py-0.5 text-[10px] text-white"
+                onClick={() => {
+                  if (!editing) setDraft(file?.content || '')
+                  setEditing(!editing)
+                }}
+              >{editing ? 'view' : 'edit'}</button>
               {editing && (
                 <button
                   className="rounded bg-emerald-700 px-2 py-0.5 text-[10px] text-white"
