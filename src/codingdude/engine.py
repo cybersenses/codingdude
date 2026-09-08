@@ -215,8 +215,10 @@ class Engine:
 
             toolsets.append(build_ast_toolset(workdir))
 
+            from .deadcode import build_deadcode_toolset
             from .mcp_config import load_merged_mcp_toolsets
 
+            toolsets.append(build_deadcode_toolset(workdir))
             toolsets.extend(load_merged_mcp_toolsets(self._config_home(), workdir))
 
             if self.embedder is not None:
