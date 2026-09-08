@@ -207,6 +207,11 @@ class Engine:
                     build_semantic_toolset(workdir, SemanticIndex(self.embedder, self._db))
                 )
 
+            from .skills import SkillRegistry, build_skills_toolset
+
+            registry = SkillRegistry(self._config_home(), workdir)
+            toolsets.append(build_skills_toolset(registry))
+
             from .memory import MemoryStore, build_memory_toolset
 
             store = MemoryStore(self._db)
@@ -218,6 +223,17 @@ class Engine:
             directive_layers = build_directive_layers(self._config_home(), workdir)
             if directive_layers:
                 instructions += '\n\n' + directive_layers
+
+            skills_index = registry.index()
+            if skills_index:
+                lines = '\n'.join(
+                    f"- {s['name']}: {s['description']}" for s in skills_index
+                )
+                instructions += (
+                    '\n\n## Skills (procedures you can load)\n'
+                    'When a task matches a skill, call load_skill(name) and follow it:\n'
+                    + lines
+                )
             if self.embedder is not None:
                 relevant = [
                     content
