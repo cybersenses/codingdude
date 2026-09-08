@@ -8,6 +8,7 @@ from pydantic_ai import ModelRetry
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 
 from .approvals import DENIED, NEEDS_GATE
+from .directives import project_directives_guard
 from .events import EditChange
 
 MAX_READ_BYTES = 256 * 1024
@@ -87,12 +88,12 @@ def build_toolset(
             on_edit(EditChange(kind='edit', path=path, before=before, after=after))
 
     def _guard_project_context(path: str) -> None:
-        """AGENT.md is the user's Project Context — edits always need a gate."""
-        if Path(path).name.lower() != 'agent.md':
+        """Directives files (AGENT.md, DIRECTIVES.md) always need a gate."""
+        if not project_directives_guard(path):
             return
         if approvals is None:
             raise ModelRetry(
-                f'{path} is the Project Context; editing it requires the approval '
+                f'{path} is a directives file; editing it requires the approval '
                 'system, which is not active in this run.'
             )
         if not approvals.yolo:

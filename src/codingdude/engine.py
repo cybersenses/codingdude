@@ -213,12 +213,11 @@ class Engine:
             toolsets.append(build_memory_toolset(store, str(workdir)))
 
             instructions = INSTRUCTIONS
-            agent_md = workdir / 'AGENT.md'
-            if agent_md.exists():
-                instructions += (
-                    '\n\nProject Context (AGENT.md, follow these instructions):\n'
-                    + agent_md.read_text(encoding='utf-8', errors='replace')
-                )
+            from .directives import build_directive_layers
+
+            directive_layers = build_directive_layers(self._config_home(), workdir)
+            if directive_layers:
+                instructions += '\n\n' + directive_layers
             if self.embedder is not None:
                 relevant = [
                     content
