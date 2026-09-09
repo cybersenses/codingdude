@@ -1,9 +1,9 @@
 """Repo map: tree + signatures within budget, engine injection."""
 
 from helpers import scripted
+from pydantic_ai.messages import ModelResponse, TextPart
 
 from codingdude.repo_map import build_repo_map
-from pydantic_ai.messages import ModelResponse, TextPart
 
 
 def make_project(workdir):

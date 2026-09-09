@@ -4,7 +4,7 @@ import subprocess
 
 import pytest
 
-from codingdude.worktrees import WorktreeError, build_worktree_toolset
+from codingdude.worktrees import build_worktree_toolset
 
 
 def git(workdir, *args):

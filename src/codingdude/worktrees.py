@@ -11,7 +11,7 @@ from pathlib import Path
 
 from pydantic_ai.toolsets import FunctionToolset
 
-from .tools import SKIP_DIRS, scrubbed_env
+from .tools import scrubbed_env
 
 WORKTREE_DIRNAME = '.codingdude-worktrees'
 BRANCH_PREFIX = 'codingdude/'

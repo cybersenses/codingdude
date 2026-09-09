@@ -1,14 +1,13 @@
 """Fix-until-green loop: test runs feed failures back, iterations capped."""
 
 from helpers import scripted
-
-from codingdude.approvals import ApprovalPolicy
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
     TextPart,
-    ToolCallPart,
 )
+
+from codingdude.approvals import ApprovalPolicy
 
 # A "test command" that fails on the first run and passes afterwards.
 _attempts = {'n': 0}

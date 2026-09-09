@@ -452,3 +452,55 @@ def build_ci_toolset(workdir: Path) -> FunctionToolset:
         return await _gh(argv)
 
     return FunctionToolset([ci_status, ci_failures])
+
+
+def build_audit_toolset(workdir: Path) -> FunctionToolset:
+    """`dependency_audit`: vulnerability scan via pip-audit (Python) and
+    npm audit (JS/TS). Read-only; auto tier. Reports what it finds; missing
+    tools are surfaced so the agent can suggest installation."""
+
+    async def _run(cmd: list[str], timeout: int = 300) -> str:
+        import asyncio
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, cwd=workdir, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE, env=scrubbed_env(),
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except TimeoutError:
+            proc.kill()
+            return 'audit timed out'
+        return (stdout.decode(errors='replace') + stderr.decode(errors='replace')).strip()
+
+    async def dependency_audit() -> str:
+        sections = []
+
+        if (workdir / 'requirements.txt').exists() or (workdir / 'pyproject.toml').exists():
+            pip_result = await _run(['pip-audit', '--progress-spinner', 'off'])
+            if 'No known vulnerabilities found' in pip_result or 'no known vulnerabilities' in pip_result.lower():
+                sections.append('pip-audit: no known vulnerabilities')
+            elif 'is not recognized' in pip_result or 'No module named pip_audit' in pip_result:
+                sections.append('pip-audit: not installed (pip install pip-audit)')
+            else:
+                sections.append(f'pip-audit:\n{pip_result[:3000]}')
+
+        if (workdir / 'package.json').exists():
+            npm_result = await _run(['npm', 'audit', '--json'])
+            import json as _json
+
+            try:
+                report = _json.loads(npm_result)
+                vulns = report.get('metadata', {}).get('vulnerabilities', {})
+                total = vulns.get('total', 0)
+                sections.append(
+                    f'npm audit: {total} vulnerabilit{"y" if total == 1 else "ies"} '
+                    f'(critical: {vulns.get("critical", 0)}, high: {vulns.get("high", 0)}, '
+                    f'moderate: {vulns.get("moderate", 0)}, low: {vulns.get("low", 0)})'
+                )
+            except _json.JSONDecodeError:
+                sections.append(f'npm audit: {npm_result[:500]}')
+
+        return '\n\n'.join(sections) or '(no supported project manifests found)'
+
+    return FunctionToolset([dependency_audit])
