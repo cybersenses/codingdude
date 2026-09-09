@@ -72,7 +72,7 @@ function Login({ onLoggedIn }) {
   )
 }
 
-function Sidebar({ workdir, setWorkdir, sessions, activeSession, onSelect, onNewSession, width, runningSessions }) {
+function Sidebar({ workdir, setWorkdir, sessions, activeSession, onSelect, onNewSession, width, runningSessions, projects, activeProject, onSelectProject, onAddProject, onDeleteProject }) {
   return (
     <aside className="flex shrink-0 flex-col gap-3 border-r border-neutral-800 bg-neutral-950 p-3" style={{ width }}>
       <h1 className="text-lg font-bold text-brand-400">CodingDude</h1>
