@@ -18,7 +18,9 @@ export class ErrorBoundary extends React.Component {
           <div className="max-w-lg rounded-lg border border-red-800 bg-neutral-950 p-6">
             <h1 className="mb-2 text-lg font-bold text-red-400">UI crashed</h1>
             <pre className="mb-4 whitespace-pre-wrap text-xs text-neutral-400">
-              {String(this.state.error)}
+              {this.state.error && this.state.error.stack
+                ? String(this.state.error.stack)
+                : String(this.state.error)}
             </pre>
             <button
               className="rounded bg-brand-700 px-3 py-1 text-sm text-white"
@@ -728,11 +730,24 @@ function Chat({ messages, streaming, onStop, onDecide, sessionId, suggestMode })
   )
 }
 
-function Prompt({ onSend, disabled, fixLoop, setFixLoop }) {
+function Prompt({ onSend, disabled, suggestMode, setSuggestMode, fixLoop, setFixLoop }) {
   const [text, setText] = useState('')
+  const [image, setImage] = useState(null) // {b64, name}
+  const fileRef = useRef(null)
+  const [notify, setNotify] = useState(() => localStorage.getItem('cd-notify') === '1')
+
+  function toggleNotify() {
+    const next = !notify
+    setNotify(next)
+    localStorage.setItem('cd-notify', next ? '1' : '0')
+    if (next && 'Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission()
+    }
+  }
+
   return (
     <form
-      className="flex flex-wrap gap-2 border-b border-neutral-800 p-3"
+      className="flex flex-wrap items-center gap-2 border-b border-neutral-800 p-3"
       onSubmit={(e) => {
         e.preventDefault()
         if (text.trim() || image) {
@@ -742,29 +757,68 @@ function Prompt({ onSend, disabled, fixLoop, setFixLoop }) {
         }
       }}
     >
-      {image && (
-        <div className="flex items-center gap-1 self-end text-[10px] text-emerald-400">
-          {image.name}
-          <button className="text-red-400" onClick={() => setImage(null)}>✕</button>
-        </div>
-      )}
       <textarea
-        className="flex-1 resize-none rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
+        className="min-w-0 flex-1 resize-none rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
         rows={2}
         value={text}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault()
-            if (text.trim()) {
-              onSend(text.trim())
+            if (text.trim() || image) {
+              onSend(text.trim() || 'describe this image', image)
               setText('')
+              setImage(null)
             }
           }
         }}
         placeholder={disabled ? 'create or select a session first' : 'describe the task… (Enter to send, Shift+Enter for newline)'}
         disabled={disabled}
       />
+      {image && (
+        <div className="flex items-center gap-1 rounded bg-neutral-900 px-2 py-1 text-[10px] text-emerald-400">
+          {image.name}
+          <button type="button" className="text-red-400" onClick={() => setImage(null)}>✕</button>
+        </div>
+      )}
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/png,image/jpeg"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files && e.target.files[0]
+          if (!f) return
+          const reader = new FileReader()
+          reader.onload = () => setImage({ b64: String(reader.result).split(',')[1], name: f.name })
+          reader.readAsDataURL(f)
+          e.target.value = ''
+        }}
+      />
+      <button
+        type="button"
+        className="rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-400 hover:text-neutral-200 disabled:opacity-40"
+        onClick={() => fileRef.current && fileRef.current.click()}
+        disabled={disabled}
+        title="attach image"
+      >
+        📎
+      </button>
+      <label className="flex items-center gap-1 text-[10px] text-neutral-400" title="agent edits become proposals you can revert">
+        <input type="checkbox" checked={suggestMode} onChange={(e) => setSuggestMode(e.target.checked)} />
+        suggest
+      </label>
+      <label className="flex items-center gap-1 text-[10px] text-neutral-400" title="run tests after the task and fix failures until green (max 3 rounds)">
+        <input type="checkbox" checked={fixLoop} onChange={(e) => setFixLoop(e.target.checked)} />
+        fix until green
+      </label>
+      <label
+        className={`cursor-pointer text-sm ${notify ? '' : 'grayscale opacity-50'}`}
+        title="notify when a run finishes or waits"
+        onClick={toggleNotify}
+      >
+        🔔
+      </label>
       <button
         className="rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-40"
         disabled={disabled}
@@ -939,7 +993,7 @@ export default function App() {
     setStatus('running')
     setError('')
     api
-      .startRun(activeSession, prompt, null, fixLoop)
+      .startRun(activeSession, prompt, null, fixLoop, image ? image.b64 : null)
       .then(({ run_id }) => {
         runRef.current = run_id
         const es = new EventSource(api.eventStreamUrl(run_id))
@@ -1046,7 +1100,14 @@ export default function App() {
         {dividerFor('right')}
         <main className="flex min-w-0 flex-1 flex-col">
           {error && <div className="bg-red-900/50 px-4 py-1 text-xs text-red-300">{error}</div>}
-          <Prompt onSend={send} disabled={!activeSession || streaming} fixLoop={fixLoop} setFixLoop={setFixLoop} />
+          <Prompt
+            onSend={send}
+            disabled={!activeSession || streaming}
+            suggestMode={suggestMode}
+            setSuggestMode={(v) => { setSuggestMode(v); localStorage.setItem('cd-suggest', v ? '1' : '0') }}
+            fixLoop={fixLoop}
+            setFixLoop={setFixLoop}
+          />
           <Chat messages={messages} streaming={streaming} onStop={stop} onDecide={decide} sessionId={activeSession} suggestMode={suggestMode} />
         </main>
         {dividerFor('right')}
