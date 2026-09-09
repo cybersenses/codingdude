@@ -85,10 +85,11 @@ export const api = {
     prompt: string,
     model: string | null = null,
     fixLoop = false,
+    imageB64: string | null = null,
   ): Promise<{ run_id: string }> =>
     call<{ run_id: string }>(`/sessions/${sessionId}/runs`, {
       method: 'POST',
-      body: JSON.stringify({ prompt, model, fix_loop: fixLoop }),
+      body: JSON.stringify({ prompt, model, fix_loop: fixLoop, image_b64: imageB64 }),
     }),
   cancelRun: (runId: string): Promise<unknown> => call(`/runs/${runId}`, { method: 'DELETE' }),
   approve: (runId: string, decision: ApprovalDecision): Promise<unknown> =>
@@ -100,6 +101,8 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ disabled }),
     }),
+  activeRuns: (): Promise<{ run_id: string; session_id: string }[]> =>
+    call('/runs/active') as Promise<{ run_id: string; session_id: string }[]>,
   eventStreamUrl: (runId: string) =>
     `/api/runs/${runId}/events?token=${encodeURIComponent(getToken())}`,
 }

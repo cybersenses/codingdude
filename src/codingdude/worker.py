@@ -222,6 +222,12 @@ def workdir_path(args):
     return Path(args.workdir).resolve()
 
 
+def image_path_arg(args):
+    from pathlib import Path
+
+    return Path(args.image).resolve() if args.image else None
+
+
 def config_home():
     from codingdude.config import config_home
 
@@ -237,6 +243,7 @@ def main(argv=None) -> int:
     parser.add_argument('--model', default=None)
     parser.add_argument('--yolo', action='store_true')
     parser.add_argument('--fix-loop', action='store_true')
+    parser.add_argument('--image', default=None, help='path to an image to include with the prompt')
     parser.add_argument('--budget', type=float, default=None)
     args = parser.parse_args(argv)
     try:

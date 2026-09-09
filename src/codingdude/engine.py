@@ -158,6 +158,8 @@ class Engine:
         fix_loop: bool = False,
         test_command: str = 'pytest -q',
         max_test_iterations: int = 3,
+        image_path: Path | None = None,
+        vision_model: Model | None = None,
     ) -> RunOutcome:
         if session_id is None:
             session_id = self._db.create_session(workdir, title=prompt[:80])
@@ -183,6 +185,8 @@ class Engine:
         try:
             self._check_budget(session_id)
             resolved = model if isinstance(model, Model) else self.build_model()
+            if image_path is not None and vision_model is not None:
+                resolved = vision_model
             model_name = getattr(resolved, 'model_name', str(resolved))
 
             history = decode_messages(self._db.load_messages(session_id))
@@ -200,8 +204,13 @@ class Engine:
                     cp_holder.append(self.checkpoints.begin(session_id))
                 self.checkpoints.capture_file(session_id, cp_holder[0], workdir, abs_path)
 
+            def on_edit_dispatch(ec: dict) -> None:
+                traced(ec)
+                if on_event:
+                    on_event(ec)
+
             toolsets: list[AbstractToolset] = [
-                build_toolset(workdir, on_edit=on_event, approvals=approvals,
+                build_toolset(workdir, on_edit=on_edit_dispatch, approvals=approvals,
                               capture=capture_for_checkpoints)
             ]
             if approvals is not None:
@@ -315,13 +324,20 @@ class Engine:
             agent: Agent = Agent(
                 model=resolved, instructions=instructions, toolsets=toolsets
             )
+            run_prompt: str | list = prompt
+            if image_path is not None:
+                from pydantic_ai.messages import BinaryContent
+
+                image_bytes = Path(image_path).read_bytes()
+                media = 'image/png' if str(image_path).lower().endswith('.png') else 'image/jpeg'
+                run_prompt = [prompt, BinaryContent(data=image_bytes, media_type=media)]
             try:
                 if emit is None:
                     # Non-streaming runs preserve full usage reporting (budget).
-                    result = await agent.run(prompt, message_history=history or None)
+                    result = await agent.run(run_prompt, message_history=history or None)
                 else:
                     result = await self._run_streaming(
-                        agent, prompt, history, model_name, traced,
+                        agent, run_prompt, history, model_name, traced,
                         cp_holder=cp_holder,
                     )
             except GateRequired as gate:

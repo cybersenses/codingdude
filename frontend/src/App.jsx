@@ -102,6 +102,9 @@ function Sidebar({ workdir, setWorkdir, sessions, activeSession, onSelect, onNew
             title={s.title || s.session_id}
           >
             {s.title || s.session_id.slice(0, 12)}
+            {runningSessions.has(s.session_id) && (
+              <span className="ml-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
+            )}
           </button>
         ))}
       </div>
@@ -130,6 +133,42 @@ function ToolTimeline({ events }) {
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+function EditBlock({ edit, sessionId, onRevert }) {
+  const [state, setState] = useState('applied') // applied | reverted
+  const removed = edit.before ? edit.before.split('\n') : []
+  const added = edit.after ? edit.after.split('\n') : []
+  const beforeSet = new Set(removed)
+  const afterSet = new Set(added)
+  const removedLines = removed.filter((l) => !afterSet.has(l))
+  const addedLines = added.filter((l) => !beforeSet.has(l))
+  return (
+    <div className="my-1 rounded border border-sky-700 bg-sky-900/10 p-2 text-xs">
+      <div className="mb-1 flex items-center justify-between">
+        <span className="font-mono text-[10px] text-sky-300">{edit.path}</span>
+        {state === 'applied' ? (
+          <button
+            className="rounded bg-red-800 px-2 py-0.5 text-[10px] text-white"
+            onClick={() => {
+              call(`/sessions/${sessionId}/file`, {
+                method: 'PUT',
+                body: JSON.stringify({ path: edit.path, content: edit.before }),
+              })
+                .then(() => { setState('reverted'); onRevert(edit) })
+                .catch(() => {})
+            }}
+          >Revert</button>
+        ) : (
+          <span className="text-[10px] text-neutral-500">reverted</span>
+        )}
+      </div>
+      <pre className="whitespace-pre-wrap font-mono text-[10px] leading-tight">
+        {removedLines.map((l, i) => <div key={'r' + i} className="text-red-400">- {l}</div>)}
+        {addedLines.map((l, i) => <div key={'a' + i} className="text-emerald-400">+ {l}</div>)}
+      </pre>
     </div>
   )
 }
@@ -624,7 +663,7 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
   )
 }
 
-function Chat({ messages, streaming, onStop, onDecide, sessionId }) {
+function Chat({ messages, streaming, onStop, onDecide, sessionId, suggestMode }) {
   const bottomRef = useRef(null)
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -649,6 +688,18 @@ function Chat({ messages, streaming, onStop, onDecide, sessionId }) {
                 <pre className="whitespace-pre-wrap text-neutral-300">{m.review}</pre>
               </div>
             )}
+            {m.edits && suggestMode && m.edits.map((ed, i) => (
+              <EditBlock key={i} edit={ed} sessionId={sessionId}
+                onRevert={(reverted) => {
+                  setMessages((msgs) => {
+                    const copy = [...msgs]
+                    const mm = { ...copy[i] }
+                    mm.edits = (mm.edits || []).filter((x) => x !== ed)
+                    copy[i] = mm
+                    return copy
+                  })
+                }} />
+            ))}
             {m.gate && !m.gate.startsWith('plan:') && <ApprovalCard command={m.gate} onDecide={onDecide} />}
             {m.gate && m.gate.startsWith('plan:') && sessionId && (
               <>
@@ -681,15 +732,22 @@ function Prompt({ onSend, disabled, fixLoop, setFixLoop }) {
   const [text, setText] = useState('')
   return (
     <form
-      className="flex gap-2 border-b border-neutral-800 p-3"
+      className="flex flex-wrap gap-2 border-b border-neutral-800 p-3"
       onSubmit={(e) => {
         e.preventDefault()
-        if (text.trim()) {
-          onSend(text.trim())
+        if (text.trim() || image) {
+          onSend(text.trim() || 'describe this image', image)
           setText('')
+          setImage(null)
         }
       }}
     >
+      {image && (
+        <div className="flex items-center gap-1 self-end text-[10px] text-emerald-400">
+          {image.name}
+          <button className="text-red-400" onClick={() => setImage(null)}>✕</button>
+        </div>
+      )}
       <textarea
         className="flex-1 resize-none rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
         rows={2}
@@ -728,6 +786,7 @@ export default function App() {
   const [refreshKey, setRefreshKey] = useState(0)
   const [diffBadge, setDiffBadge] = useState(false)
   const [status, setStatus] = useState('idle')
+  const [suggestMode, setSuggestMode] = useState(() => localStorage.getItem('cd-suggest') === '1')
   const [fixLoop, setFixLoop] = useState(false)
   const runRef = useRef(null)
   const esRef = useRef(null)
@@ -826,6 +885,21 @@ export default function App() {
     if (loggedIn) refreshSessions(workdir)
   }, [loggedIn, workdir, refreshSessions])
 
+  const [runningSessions, setRunningSessions] = useState(() => new Set())
+  useEffect(() => {
+    if (!loggedIn) return
+    let stop = false
+    async function poll() {
+      try {
+        const active = await api.activeRuns()
+        if (!stop) setRunningSessions(new Set(active.map((r) => r.session_id)))
+      } catch { /* transient */ }
+      if (!stop) setTimeout(poll, 5000)
+    }
+    poll()
+    return () => { stop = true }
+  }, [loggedIn])
+
   async function loadMessages(sessionId) {
     const raw = await api.getMessages(sessionId)
     const turns = []
@@ -854,7 +928,7 @@ export default function App() {
       .catch((e) => setError(String(e.message)))
   }
 
-  function send(prompt) {
+  function send(prompt, image) {
     if (!activeSession || streaming) return
     setMessages((m) => [
       ...m,
@@ -880,6 +954,9 @@ export default function App() {
               last.toolEvents = [...(last.toolEvents || []), { tool_name: ev.tool_name, result: ev.result }]
               last.gate = null
               if (ev.tool_name === 'edit_file' || ev.tool_name === 'write_file') setDiffBadge(true)
+            }
+            if (ev.type === 'EDIT_APPLIED') {
+              last.edits = [...(last.edits || []), { path: ev.path, before: ev.before, after: ev.after }]
             }
             if (ev.type === 'GATE_REQUEST') {
               last.gate = ev.command
@@ -970,7 +1047,7 @@ export default function App() {
         <main className="flex min-w-0 flex-1 flex-col">
           {error && <div className="bg-red-900/50 px-4 py-1 text-xs text-red-300">{error}</div>}
           <Prompt onSend={send} disabled={!activeSession || streaming} fixLoop={fixLoop} setFixLoop={setFixLoop} />
-          <Chat messages={messages} streaming={streaming} onStop={stop} onDecide={decide} sessionId={activeSession} />
+          <Chat messages={messages} streaming={streaming} onStop={stop} onDecide={decide} sessionId={activeSession} suggestMode={suggestMode} />
         </main>
         {dividerFor('right')}
         <RightPanel

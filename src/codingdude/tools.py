@@ -33,7 +33,7 @@ def scrubbed_env() -> dict:
         if not any(marker in k.upper() for marker in SECRET_MARKERS) or k in ('SYSTEMROOT',)
     }
 
-EditEmitter = Callable[[EditChange], None]
+EditEmitter = Callable[[dict], None]
 
 
 def build_toolset(
@@ -42,7 +42,7 @@ def build_toolset(
     read_only: bool = False,
     approvals=None,
     capture: Callable[[Path], None] | None = None,
-) -> FunctionToolset:
+) -> FunctionToolset:  # noqa: C901
     """Build the toolset bound to a Workdir (via closure). read_only strips edits.
     `capture(abs_path)` snapshots a file before the agent modifies it (checkpoints).
 
@@ -104,7 +104,7 @@ def build_toolset(
 
     def emit_edit(path: str, before: str, after: str) -> None:
         if on_edit:
-            on_edit(EditChange(kind='edit', path=path, before=before, after=after))
+            on_edit({'kind': 'edit', 'path': path, 'before': before, 'after': after})
 
     def _guard_project_context(path: str) -> None:
         """Directives files (AGENT.md, DIRECTIVES.md) always need a gate."""

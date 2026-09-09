@@ -56,11 +56,11 @@ async def test_edit_file_replaces_unique_match(engine, workdir):
     )
     assert outcome.output == 'done'
     assert (workdir / 'src' / 'app.py').read_text() == 'def greet():\n    return "hello"\n'
-    edits = [e for e in collector.events if e.kind == 'edit']
+    edits = [e for e in collector.events if e['kind'] == 'edit']
     assert len(edits) == 1
-    assert edits[0].path == 'src/app.py'
-    assert edits[0].before == 'def greet():\n    return "hi"\n'
-    assert edits[0].after == 'def greet():\n    return "hello"\n'
+    assert edits[0]['path'] == 'src/app.py'
+    assert edits[0]['before'] == 'def greet():\n    return "hi"\n'
+    assert edits[0]['after'] == 'def greet():\n    return "hello"\n'
 
 
 async def test_edit_file_no_match_retries_and_file_untouched(engine, workdir):
@@ -110,8 +110,8 @@ async def test_write_file_creates_new_file_with_dirs(engine, workdir):
         on_event=collector,
     )
     assert (workdir / 'src' / 'newpkg' / 'mod.py').read_text() == 'VALUE = 1\n'
-    edits = [e for e in collector.events if e.kind == 'edit']
-    assert len(edits) == 1 and edits[0].path == 'src/newpkg/mod.py'
+    edits = [e for e in collector.events if e['kind'] == 'edit']
+    assert len(edits) == 1 and edits[0]['path'] == 'src/newpkg/mod.py'
 
 
 async def test_write_file_refuses_to_clobber_nonempty_file(engine, workdir):

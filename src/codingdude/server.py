@@ -37,8 +37,9 @@ HOST = '127.0.0.1'  # localhost only, by design
 class RunChannel:
     """Bridges worker WebSocket events to SSE subscribers."""
 
-    def __init__(self, run_id: str, registry: dict):
+    def __init__(self, run_id: str, session_id: str, registry: dict):
         self.run_id = run_id
+        self.session_id = session_id
         self.registry = registry
         self.queue: asyncio.Queue = asyncio.Queue()
         self.inbox: asyncio.Queue = asyncio.Queue()  # server → worker (approvals)
@@ -129,6 +130,7 @@ def create_app(
         yolo: bool = False
         budget: float | None = None
         fix_loop: bool = False
+        image_b64: str | None = None  # base64 data-URL payload (no prefix)
 
     @app.post('/sessions')
     def create_session(body: SessionIn, _: None = Depends(authorize)) -> dict:
@@ -176,7 +178,7 @@ def create_app(
             raise HTTPException(status_code=404, detail='no such session')
 
         run_id = secrets.token_urlsafe(8)
-        channel = RunChannel(run_id, channels)
+        channel = RunChannel(run_id, session_id, channels)
         channels[run_id] = channel
 
         cmd = [
@@ -194,6 +196,15 @@ def create_app(
             cmd += ['--budget', str(body.budget)]
         if body.fix_loop:
             cmd.append('--fix-loop')
+        if body.image_b64:
+            import base64
+            import uuid as _uuid
+
+            uploads = home / 'uploads'
+            uploads.mkdir(parents=True, exist_ok=True)
+            image_file = uploads / f'{_uuid.uuid4().hex[:8]}.png'
+            image_file.write_bytes(base64.b64decode(body.image_b64))
+            cmd += ['--image', str(image_file)]
         channel.worker = subprocess.Popen(cmd)
 
         return {'run_id': run_id}
@@ -370,6 +381,14 @@ def create_app(
         if not workdir:
             raise HTTPException(status_code=404, detail='no such session')
         return CheckpointStore(home).rewind_to(session_id, cp_id, Path(workdir))
+
+    @app.get('/runs/active')
+    def active_runs(_: None = Depends(authorize)) -> list[dict]:
+        out = []
+        for run_id, ch in channels.items():
+            if ch.worker is None or ch.worker.poll() is None:
+                out.append({'run_id': run_id, 'session_id': ch.session_id})
+        return out
 
     @app.get('/sessions/{session_id}/trace')
     def session_trace(session_id: str, _: None = Depends(authorize)) -> list[dict]:
