@@ -1,1 +1,24 @@
 @import "tailwindcss";
+
+/* Design tokens: the single source for CodingDude's look. Components should
+   reference these (bg-brand, text-brand, border-line, bg-surface, ...) rather
+   than raw palette classes, so a re-theme is a change to this file only. */
+@theme {
+  --color-brand: #10b981;
+  --color-brand-dark: #059669;
+  --color-brand-light: #6ee7b7;
+  --color-surface: #0a0a0a;
+  --color-panel: #111111;
+  --color-line: #262626;
+  --color-ink: #e5e5e5;
+  --color-ink-muted: #a3a3a3;
+  --color-danger: #e11d48;
+  --color-warn: #f59e0b;
+}
+
+@layer base {
+  body {
+    background-color: var(--color-surface);
+    color: var(--color-ink);
+  }
+}

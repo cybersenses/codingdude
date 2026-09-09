@@ -133,7 +133,8 @@ async def run(args) -> int:
         async def ask(command: str) -> str:
             fut = loop.create_future()
             pending_gate['fut'] = fut
-            await ws_send({'type': 'GATE_REQUEST', 'command': command})
+            # Routed through on_event so the gate lands in the run's JSONL trace.
+            on_event({'type': 'GATE_REQUEST', 'command': command})
             decision = await fut
             if decision == 'pattern':
                 engine.approve_pattern(args.session, command)
@@ -171,23 +172,25 @@ async def run(args) -> int:
                     emit=on_event,
                 )
                 if outcome.status == 'gate_aborted':
-                    await ws_send({
+                    terminal = {
                         'type': 'RUN_ERROR',
                         'code': 'gate',
                         'message': outcome.output,
-                    })
+                    }
                 else:
                     # Only after persistence: the UI reading messages must see
                     # the full exchange when RUN_FINISHED lands.
-                    await ws_send({'type': 'RUN_FINISHED'})
+                    terminal = {'type': 'RUN_FINISHED'}
             except Exception as exc:  # noqa: BLE001 — reported to the UI, not crashed
                 from .exceptions import BudgetExceeded
 
-                await ws_send({
+                terminal = {
                     'type': 'RUN_ERROR',
                     'code': 'budget' if isinstance(exc, BudgetExceeded) else 'error',
                     'message': str(exc),
-                })
+                }
+            trace_terminal(args.session, terminal)
+            await ws_send(terminal)
 
         tasks = [
             asyncio.create_task(sender()),
@@ -201,6 +204,16 @@ async def run(args) -> int:
         while not queue.empty():
             await ws.send(json.dumps(queue.get_nowait()))
     return 0
+
+
+def trace_terminal(session_id: str, event: dict) -> None:
+    import json as _json
+    from datetime import UTC as _UTC, datetime as _dt
+
+    trace_dir = config_home() / 'traces'
+    trace_dir.mkdir(parents=True, exist_ok=True)
+    with open(trace_dir / f'{session_id}.jsonl', 'a', encoding='utf-8') as f:
+        f.write(_json.dumps({'ts': _dt.now(_UTC).isoformat(), **event}) + '\n')
 
 
 def workdir_path(args):
