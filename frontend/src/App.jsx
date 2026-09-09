@@ -72,7 +72,7 @@ function Login({ onLoggedIn }) {
   )
 }
 
-function Sidebar({ workdir, setWorkdir, sessions, activeSession, onSelect, onNewSession, width }) {
+function Sidebar({ workdir, setWorkdir, sessions, activeSession, onSelect, onNewSession, width, runningSessions }) {
   return (
     <aside className="flex shrink-0 flex-col gap-3 border-r border-neutral-800 bg-neutral-950 p-3" style={{ width }}>
       <h1 className="text-lg font-bold text-brand-400">CodingDude</h1>
@@ -1091,13 +1091,13 @@ export default function App() {
           setWorkdir={setWorkdir}
           sessions={sessions}
           activeSession={activeSession}
+          runningSessions={runningSessions}
           onSelect={(id) => {
             setActiveSession(id)
             loadMessages(id).catch((e) => setError(String(e.message)))
           }}
           onNewSession={newSession}
         />
-        {dividerFor('right')}
         <main className="flex min-w-0 flex-1 flex-col">
           {error && <div className="bg-red-900/50 px-4 py-1 text-xs text-red-300">{error}</div>}
           <Prompt
