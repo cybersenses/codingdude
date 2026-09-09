@@ -35,8 +35,6 @@ async def test_fix_loop_runs_tests_and_converges(engine, workdir):
         marker.write_text('go')
         return 1, '1 failed'
 
-    outcome_fail = None
-
     async def fake_test(command):
         code, out = shell_like(command)
         return code, out
