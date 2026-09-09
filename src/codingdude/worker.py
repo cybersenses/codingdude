@@ -236,6 +236,7 @@ def main(argv=None) -> int:
     parser.add_argument('--prompt', required=True)
     parser.add_argument('--model', default=None)
     parser.add_argument('--yolo', action='store_true')
+    parser.add_argument('--fix-loop', action='store_true')
     parser.add_argument('--budget', type=float, default=None)
     args = parser.parse_args(argv)
     try:

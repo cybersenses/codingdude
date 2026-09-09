@@ -677,7 +677,7 @@ function Chat({ messages, streaming, onStop, onDecide, sessionId }) {
   )
 }
 
-function Prompt({ onSend, disabled }) {
+function Prompt({ onSend, disabled, fixLoop, setFixLoop }) {
   const [text, setText] = useState('')
   return (
     <form
@@ -728,6 +728,7 @@ export default function App() {
   const [refreshKey, setRefreshKey] = useState(0)
   const [diffBadge, setDiffBadge] = useState(false)
   const [status, setStatus] = useState('idle')
+  const [fixLoop, setFixLoop] = useState(false)
   const runRef = useRef(null)
   const esRef = useRef(null)
 
@@ -864,7 +865,7 @@ export default function App() {
     setStatus('running')
     setError('')
     api
-      .startRun(activeSession, prompt)
+      .startRun(activeSession, prompt, null, fixLoop)
       .then(({ run_id }) => {
         runRef.current = run_id
         const es = new EventSource(api.eventStreamUrl(run_id))
@@ -968,7 +969,7 @@ export default function App() {
         {dividerFor('right')}
         <main className="flex min-w-0 flex-1 flex-col">
           {error && <div className="bg-red-900/50 px-4 py-1 text-xs text-red-300">{error}</div>}
-          <Prompt onSend={send} disabled={!activeSession || streaming} />
+          <Prompt onSend={send} disabled={!activeSession || streaming} fixLoop={fixLoop} setFixLoop={setFixLoop} />
           <Chat messages={messages} streaming={streaming} onStop={stop} onDecide={decide} sessionId={activeSession} />
         </main>
         {dividerFor('right')}

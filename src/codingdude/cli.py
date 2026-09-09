@@ -21,6 +21,7 @@ def run_headless(
     model: Model | str | None = None,
     session_id: str | None = None,
     approvals=None,
+    fix_loop: bool = False,
 ) -> int:
     """One-shot Headless Run (ADR-0003). Returns a process exit code:
     0 success, 1 failure, 2 gate-aborted, 3 budget-exceeded."""
@@ -31,6 +32,7 @@ def run_headless(
             session_id=session_id,
             model=model,
             approvals=approvals,
+            fix_loop=fix_loop,
         )
         try:
             asyncio.get_running_loop()
@@ -71,6 +73,7 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument('--model', default=None, help='model override, e.g. openai:gpt-5-mini')
     run.add_argument('--yolo', action='store_true', help='run without approval gates (ADR-0003)')
     run.add_argument('--budget', type=float, default=None, help='session spend cap in USD (hard stop)')
+    run.add_argument('--fix-loop', action='store_true', help='run tests after the task and feed failures back until green (max 3 rounds)')
     serve_cmd = sub.add_parser('serve', help='start the web server + UI')
     serve_cmd.add_argument('--port', type=int, default=8765)
 
@@ -90,6 +93,8 @@ def main(argv: list[str] | None = None) -> int:
         db=Database.connect(config_home()),
         budget_cap_usd=args.budget,
     )
+    if args.fix_loop:
+        args.fix_loop = True
     from .approvals import ApprovalPolicy
 
     return run_headless(
@@ -98,6 +103,7 @@ def main(argv: list[str] | None = None) -> int:
         args.prompt,
         model=infer_model(args.model) if args.model else None,
         approvals=ApprovalPolicy(yolo=args.yolo),
+        fix_loop=args.fix_loop,
     )
 
 

@@ -80,10 +80,15 @@ export const api = {
   listSessions: (workdir: string): Promise<SessionInfo[]> =>
     call<SessionInfo[]>(`/sessions?workdir=${encodeURIComponent(workdir)}`),
   getMessages: (sessionId: string) => call(`/sessions/${sessionId}/messages`),
-  startRun: (sessionId: string, prompt: string, model: string | null = null): Promise<{ run_id: string }> =>
+  startRun: (
+    sessionId: string,
+    prompt: string,
+    model: string | null = null,
+    fixLoop = false,
+  ): Promise<{ run_id: string }> =>
     call<{ run_id: string }>(`/sessions/${sessionId}/runs`, {
       method: 'POST',
-      body: JSON.stringify({ prompt, model }),
+      body: JSON.stringify({ prompt, model, fix_loop: fixLoop }),
     }),
   cancelRun: (runId: string): Promise<unknown> => call(`/runs/${runId}`, { method: 'DELETE' }),
   approve: (runId: string, decision: ApprovalDecision): Promise<unknown> =>

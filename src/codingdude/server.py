@@ -128,6 +128,7 @@ def create_app(
         model: str | None = None
         yolo: bool = False
         budget: float | None = None
+        fix_loop: bool = False
 
     @app.post('/sessions')
     def create_session(body: SessionIn, _: None = Depends(authorize)) -> dict:
@@ -191,6 +192,8 @@ def create_app(
             cmd.append('--yolo')
         if body.budget is not None:
             cmd += ['--budget', str(body.budget)]
+        if body.fix_loop:
+            cmd.append('--fix-loop')
         channel.worker = subprocess.Popen(cmd)
 
         return {'run_id': run_id}
