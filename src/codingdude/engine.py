@@ -272,6 +272,12 @@ class Engine:
             toolsets.append(build_memory_toolset(store, str(workdir)))
 
             instructions = INSTRUCTIONS
+            from .repo_map import build_repo_map as _build_map
+
+            repo_map_text = _build_map(workdir)
+            if repo_map_text:
+                map_header = '## Repository overview (auto-generated map)'
+                instructions += '\n\n' + map_header + '\n' + repo_map_text
             from .directives import build_directive_layers
 
             directive_layers = build_directive_layers(self._config_home(), workdir)
