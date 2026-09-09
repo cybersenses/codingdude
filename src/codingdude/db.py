@@ -61,6 +61,12 @@ CREATE TABLE IF NOT EXISTS plans (
     status TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS projects (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    workdir TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL
+);
 """
 
 
@@ -95,6 +101,33 @@ class Database:
         conn.executescript(_SCHEMA)
         conn.commit()
         return cls(conn)
+
+    def create_project(self, name: str, workdir: Path) -> int:
+        cur = self._conn.execute(
+            'INSERT INTO projects (name, workdir, created_at) VALUES (?, ?, ?)',
+            (name, str(workdir), _now()),
+        )
+        self._conn.commit()
+        assert cur.lastrowid is not None
+        return cur.lastrowid
+
+    def list_projects(self) -> list[dict]:
+        rows = self._conn.execute(
+            'SELECT id, name, workdir, created_at FROM projects ORDER BY name'
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def delete_project(self, project_id: int) -> bool:
+        cur = self._conn.execute('DELETE FROM projects WHERE id = ?', (project_id,))
+        self._conn.commit()
+        return cur.rowcount > 0
+
+    def project_by_workdir(self, workdir: Path) -> dict | None:
+        row = self._conn.execute(
+            'SELECT id, name, workdir FROM projects WHERE workdir = ?',
+            (str(workdir),),
+        ).fetchone()
+        return dict(row) if row else None
 
     def create_session(self, workdir: Path, title: str | None = None) -> str:
         session_id = uuid.uuid4().hex

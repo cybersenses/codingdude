@@ -23,6 +23,12 @@ export interface UsageTotals {
   cost_usd: number | null
 }
 
+export interface Project {
+  id: number
+  name: string
+  workdir: string
+}
+
 export interface McpServer {
   name: string
   config: { command: string; args?: string[] }
@@ -77,6 +83,11 @@ export function getToken(): string {
 export const api = {
   createSession: (workdir: string, title: string | null = null): Promise<{ session_id: string }> =>
     call<{ session_id: string }>('/sessions', { method: 'POST', body: JSON.stringify({ workdir, title }) }),
+  listProjects: (): Promise<Project[]> => call('/projects') as Promise<Project[]>,
+  addProject: (name: string, workdir: string): Promise<Project> =>
+    call('/projects', { method: 'POST', body: JSON.stringify({ name, workdir }) }) as Promise<Project>,
+  deleteProject: (id: number): Promise<unknown> =>
+    call(`/projects/${id}`, { method: 'DELETE' }),
   listSessions: (workdir: string): Promise<SessionInfo[]> =>
     call<SessionInfo[]>(`/sessions?workdir=${encodeURIComponent(workdir)}`),
   getMessages: (sessionId: string) => call(`/sessions/${sessionId}/messages`),

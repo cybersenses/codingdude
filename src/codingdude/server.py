@@ -335,6 +335,27 @@ def create_app(
         target.write_text(body.content, encoding='utf-8')
         return {'saved': body.path, 'bytes': len(body.content)}
 
+    class ProjectIn(BaseModel):
+        name: str
+        workdir: str
+
+    @app.get('/projects')
+    def get_projects(_: None = Depends(authorize)) -> list[dict]:
+        return db.list_projects()
+
+    @app.post('/projects')
+    def add_project(body: ProjectIn, _: None = Depends(authorize)) -> dict:
+        workdir = str(Path(body.workdir).resolve())
+        for p in db.list_projects():
+            if p['workdir'] == workdir:
+                raise HTTPException(status_code=409, detail='a project with this workdir already exists')
+        pid = db.create_project(body.name, Path(workdir))
+        return {'id': pid, 'name': body.name, 'workdir': workdir}
+
+    @app.delete('/projects/{project_id}')
+    def remove_project(project_id: int, _: None = Depends(authorize)) -> dict:
+        return {'deleted': db.delete_project(project_id)}
+
     @app.post('/sessions/{session_id}/review')
     async def run_review(session_id: str, _: None = Depends(authorize)) -> dict:
         workdir = db.session_workdir(session_id)

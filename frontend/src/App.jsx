@@ -77,6 +77,32 @@ function Sidebar({ workdir, setWorkdir, sessions, activeSession, onSelect, onNew
     <aside className="flex shrink-0 flex-col gap-3 border-r border-neutral-800 bg-neutral-950 p-3" style={{ width }}>
       <h1 className="text-lg font-bold text-brand-400">CodingDude</h1>
       <label className="text-xs text-neutral-400">
+        Project
+        <select
+          className="mt-1 w-full rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-200"
+          value={activeProject?.id ?? ''}
+          onChange={(e) => {
+            const p = projects.find((x) => x.id === Number(e.target.value))
+            if (p) onSelectProject(p)
+          }}
+        >
+          <option value="">— select project —</option>
+          {projects.map((p) => (
+            <option key={p.id} value={p.id}>{p.name}</option>
+          ))}
+        </select>
+      </label>
+      {activeProject && (
+        <div className="flex items-center justify-between text-[10px] text-neutral-500">
+          <span className="truncate font-mono">{activeProject.workdir}</span>
+          <button
+            className="text-red-500 hover:text-red-300"
+            title="remove project from list (files are not touched)"
+            onClick={() => onDeleteProject(activeProject.id)}
+          >✕</button>
+        </div>
+      )}
+      <label className="text-xs text-neutral-400">
         Workdir
         <input
           className="mt-1 w-full rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-200"
@@ -833,6 +859,8 @@ export default function App() {
   const [loggedIn, setLoggedIn] = useState(null) // null = checking cookie
   const [workdir, setWorkdir] = useState(localStorage.getItem('codingdude-workdir') || '')
   const [sessions, setSessions] = useState([])
+  const [projects, setProjects] = useState([])
+  const [activeProject, setActiveProject] = useState(null)
   const [activeSession, setActiveSession] = useState(null)
   const [messages, setMessages] = useState([])
   const [streaming, setStreaming] = useState(false)
@@ -936,8 +964,19 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (loggedIn) refreshSessions(workdir)
-  }, [loggedIn, workdir, refreshSessions])
+    if (loggedIn) {
+      api.listProjects().then((list) => {
+        setProjects(list)
+        // restore last project or auto-adopt the first
+        const saved = localStorage.getItem('cd-project-id')
+        const match = list.find((x) => x.id === Number(saved)) || list[0]
+        if (match) {
+          setActiveProject(match)
+          setWorkdir(match.workdir)
+        }
+      }).catch(() => {})
+    }
+  }, [loggedIn, refreshSessions])
 
   const [runningSessions, setRunningSessions] = useState(() => new Set())
   useEffect(() => {
@@ -1087,6 +1126,31 @@ export default function App() {
         {dividerFor('sidebar')}
         <Sidebar
           width={sidebarWidth}
+          projects={projects}
+          activeProject={activeProject}
+          onSelectProject={(p) => {
+            setActiveProject(p)
+            setWorkdir(p.workdir)
+            setActiveSession(null)
+            setMessages([])
+            refreshSessions(p.workdir)
+          }}
+          onAddProject={(name, wd) => {
+            api.addProject(name, wd)
+              .then((proj) => {
+                setProjects((list) => [...list, proj].sort((a, b) => a.name.localeCompare(b.name)))
+                setActiveProject(proj)
+                setWorkdir(proj.workdir)
+                setActiveSession(null)
+                setMessages([])
+              })
+              .catch((e) => setError(String(e.message)))
+          }}
+          onDeleteProject={(id) => {
+            api.deleteProject(id).catch(() => {})
+            setProjects((list) => list.filter((x) => x.id !== id))
+            if (activeProject?.id === id) setActiveProject(null)
+          }}
           workdir={workdir}
           setWorkdir={setWorkdir}
           sessions={sessions}
