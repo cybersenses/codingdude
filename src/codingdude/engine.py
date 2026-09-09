@@ -155,6 +155,9 @@ class Engine:
         subagent_model: Model | None = None,
         emit: Callable[[dict], None] | None = None,
         trace: bool = True,
+        fix_loop: bool = False,
+        test_command: str = 'pytest -q',
+        max_test_iterations: int = 3,
     ) -> RunOutcome:
         if session_id is None:
             session_id = self._db.create_session(workdir, title=prompt[:80])
@@ -206,6 +209,12 @@ class Engine:
 
                 # Pattern Approvals are session-scoped: load what past runs saved.
                 approvals.patterns.update(self._db.session_patterns(session_id))
+                if fix_loop:
+                    # The user pre-authorized the test loop when enabling the mode.
+                    for base in test_command.split():
+                        if base not in ('-', 'q'):
+                            approvals.patterns.add(base)
+                    approvals.patterns.add(test_command)
                 # New pattern approvals persist for the rest of the Session.
                 approvals.on_pattern = (
                     lambda pattern: self._db.record_pattern_approval(session_id, pattern)
@@ -326,6 +335,42 @@ class Engine:
             raise
 
         self._db.append_messages(session_id, encode_messages(list(result.new_messages())))
+
+        # Fix-until-green loop: run the tests, feed failures back, repeat.
+        if fix_loop and approvals is not None:
+            import asyncio
+
+            for _ in range(max_test_iterations):
+                proc = await asyncio.create_subprocess_exec(
+                    'bash', '-c', test_command,
+                    cwd=workdir, stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE, env=self._scrubbed(),
+                )
+                try:
+                    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=600)
+                except TimeoutError:
+                    proc.kill()
+                    break
+                test_out = (stdout.decode(errors='replace') + stderr.decode(errors='replace')).strip()[:4000]
+                passed = proc.returncode == 0
+                if emit:
+                    emit({'type': 'TEST_RUN', 'passed': passed, 'output': test_out})
+                if passed:
+                    break
+                retry_agent: Agent = Agent(
+                    model=resolved, instructions=instructions, toolsets=toolsets
+                )
+                history = history + list(result.new_messages()) if result else history
+                failure_text = (
+                    'The test suite is still failing. Output:\n' + test_out + '\n'
+                )
+                result = await retry_agent.run(
+                    failure_text
+                    + 'Fix the failures. Do not declare success until the tests pass.',
+                    message_history=history,
+                )
+                self._db.append_messages(session_id, encode_messages(list(result.new_messages())))
+
         usage = result.usage
         self._db.record_usage(
             session_id,
@@ -514,12 +559,18 @@ class Engine:
         # NB: terminal RUN_FINISHED is emitted by the worker after persistence.
         return result
 
+    @staticmethod
+    def _scrubbed() -> dict:
+        from .tools import scrubbed_env
+
+        return scrubbed_env()
+
     def _diff_nonempty(self, session_id: str) -> bool:
+        import subprocess
+
         workdir = self._db.session_workdir(session_id)
         if not workdir:
             return False
-        import subprocess
-
         result = subprocess.run(
             ['git', 'diff', 'HEAD'], cwd=workdir, capture_output=True, text=True, timeout=30
         )
