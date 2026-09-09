@@ -15,8 +15,6 @@ import time
 import uuid
 from pathlib import Path
 
-from .config import config_home
-
 CHECKPOINTS_DIRNAME = 'checkpoints'
 DEFAULT_MAX_PER_SESSION = 50
 DEFAULT_MAX_AGE_DAYS = 30

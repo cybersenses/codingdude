@@ -603,10 +603,8 @@ class Engine:
         """Anti-slop: cross-check the final summary's verification claims against
         recorded tool results; re-execute explicitly claimed verifications once;
         give the model one round to address unsupported claims."""
-        import json as _json
 
         from pydantic_ai import Agent
-        from pydantic_ai.messages import ModelRequest, UserPromptPart
 
         from .prompts import load_prompt
 

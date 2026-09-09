@@ -208,7 +208,8 @@ async def run(args) -> int:
 
 def trace_terminal(session_id: str, event: dict) -> None:
     import json as _json
-    from datetime import UTC as _UTC, datetime as _dt
+    from datetime import UTC as _UTC
+    from datetime import datetime as _dt
 
     trace_dir = config_home() / 'traces'
     trace_dir.mkdir(parents=True, exist_ok=True)

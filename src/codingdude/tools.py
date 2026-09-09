@@ -10,7 +10,6 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from .approvals import DENIED, NEEDS_GATE
 from .directives import project_directives_guard
 from .errors import GateRequired
-from .events import EditChange
 
 MAX_READ_BYTES = 256 * 1024
 MAX_GREP_RESULTS = 50
