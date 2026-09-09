@@ -45,7 +45,7 @@ async def test_rename_not_found_is_retryable(home, workdir):
     toolset = build_refactor_toolset(workdir)
     try:
         await toolset.tools['rename_symbol'].function(old_name='missing', new_name='y')
-        assert False, 'should have raised'
+        raise AssertionError('should have raised')
     except ModelRetry as exc:
         assert 'missing' in str(exc)
 
