@@ -103,7 +103,7 @@ def build_toolset(
 
     def emit_edit(path: str, before: str, after: str) -> None:
         if on_edit:
-            on_edit({'kind': 'edit', 'path': path, 'before': before, 'after': after})
+            on_edit({'type': 'EDIT_APPLIED', 'kind': 'edit', 'path': path, 'before': before, 'after': after})
 
     def _guard_project_context(path: str) -> None:
         """Directives files (AGENT.md, DIRECTIVES.md) always need a gate."""
