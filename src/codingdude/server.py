@@ -334,6 +334,40 @@ def create_app(
         findings = await eng.review_diff(session_id)
         return {'findings': findings or 'CLEAN — no findings'}
 
+    @app.get('/sessions/{session_id}/checkpoints')
+    def list_checkpoints(session_id: str, _: None = Depends(authorize)) -> list[dict]:
+        from .checkpoints import CheckpointStore
+
+        return CheckpointStore(home).list_checkpoints(session_id)
+
+    class RestoreIn(BaseModel):
+        path: str | None = None  # None → restore the whole checkpoint
+
+    @app.post('/checkpoints/{session_id}/{cp_id}/restore')
+    def restore_checkpoint(session_id: str, cp_id: str, body: RestoreIn,
+                           _: None = Depends(authorize)) -> dict:
+        from .checkpoints import CheckpointStore
+
+        workdir = db.session_workdir(session_id)
+        if not workdir:
+            raise HTTPException(status_code=404, detail='no such session')
+        store = CheckpointStore(home)
+        try:
+            if body.path:
+                return store.restore_file(session_id, cp_id, body.path, Path(workdir))
+            return store.restore_checkpoint(session_id, cp_id, Path(workdir))
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+
+    @app.post('/checkpoints/{session_id}/{cp_id}/rewind')
+    def rewind_checkpoint(session_id: str, cp_id: str, _: None = Depends(authorize)) -> dict:
+        from .checkpoints import CheckpointStore
+
+        workdir = db.session_workdir(session_id)
+        if not workdir:
+            raise HTTPException(status_code=404, detail='no such session')
+        return CheckpointStore(home).rewind_to(session_id, cp_id, Path(workdir))
+
     @app.get('/sessions/{session_id}/trace')
     def session_trace(session_id: str, _: None = Depends(authorize)) -> list[dict]:
         """Replayable run trace: every traced event for the session."""

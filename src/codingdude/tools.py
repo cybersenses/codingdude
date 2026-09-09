@@ -41,8 +41,10 @@ def build_toolset(
     on_edit: EditEmitter | None = None,
     read_only: bool = False,
     approvals=None,
+    capture: Callable[[Path], None] | None = None,
 ) -> FunctionToolset:
     """Build the toolset bound to a Workdir (via closure). read_only strips edits.
+    `capture(abs_path)` snapshots a file before the agent modifies it (checkpoints).
 
     `approvals` (an ApprovalPolicy) gates AGENT.md edits — the Project Context
     changes only with explicit consent (spec story 26).
@@ -119,6 +121,8 @@ def build_toolset(
     def edit_file(path: str, old_text: str, new_text: str) -> str:
         """Replace `old_text` with `new_text` — the match must be unique."""
         _guard_project_context(path)
+        if capture:
+            capture(resolve(path))
         target = resolve(path)
         before = target.read_text(encoding='utf-8', errors='replace')
         count = before.count(old_text)
@@ -140,6 +144,8 @@ def build_toolset(
     def write_file(path: str, content: str) -> str:
         """Create a new file (with parent dirs). Existing non-empty files must use edit_file."""
         _guard_project_context(path)
+        if capture:
+            capture(resolve(path))
         target = resolve(path)
         existed = target.read_text(encoding='utf-8', errors='replace') if target.exists() else ''
         if existed.strip():

@@ -14,6 +14,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.toolsets import AbstractToolset
 
+from .checkpoints import CheckpointStore
 from .config import Config
 from .db import Database
 from .messages import decode_messages, encode_messages
@@ -95,6 +96,12 @@ class Engine:
         self._budget_cap_usd = budget_cap_usd
         # Optional embedder: enables the semantic_search tool + semantic Memory.
         self.embedder = embedder
+        # Checkpoint store: per-turn file snapshots before agent edits.
+        self.checkpoints = CheckpointStore(
+            self._config_home(),
+            max_per_session=50,
+            max_age_days=30,
+        )
 
     def build_model(
         self, main: Model | str | None = None, fallback: Model | str | None = None
@@ -183,8 +190,16 @@ class Engine:
                     session_id, [encode_messages([m]) for m in history]
                 )
 
+            cp_holder: list[str] = []
+
+            def capture_for_checkpoints(abs_path: Path) -> None:
+                if not cp_holder:
+                    cp_holder.append(self.checkpoints.begin(session_id))
+                self.checkpoints.capture_file(session_id, cp_holder[0], workdir, abs_path)
+
             toolsets: list[AbstractToolset] = [
-                build_toolset(workdir, on_edit=on_event, approvals=approvals)
+                build_toolset(workdir, on_edit=on_event, approvals=approvals,
+                              capture=capture_for_checkpoints)
             ]
             if approvals is not None:
                 from .config import load_project_config
@@ -291,7 +306,8 @@ class Engine:
                     result = await agent.run(prompt, message_history=history or None)
                 else:
                     result = await self._run_streaming(
-                        agent, prompt, history, model_name, traced
+                        agent, prompt, history, model_name, traced,
+                        cp_holder=cp_holder,
                     )
             except GateRequired as gate:
                 # ADR-0003: unattended runs abort on gates. The Session keeps
@@ -321,6 +337,12 @@ class Engine:
         )
         if self._extraction_model is not None:
             await self._extract_memory(session_id, workdir)
+        if self._diff_nonempty(session_id):
+            await self._verify_claims(
+                session_id, result, workdir, approvals, emit,
+                resolved=resolved, history=history,
+                toolsets=toolsets, instructions=instructions,
+            )
         self._check_budget(session_id)
         return RunOutcome(
             session_id=session_id,
@@ -429,7 +451,7 @@ class Engine:
             )
         return compacted, True
 
-    async def _run_streaming(self, agent, prompt, history, model_name, emit):
+    async def _run_streaming(self, agent, prompt, history, model_name, emit, cp_holder):
         """Run the agent, emitting AG-UI-shaped events for the UI layer."""
         from pydantic_ai._agent_graph import CallToolsNode
         from pydantic_ai.messages import (
@@ -445,6 +467,7 @@ class Engine:
         async with agent.iter(prompt, message_history=history or None) as run:
             async for node in run:
                 if agent.is_model_request_node(node):
+                    cp_holder.clear()  # new assistant turn → new checkpoint
                     emit({'type': 'TEXT_MESSAGE_START', 'role': 'assistant'})
                     async with node.stream(run.ctx) as stream:
                         async for event in stream:
@@ -490,3 +513,81 @@ class Engine:
             result = run.result
         # NB: terminal RUN_FINISHED is emitted by the worker after persistence.
         return result
+
+    def _diff_nonempty(self, session_id: str) -> bool:
+        workdir = self._db.session_workdir(session_id)
+        if not workdir:
+            return False
+        import subprocess
+
+        result = subprocess.run(
+            ['git', 'diff', 'HEAD'], cwd=workdir, capture_output=True, text=True, timeout=30
+        )
+        return bool(result.stdout.strip())
+
+    async def _verify_claims(self, session_id: str, result, workdir: Path, approvals, emit,
+                             resolved=None, history=None, toolsets=None, instructions=None) -> None:
+        """Anti-slop: cross-check the final summary's verification claims against
+        recorded tool results; re-execute explicitly claimed verifications once;
+        give the model one round to address unsupported claims."""
+        import json as _json
+
+        from pydantic_ai import Agent
+        from pydantic_ai.messages import ModelRequest, UserPromptPart
+
+        from .prompts import load_prompt
+
+        if self._extraction_model is None:
+            return
+
+        final_text = result.output
+        payloads = decode_messages(self._db.load_messages(session_id))
+        tool_results = []
+        for m in payloads:
+            for part in m.parts:
+                name = getattr(part, 'tool_name', None)
+                if name in ('shell', 'run_coverage'):
+                    content = str(getattr(part, 'content', ''))[:300]
+                    tool_results.append(f'{name}: exit {content[:120]}')
+
+        auditor = Agent(model=self._extraction_model)
+        audit_prompt = (
+            load_prompt('claim_check')
+            + '\n\nSUMMARY:\n'
+            + final_text[:3000]
+            + '\n\nRECORDED COMMAND RESULTS:\n'
+            + ('\n'.join(tool_results)[-4000:] if tool_results else '(none recorded)')
+        )
+        try:
+            audit = await auditor.run(audit_prompt)
+        except Exception:  # noqa: BLE001 — verification must never fail the run
+            return
+        unsupported = [
+            line.strip().lstrip('-•* ')
+            for line in audit.output.splitlines()
+            if line.strip() and not line.strip().upper().startswith('CLEAN')
+        ]
+        if not unsupported:
+            if emit:
+                emit({'type': 'CLAIMS_VERIFIED'})
+            return
+
+        findings = 'The reviewer could not verify these claims:\n' + '\n'.join(
+            f'- {c}' for c in unsupported
+        )
+        # One retry round: the model gets the findings plus the conversation so
+        # far, and must back the claims with real commands or correct itself.
+        retry_agent: Agent = Agent(
+            model=resolved, instructions=instructions or INSTRUCTIONS,
+            toolsets=toolsets,
+        )
+        try:
+            retry = await retry_agent.run(
+                f'{findings}\nBack these claims by actually running the checks now '
+                '(use the tools), or correct your summary.',
+                message_history=history + list(result.new_messages()),
+            )
+            emit({'type': 'CLAIMS_ADDRESSED', 'response': str(retry.output)[:1500]})
+        except Exception:  # noqa: BLE001 — best effort; report unverified either way
+            pass
+        emit({'type': 'CLAIMS_UNVERIFIED', 'claims': unsupported})

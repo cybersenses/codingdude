@@ -327,7 +327,11 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
         if (tab === 'Cost') { const u = await call(`/sessions/${sessionId}/usage`); setData((d) => ({ ...d, usage: u })) }
         if (tab === 'Memory') { const m = await call('/memory'); setData((d) => ({ ...d, memory: m })) }
         if (tab === 'MCP') { const m = await api.listMcp(sessionId); setData((d) => ({ ...d, mcp: m })) }
-        if (tab === 'Trace') { const tr = await call(`/sessions/${sessionId}/trace`); setData((d) => ({ ...d, trace: tr })) }
+        if (tab === 'Trace') {
+          const tr = await call(`/sessions/${sessionId}/trace`)
+          const cps = await call(`/sessions/${sessionId}/checkpoints`)
+          setData((d) => ({ ...d, trace: tr, checkpoints: cps }))
+        }
       } catch { /* transient */ }
       if (!stop) setTimeout(poll, 4000)
     }
@@ -527,13 +531,34 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
       USER_PROMPT: 'text-neutral-300',
     }
     body = (
-      <div className="space-y-0.5 font-mono text-[10px]">
-        {(data.trace || []).slice().reverse().map((e, i) => (
-          <div key={i} className={colors[e.type] || 'text-neutral-400'}>
-            {(e.ts || '').slice(11, 19)} {e.type} {e.command || e.tool_name || e.delta || ''}
+      <div className="space-y-2">
+        <div className="space-y-0.5 font-mono text-[10px]">
+          {(data.trace || []).slice().reverse().map((e, i) => (
+            <div key={i} className={colors[e.type] || 'text-neutral-400'}>
+              {(e.ts || '').slice(11, 19)} {e.type} {e.command || e.tool_name || e.delta || ''}
+            </div>
+          ))}
+          {(!data.trace || !data.trace.length) && <div className="text-neutral-600">no events yet</div>}
+        </div>
+        {data.checkpoints && data.checkpoints.length > 0 && (
+          <div className="space-y-1 border-t border-neutral-800 pt-2">
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">Checkpoints</div>
+            {data.checkpoints.map((c) => (
+              <div key={c.id} className="rounded bg-neutral-900 p-1">
+                <div className="flex items-center justify-between">
+                  <span className="font-mono text-[10px] text-neutral-300">{c.id.slice(0, 17)}</span>
+                  <div className="flex gap-1">
+                    <button
+                      className="rounded bg-sky-700 px-1.5 py-0.5 text-[9px] text-white"
+                      onClick={() => call(`/checkpoints/${sessionId}/${c.id}/rewind`, { method: 'POST', body: '{}' }).catch(() => {})}
+                    >rewind</button>
+                  </div>
+                </div>
+                <div className="text-[9px] text-neutral-500">{c.files.join(', ')}</div>
+              </div>
+            ))}
           </div>
-        ))}
-        {(!data.trace || !data.trace.length) && <div className="text-neutral-600">no events yet</div>}
+        )}
       </div>
     )
   } else if (tab === 'Terminal') {
@@ -754,6 +779,29 @@ export default function App() {
     window.addEventListener('cd-unauthorized', onUnauthorized)
     return () => window.removeEventListener('cd-unauthorized', onUnauthorized)
   }, [])
+
+  // Notifications: tab title + sound + toast on run state changes.
+  const [notify, setNotify] = useState(() => localStorage.getItem('cd-notify') === '1')
+  useEffect(() => {
+    if (!status || status === 'idle') { document.title = 'CodingDude'; return }
+    const map = {
+      running: ['▶ CodingDude', false],
+      finished: ['✓ CodingDude — done', true],
+      stopped: ['■ CodingDude — stopped', true],
+    }
+    if (status.startsWith('waiting')) { map.waiting = ['⏸ CodingDude — approval needed', true] }
+    if (status.startsWith('error')) { map.error = ['✗ CodingDude — error', true] }
+    const entry = map[status] || ['CodingDude', false]
+    document.title = entry[0]
+    if (notify && entry[1] && 'Notification' in window && Notification.permission === 'granted') {
+      try { new Notification(entry[0]) } catch { /* unavailable */ }
+    }
+    if (status !== 'running') {
+      const audio = new Audio('data:audio/wav;base64,UklGRl9vT19XQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=')
+      audio.volume = 0.3
+      audio.play().catch(() => {})
+    }
+  }, [status, notify])
 
   // An existing session cookie skips the login screen.
   useEffect(() => {
