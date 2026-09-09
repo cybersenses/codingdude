@@ -168,7 +168,7 @@ class CheckpointStore:
             entries.append((meta.get('created_at', 0), cp_dir))
         entries.sort(key=lambda e: e[0], reverse=True)
         # keep room for the checkpoint about to be created
-        for created, cp_dir in entries[self.max_per_session - 1 :]:
+        for _created, cp_dir in entries[self.max_per_session - 1 :]:
             shutil.rmtree(cp_dir, ignore_errors=True)
         for created, cp_dir in entries:
             if created < cutoff:

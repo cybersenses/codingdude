@@ -371,7 +371,7 @@ def create_app(
                 return store.restore_file(session_id, cp_id, body.path, Path(workdir))
             return store.restore_checkpoint(session_id, cp_id, Path(workdir))
         except FileNotFoundError as exc:
-            raise HTTPException(status_code=404, detail=str(exc))
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.post('/checkpoints/{session_id}/{cp_id}/rewind')
     def rewind_checkpoint(session_id: str, cp_id: str, _: None = Depends(authorize)) -> dict:

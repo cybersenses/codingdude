@@ -265,7 +265,6 @@ def build_git_toolset(workdir: Path, policy) -> FunctionToolset:
         import asyncio
 
         if use_shell:
-            # Windows resolves gh (and test stubs) through the shell's PATH.
             proc = await asyncio.create_subprocess_shell(
                 ' '.join(argv), cwd=workdir, stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE, env=scrubbed_env(),
@@ -278,7 +277,8 @@ def build_git_toolset(workdir: Path, policy) -> FunctionToolset:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         out = (stdout.decode(errors='replace') + stderr.decode(errors='replace')).strip()
         code = proc.returncode if proc.returncode is not None else -1
-        return f'exit {code}\n{out}' if out else f'exit {code}'
+        summary = f'exit {code}\n{out}' if out else f'exit {code}'
+        return summary
 
     async def git_status() -> str:
         return await _run(['git', 'status', '--porcelain', '-b'])
@@ -411,3 +411,44 @@ def build_knip_toolset(workdir: Path) -> FunctionToolset:
         return f'exit {code}\n{out[:6000]}'
 
     return FunctionToolset([find_unused_exports])
+
+
+def build_ci_toolset(workdir: Path) -> FunctionToolset:
+    """CI tools via the gh CLI. Read-only (run list, failed logs) — auto tier.
+
+    `gh run rerun`/watch and anything mutating stay in the shell's
+    always-gated tier; never auto-approved here."""
+
+    async def _gh(argv: list[str], timeout: int = 120) -> str:
+        import asyncio
+
+        proc = await asyncio.create_subprocess_exec(
+            'gh', *argv, cwd=workdir, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE, env=scrubbed_env(),
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except TimeoutError:
+            proc.kill()
+            return 'gh timed out'
+        out = (stdout.decode(errors='replace') + stderr.decode(errors='replace')).strip()
+        code = proc.returncode if proc.returncode is not None else -1
+        summary = f'exit {code}\n{out}' if out else f'exit {code}'
+        return summary
+
+    async def ci_status(branch: str = '') -> str:
+        """Latest CI run statuses for the current repo (via gh)."""
+        argv = ['run', 'list', '--limit', '5']
+        if branch:
+            argv += ['--branch', branch]
+        return await _gh(argv)
+
+    async def ci_failures(run_id: str = '') -> str:
+        """Failed step names and log excerpts for a CI run (via gh)."""
+        argv = ['run', 'view']
+        if run_id:
+            argv.append(run_id)
+        argv += ['--log-failed']
+        return await _gh(argv)
+
+    return FunctionToolset([ci_status, ci_failures])
