@@ -374,3 +374,35 @@ def build_coverage_toolset(workdir: Path, policy) -> FunctionToolset:
         return f'exit code: {proc.returncode}\n{out}'
 
     return FunctionToolset([run_coverage])
+
+
+def build_knip_toolset(workdir: Path) -> FunctionToolset:
+    """The `find_unused_exports` tool for JS/TS projects: runs knip from the
+    project's own devDependencies (never auto-installing). Graceful when
+    knip isn't set up."""
+
+    async def find_unused_exports() -> str:
+        if not (workdir / 'package.json').exists():
+            return 'no package.json — knip only applies to JS/TS projects'
+        import asyncio
+
+        proc = await asyncio.create_subprocess_shell(
+            'npx --no-install knip --reporter compact',
+            cwd=workdir, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE, env=scrubbed_env(),
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
+        except TimeoutError:
+            proc.kill()
+            return 'knip timed out after 300s'
+        out = (stdout.decode(errors='replace') + stderr.decode(errors='replace')).strip()
+        code = proc.returncode if proc.returncode is not None else -1
+        if code != 0 and 'knip' not in out and len(out) < 200:
+            return (
+                'knip is not installed in this project. Add it as a devDependency '
+                '(npm i -D knip) to enable unused-export and unused-dependency detection.'
+            )
+        return f'exit {code}\n{out[:6000]}'
+
+    return FunctionToolset([find_unused_exports])

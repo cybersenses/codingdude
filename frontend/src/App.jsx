@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import CodeEditor from './CodeEditor.jsx'
-import { api, call, checkAuth, login } from './api.js'
+import { api, call, checkAuth, login } from './api'
 
 export class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -21,7 +21,7 @@ export class ErrorBoundary extends React.Component {
               {String(this.state.error)}
             </pre>
             <button
-              className="rounded bg-emerald-700 px-3 py-1 text-sm text-white"
+              className="rounded bg-brand-700 px-3 py-1 text-sm text-white"
               onClick={() => location.reload()}
             >
               Reload
@@ -52,7 +52,7 @@ function Login({ onLoggedIn }) {
           }
         }}
       >
-        <h1 className="mb-4 text-center text-lg font-bold text-emerald-400">CodingDude</h1>
+        <h1 className="mb-4 text-center text-lg font-bold text-brand-400">CodingDude</h1>
         <input
           type="password"
           className="mb-3 w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
@@ -62,7 +62,7 @@ function Login({ onLoggedIn }) {
           autoFocus
         />
         {err && <div className="mb-2 text-xs text-red-400">{err}</div>}
-        <button className="w-full rounded bg-emerald-700 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-600">
+        <button className="w-full rounded bg-brand-700 px-3 py-2 text-sm font-medium text-white hover:bg-brand-600">
           Log in
         </button>
       </form>
@@ -73,7 +73,7 @@ function Login({ onLoggedIn }) {
 function Sidebar({ workdir, setWorkdir, sessions, activeSession, onSelect, onNewSession, width }) {
   return (
     <aside className="flex shrink-0 flex-col gap-3 border-r border-neutral-800 bg-neutral-950 p-3" style={{ width }}>
-      <h1 className="text-lg font-bold text-emerald-400">CodingDude</h1>
+      <h1 className="text-lg font-bold text-brand-400">CodingDude</h1>
       <label className="text-xs text-neutral-400">
         Workdir
         <input
@@ -84,7 +84,7 @@ function Sidebar({ workdir, setWorkdir, sessions, activeSession, onSelect, onNew
         />
       </label>
       <button
-        className="rounded bg-emerald-700 px-2 py-1 text-sm font-medium text-white hover:bg-emerald-600"
+        className="rounded bg-brand-700 px-2 py-1 text-sm font-medium text-white hover:bg-brand-600"
         onClick={onNewSession}
       >
         + New session
@@ -95,7 +95,7 @@ function Sidebar({ workdir, setWorkdir, sessions, activeSession, onSelect, onNew
             key={s.session_id}
             className={`block w-full truncate rounded px-2 py-1 text-left text-sm ${
               s.session_id === activeSession
-                ? 'bg-neutral-800 text-emerald-300'
+                ? 'bg-neutral-800 text-brand-300'
                 : 'text-neutral-400 hover:bg-neutral-900'
             }`}
             onClick={() => onSelect(s.session_id)}
@@ -124,7 +124,7 @@ function ToolTimeline({ events }) {
         <div className="space-y-1 px-2 pb-2">
           {events.map((e, i) => (
             <div key={i} className="rounded bg-neutral-950 p-1 font-mono text-neutral-400">
-              <div className="text-emerald-500">{e.tool_name || e.type}</div>
+              <div className="text-brand-500">{e.tool_name || e.type}</div>
               {e.result && <pre className="whitespace-pre-wrap text-neutral-500">{e.result}</pre>}
             </div>
           ))}
@@ -140,7 +140,7 @@ function ApprovalCard({ command, onDecide }) {
       <div className="mb-2 text-xs font-semibold text-amber-300">Approval needed</div>
       <pre className="mb-2 overflow-x-auto rounded bg-neutral-950 p-2 font-mono text-xs text-neutral-200">{command}</pre>
       <div className="flex gap-2">
-        <button className="rounded bg-emerald-700 px-3 py-1 text-xs text-white hover:bg-emerald-600"
+        <button className="rounded bg-brand-700 px-3 py-1 text-xs text-white hover:bg-brand-600"
           onClick={() => onDecide('approve')}>Approve</button>
         <button className="rounded bg-neutral-700 px-3 py-1 text-xs text-white hover:bg-neutral-600"
           onClick={() => onDecide('pattern')}>Approve all matching</button>
@@ -168,7 +168,7 @@ function PlanCard({ sessionId, onDecide }) {
   }, [sessionId])
   if (!plan) return null
   const statusColor = plan.status === 'rejected' ? 'text-red-400'
-    : plan.status === 'done' ? 'text-emerald-400' : 'text-amber-300'
+    : plan.status === 'done' ? 'text-brand-400' : 'text-amber-300'
   return (
     <div className="my-2 rounded border border-sky-700 bg-sky-900/20 p-3">
       <div className="mb-1 flex items-center justify-between">
@@ -184,7 +184,7 @@ function PlanCard({ sessionId, onDecide }) {
       </ol>
       {plan.status === 'approved' && onDecide && (
         <div className="mt-2 flex gap-2">
-          <button className="rounded bg-emerald-700 px-3 py-1 text-xs text-white hover:bg-emerald-600"
+          <button className="rounded bg-brand-700 px-3 py-1 text-xs text-white hover:bg-brand-600"
             onClick={() => onDecide('approve')}>Approve plan</button>
           <button className="rounded bg-red-800 px-3 py-1 text-xs text-white hover:bg-red-700"
             onClick={() => onDecide('deny')}>Reject</button>
@@ -275,7 +275,7 @@ function FileExplorer({ sessionId }) {
       {openPath && (
         <div className="flex min-h-0 flex-1 flex-col gap-1">
           <div className="flex items-center justify-between">
-            <span className="truncate font-mono text-[10px] text-emerald-300">{openPath}</span>
+            <span className="truncate font-mono text-[10px] text-brand-300">{openPath}</span>
             <div className="flex gap-1">
               <button
                 className="rounded bg-neutral-700 px-2 py-0.5 text-[10px] text-white"
@@ -286,13 +286,13 @@ function FileExplorer({ sessionId }) {
               >{editing ? 'view' : 'edit'}</button>
               {editing && (
                 <button
-                  className="rounded bg-emerald-700 px-2 py-0.5 text-[10px] text-white"
+                  className="rounded bg-brand-700 px-2 py-0.5 text-[10px] text-white"
                   onClick={save}
                 >save</button>
               )}
             </div>
           </div>
-          {saved && <div className="text-[10px] text-emerald-400">saved ✓</div>}
+          {saved && <div className="text-[10px] text-brand-400">saved ✓</div>}
           {editing ? (
             <div className="min-h-0 flex-1 overflow-hidden rounded border border-neutral-700">
               <CodeEditor path={openPath} value={draft} onChange={setDraft} height="100%" />
@@ -314,7 +314,7 @@ function FileExplorer({ sessionId }) {
 
 
 function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
-  const tabs = ['Diff', 'Files', 'Terminal', 'Cost', 'Memory', 'MCP', 'Standards']
+  const tabs = ['Diff', 'Files', 'Terminal', 'Trace', 'Cost', 'Memory', 'MCP', 'Standards']
   const [tab, setTab] = useState('Diff')
   const [data, setData] = useState({})
 
@@ -327,6 +327,7 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
         if (tab === 'Cost') { const u = await call(`/sessions/${sessionId}/usage`); setData((d) => ({ ...d, usage: u })) }
         if (tab === 'Memory') { const m = await call('/memory'); setData((d) => ({ ...d, memory: m })) }
         if (tab === 'MCP') { const m = await api.listMcp(sessionId); setData((d) => ({ ...d, mcp: m })) }
+        if (tab === 'Trace') { const tr = await call(`/sessions/${sessionId}/trace`); setData((d) => ({ ...d, trace: tr })) }
       } catch { /* transient */ }
       if (!stop) setTimeout(poll, 4000)
     }
@@ -434,12 +435,12 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
           {modes.map((m) => (
             <button
               key={m}
-              className={`rounded px-2 py-0.5 text-[10px] uppercase tracking-wide ${stdMode === m ? 'bg-neutral-800 text-emerald-300' : 'text-neutral-500 hover:text-neutral-300'}`}
+              className={`rounded px-2 py-0.5 text-[10px] uppercase tracking-wide ${stdMode === m ? 'bg-neutral-800 text-brand-300' : 'text-neutral-500 hover:text-neutral-300'}`}
               onClick={() => setStdMode(m)}
             >{m}</button>
           ))}
         </div>
-        {savedMsg && <div className="rounded bg-emerald-900/40 px-2 py-1 text-[10px] text-emerald-300">{savedMsg}</div>}
+        {savedMsg && <div className="rounded bg-emerald-900/40 px-2 py-1 text-[10px] text-brand-300">{savedMsg}</div>}
 
         {stdMode === 'directives' && (
           <div className="flex min-h-0 flex-1 flex-col gap-1">
@@ -455,7 +456,7 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
               />
             </div>
             <button
-              className="self-start rounded bg-emerald-700 px-3 py-1 text-xs text-white hover:bg-emerald-600"
+              className="self-start rounded bg-brand-700 px-3 py-1 text-xs text-white hover:bg-brand-600"
               onClick={saveDirectives}
             >Save directives</button>
           </div>
@@ -464,7 +465,7 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
         {stdMode === 'skills' && !editingSkill && (
           <div className="flex flex-1 flex-col gap-1 overflow-y-auto">
             <button
-              className="self-start rounded bg-emerald-700 px-2 py-1 text-[10px] text-white"
+              className="self-start rounded bg-brand-700 px-2 py-1 text-[10px] text-white"
               onClick={() => setEditingSkill({ name: 'new-skill', description: '', body: '' })}
             >+ new skill</button>
             {skillList && skillList.map((s) => (
@@ -505,7 +506,7 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
               />
             </div>
             <div className="flex gap-1">
-              <button className="rounded bg-emerald-700 px-3 py-1 text-xs text-white" onClick={saveSkill}>save skill</button>
+              <button className="rounded bg-brand-700 px-3 py-1 text-xs text-white" onClick={saveSkill}>save skill</button>
               <button className="rounded bg-neutral-700 px-3 py-1 text-xs text-white" onClick={() => setEditingSkill(null)}>cancel</button>
             </div>
           </div>
@@ -516,6 +517,23 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
             {reviewChecklist ?? 'loading…'}
           </pre>
         )}
+      </div>
+    )
+  } else if (tab === 'Trace') {
+    const colors = {
+      GATE_REQUEST: 'text-amber-300', RUN_ERROR: 'text-red-400',
+      RUN_FINISHED: 'text-brand-400', TOOL_CALL_START: 'text-sky-400',
+      TOOL_CALL_END: 'text-sky-300', PLAN_PROPOSED: 'text-purple-300',
+      USER_PROMPT: 'text-neutral-300',
+    }
+    body = (
+      <div className="space-y-0.5 font-mono text-[10px]">
+        {(data.trace || []).slice().reverse().map((e, i) => (
+          <div key={i} className={colors[e.type] || 'text-neutral-400'}>
+            {(e.ts || '').slice(11, 19)} {e.type} {e.command || e.tool_name || e.delta || ''}
+          </div>
+        ))}
+        {(!data.trace || !data.trace.length) && <div className="text-neutral-600">no events yet</div>}
       </div>
     )
   } else if (tab === 'Terminal') {
@@ -530,7 +548,7 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
               {s.name} <span className="text-neutral-600">({s.config.command})</span>
             </span>
             <button
-              className={s.disabled ? 'text-emerald-500 hover:text-emerald-300' : 'text-red-500 hover:text-red-300'}
+              className={s.disabled ? 'text-brand-500 hover:text-brand-300' : 'text-red-500 hover:text-red-300'}
               onClick={() => toggleServer(s.name, !s.disabled)}
             >{s.disabled ? 'enable' : 'disable'}</button>
           </div>
@@ -542,7 +560,7 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
     body = (
       <pre className="whitespace-pre-wrap font-mono text-[10px] leading-tight">
         {data.diff.split('\n').map((l, i) => (
-          <div key={i} className={l.startsWith('+') ? 'text-emerald-400' : l.startsWith('-') ? 'text-red-400' : 'text-neutral-500'}>{l}</div>
+          <div key={i} className={l.startsWith('+') ? 'text-brand-400' : l.startsWith('-') ? 'text-red-400' : 'text-neutral-500'}>{l}</div>
         ))}
       </pre>
     )
@@ -555,7 +573,7 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
         <div>requests: {u.requests ?? 0}</div>
         <div>input tokens: {u.input_tokens ?? 0}</div>
         <div>output tokens: {u.output_tokens ?? 0}</div>
-        <div className="text-emerald-400">cost: ${(u.cost_usd ?? 0).toFixed(4)}</div>
+        <div className="text-brand-400">cost: ${(u.cost_usd ?? 0).toFixed(4)}</div>
       </div>
     )
   }
@@ -566,12 +584,12 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
         {tabs.map((t) => (
           <button
             key={t}
-            className={`relative rounded px-2 py-0.5 text-xs ${tab === t ? 'bg-neutral-800 text-emerald-300' : 'text-neutral-500 hover:text-neutral-300'}`}
+            className={`relative rounded px-2 py-0.5 text-xs ${tab === t ? 'bg-neutral-800 text-brand-300' : 'text-neutral-500 hover:text-neutral-300'}`}
             onClick={() => setTab(t)}
           >
             {t}
             {t === 'Diff' && diffBadge && tab !== 'Diff' && (
-              <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-brand-400" />
             )}
           </button>
         ))}
@@ -593,7 +611,7 @@ function Chat({ messages, streaming, onStop, onDecide, sessionId }) {
           <div key={i} className={m.role === 'user' ? 'text-right' : ''}>
             <div
               className={`inline-block max-w-[85%] whitespace-pre-wrap rounded-lg px-3 py-2 text-sm ${
-                m.role === 'user' ? 'bg-emerald-800 text-white' : 'bg-neutral-800 text-neutral-200'
+                m.role === 'user' ? 'bg-brand-800 text-white' : 'bg-neutral-800 text-neutral-200'
               }`}
             >
               {m.text}
@@ -611,7 +629,7 @@ function Chat({ messages, streaming, onStop, onDecide, sessionId }) {
               <>
                 <PlanCard sessionId={sessionId} onDecide={onDecide} />
                 <div className="my-1 flex gap-2">
-                  <button className="rounded bg-emerald-700 px-3 py-1 text-xs text-white hover:bg-emerald-600"
+                  <button className="rounded bg-brand-700 px-3 py-1 text-xs text-white hover:bg-brand-600"
                     onClick={() => onDecide('approve')}>Approve plan</button>
                   <button className="rounded bg-red-800 px-3 py-1 text-xs text-white hover:bg-red-700"
                     onClick={() => onDecide('deny')}>Reject</button>
@@ -665,7 +683,7 @@ function Prompt({ onSend, disabled }) {
         disabled={disabled}
       />
       <button
-        className="rounded bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-600 disabled:opacity-40"
+        className="rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-40"
         disabled={disabled}
       >
         Send
@@ -700,7 +718,7 @@ export default function App() {
     return (
       <div
         data-pane={which}
-        className="w-1 shrink-0 cursor-col-resize bg-neutral-800 transition-colors hover:bg-emerald-600"
+        className="w-1 shrink-0 cursor-col-resize bg-neutral-800 transition-colors hover:bg-brand-600"
         onMouseDown={(e) => {
           e.preventDefault()
           const startX = e.clientX
@@ -917,7 +935,7 @@ export default function App() {
         <span>
           {activeSession ? `session ${activeSession.slice(0, 8)}` : 'no session'} · {workdir || 'no workdir'}
         </span>
-        <span className={streaming ? 'text-emerald-400' : ''}>{status}</span>
+        <span className={streaming ? 'text-brand-400' : ''}>{status}</span>
       </footer>
     </div>
   )

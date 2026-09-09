@@ -1,6 +1,6 @@
 [project]
 name = "codingdude"
-version = "0.2.0"
+version = "0.3.0"
 description = "CodingDude — a personal coding agent built with pydantic-ai"
 readme = "README.md"
 requires-python = ">=3.12"

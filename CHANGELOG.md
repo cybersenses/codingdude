@@ -1,6 +1,26 @@
 # Changelog
 
-## 0.2.0 — 2026-09-08
+## 0.3.0 — 2026-09-09
+
+Modernization completion (WS-C/E/F/G/H remainder).
+
+### Added
+- Trace viewer tab: replay every traced event of a session (gates, terminals, tool calls)
+- `run_coverage` agent tool: pytest-cov execution with per-file missing-line report
+- `find_unused_exports` agent tool: knip integration for JS/TS projects (uses project devDependencies, never auto-installs)
+- `find_dead_code` agent tool: vulture (Python) + tree-sitter (JS/TS) unused-symbol detection
+- On-demand code review: Diff-tab "Run review" button → reviewer findings
+- Design tokens: brand palette defined as Tailwind @theme aliases
+- Typed API layer (`api.ts`) with generated-style event/response models — first step of the TS migration
+- Memory extraction wired into the worker (cheap-model post-session fact banking)
+- Binary gates/terminals now land in the JSONL trace
+
+### Changed
+- `emerald-*` accent classes swept to `brand-*` tokens
+
+### Fixed
+- review refactor shared between plan-completion and on-demand flows
+ — 2026-09-08
 
 Uber-agent layer (tickets 18–22) + modernization pass (WS-A–H).
 
