@@ -278,11 +278,10 @@ class Engine:
                 # Pattern Approvals are session-scoped: load what past runs saved.
                 approvals.patterns.update(self._db.session_patterns(session_id))
                 if fix_loop:
-                    # The user pre-authorized the test loop when enabling the mode.
-                    for base in test_command.split():
-                        if base not in ('-', 'q'):
-                            approvals.patterns.add(base)
-                    approvals.patterns.add(test_command)
+                    # The user pre-authorized the test loop when enabling the
+                    # mode: approve the exact command, never a broad interpreter
+                    # token (self-review C3).
+                    approvals.patterns.add(test_command.strip())
                 # New pattern approvals persist for the rest of the Session.
                 approvals.on_pattern = (
                     lambda pattern: self._db.record_pattern_approval(session_id, pattern)

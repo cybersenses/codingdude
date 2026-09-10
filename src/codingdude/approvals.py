@@ -42,6 +42,12 @@ OUTSIDE_WORKDIR = re.compile(
     r'(\.\.[\\/]|~[\\/]|(?:[A-Za-z]:)[\\/]|/(?:home|Users|etc|var|tmp)/)',
 )
 
+DEFAULT_ALLOWED_BINARIES = {
+    'ls', 'dir', 'cat', 'head', 'tail', 'pwd', 'echo', 'which', 'where',
+    'tree', 'wc', 'file', 'stat', 'grep', 'rg', 'diff', 'sort', 'uniq',
+    'pytest', 'python', 'python3', 'node', 'git', 'gh', 'ruff', 'mypy',
+}
+
 
 @dataclass
 class ApprovalPolicy:
@@ -60,7 +66,7 @@ class ApprovalPolicy:
     patterns: set[str] = field(default_factory=set)
     ask: object | None = None
     on_pattern: object | None = None  # callable(pattern) — engine persists it
-    allowed_binaries: set[str] = field(default_factory=lambda: set(_DEFAULT_ALLOWED))
+    allowed_binaries: set[str] = field(default_factory=lambda: set(DEFAULT_ALLOWED_BINARIES))
 
     def approve_pattern(self, pattern: str) -> None:
         self.patterns.add(pattern)
@@ -72,8 +78,8 @@ class ApprovalPolicy:
         if ALWAYS_GATED.match(stripped) or OUTSIDE_WORKDIR.search(stripped):
             return DENIED
         base = stripped.split()[0]
-        if base in self.patterns:
-            return APPROVED
+        # Multi-token pattern families: `npm test` approves `npm test ...`
+        # but never `npm publish` (self-review C2).
         if any(stripped == p or stripped.startswith(p + ' ') for p in self.patterns):
             return APPROVED
         if AUTO_SHELL.match(stripped) and base in self.allowed_binaries:
@@ -94,8 +100,3 @@ class ApprovalPolicy:
 
 # Default binaries considered safe to gate-approve as reads. Anything outside
 # this set NEEDS_GATE the first time; the user can then approve the pattern.
-_DEFAULT_ALLOWED = {
-    'ls', 'dir', 'cat', 'head', 'tail', 'pwd', 'echo', 'which', 'where',
-    'tree', 'wc', 'file', 'stat', 'grep', 'rg', 'diff', 'sort', 'uniq',
-    'pytest', 'python', 'python3', 'node', 'git', 'gh', 'ruff', 'mypy',
-}
