@@ -1026,7 +1026,12 @@ export default function App() {
   }, [loggedIn])
 
   async function loadMessages(sessionId) {
-    const raw = await api.getMessages(sessionId)
+    let raw
+    try {
+      raw = await api.getMessages(sessionId)
+    } catch {
+      return // transient server hiccup; the trace poll will retry
+    }
     const turns = []
     for (const m of raw) {
       for (const p of m.parts || []) {
@@ -1070,7 +1075,13 @@ export default function App() {
         const es = new EventSource(api.eventStreamUrl(run_id))
         esRef.current = es
         es.onmessage = (e) => {
-          const ev = JSON.parse(e.data)
+          let ev
+          try {
+            ev = JSON.parse(e.data)
+          } catch (err) {
+            console.warn('skipping malformed SSE data', e.data)
+            return
+          }
           setMessages((msgs) => {
             const copy = [...msgs]
             const last = { ...copy[copy.length - 1] }
