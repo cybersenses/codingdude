@@ -4,6 +4,9 @@ One worker per accepted run. Connects back to the server over a local WebSocket,
 sends AG-UI-shaped JSON events, waits for approval decisions on interactive
 gates, and exits when the run ends. Being a separate process means a wedged run
 dies alone and kill = cancel.
+
+All worker→server traffic flows through ONE sender task — concurrent ws.send
+calls from multiple tasks can interleave frames and corrupt the event stream.
 """
 
 import argparse
@@ -61,9 +64,6 @@ async def _resolve_model(name: str | None):
         )
         from pydantic_ai.models.function import FunctionModel
 
-        def gated(messages, info):
-            return gated_response(messages)
-
         def gated_response(messages):
             if not any(
                 isinstance(p, ToolCallPart) for m in messages for p in m.parts
@@ -79,6 +79,9 @@ async def _resolve_model(name: str | None):
             ]
             answer = 'gated-ran' if any('gated-ok' in r for r in returns) else 'gated-no'
             return MR(parts=[TP(content=answer)])
+
+        def gated(messages, info):
+            return gated_response(messages)
 
         async def gated_stream(messages, info):
             if not any(
@@ -133,7 +136,8 @@ async def run(args) -> int:
         async def ask(command: str) -> str:
             fut = loop.create_future()
             pending_gate['fut'] = fut
-            # Routed through on_event so the gate lands in the run's JSONL trace.
+            # Single writer: gate requests flow through the same queue as
+            # every other event, so frames can never interleave.
             on_event({'type': 'GATE_REQUEST', 'command': command})
             decision = await fut
             if decision == 'pattern':
@@ -143,9 +147,6 @@ async def run(args) -> int:
         policy.ask = ask
 
     async with websockets.connect(args.server) as ws:
-        async def ws_send(payload: dict) -> None:
-            await ws.send(json.dumps(payload))
-
         async def sender():
             while True:
                 event = await queue.get()
@@ -170,6 +171,7 @@ async def run(args) -> int:
                     model=model,
                     approvals=policy,
                     emit=on_event,
+                    image_path=image_path_arg(args),
                 )
                 if outcome.status == 'gate_aborted':
                     terminal = {
@@ -190,19 +192,17 @@ async def run(args) -> int:
                     'message': str(exc),
                 }
             trace_terminal(args.session, terminal)
-            await ws_send(terminal)
+            # Single writer: queued, so ordering with other events is preserved.
+            on_event(terminal)
 
-        tasks = [
-            asyncio.create_task(sender()),
-            asyncio.create_task(reader()),
-            asyncio.create_task(runner()),
-        ]
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        for t in pending:
+        sender_task = asyncio.create_task(sender())
+        reader_task = asyncio.create_task(reader())
+        runner_task = asyncio.create_task(runner())
+        # Sender exits when it forwards the terminal event.
+        await sender_task
+        for t in (reader_task, runner_task):
             t.cancel()
-        # Drain whatever the runner queued after sender returned.
-        while not queue.empty():
-            await ws.send(json.dumps(queue.get_nowait()))
+
     return 0
 
 
