@@ -422,7 +422,9 @@ class Engine:
                 self._db.delete_session(session_id)
             raise
 
-        self._db.append_messages(session_id, encode_messages(list(result.new_messages())))
+        self._db.replace_messages(
+            session_id, [encode_messages([m]) for m in result.all_messages()]
+        )
 
         # Fix-until-green loop: run the tests, feed failures back, repeat.
         if fix_loop and approvals is not None:
@@ -457,7 +459,10 @@ class Engine:
                     + 'Fix the failures. Do not declare success until the tests pass.',
                     message_history=history,
                 )
-                self._db.append_messages(session_id, encode_messages(list(result.new_messages())))
+                self._db.replace_messages(
+                    session_id,
+                    [encode_messages([m]) for m in result.all_messages()],
+                )
 
         usage = result.usage
         self._db.record_usage(

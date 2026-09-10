@@ -723,7 +723,7 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
   )
 }
 
-function Chat({ messages, streaming, onStop, onDecide, sessionId, suggestMode }) {
+function Chat({ messages, streaming, onStop, onDecide, sessionId, suggestMode, onEditRevert }) {
   const bottomRef = useRef(null)
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -750,15 +750,7 @@ function Chat({ messages, streaming, onStop, onDecide, sessionId, suggestMode })
             )}
             {m.edits && suggestMode && m.edits.map((ed, i) => (
               <EditBlock key={i} edit={ed} sessionId={sessionId}
-                onRevert={(reverted) => {
-                  setMessages((msgs) => {
-                    const copy = [...msgs]
-                    const mm = { ...copy[i] }
-                    mm.edits = (mm.edits || []).filter((x) => x !== ed)
-                    copy[i] = mm
-                    return copy
-                  })
-                }} />
+                onRevert={() => onEditRevert(i, ed)} />
             ))}
             {m.gate && !m.gate.startsWith('plan:') && <ApprovalCard command={m.gate} onDecide={onDecide} />}
             {m.gate && m.gate.startsWith('plan:') && sessionId && (
@@ -1128,6 +1120,13 @@ export default function App() {
       })
   }
 
+  function onEditRevert(msgIndex, edit) {
+    setMessages((msgs) => msgs.map((m, idx) => {
+      if (idx !== msgIndex || !m.edits) return m
+      return { ...m, edits: m.edits.filter((x) => x !== edit) }
+    }))
+  }
+
   function stop() {
     if (runRef.current) api.cancelRun(runRef.current).catch(() => {})
     esRef.current?.close()
@@ -1215,7 +1214,7 @@ export default function App() {
             fixLoop={fixLoop}
             setFixLoop={setFixLoop}
           />
-          <Chat messages={messages} streaming={streaming} onStop={stop} onDecide={decide} sessionId={activeSession} suggestMode={suggestMode} />
+          <Chat messages={messages} streaming={streaming} onStop={stop} onDecide={decide} sessionId={activeSession} suggestMode={suggestMode} onEditRevert={onEditRevert} />
         </main>
         {dividerFor('right')}
         <RightPanel
