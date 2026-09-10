@@ -30,7 +30,6 @@ def _iter_source_files(workdir: Path, extensions: set[str], path: str = '.'):
         yield f
 
 
-
 async def _vulture_python(workdir: Path, path: str, min_confidence: int) -> str:
     files = [str(f) for f in _iter_source_files(workdir, {'.py'}, path)]
     if not files:
@@ -44,7 +43,11 @@ async def _vulture_python(workdir: Path, path: str, min_confidence: int) -> str:
 
 
 def _tree_sitter_definitions_and_refs(source: bytes, lang_module) -> tuple[set[str], set[str], dict[str, list[tuple]]]:
-    """Returns (defined, referenced, def_locations) for functions and classes."""
+    """Returns (defined, referenced, def_locations) for functions and classes.
+
+    Definition name nodes are excluded from references by skipping the name
+    child when recursing into a declaration's children.
+    """
     from tree_sitter import Parser
 
     parser = Parser(lang_module)
@@ -53,7 +56,7 @@ def _tree_sitter_definitions_and_refs(source: bytes, lang_module) -> tuple[set[s
     referenced: set[str] = set()
     locations: dict[str, list[tuple[str, int]]] = {}
 
-    def walk(node, in_definition: bool):
+    def walk(node):
         if node.type in ('function_declaration', 'function_definition', 'method_definition',
                          'class_declaration', 'class_definition'):
             name_node = node.child_by_field_name('name')
@@ -62,13 +65,22 @@ def _tree_sitter_definitions_and_refs(source: bytes, lang_module) -> tuple[set[s
                 locations.setdefault(name_node.text.decode(), []).append(
                     ('def', node.start_point[0] + 1)
                 )
-                in_definition = True
-        if node.type == 'identifier' and not in_definition:
+                # Walk children but skip the name identifier — it's the
+                # definition site, not a usage. Compare by byte range since
+                # tree-sitter creates fresh wrapper objects on each access.
+                name_start = name_node.start_byte
+                name_end = name_node.end_byte
+                for child in node.children:
+                    if child.start_byte == name_start and child.end_byte == name_end:
+                        continue
+                    walk(child)
+                return
+        if node.type == 'identifier':
             referenced.add(node.text.decode())
         for child in node.children:
-            walk(child, in_definition)
+            walk(child)
 
-    walk(tree.root_node, False)
+    walk(tree.root_node)
     return defined, referenced, locations
 
 
@@ -100,11 +112,9 @@ def _js_dead_code(workdir: Path, path: str, min_confidence: int) -> str:
     dead = sorted(defined - referenced)
     results = []
     for name in dead:
-        if name in locations and len(locations[name]) >= min_confidence // 100 + 0:
-            pass
         for path_line in locations.get(name, [])[:1]:
-            results.append(f'{path_line}: {name}')
-    return '\n'.join(f'dead: {r}' for r in results)
+            results.append(f'dead: {path_line}: {name}')
+    return '\n'.join(results)
 
 
 def build_deadcode_toolset(workdir: Path) -> FunctionToolset:
