@@ -20,7 +20,9 @@ from .db import Database
 from .messages import decode_messages, encode_messages
 from .tools import (
     GateRequired,
+    build_coverage_toolset,
     build_delegation_toolset,
+    build_git_toolset,
     build_shell_toolset,
     build_toolset,
     build_web_toolset,
@@ -115,8 +117,9 @@ class Engine:
         primary = main or self._config.models.main
         fallback_name = fallback or self._config.models.fallback
         try:
-            if isinstance(fallback_name, str) and (
-                self._config.models.fallback_base_url
+            if (
+                isinstance(fallback_name, str)
+                and self._config.models.fallback_base_url
                 and fallback_name.startswith('zai:')
             ):
                 fallback_model = _zai_fallback(
@@ -142,6 +145,58 @@ class Engine:
         except Exception as exc:  # noqa: BLE001 — missing credentials etc.
             logger.warning('subagent model unavailable (%s); delegation disabled', exc)
             return None
+
+    def _config_home(self) -> Path:
+        from .config import config_home
+
+        return config_home()
+
+    async def review_diff(self, session_id: str) -> str:
+        """On-demand review of the Session's working-tree diff (UI button)."""
+        from .planning import review_diff_findings
+
+        return await review_diff_findings(
+            self._db, session_id, self._config_home(),
+            self._extraction_model or self._build_subagent_model(),
+        )
+
+    def approve_pattern(self, session_id: str, command: str) -> str:
+        """Record a Pattern Approval for the rest of the Session (UI calls this)."""
+        from .approvals import ApprovalPolicy
+
+        policy = ApprovalPolicy()
+        pattern = policy.pattern_for(command)
+        self._db.record_pattern_approval(session_id, pattern)
+        return pattern
+
+    def _check_budget(self, session_id: str) -> None:
+        """Hard-stop the session once spend crosses the cap (off by default;
+        never bypassed by --yolo)."""
+        if self._budget_cap_usd is None:
+            return
+        from .exceptions import BudgetExceeded
+
+        totals = self._db.session_usage(session_id)
+        spent = totals.get('cost_usd') or 0.0
+        if spent >= self._budget_cap_usd:
+            raise BudgetExceeded(spent_usd=spent, cap_usd=self._budget_cap_usd)
+
+    @staticmethod
+    def _scrubbed() -> dict:
+        from .tools import scrubbed_env
+
+        return scrubbed_env()
+
+    def _diff_nonempty(self, session_id: str) -> bool:
+        import subprocess
+
+        workdir = self._db.session_workdir(session_id)
+        if not workdir:
+            return False
+        result = subprocess.run(
+            ['git', 'diff', 'HEAD'], cwd=workdir, capture_output=True, text=True, timeout=30
+        )
+        return bool(result.stdout.strip())
 
     async def run(
         self,
@@ -181,6 +236,11 @@ class Engine:
                     f.write(payload + '\n')
             if emit:
                 emit(event)
+
+        def persist_snapshot(msgs):
+            self._db.replace_messages(
+                session_id, [encode_messages([m]) for m in msgs]
+            )
 
         try:
             self._check_budget(session_id)
@@ -241,6 +301,8 @@ class Engine:
 
             subagent = subagent_model or self._build_subagent_model()
             if subagent is not None:
+                from .tools import build_delegation_toolset
+
                 toolsets.append(build_delegation_toolset(workdir, subagent))
 
             toolsets.append(build_web_toolset())
@@ -281,12 +343,13 @@ class Engine:
             toolsets.append(build_memory_toolset(store, str(workdir)))
 
             instructions = INSTRUCTIONS
-            from .repo_map import build_repo_map as _build_map
+            from .repo_map import build_repo_map
 
-            repo_map_text = _build_map(workdir)
+            repo_map_text = build_repo_map(workdir)
             if repo_map_text:
-                map_header = '## Repository overview (auto-generated map)'
-                instructions += '\n\n' + map_header + '\n' + repo_map_text
+                instructions += (
+                    '\n\n## Repository overview (auto-generated map)\n' + repo_map_text
+                )
             from .directives import build_directive_layers
 
             directive_layers = build_directive_layers(self._config_home(), workdir)
@@ -339,6 +402,7 @@ class Engine:
                     result = await self._run_streaming(
                         agent, run_prompt, history, model_name, traced,
                         cp_holder=cp_holder,
+                        persist=persist_snapshot,
                     )
             except GateRequired as gate:
                 # ADR-0003: unattended runs abort on gates. The Session keeps
@@ -442,41 +506,6 @@ class Engine:
                 store.add(fact, scope='workdir', workdir=str(workdir))
                 known.add(fact)
 
-    def _config_home(self) -> Path:
-        from .config import config_home
-
-        return config_home()
-
-    async def review_diff(self, session_id: str) -> str:
-        """On-demand review of the Session's working-tree diff (UI button)."""
-        from .planning import review_diff_findings
-
-        return await review_diff_findings(
-            self._db, session_id, self._config_home(),
-            self._extraction_model or self._build_subagent_model(),
-        )
-
-    def approve_pattern(self, session_id: str, command: str) -> str:
-        """Record a Pattern Approval for the rest of the Session (UI calls this)."""
-        from .approvals import ApprovalPolicy
-
-        policy = ApprovalPolicy()
-        pattern = policy.pattern_for(command)
-        self._db.record_pattern_approval(session_id, pattern)
-        return pattern
-
-    def _check_budget(self, session_id: str) -> None:
-        """Hard-stop the session once spend crosses the cap (off by default;
-        never bypassed by --yolo)."""
-        if self._budget_cap_usd is None:
-            return
-        from .exceptions import BudgetExceeded
-
-        totals = self._db.session_usage(session_id)
-        spent = totals.get('cost_usd') or 0.0
-        if spent >= self._budget_cap_usd:
-            raise BudgetExceeded(spent_usd=spent, cap_usd=self._budget_cap_usd)
-
     async def _maybe_compact(self, history, resolved: Model, on_event):
         """Compact old turns into a summary when history passes the threshold.
 
@@ -518,7 +547,8 @@ class Engine:
             )
         return compacted, True
 
-    async def _run_streaming(self, agent, prompt, history, model_name, emit, cp_holder):
+    async def _run_streaming(self, agent, prompt, history, model_name, emit, cp_holder,
+                             persist=None):
         """Run the agent, emitting AG-UI-shaped events for the UI layer."""
         from pydantic_ai._agent_graph import CallToolsNode
         from pydantic_ai.messages import (
@@ -534,7 +564,6 @@ class Engine:
         async with agent.iter(prompt, message_history=history or None) as run:
             async for node in run:
                 if agent.is_model_request_node(node):
-                    cp_holder.clear()  # new assistant turn → new checkpoint
                     emit({'type': 'TEXT_MESSAGE_START', 'role': 'assistant'})
                     async with node.stream(run.ctx) as stream:
                         async for event in stream:
@@ -562,6 +591,9 @@ class Engine:
                                     })
                     emit({'type': 'TEXT_MESSAGE_END'})
                 elif isinstance(node, CallToolsNode):
+                    # Persist incrementally so gates/stops/crashes keep history.
+                    if persist is not None:
+                        persist(run.all_messages())
                     async with node.stream(run.ctx) as stream:
                         async for event in stream:
                             if isinstance(event, FunctionToolCallEvent):
@@ -571,32 +603,15 @@ class Engine:
                                     'args': event.part.args,
                                 })
                             elif isinstance(event, FunctionToolResultEvent):
-                                result = event.part
+                                result_part = event.part
                                 emit({
                                     'type': 'TOOL_CALL_END',
-                                    'tool_name': result.tool_name,
-                                    'result': str(result.content)[:2000],
+                                    'tool_name': result_part.tool_name,
+                                    'result': str(result_part.content)[:2000],
                                 })
             result = run.result
         # NB: terminal RUN_FINISHED is emitted by the worker after persistence.
         return result
-
-    @staticmethod
-    def _scrubbed() -> dict:
-        from .tools import scrubbed_env
-
-        return scrubbed_env()
-
-    def _diff_nonempty(self, session_id: str) -> bool:
-        import subprocess
-
-        workdir = self._db.session_workdir(session_id)
-        if not workdir:
-            return False
-        result = subprocess.run(
-            ['git', 'diff', 'HEAD'], cwd=workdir, capture_output=True, text=True, timeout=30
-        )
-        return bool(result.stdout.strip())
 
     async def _verify_claims(self, session_id: str, result, workdir: Path, approvals, emit,
                              resolved=None, history=None, toolsets=None, instructions=None) -> None:
