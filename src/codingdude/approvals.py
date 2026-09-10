@@ -3,7 +3,8 @@
 - APPROVED: reads, searches, in-Workdir edits, local git reads, and benign shell
   utilities — runs without asking.
 - NEEDS_GATE: ordinary shell commands. One approval can cover the rest of the
-  Session via a Pattern Approval (the command's leading token).
+  Session via a Pattern Approval (leading-token, or a multi-token family such
+  as `npm test`).
 - DENIED: remote mutations and destructive operations. Never unlocked by a
   pattern — only by `--yolo` (the explicit full-off switch, ADR-0003).
 """
@@ -16,24 +17,29 @@ NEEDS_GATE = 'needs_gate'
 DENIED = 'denied'
 
 # Commands that run without a gate: read-only / dev-loop conveniences.
-# NOTE: git branch *creation* is deliberately not auto (spec story 19).
+# NOTE: `find` is deliberately NOT here — `find -delete` / `-exec` are
+# destructive (self-review C1). `git branch` creation is gated (story 19).
 AUTO_SHELL = re.compile(
-    r'^(ls|dir|cat|head|tail|pwd|echo|which|where|find|tree|wc|file|stat|'
+    r'^(ls|dir|cat|head|tail|pwd|echo|which|where|tree|wc|file|stat|'
     r'git (status|log|diff|show)|node --version|python --version)\b'
 )
 
 # The always-gated tier: remote mutations and destructive operations.
 ALWAYS_GATED = re.compile(
-    r'^(git (push|remote|clean|reset --hard)|gh (pr|repo|release|api)|'
-    r'rm |rmdir|del |rd |remove-item|mv |move |format |shutdown|taskkill)'
-    r'|(^|[;&|]\s*)sudo\b',
+    r'^(git (push|remote|clean|reset --hard)|gh (pr|repo|release|api|run)'
+    r'|npm (publish|unpublish|access|deprecate)|pip (upload|publish)'
+    r'|docker (push|rm|rmi)|rm |rmdir|del |rd |remove-item|mv |move '
+    r'|format |shutdown|taskkill|find .*(-delete|-exec|-ok)|chmod |chown )'
+    r'|(^|[;&|]\s*)sudo\b'
+    r'|curl .+(-T|--upload|-d|--data|-X ?(POST|PUT|DELETE))'
+    r'|wget .+(--post-file|--method)',
     re.IGNORECASE,
 )
 
 # Heuristic for commands reaching outside the Workdir (home dirs, parent dirs,
 # absolute paths). Best-effort by nature — the file tools are the hard boundary.
 OUTSIDE_WORKDIR = re.compile(
-    r'(\.\./|~/|~\\\\|(?:[A-Za-z]:\\\\)|/(?:home|Users|etc|var|tmp)/)',
+    r'(\.\.[\\/]|~[\\/]|(?:[A-Za-z]:)[\\/]|/(?:home|Users|etc|var|tmp)/)',
 )
 
 
@@ -44,12 +50,17 @@ class ApprovalPolicy:
     `ask`, when set, is an async callable(command) -> 'approve' | 'pattern' |
     'deny'. Interactive frontends set it: a gate waits for the user's answer.
     Without it (headless), gates abort the run per ADR-0003.
+
+    `allowed_binaries`: deny-by-default gate for unknown leading tokens — a
+    command whose binary is not on this list (nor pattern-approved) is gated
+    even if it would otherwise look read-only.
     """
 
     yolo: bool = False
     patterns: set[str] = field(default_factory=set)
     ask: object | None = None
     on_pattern: object | None = None  # callable(pattern) — engine persists it
+    allowed_binaries: set[str] = field(default_factory=lambda: set(_DEFAULT_ALLOWED))
 
     def approve_pattern(self, pattern: str) -> None:
         self.patterns.add(pattern)
@@ -60,12 +71,31 @@ class ApprovalPolicy:
         stripped = command.strip()
         if ALWAYS_GATED.match(stripped) or OUTSIDE_WORKDIR.search(stripped):
             return DENIED
-        if stripped.split()[0] in self.patterns:
+        base = stripped.split()[0]
+        if base in self.patterns:
             return APPROVED
-        if AUTO_SHELL.match(stripped):
+        if any(stripped == p or stripped.startswith(p + ' ') for p in self.patterns):
+            return APPROVED
+        if AUTO_SHELL.match(stripped) and base in self.allowed_binaries:
             return APPROVED
         return NEEDS_GATE
 
     def pattern_for(self, command: str) -> str:
-        """The Pattern Approval a user implicitly grants by approving this command."""
-        return command.strip().split()[0]
+        """The Pattern Approval a user implicitly grants by approving this command.
+
+        Multi-token binaries (npm/gh/pip) get a two-token family so approving
+        `npm test` does not unlock `npm publish` (self-review C2).
+        """
+        tokens = command.strip().split()
+        if tokens and tokens[0] in ('npm', 'pip', 'docker', 'kubectl', 'git'):
+            return ' '.join(tokens[:2])
+        return tokens[0]
+
+
+# Default binaries considered safe to gate-approve as reads. Anything outside
+# this set NEEDS_GATE the first time; the user can then approve the pattern.
+_DEFAULT_ALLOWED = {
+    'ls', 'dir', 'cat', 'head', 'tail', 'pwd', 'echo', 'which', 'where',
+    'tree', 'wc', 'file', 'stat', 'grep', 'rg', 'diff', 'sort', 'uniq',
+    'pytest', 'python', 'python3', 'node', 'git', 'gh', 'ruff', 'mypy',
+}

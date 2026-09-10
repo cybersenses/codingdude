@@ -71,10 +71,11 @@ class SemanticIndex:
                 continue
             vector = json.dumps(self.embedder.embed(content))
             self.db._conn.execute(
-                'INSERT INTO embeddings (path, content_hash, vector) VALUES (?, ?, ?)'
-                ' ON CONFLICT(path) DO UPDATE SET content_hash=excluded.content_hash,'
-                ' vector=excluded.vector',
-                (rel, digest, vector),
+                'INSERT INTO embeddings (path, workdir, content_hash, vector)'
+                ' VALUES (?, ?, ?, ?)'
+                ' ON CONFLICT(path, workdir) DO UPDATE SET'
+                ' content_hash=excluded.content_hash, vector=excluded.vector',
+                (rel, str(workdir), digest, vector),
             )
             count += 1
         self.db._conn.commit()
@@ -82,7 +83,10 @@ class SemanticIndex:
 
     def search(self, query: str, workdir: Path, top_n: int = 5) -> list[tuple[str, float]]:
         qv = self.embedder.embed(query)
-        rows = self.db._conn.execute('SELECT path, vector FROM embeddings').fetchall()
+        rows = self.db._conn.execute(
+            'SELECT path, vector FROM embeddings WHERE workdir = ?',
+            (str(workdir),),
+        ).fetchall()
         scored = [
             (r['path'], cosine(qv, json.loads(r['vector'])))
             for r in rows

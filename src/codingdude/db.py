@@ -49,9 +49,11 @@ CREATE TABLE IF NOT EXISTS usage (
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS embeddings (
-    path TEXT PRIMARY KEY,
+    path TEXT NOT NULL,
+    workdir TEXT NOT NULL,
     content_hash TEXT NOT NULL,
-    vector TEXT NOT NULL
+    vector TEXT NOT NULL,
+    PRIMARY KEY (path, workdir)
 );
 CREATE TABLE IF NOT EXISTS plans (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -97,6 +99,11 @@ class Database:
         conn = sqlite3.connect(home / 'codingdude.db', check_same_thread=False)
         conn.row_factory = sqlite3.Row
         conn.execute('PRAGMA journal_mode=WAL')
+        # migration: embeddings gained workdir scoping in 0.3.1 — the cache is
+        # disposable, so recreate the legacy shape in place
+        cols = [r[1] for r in conn.execute('PRAGMA table_info(embeddings)')]
+        if cols and 'workdir' not in cols:
+            conn.execute('DROP TABLE embeddings')
         conn.execute('PRAGMA busy_timeout=5000')
         conn.executescript(_SCHEMA)
         conn.commit()

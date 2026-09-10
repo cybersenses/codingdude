@@ -10,9 +10,23 @@ from .tools import SKIP_DIRS
 MAX_RESULTS = 50
 
 
-def _python_files(root: Path, path: str = '.'):
+def _resolve_contained(workdir: Path, path: str) -> Path:
+    """Containment-checked resolution - symlink-safe, Workdir-confined."""
+    root_r = workdir.resolve()
+    target = (root_r / path).resolve()
+    try:
+        target.relative_to(root_r)
+    except ValueError:
+        raise ModelRetry(
+            f'Path {path!r} is outside the Workdir. '
+            'Only paths inside the Workdir are accessible.'
+        ) from None
+    return target
 
-    target = (root / path).resolve()
+
+def _python_files(workdir: Path, path: str = "."):
+    root = workdir.resolve()
+    target = _resolve_contained(workdir, path)
     if target.is_file():
         yield target
         return
