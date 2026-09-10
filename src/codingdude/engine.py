@@ -17,7 +17,7 @@ from pydantic_ai.toolsets import AbstractToolset
 from .checkpoints import CheckpointStore
 from .config import Config
 from .db import Database
-from .messages import decode_messages, encode_messages
+from .messages import decode_messages, encode_messages, sanitize_history
 from .tools import (
     GateRequired,
     build_coverage_toolset,
@@ -249,7 +249,9 @@ class Engine:
                 resolved = vision_model
             model_name = getattr(resolved, 'model_name', str(resolved))
 
-            history = decode_messages(self._db.load_messages(session_id))
+            history = sanitize_history(
+                decode_messages(self._db.load_messages(session_id))
+            )
             traced({'type': 'USER_PROMPT', 'text': prompt})
             history, compacted = await self._maybe_compact(history, resolved, on_event)
             if compacted:
