@@ -73,6 +73,7 @@ function Login({ onLoggedIn }) {
 }
 
 function Sidebar({ workdir, setWorkdir, sessions, activeSession, onSelect, onNewSession, width, runningSessions, projects, activeProject, onSelectProject, onAddProject, onDeleteProject }) {
+  const [newProjectName, setNewProjectName] = useState(null)
   return (
     <aside className="flex shrink-0 flex-col gap-3 border-r border-neutral-800 bg-neutral-950 p-3" style={{ width }}>
       <h1 className="text-lg font-bold text-brand-400">CodingDude</h1>
@@ -111,6 +112,37 @@ function Sidebar({ workdir, setWorkdir, sessions, activeSession, onSelect, onNew
           placeholder="C:\path\to\project"
         />
       </label>
+      {newProjectName !== null ? (
+        <div className="flex flex-col gap-1 rounded border border-neutral-700 bg-neutral-900 p-2">
+          <input
+            className="w-full rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-200"
+            value={newProjectName}
+            onChange={(e) => setNewProjectName(e.target.value)}
+            placeholder="project name"
+            autoFocus
+          />
+          <div className="truncate text-[10px] text-neutral-500">folder: {workdir || '— set workdir above —'}</div>
+          <div className="flex gap-1">
+            <button
+              className="rounded bg-emerald-700 px-2 py-1 text-[10px] text-white disabled:opacity-40"
+              disabled={!newProjectName.trim() || !workdir.trim()}
+              onClick={() => {
+                onAddProject(newProjectName.trim(), workdir.trim())
+                setNewProjectName(null)
+              }}
+            >save project</button>
+            <button
+              className="rounded bg-neutral-700 px-2 py-1 text-[10px] text-white"
+              onClick={() => setNewProjectName(null)}
+            >cancel</button>
+          </div>
+        </div>
+      ) : (
+        <button
+          className="self-start rounded border border-neutral-700 px-2 py-1 text-[10px] text-neutral-400 hover:text-neutral-200"
+          onClick={() => setNewProjectName('')}
+        >+ New project</button>
+      )}
       <button
         className="rounded bg-brand-700 px-2 py-1 text-sm font-medium text-white hover:bg-brand-600"
         onClick={onNewSession}
