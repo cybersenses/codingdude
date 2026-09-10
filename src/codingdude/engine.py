@@ -383,8 +383,12 @@ class Engine:
                     + lines
                 )
 
+            from pydantic_ai.settings import ModelSettings
+
+            model_settings = ModelSettings(timeout=300)
             agent: Agent = Agent(
-                model=resolved, instructions=instructions, toolsets=toolsets
+                model=resolved, instructions=instructions, toolsets=toolsets,
+                model_settings=model_settings, retries=2,
             )
             run_prompt: str | list = prompt
             if image_path is not None:
