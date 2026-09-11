@@ -186,7 +186,10 @@ async def _resolve_gate(policy, command: str, always: bool = False) -> None:
             'continue the task another way or ask the user what to do instead.'
         )
     if answer == 'pattern' and not always:
-        pattern = command.strip().split()[0]
+        # One source of truth for what a pattern covers — never the bare
+        # leading token, or an interpreter approval unlocks the interpreter
+        # (self-review C1).
+        pattern = policy.pattern_for(command)
         policy.approve_pattern(pattern)
         if policy.on_pattern:
             policy.on_pattern(pattern)

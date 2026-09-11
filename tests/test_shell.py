@@ -61,6 +61,34 @@ def test_yolo_unlocks_everything():
     assert policy.decide('git push') == APPROVED
 
 
+def test_pattern_for_interpreter_is_exact_not_binary_family():
+    """Approving an interpreter command must NOT unlock the whole interpreter.
+
+    Self-review C1: a session pattern for `python -m pytest` must never be the
+    bare `python`, or `python -c "<arbitrary code>"` runs ungated afterwards.
+    """
+    policy = ApprovalPolicy()
+    pattern = policy.pattern_for('python -m pytest -q')
+    assert pattern != 'python'
+    policy.approve_pattern(pattern)
+    assert policy.decide('python -m pytest -q') == APPROVED
+    assert policy.decide('python -c "import os; os.system(\'rm -rf x\')"') != APPROVED
+
+
+def test_pattern_for_multi_token_family_still_scoped():
+    policy = ApprovalPolicy()
+    assert policy.pattern_for('npm test -- --watch') == 'npm test'
+    assert policy.pattern_for('git commit -m x') == 'git commit'
+    policy.approve_pattern('npm test')
+    assert policy.decide('npm test foo') == APPROVED
+    assert policy.decide('npm exec evil') != APPROVED
+
+
+def test_decide_empty_command_is_gated_not_crash():
+    assert ApprovalPolicy().decide('') == NEEDS_GATE
+    assert ApprovalPolicy().decide('   ') == NEEDS_GATE
+
+
 async def test_approved_shell_runs_and_returns_output(engine, workdir):
     outcome = await engine.run(
         prompt='list files',

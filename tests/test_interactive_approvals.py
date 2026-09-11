@@ -10,7 +10,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 
-from codingdude.approvals import ApprovalPolicy
+from codingdude.approvals import APPROVED, NEEDS_GATE, ApprovalPolicy
 from codingdude.config import load_config
 from codingdude.db import Database
 from codingdude.engine import Engine
@@ -123,6 +123,29 @@ async def test_ask_on_always_gated_pattern_never_persists(home, workdir):
     )
     assert outcome.status == 'complete'  # single approve went through
     assert engine._db.session_patterns(outcome.session_id) == []  # nothing persisted
+
+
+async def test_ask_pattern_for_interpreter_persists_exact_command(home, workdir):
+    """Self-review C1: approving an interpreter command persists that exact
+    command, never the bare binary, so a sibling `python -c` stays gated."""
+    async def ask(command):
+        return 'pattern'
+
+    engine, policy = engine_with_ask(home, ask)
+    cmd = 'python -m pytest -q'
+    first = await engine.run(
+        prompt='run the tests', workdir=workdir, approvals=policy,
+        model=shell_then_answer(cmd, lambda r: 'done'),
+    )
+    assert first.status == 'complete'
+    assert engine._db.session_patterns(first.session_id) == [cmd]
+
+    # Reloading the persisted session pattern into a fresh policy approves the
+    # exact command but still gates a sibling python invocation.
+    fresh = ApprovalPolicy()
+    fresh.patterns.update(engine._db.session_patterns(first.session_id))
+    assert fresh.decide(cmd) == APPROVED
+    assert fresh.decide('python -c "print(1)"') == NEEDS_GATE
 
 
 def git_init(workdir):

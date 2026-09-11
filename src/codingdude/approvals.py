@@ -36,6 +36,22 @@ ALWAYS_GATED = re.compile(
     re.IGNORECASE,
 )
 
+# Binaries that execute arbitrary code from their own arguments: a Pattern
+# Approval for these covers the EXACT command only, never the bare binary.
+# (self-review C1: approving `python -m pytest` must not unlock `python -c ...`.)
+INTERPRETERS = frozenset({
+    'python', 'python3', 'py', 'node', 'nodejs', 'deno', 'bun', 'npx', 'pnpx',
+    'bash', 'sh', 'zsh', 'fish', 'pwsh', 'powershell', 'cmd', 'ruby', 'perl',
+    'php', 'osascript', 'env', 'uv', 'uvx', 'pipx', 'pythonw',
+})
+
+# Binaries whose leading token alone is too broad; the pattern is the first two
+# tokens (`npm test`, not `npm`). (self-review C2.)
+MULTI_TOKEN_BINARIES = frozenset({
+    'npm', 'pnpm', 'yarn', 'pip', 'pip3', 'docker', 'docker-compose', 'kubectl',
+    'git', 'poetry', 'cargo', 'go', 'dotnet', 'az', 'aws', 'gcloud', 'make',
+})
+
 # Heuristic for commands reaching outside the Workdir (home dirs, parent dirs,
 # absolute paths). Best-effort by nature — the file tools are the hard boundary.
 OUTSIDE_WORKDIR = re.compile(
@@ -75,6 +91,8 @@ class ApprovalPolicy:
         if self.yolo:
             return APPROVED
         stripped = command.strip()
+        if not stripped:
+            return NEEDS_GATE
         if ALWAYS_GATED.match(stripped) or OUTSIDE_WORKDIR.search(stripped):
             return DENIED
         base = stripped.split()[0]
@@ -89,13 +107,23 @@ class ApprovalPolicy:
     def pattern_for(self, command: str) -> str:
         """The Pattern Approval a user implicitly grants by approving this command.
 
-        Multi-token binaries (npm/gh/pip) get a two-token family so approving
-        `npm test` does not unlock `npm publish` (self-review C2).
+        Tiered by breadth, narrowest first:
+        - Interpreter/host binaries (python/node/bash/...) → the EXACT command,
+          so approving `python -m pytest` never unlocks `python -c "<code>"`
+          (self-review C1).
+        - Multi-token command families (npm/pip/git/...) → the first two tokens,
+          so approving `npm test` never unlocks `npm publish` (self-review C2).
+        - Otherwise → the leading token (e.g. `pytest`).
         """
         tokens = command.strip().split()
-        if tokens and tokens[0] in ('npm', 'pip', 'docker', 'kubectl', 'git'):
+        if not tokens:
+            return ''
+        base = tokens[0]
+        if base in INTERPRETERS:
+            return command.strip()
+        if base in MULTI_TOKEN_BINARIES and len(tokens) > 1:
             return ' '.join(tokens[:2])
-        return tokens[0]
+        return base
 
 
 # Default binaries considered safe to gate-approve as reads. Anything outside
