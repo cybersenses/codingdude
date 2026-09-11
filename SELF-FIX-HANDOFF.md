@@ -239,4 +239,34 @@ result, commit SHA, rollback.
   - **M12 / M13 / L11** — `frontend/src/App.jsx`; requires `cd frontend && npm run build`
     and re-serving the UI (committed `frontend/dist` changes).
 
+### Tooling — self-bounce: `codingdude.restart`  ✔ (not a finding)
+- **New:** `src/codingdude/restart.py`, `tests/test_restart.py`, and a
+  `codingdude restart` CLI subcommand.
+- **What it does:** `trigger_restart()` spawns a **detached** helper
+  (`python -m codingdude.restart --bounce`) that kills the server *by listening
+  port* and relaunches `python -m codingdude.cli serve`. Detached so it survives
+  the death of the worker that asked for it (a worker dies with its server).
+- **Safe inspection (read-only):** `python -m codingdude.restart --status` and
+  `--dry-run` — verified: found the live server (PID 25668, `healthy: true`).
+- **Verification:** ruff clean; mypy clean (27 files); pytest **151 passed**.
+- **Commit:** `770f0b1`. **Rollback:** `git revert 770f0b1`.
+- **Use it when:** activating changes the running server can't see (M4 token-env,
+  M11 tool wiring, frontend rebuild). `python -m codingdude.restart` = bounce now.
+
+### Steps 21–23 (tranche 5)  ✔ — M10, L13
+- **M10** `tools.py`/`engine.py`: added `shell_argv(command, shell_bin)`; the
+  shell tool, coverage and the **fix-loop** all use it (no hardcoded `bash` —
+  PowerShell projects work).
+- **L13** `engine.py`: `_diff_nonempty` swallows a missing/unusable `git`
+  instead of crashing a run *after* it already succeeded.
+- **L13** `mcp_config.py`: the MCP temp file is named from a stable `sha256`
+  (was the per-process-randomised builtin `hash`, so files accumulated).
+- **Tests:** `shell_argv` unit test.
+- **Verification:** ruff clean; mypy clean; pytest **152 passed**.
+- **Commit:** `3a8200d`. **Rollback:** `git revert 3a8200d`.
+
+> "Still remaining" above predates this tranche: **M10 and the L13 items are now
+> done**; M8, M14, L5, L6, L8 remain in-place, and M11 (tool wiring) +
+> M12/M13/L11 (frontend) still need a **restart/rebuild** — use `codingdude.restart`.
+
 <!-- END LOG -->
