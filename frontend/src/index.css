@@ -27,6 +27,9 @@
   --ss-success: #73d083;
   --ss-warning: #e1ad57;
   --ss-danger: #ff968a;
+  --ss-success-foreground: #050302;
+  --ss-warning-foreground: #050302;
+  --ss-danger-foreground: #050302;
   --ss-primary-50: #fff7f2;
   --ss-primary-100: #ffe5d7;
   --ss-primary-200: #ffcbae;
@@ -69,6 +72,9 @@
   --ss-success: #006425;
   --ss-warning: #6e4b00;
   --ss-danger: #902824;
+  --ss-success-foreground: #fffbf8;
+  --ss-warning-foreground: #fffbf8;
+  --ss-danger-foreground: #fffbf8;
   --ss-accent-400: #799ee5;
   --ss-accent-500: #5b82cc;
   --ss-accent-600: #4469b2;
@@ -110,6 +116,10 @@
   --color-danger: var(--ss-danger);
   --color-warn: var(--ss-warning);
   --color-focus: var(--ss-focus);
+  --color-accent-fg: var(--ss-accent-foreground);
+  --color-success-fg: var(--ss-success-foreground);
+  --color-warning-fg: var(--ss-warning-foreground);
+  --color-danger-fg: var(--ss-danger-foreground);
 
   /* Bind Tailwind's neutral scale to the theme so existing neutral-* classes
      re-theme in light and dark without touching every component. */
@@ -136,5 +146,15 @@
   :focus-visible {
     outline: 2px solid var(--ss-focus);
     outline-offset: 2px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 }

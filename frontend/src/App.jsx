@@ -22,8 +22,8 @@ export class ErrorBoundary extends React.Component {
     if (this.state.error) {
       return (
         <div className="flex h-screen items-center justify-center bg-neutral-900 p-6">
-          <div className="max-w-lg rounded-lg border border-red-800 bg-neutral-950 p-6">
-            <h1 className="mb-2 text-lg font-bold text-red-400">UI crashed</h1>
+          <div className="max-w-lg rounded-lg border border-danger/60 bg-neutral-950 p-6">
+            <h1 className="mb-2 text-lg font-bold text-danger">UI crashed</h1>
             <pre className="mb-4 whitespace-pre-wrap text-xs text-neutral-400">
               {this.state.error && this.state.error.stack
                 ? String(this.state.error.stack)
@@ -70,7 +70,7 @@ function Login({ onLoggedIn }) {
           onChange={(e) => setPassword(e.target.value)}
           autoFocus
         />
-        {err && <div className="mb-2 text-xs text-red-400">{err}</div>}
+        {err && <div className="mb-2 text-xs text-danger">{err}</div>}
         <button className="w-full rounded bg-brand-700 px-3 py-2 text-sm font-medium text-brand-fg hover:bg-brand-600">
           Log in
         </button>
@@ -104,8 +104,9 @@ function Sidebar({ workdir, setWorkdir, sessions, activeSession, onSelect, onNew
         <div className="flex items-center justify-between text-[10px] text-neutral-500">
           <span className="truncate font-mono">{activeProject.workdir}</span>
           <button
-            className="text-red-500 hover:text-red-300"
+            className="text-danger hover:opacity-80"
             title="remove project from list (files are not touched)"
+            aria-label="Remove project from list"
             onClick={() => onDeleteProject(activeProject.id)}
           >✕</button>
         </div>
@@ -131,7 +132,7 @@ function Sidebar({ workdir, setWorkdir, sessions, activeSession, onSelect, onNew
           <div className="truncate text-[10px] text-neutral-500">folder: {workdir || '— set workdir above —'}</div>
           <div className="flex gap-1">
             <button
-              className="rounded bg-emerald-700 px-2 py-1 text-[10px] text-white disabled:opacity-40"
+              className="rounded bg-success px-2 py-1 text-[10px] text-success-fg disabled:opacity-40"
               disabled={!newProjectName.trim() || !workdir.trim()}
               onClick={() => {
                 onAddProject(newProjectName.trim(), workdir.trim())
@@ -139,7 +140,7 @@ function Sidebar({ workdir, setWorkdir, sessions, activeSession, onSelect, onNew
               }}
             >save project</button>
             <button
-              className="rounded bg-neutral-700 px-2 py-1 text-[10px] text-white"
+              className="rounded bg-neutral-700 px-2 py-1 text-[10px] text-ink"
               onClick={() => setNewProjectName(null)}
             >cancel</button>
           </div>
@@ -170,7 +171,7 @@ function Sidebar({ workdir, setWorkdir, sessions, activeSession, onSelect, onNew
           >
             {s.title || s.session_id.slice(0, 12)}
             {runningSessions.has(s.session_id) && (
-              <span className="ml-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
+              <span className="ml-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-success" />
             )}
           </button>
         ))}
@@ -213,12 +214,12 @@ function EditBlock({ edit, sessionId, onRevert }) {
   const removedLines = removed.filter((l) => !afterSet.has(l))
   const addedLines = added.filter((l) => !beforeSet.has(l))
   return (
-    <div className="my-1 rounded border border-sky-700 bg-sky-900/10 p-2 text-xs">
+    <div className="my-1 rounded border border-accent/50 bg-accent/10 p-2 text-xs">
       <div className="mb-1 flex items-center justify-between">
-        <span className="font-mono text-[10px] text-sky-300">{edit.path}</span>
+        <span className="font-mono text-[10px] text-accent">{edit.path}</span>
         {state === 'applied' ? (
           <button
-            className="rounded bg-red-800 px-2 py-0.5 text-[10px] text-white"
+            className="rounded bg-danger px-2 py-0.5 text-[10px] text-danger-fg"
             onClick={() => {
               call(`/sessions/${sessionId}/file`, {
                 method: 'PUT',
@@ -233,8 +234,8 @@ function EditBlock({ edit, sessionId, onRevert }) {
         )}
       </div>
       <pre className="whitespace-pre-wrap font-mono text-[10px] leading-tight">
-        {removedLines.map((l, i) => <div key={'r' + i} className="text-red-400">- {l}</div>)}
-        {addedLines.map((l, i) => <div key={'a' + i} className="text-emerald-400">+ {l}</div>)}
+        {removedLines.map((l, i) => <div key={'r' + i} className="text-danger">- {l}</div>)}
+        {addedLines.map((l, i) => <div key={'a' + i} className="text-success">+ {l}</div>)}
       </pre>
     </div>
   )
@@ -242,15 +243,15 @@ function EditBlock({ edit, sessionId, onRevert }) {
 
 function ApprovalCard({ command, onDecide }) {
   return (
-    <div className="my-2 rounded border border-amber-600 bg-amber-900/20 p-3">
-      <div className="mb-2 text-xs font-semibold text-amber-300">Approval needed</div>
+    <div className="my-2 rounded border border-warning/60 bg-warning/15 p-3">
+      <div className="mb-2 text-xs font-semibold text-warning">Approval needed</div>
       <pre className="mb-2 overflow-x-auto rounded bg-neutral-950 p-2 font-mono text-xs text-neutral-200">{command}</pre>
       <div className="flex gap-2">
         <button className="rounded bg-brand-700 px-3 py-1 text-xs text-brand-fg hover:bg-brand-600"
           onClick={() => onDecide('approve')}>Approve</button>
-        <button className="rounded bg-neutral-700 px-3 py-1 text-xs text-white hover:bg-neutral-600"
+        <button className="rounded bg-neutral-700 px-3 py-1 text-xs text-ink hover:bg-neutral-600"
           onClick={() => onDecide('pattern')}>Approve all matching</button>
-        <button className="rounded bg-red-800 px-3 py-1 text-xs text-white hover:bg-red-700"
+        <button className="rounded bg-danger px-3 py-1 text-xs text-danger-fg hover:bg-danger/90"
           onClick={() => onDecide('deny')}>Deny</button>
       </div>
     </div>
@@ -273,12 +274,12 @@ function PlanCard({ sessionId, onDecide }) {
     return () => { stop = true }
   }, [sessionId])
   if (!plan) return null
-  const statusColor = plan.status === 'rejected' ? 'text-red-400'
-    : plan.status === 'done' ? 'text-brand-400' : 'text-amber-300'
+  const statusColor = plan.status === 'rejected' ? 'text-danger'
+    : plan.status === 'done' ? 'text-brand-400' : 'text-warning'
   return (
-    <div className="my-2 rounded border border-sky-700 bg-sky-900/20 p-3">
+    <div className="my-2 rounded border border-accent/50 bg-accent/15 p-3">
       <div className="mb-1 flex items-center justify-between">
-        <span className="text-xs font-semibold text-sky-300">Plan — {plan.goal}</span>
+        <span className="text-xs font-semibold text-accent">Plan — {plan.goal}</span>
         <span className={`text-xs ${statusColor}`}>{plan.status}</span>
       </div>
       <ol className="space-y-0.5">
@@ -292,7 +293,7 @@ function PlanCard({ sessionId, onDecide }) {
         <div className="mt-2 flex gap-2">
           <button className="rounded bg-brand-700 px-3 py-1 text-xs text-brand-fg hover:bg-brand-600"
             onClick={() => onDecide('approve')}>Approve plan</button>
-          <button className="rounded bg-red-800 px-3 py-1 text-xs text-white hover:bg-red-700"
+          <button className="rounded bg-danger px-3 py-1 text-xs text-danger-fg hover:bg-danger/90"
             onClick={() => onDecide('deny')}>Reject</button>
         </div>
       )}
@@ -306,7 +307,7 @@ function TreeNode({ node, depth, onOpen }) {
     return (
       <div>
         <button
-          className="block w-full truncate text-left text-xs text-sky-300 hover:text-sky-200"
+          className="block w-full truncate text-left text-xs text-accent hover:opacity-80"
           style={{ paddingLeft: depth * 10 + 4 }}
           onClick={() => setOpen(!open)}
         >
@@ -384,7 +385,7 @@ function FileExplorer({ sessionId }) {
             <span className="truncate font-mono text-[10px] text-brand-300">{openPath}</span>
             <div className="flex gap-1">
               <button
-                className="rounded bg-neutral-700 px-2 py-0.5 text-[10px] text-white"
+                className="rounded bg-neutral-700 px-2 py-0.5 text-[10px] text-ink"
                 onClick={() => {
                   if (!editing) setDraft(file?.content || '')
                   setEditing(!editing)
@@ -525,7 +526,7 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
             >{m}</button>
           ))}
         </div>
-        {savedMsg && <div className="rounded bg-emerald-900/40 px-2 py-1 text-[10px] text-brand-300">{savedMsg}</div>}
+        {savedMsg && <div className="rounded bg-success/15 px-2 py-1 text-[10px] text-brand-300">{savedMsg}</div>}
 
         {stdMode === 'directives' && (
           <div className="flex min-h-0 flex-1 flex-col gap-1">
@@ -560,8 +561,8 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
                   <div className="truncate text-[10px] text-neutral-500">{s.description}</div>
                 </div>
                 <div className="flex shrink-0 gap-1">
-                  <button className="text-[10px] text-sky-400" onClick={() => startEditSkill(s.name)}>edit</button>
-                  <button className="text-[10px] text-red-500" onClick={() => deleteSkill(s.name)}>del</button>
+                  <button className="text-[10px] text-accent" onClick={() => startEditSkill(s.name)}>edit</button>
+                  <button className="text-[10px] text-danger" onClick={() => deleteSkill(s.name)}>del</button>
                 </div>
               </div>
             ))}
@@ -592,7 +593,7 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
             </div>
             <div className="flex gap-1">
               <button className="rounded bg-brand-700 px-3 py-1 text-xs text-brand-fg" onClick={saveSkill}>save skill</button>
-              <button className="rounded bg-neutral-700 px-3 py-1 text-xs text-white" onClick={() => setEditingSkill(null)}>cancel</button>
+              <button className="rounded bg-neutral-700 px-3 py-1 text-xs text-ink" onClick={() => setEditingSkill(null)}>cancel</button>
             </div>
           </div>
         )}
@@ -606,9 +607,9 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
     )
   } else if (tab === 'Trace') {
     const colors = {
-      GATE_REQUEST: 'text-amber-300', RUN_ERROR: 'text-red-400',
-      RUN_FINISHED: 'text-brand-400', TOOL_CALL_START: 'text-sky-400',
-      TOOL_CALL_END: 'text-sky-300', PLAN_PROPOSED: 'text-purple-300',
+      GATE_REQUEST: 'text-warning', RUN_ERROR: 'text-danger',
+      RUN_FINISHED: 'text-brand-400', TOOL_CALL_START: 'text-accent',
+      TOOL_CALL_END: 'text-accent', PLAN_PROPOSED: 'text-accent',
       USER_PROMPT: 'text-neutral-300',
     }
     body = (
@@ -630,7 +631,7 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
                   <span className="font-mono text-[10px] text-neutral-300">{c.id.slice(0, 17)}</span>
                   <div className="flex gap-1">
                     <button
-                      className="rounded bg-sky-700 px-1.5 py-0.5 text-[9px] text-white"
+                      className="rounded bg-accent px-1.5 py-0.5 text-[9px] text-accent-fg"
                       onClick={() => call(`/checkpoints/${sessionId}/${c.id}/rewind`, { method: 'POST', body: '{}' }).catch(() => {})}
                     >rewind</button>
                   </div>
@@ -654,7 +655,7 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
               {s.name} <span className="text-neutral-600">({s.config.command})</span>
             </span>
             <button
-              className={s.disabled ? 'text-brand-500 hover:text-brand-300' : 'text-red-500 hover:text-red-300'}
+              className={s.disabled ? 'text-brand-500 hover:text-brand-300' : 'text-danger hover:opacity-80'}
               onClick={() => toggleServer(s.name, !s.disabled)}
             >{s.disabled ? 'enable' : 'disable'}</button>
           </div>
@@ -666,7 +667,7 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
     body = (
       <pre className="whitespace-pre-wrap font-mono text-[10px] leading-tight">
         {data.diff.split('\n').map((l, i) => (
-          <div key={i} className={l.startsWith('+') ? 'text-brand-400' : l.startsWith('-') ? 'text-red-400' : 'text-neutral-500'}>{l}</div>
+          <div key={i} className={l.startsWith('+') ? 'text-brand-400' : l.startsWith('-') ? 'text-danger' : 'text-neutral-500'}>{l}</div>
         ))}
       </pre>
     )
@@ -716,7 +717,7 @@ function Chat({ messages, streaming, onStop, onDecide, sessionId, suggestMode, o
         {messages.map((m, i) => (
           <div key={i} className={m.role === 'user' ? 'text-right' : ''}>
             <div
-              className={`inline-block max-w-[85%] whitespace-pre-wrap rounded-lg px-3 py-2 text-sm ${
+              className={`inline-block max-w-[85%] whitespace-pre-wrap rounded-lg px-3 py-2 text-base ${
                 m.role === 'user' ? 'bg-brand-700 text-brand-fg' : 'bg-neutral-800 text-neutral-200'
               }`}
             >
@@ -725,8 +726,8 @@ function Chat({ messages, streaming, onStop, onDecide, sessionId, suggestMode, o
             </div>
             {m.toolEvents && <ToolTimeline events={m.toolEvents} />}
             {m.review && (
-              <div className="my-1 rounded border border-purple-700 bg-purple-900/20 p-2 text-xs">
-                <div className="font-semibold text-purple-300">Reviewer findings</div>
+              <div className="my-1 rounded border border-accent/50 bg-accent/15 p-2 text-xs">
+                <div className="font-semibold text-accent">Reviewer findings</div>
                 <pre className="whitespace-pre-wrap text-neutral-300">{m.review}</pre>
               </div>
             )}
@@ -741,7 +742,7 @@ function Chat({ messages, streaming, onStop, onDecide, sessionId, suggestMode, o
                 <div className="my-1 flex gap-2">
                   <button className="rounded bg-brand-700 px-3 py-1 text-xs text-brand-fg hover:bg-brand-600"
                     onClick={() => onDecide('approve')}>Approve plan</button>
-                  <button className="rounded bg-red-800 px-3 py-1 text-xs text-white hover:bg-red-700"
+                  <button className="rounded bg-danger px-3 py-1 text-xs text-danger-fg hover:bg-danger/90"
                     onClick={() => onDecide('deny')}>Reject</button>
                 </div>
               </>
@@ -750,7 +751,7 @@ function Chat({ messages, streaming, onStop, onDecide, sessionId, suggestMode, o
         ))}
         {streaming && (
           <button
-            className="rounded border border-red-700 px-2 py-1 text-xs text-red-400 hover:bg-red-900/30"
+            className="rounded border border-danger/60 px-2 py-1 text-xs text-danger hover:bg-danger/20"
             onClick={onStop}
           >
             ■ Stop
@@ -808,9 +809,9 @@ function Prompt({ onSend, disabled, suggestMode, setSuggestMode, fixLoop, setFix
         disabled={disabled}
       />
       {image && (
-        <div className="flex items-center gap-1 rounded bg-neutral-900 px-2 py-1 text-[10px] text-emerald-400">
+        <div className="flex items-center gap-1 rounded bg-neutral-900 px-2 py-1 text-[10px] text-success">
           {image.name}
-          <button type="button" className="text-red-400" onClick={() => setImage(null)}>✕</button>
+          <button type="button" aria-label="Remove image" className="text-danger" onClick={() => setImage(null)}>✕</button>
         </div>
       )}
       <input
@@ -833,6 +834,7 @@ function Prompt({ onSend, disabled, suggestMode, setSuggestMode, fixLoop, setFix
         onClick={() => fileRef.current && fileRef.current.click()}
         disabled={disabled}
         title="attach image"
+        aria-label="Attach image"
       >
         📎
       </button>
@@ -847,6 +849,7 @@ function Prompt({ onSend, disabled, suggestMode, setSuggestMode, fixLoop, setFix
       <label
         className={`cursor-pointer text-sm ${notify ? '' : 'grayscale opacity-50'}`}
         title="notify when a run finishes or waits"
+        aria-label="Toggle notifications"
         onClick={toggleNotify}
       >
         🔔
@@ -1268,7 +1271,7 @@ export default function App() {
           onNewSession={newSession}
         />
         <main className="flex min-w-0 flex-1 flex-col">
-          {error && <div className="bg-red-900/50 px-4 py-1 text-xs text-red-300">{error}</div>}
+          {error && <div className="bg-danger/15 px-4 py-1 text-xs text-danger">{error}</div>}
           <Prompt
             onSend={send}
             disabled={!activeSession || streaming}
@@ -1292,7 +1295,7 @@ export default function App() {
           {activeSession ? `session ${activeSession.slice(0, 8)}` : 'no session'} ·{' '}
           {sessions.find((s) => s.session_id === activeSession)?.workdir || workdir || 'no workdir'}
           {activeSession && !sessions.some((s) => s.session_id === activeSession) && (
-            <span className="text-red-400"> · ⚠ session not in selected project</span>
+            <span className="text-danger"> · ⚠ session not in selected project</span>
           )}
         </span>
         <span className="text-neutral-600" title="frontend build · backend server build">
