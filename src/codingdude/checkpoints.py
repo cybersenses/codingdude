@@ -65,6 +65,23 @@ class CheckpointStore:
             return None
         return meta if isinstance(meta, dict) and 'files' in meta else None
 
+    def _ordered_ids(self, session_dir: Path) -> list[str]:
+        """Checkpoint ids oldest-first by created_at.
+
+        Name order is not reliably chronological: two checkpoints created in the
+        same second share the timestamp *prefix* and then sort on a random uuid.
+        """
+        if not session_dir.exists():
+            return []
+        entries = []
+        for cp_dir in session_dir.iterdir():
+            if not cp_dir.is_dir():
+                continue
+            meta = self._read_meta(cp_dir / 'metadata.json')
+            entries.append((meta.get('created_at', 0) if meta else 0, cp_dir.name))
+        entries.sort()
+        return [name for _created, name in entries]
+
     def capture_file(self, session_id: str, cp_id: str, workdir: Path, abs_path: Path) -> None:
         """Snapshot one file into the checkpoint (first touch per file)."""
         cp_dir = self._session_dir(session_id) / cp_id
@@ -144,7 +161,7 @@ class CheckpointStore:
         """Restore this checkpoint AND undo all later checkpoints, storing the
         discarded state as its own checkpoint (undo the undo)."""
         session_dir = self._session_dir(session_id)
-        cps = sorted(p.name for p in session_dir.iterdir() if p.is_dir()) if session_dir.exists() else []
+        cps = self._ordered_ids(session_dir)
         if cp_id not in cps:
             raise FileNotFoundError(f'no such checkpoint: {cp_id}')
         # capture current state as a safety checkpoint before rewinding
@@ -163,6 +180,10 @@ class CheckpointStore:
             if abs_path.exists():
                 self.capture_file(session_id, safety_id, live_workdir, abs_path)
         restored = self.restore_checkpoint(session_id, cp_id, workdir)
+        # Drop the now-undone later checkpoints; their state lives on in the
+        # safety checkpoint, so the timeline reads "we rewound to here" (L5).
+        for later_id in later:
+            shutil.rmtree(session_dir / later_id, ignore_errors=True)
         return {'rewound_to': cp_id, 'safety_checkpoint': safety_id, **restored}
 
     def _prune(self, session_id: str) -> None:

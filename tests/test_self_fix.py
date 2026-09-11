@@ -102,3 +102,67 @@ def test_m10_shell_argv_selects_the_configured_shell():
     assert shell_argv('Get-ChildItem', 'powershell') == [
         'powershell', '-NoProfile', '-Command', 'Get-ChildItem'
     ]
+
+
+def test_m8_project_can_reenable_a_globally_disabled_server(home, workdir):
+    """A project `enabled` entry must override a global `disabled` (M8)."""
+    import json
+
+    from codingdude.mcp_config import merged_mcp_config, set_mcp_disabled
+
+    home.mkdir(parents=True, exist_ok=True)
+    (home / 'mcp.json').write_text(
+        json.dumps({'mcpServers': {'x': {'command': 'x'}}, 'disabled': ['x']})
+    )
+    (workdir / '.codingdude').mkdir(parents=True, exist_ok=True)
+    assert merged_mcp_config(home, workdir)['disabled'] == ['x']
+    assert set_mcp_disabled(home, workdir, 'x', disabled=False) is True
+    assert merged_mcp_config(home, workdir)['disabled'] == []
+
+
+def test_m14_typescript_files_use_the_ts_grammar():
+    """TS-only syntax (interface) must parse without error nodes (M14)."""
+    from tree_sitter import Parser
+
+    from codingdude.jslang import language_for
+
+    src = b'interface P { id: number }\nconst f = (x: number): number => x;\n'
+    tree = Parser(language_for('.ts')).parse(src)
+    assert not tree.root_node.has_error
+
+
+def test_l5_rewind_drops_later_checkpoints(home, tmp_path):
+    """Rewind removes the undone later checkpoints but keeps the safety one (L5)."""
+    from codingdude.checkpoints import CheckpointStore
+
+    store = CheckpointStore(home)
+    f = tmp_path / 'doc.txt'
+    cp1 = store.begin('s1')
+    f.write_text('1\n')
+    store.capture_file('s1', cp1, tmp_path, f)
+    cp2 = store.begin('s1')
+    f.write_text('2\n')
+    store.capture_file('s1', cp2, tmp_path, f)
+
+    result = store.rewind_to('s1', cp1, tmp_path)
+    ids = [c['id'] for c in store.list_checkpoints('s1')]
+    assert cp2 not in ids
+    assert result['safety_checkpoint'] in ids
+    assert f.read_text() == '1\n'
+
+
+def test_l8_yaml_frontmatter_skill(home):
+    """`---` frontmatter (key: value + [list]) is parsed (L8)."""
+    from codingdude.skills import SkillRegistry
+
+    d = home / 'skills' / 'yamlskill'
+    d.mkdir(parents=True)
+    (d / 'SKILL.md').write_text(
+        '---\nname: yamlskill\ndescription: YAML frontmatter\n'
+        'triggers: [zap, zip]\n---\n\nBODY-TEXT\n'
+    )
+    reg = SkillRegistry(home)
+    by_name = {s['name']: s for s in reg.index()}
+    assert by_name['yamlskill']['description'] == 'YAML frontmatter'
+    assert reg.load('yamlskill') == 'BODY-TEXT'
+    assert [s['name'] for s in reg.matching('zap it')] == ['yamlskill']

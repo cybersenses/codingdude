@@ -62,10 +62,11 @@ def _python_replace(path: Path, old: str, new: str) -> int:
 
 def _js_replace(path: Path, old: str, new: str) -> int:
     """Tree-sitter identifier replacement for JS/TS."""
-    import tree_sitter_javascript as tsjs
-    from tree_sitter import Language, Parser
+    from tree_sitter import Parser
 
-    parser = Parser(Language(tsjs.language()))
+    from .jslang import language_for
+
+    parser = Parser(language_for(path.suffix))
     source = path.read_text(encoding='utf-8', errors='replace')
     try:
         tree = parser.parse(source.encode('utf-8'))

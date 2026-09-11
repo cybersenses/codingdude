@@ -16,6 +16,35 @@ from pathlib import Path
 from pydantic_ai.toolsets import FunctionToolset
 
 
+def _parse_frontmatter(raw: str) -> tuple[dict, str]:
+    """Split a SKILL.md into (meta, body).
+
+    Two styles are supported: a JSON object before the first blank line
+    (the original format), and `---`-delimited `key: value` lines (the
+    common SKILL.md convention). Unknown formats fall back to "no meta".
+    """
+    if raw.startswith('---\n'):
+        end = raw.find('\n---', 3)
+        if end != -1:
+            meta: dict = {}
+            for line in raw[4:end].splitlines():
+                if ':' not in line:
+                    continue
+                key, _, value = line.partition(':')
+                value = value.strip()
+                if value.startswith('[') and value.endswith(']'):
+                    meta[key.strip()] = [
+                        t.strip().strip('\"\'') for t in value[1:-1].split(',') if t.strip()
+                    ]
+                else:
+                    meta[key.strip()] = value.strip('\"\'')
+            return meta, raw[end + 4:].lstrip('\n')
+    body_start = raw.find('\n\n')
+    meta = json.loads(raw[:body_start]) if body_start != -1 else {}
+    body = raw[body_start + 2:] if body_start != -1 else raw
+    return meta, body
+
+
 class SkillRegistry:
     def __init__(self, home: Path):
         self.home = home
@@ -29,10 +58,7 @@ class SkillRegistry:
         for skill_md in sorted(self._dir().glob('*/SKILL.md')):
             try:
                 raw = skill_md.read_text(encoding='utf-8').replace('\r\n', '\n')
-                # Frontmatter: first line(s) of JSON before the first blank line.
-                body_start = raw.find('\n\n')
-                meta = json.loads(raw[:body_start]) if body_start != -1 else {}
-                body = raw[body_start + 2:] if body_start != -1 else raw
+                meta, body = _parse_frontmatter(raw)
                 found[meta.get('name', skill_md.parent.name)] = {
                     'name': meta.get('name', skill_md.parent.name),
                     'description': meta.get('description', ''),

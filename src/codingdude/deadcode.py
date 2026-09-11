@@ -95,10 +95,8 @@ def _tree_sitter_definitions_and_refs(source: bytes, lang_module) -> tuple[set[s
 
 def _js_dead_code(workdir: Path, path: str, min_confidence: int) -> str:
     """Tree-sitter scan of JS/TS files: defined-but-never-referenced symbols."""
-    import tree_sitter_javascript as tsjs
-    from tree_sitter import Language
+    from .jslang import language_for
 
-    lang = Language(tsjs.language())
     defined: set[str] = set()
     referenced: set[str] = set()
     locations: dict[str, list[tuple[str, int]]] = {}
@@ -108,7 +106,7 @@ def _js_dead_code(workdir: Path, path: str, min_confidence: int) -> str:
         rel = str(f.relative_to(Path(workdir).resolve())).replace('\\', '/')
         try:
             defined_l, referenced_l, locs = _tree_sitter_definitions_and_refs(
-                f.read_bytes(), lang
+                f.read_bytes(), language_for(f.suffix)
             )
         except Exception:
             continue

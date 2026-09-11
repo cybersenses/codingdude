@@ -45,11 +45,12 @@ def _python_signatures(path: Path) -> list[str]:
 
 def _js_signatures(path: Path) -> list[str]:
     try:
-        import tree_sitter_javascript as tsjs
-        from tree_sitter import Language, Parser
+        from tree_sitter import Parser
+
+        from .jslang import language_for
     except ImportError:
         return []
-    parser = Parser(Language(tsjs.language()))
+    parser = Parser(language_for(path.suffix))
     try:
         tree = parser.parse(path.read_bytes())
     except Exception:

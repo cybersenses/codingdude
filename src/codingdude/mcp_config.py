@@ -17,9 +17,13 @@ from pydantic_ai import mcp
 
 def _load_config_file(path: Path) -> dict:
     if not path.exists():
-        return {'mcpServers': {}, 'disabled': []}
+        return {'mcpServers': {}, 'disabled': [], 'enabled': []}
     raw = json.loads(path.read_text(encoding='utf-8'))
-    return {'mcpServers': raw.get('mcpServers', {}), 'disabled': raw.get('disabled', [])}
+    return {
+        'mcpServers': raw.get('mcpServers', {}),
+        'disabled': raw.get('disabled', []),
+        'enabled': raw.get('enabled', []),
+    }
 
 
 def merged_mcp_config(home: Path, workdir: Path) -> dict:
@@ -27,7 +31,10 @@ def merged_mcp_config(home: Path, workdir: Path) -> dict:
     merged = _load_config_file(home / 'mcp.json')
     project = _load_config_file(workdir / '.codingdude' / 'mcp.json')
     merged['mcpServers'].update(project['mcpServers'])
-    merged['disabled'] = sorted(set(merged['disabled']) | set(project['disabled']))
+    # Project `enabled` overrides a global `disabled` for that server (M8).
+    merged['disabled'] = sorted(
+        (set(merged['disabled']) | set(project['disabled'])) - set(project.get('enabled', []))
+    )
     return merged
 
 
@@ -85,11 +92,16 @@ def set_mcp_disabled(home: Path, workdir: Path, name: str, disabled: bool) -> bo
     project_path = workdir / '.codingdude' / 'mcp.json'
     project = _load_config_file(project_path)
     disabled_set = set(project['disabled'])
+    enabled_set = set(project.get('enabled', []))
     if disabled:
         disabled_set.add(name)
+        enabled_set.discard(name)
     else:
+        # Project-level enable overrides a global disable (self-review M8).
         disabled_set.discard(name)
+        enabled_set.add(name)
     project['disabled'] = sorted(disabled_set)
+    project['enabled'] = sorted(enabled_set)
     project_path.parent.mkdir(parents=True, exist_ok=True)
     project_path.write_text(json.dumps(project, indent=2), encoding='utf-8')
     return True
