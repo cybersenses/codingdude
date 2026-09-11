@@ -132,4 +132,57 @@ result, commit SHA, rollback.
   → **24 passed**; full `uv run pytest -q` → **136 passed**; ruff + mypy clean.
 - **Commit:** `3c28975`. **Rollback:** `git revert 3c28975`.
 
+### Step 3 — H2: worker forwards `--fix-loop`  ✔
+- **Files:** `src/codingdude/worker.py`, new `tests/test_worker.py`.
+- **Change:** added `engine_run_kwargs(args, model)` (single mapping to
+  `engine.run`) and the runner now calls
+  `engine.run(**engine_run_kwargs(args, model), approvals=policy, emit=on_event)`.
+- **Verification:** `uv run pytest tests/test_worker.py -q` → **3 passed**;
+  ruff + mypy clean. (Full suite run again at the next engine touch.)
+- **Commit:** `b2e6e48`. **Rollback:** `git revert b2e6e48`.
+
+### Step 4 — H3: `run_coverage` argv + `source` validation  ✔
+- **Files:** `src/codingdude/tools.py`, new `tests/test_self_fix.py`.
+- **Change:** `source` must be a relative in-Workdir path (`ModelRetry` otherwise);
+  pytest is launched via `argv` (no `bash -c`), so a value like `.; rm -rf /`
+  cannot execute. Also removes the hardcoded-bash injection surface.
+- **Red→green:** `test_h3_run_coverage_rejects_escaping_source` (new) passes.
+- **Commit:** `d4c2f91`. **Rollback:** `git revert d4c2f91`.
+
+### Steps 5–11 (merged — all low risk)  ✔
+- **H4** `config.py`: `load_project_config` accepts the documented
+  `shell = "powershell"` **and** the `[shell] default/shell` table.
+- **H8** `deadcode.py`: `_iter_source_files` is Workdir-contained (resolves root,
+  `ModelRetry` on escape); `find_dead_code` can no longer scan outside the project.
+- **H9** `engine.py`: a string `model=` override is honoured
+  (`build_model(main=model)`), no longer silently dropped.
+- **M1** `tools.py`: `resolve()` compares against `workdir.resolve()`.
+- **M2** `tools.py`: `glob()` refuses absolute / `..` patterns.
+- **M5** `server.py`: `run_ws` honours `allow_testclient` (was hardcoded).
+- **M6** `db.py`: `delete_session` also deletes `plans` rows.
+- **M7** `engine.py`: MCP toolset load is wrapped — a bad `mcp.json` can no longer
+  brick a run (logs a warning and continues).
+- **L9** `cli.py`: removed the no-op `if args.fix_loop: args.fix_loop = True`.
+- **L10** `tests/helpers.py`: removed the duplicate (unreachable) `return`.
+- **Tests:** `tests/test_self_fix.py` (H3/H4/H8/M2/M6).
+- **Verification:** `uv run ruff check src tests bench.py` → *All checks passed*;
+  `uv run mypy` → *no issues in 26 files*; `uv run pytest -q` → **144 passed**.
+- **Commit:** `d4c2f91`. **Rollback:** `git revert d4c2f91`.
+
+> **Note on ruff scope:** the CI command is `ruff check src tests bench.py`
+> (not `.`), so throwing a temp applier at the repo root does not trip lint.
+> The tranche-2 applier was a throwaway and has been deleted.
+
+### Remaining work (not yet done — see `cdissues.md` for detail)
+
+- **Engine, medium risk:** H5 (vision model + real media type), H6 (per-sub-run
+  usage accounting + budget checks), H7 (incremental persist on the headless path).
+- **Small:** M3 (`OUTSIDE_WORKDIR` `re.IGNORECASE`), M4 (token/prompt off argv),
+  M8 (per-server MCP enable), M9 (persist claim-verification retry),
+  M10 (shared shell resolution for Windows).
+- **Riskier:** M11 (attach orphan toolsets — worktree/knip/ci/audit/repo_map/refactor).
+- **Frontend (needs `npm run build`, touches committed `frontend/dist`):**
+  M12 (revert index), M13 (duplicate skill fns), L11 (reload drops events).
+- **Low:** M14 (TS grammar), L1–L8, L12, L13.
+
 <!-- END LOG -->
