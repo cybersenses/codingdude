@@ -151,15 +151,22 @@ async def test_always_gated_aborts_headless_run(engine, workdir):
 
 
 async def test_default_run_has_no_shell_tool(engine, workdir):
-    """Without an ApprovalPolicy the shell tool isn't offered at all."""
-    def must_not_have_shell(messages, info):
-        names = {t.name for t in info.tools} if hasattr(info, 'tools') else set()
-        return ModelResponse(parts=[TextPart(content=f"shell={'shell' in names}")])
+    """Without an ApprovalPolicy the shell tool isn't attached: a model that
+    calls it is told the tool is unknown — it neither runs nor crashes the run.
 
-    outcome = await engine.run(
-        prompt='check tools', workdir=workdir, model=scripted(must_not_have_shell)
-    )
-    assert outcome.output == 'shell=False'
+    (Rewritten from a vacuous `info.tools` probe: this pydantic-ai version has
+    no `info.tools`, so the old form passed regardless of the code.)
+    """
+    def calls_shell(messages, info):
+        if not any(isinstance(p, ToolCallPart) for m in messages for p in m.parts):
+            return ModelResponse(parts=[ToolCallPart(
+                tool_name='shell', args={'command': 'echo hi > ran.txt'}
+            )])
+        return ModelResponse(parts=[TextPart(content='finished')])
+
+    outcome = await engine.run(prompt='check tools', workdir=workdir, model=scripted(calls_shell))
+    assert outcome.status == 'complete'
+    assert not (workdir / 'ran.txt').exists()  # the command never executed
 
 
 async def test_headless_exit_code_for_gate(engine, workdir):

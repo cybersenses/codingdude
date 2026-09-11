@@ -48,6 +48,22 @@ def tool_then_answer(tool_name: str, args: dict, check):
     return scripted(fn)
 
 
+async def test_git_commit_without_policy_does_not_crash(engine, workdir):
+    """Self-review H1: with no ApprovalPolicy the gated git tools must not be
+    attached, so a model that calls git_commit is simply told the tool is
+    unknown — not a run-killing AttributeError on a None policy."""
+    git_repo(workdir)
+    (workdir / 'hello.txt').write_text('changed\n')
+
+    def model_calls_commit(messages, info):
+        if not any(isinstance(p, ToolCallPart) for m in messages for p in m.parts):
+            return ModelResponse(parts=[ToolCallPart(tool_name='git_commit', args={'message': 'x'})])
+        return ModelResponse(parts=[TextPart(content='finished')])
+
+    outcome = await engine.run(prompt='commit it', workdir=workdir, model=scripted(model_calls_commit))
+    assert outcome.status == 'complete'
+
+
 async def test_git_status_reads_auto(engine, workdir):
     git_repo(workdir)
     outcome = await engine.run(

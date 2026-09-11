@@ -311,10 +311,13 @@ class Engine:
                 toolsets.append(
                     build_shell_toolset(workdir, approvals, shell_bin=project_shell)
                 )
-            from .tools import build_coverage_toolset, build_git_toolset
+                # Git/coverage tools gate through the same policy; without one
+                # they must not be attached, or a gated call crashes on the
+                # None policy (self-review H1).
+                from .tools import build_coverage_toolset, build_git_toolset
 
-            toolsets.append(build_git_toolset(workdir, approvals))
-            toolsets.append(build_coverage_toolset(workdir, approvals))
+                toolsets.append(build_git_toolset(workdir, approvals))
+                toolsets.append(build_coverage_toolset(workdir, approvals))
 
             subagent = subagent_model or self._build_subagent_model()
             if subagent is not None:
