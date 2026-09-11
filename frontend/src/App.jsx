@@ -978,7 +978,8 @@ export default function App() {
       let ok = await checkAuth()
       if (!ok) ok = await authLocal()
       setLoggedIn(ok)
-      if (ok) refreshSessions(localStorage.getItem('codingdude-workdir') || '')
+      // Session loading happens in ONE place: the projects effect below,
+      // which reconciles the selected project and its sessions together.
     }
     boot()
   }, [])
@@ -986,8 +987,15 @@ export default function App() {
   const refreshSessions = useCallback(async (wd) => {
     if (!wd) return
     try {
-      setSessions(await api.listSessions(wd))
+      const list = await api.listSessions(wd)
+      setSessions(list)
       setError('')
+      // Invariant (RC-4 fix): a selected session must belong to the selected
+      // folder. Anything else auto-resumes this project's most recent session.
+      setActiveSession((cur) => {
+        if (cur && list.some((s) => s.session_id === cur)) return cur
+        return list[0]?.session_id || null
+      })
     } catch (e) {
       setError(String(e.message))
     }
@@ -997,16 +1005,34 @@ export default function App() {
     if (loggedIn) {
       api.listProjects().then((list) => {
         setProjects(list)
-        // restore last project or auto-adopt the first
+        // Restore the saved project by id, else the most recently active one
+        // (the backend returns projects recent-first).
         const saved = localStorage.getItem('cd-project-id')
         const match = list.find((x) => x.id === Number(saved)) || list[0]
         if (match) {
           setActiveProject(match)
           setWorkdir(match.workdir)
+          refreshSessions(match.workdir)
         }
       }).catch(() => {})
     }
   }, [loggedIn, refreshSessions])
+
+  // Persist the selection so the next startup resumes exactly where you
+  // stopped — previously codingdude-workdir was only saved on newSession(),
+  // and cd-project-id was read but never written.
+  useEffect(() => {
+    if (activeProject) localStorage.setItem('cd-project-id', String(activeProject.id))
+  }, [activeProject])
+  useEffect(() => {
+    if (workdir) localStorage.setItem('codingdude-workdir', workdir)
+  }, [workdir])
+
+  // Auto-resume: loading a session's history follows the selection itself.
+  useEffect(() => {
+    if (!loggedIn || !activeSession) return
+    loadMessages(activeSession).catch((e) => setError(String(e.message)))
+  }, [activeSession, loggedIn])
 
   const [runningSessions, setRunningSessions] = useState(() => new Set())
   useEffect(() => {
@@ -1045,7 +1071,6 @@ export default function App() {
 
   function newSession() {
     if (!workdir) return
-    localStorage.setItem('codingdude-workdir', workdir)
     api
       .createSession(workdir)
       .then((r) => {
@@ -1058,6 +1083,12 @@ export default function App() {
 
   function send(prompt, image) {
     if (!activeSession || streaming) return
+    // Invariant guard (RC-4): never send into a session that isn't in the
+    // selected project's session list (wrong-folder execution).
+    if (!sessions.some((s) => s.session_id === activeSession)) {
+      setError('active session does not belong to the selected project — pick or create a session here')
+      return
+    }
     setMessages((m) => [
       ...m,
       { role: 'user', text: prompt },
@@ -1218,8 +1249,7 @@ export default function App() {
           activeSession={activeSession}
           runningSessions={runningSessions}
           onSelect={(id) => {
-            setActiveSession(id)
-            loadMessages(id).catch((e) => setError(String(e.message)))
+            setActiveSession(id)  // history loads via the activeSession effect
           }}
           onNewSession={newSession}
         />
@@ -1245,7 +1275,11 @@ export default function App() {
       </div>
       <footer className="flex items-center justify-between border-t border-neutral-800 bg-neutral-950 px-3 py-1 text-[10px] text-neutral-500">
         <span>
-          {activeSession ? `session ${activeSession.slice(0, 8)}` : 'no session'} · {workdir || 'no workdir'}
+          {activeSession ? `session ${activeSession.slice(0, 8)}` : 'no session'} ·{' '}
+          {sessions.find((s) => s.session_id === activeSession)?.workdir || workdir || 'no workdir'}
+          {activeSession && !sessions.some((s) => s.session_id === activeSession) && (
+            <span className="text-red-400"> · ⚠ session not in selected project</span>
+          )}
         </span>
         <span className={streaming ? 'text-brand-400' : ''}>{status}</span>
       </footer>

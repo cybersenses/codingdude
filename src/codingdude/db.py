@@ -119,8 +119,17 @@ class Database:
         return cur.lastrowid
 
     def list_projects(self) -> list[dict]:
+        """Projects, most recently active first.
+
+        Recency = the newest session's updated_at in that workdir; projects
+        with no sessions fall back to their own creation time, so startup
+        resumes the project actually used last, not the alphabetically first.
+        """
         rows = self._conn.execute(
-            'SELECT id, name, workdir, created_at FROM projects ORDER BY name'
+            'SELECT p.id, p.name, p.workdir, p.created_at,'
+            ' MAX(s.updated_at) AS last_activity FROM projects p'
+            ' LEFT JOIN sessions s ON s.workdir = p.workdir'
+            ' GROUP BY p.id ORDER BY COALESCE(MAX(s.updated_at), p.created_at) DESC'
         ).fetchall()
         return [dict(r) for r in rows]
 
