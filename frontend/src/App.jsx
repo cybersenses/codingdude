@@ -678,24 +678,46 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
         <div className="text-neutral-600">config: ~/.codingdude/mcp.json (global) + .codingdude/mcp.json (project)</div>
       </div>
     )
-  } else if (tab === 'Diff' && data.diff) {
-    body = (
-      <pre className="whitespace-pre-wrap font-mono text-[10px] leading-tight">
-        {data.diff.split('\n').map((l, i) => (
-          <div key={i} className={l.startsWith('+') ? 'text-brand-400' : l.startsWith('-') ? 'text-danger' : 'text-neutral-500'}>{l}</div>
-        ))}
-      </pre>
+  } else if (tab === 'Diff') {
+    const diffLines = (data.diff || '').split('\n')
+    const added = diffLines.filter((l) => l.startsWith('+') && !l.startsWith('+++')).length
+    const removed = diffLines.filter((l) => l.startsWith('-') && !l.startsWith('---')).length
+    const lineClass = (l) => {
+      if (l.startsWith('@@')) return 'text-accent'
+      if (l.startsWith('diff --git') || l.startsWith('index ') || l.startsWith('+++') || l.startsWith('---'))
+        return 'text-ink-muted'
+      if (l.startsWith('+')) return 'text-success'
+      if (l.startsWith('-')) return 'text-danger'
+      return 'text-ink-muted'
+    }
+    body = !data.diff ? (
+      <div className="rounded border border-line bg-surface p-4 text-xs text-ink-muted">
+        No working-tree changes yet — edits the agent makes will appear here.
+      </div>
+    ) : (
+      <div className="overflow-hidden rounded border border-line bg-surface">
+        <div className="flex items-center gap-3 border-b border-line px-2 py-1 font-mono text-[10px]">
+          <span className="text-success">+{added}</span>
+          <span className="text-danger">-{removed}</span>
+          <span className="ml-auto uppercase tracking-wide text-ink-muted">working tree</span>
+        </div>
+        <div className="max-h-[70vh] overflow-auto p-2 font-mono text-[11px] leading-[1.5]">
+          {diffLines.map((l, i) => (
+            <div key={i} className={`whitespace-pre ${lineClass(l)}`}>{l || ' '}</div>
+          ))}
+        </div>
+      </div>
     )
   } else if (tab === 'Files') {
     body = <FileExplorer sessionId={sessionId} />
   } else if (tab === 'Cost' && data.usage) {
     const u = data.usage
     body = (
-      <div className="space-y-1 text-neutral-300">
-        <div>requests: {u.requests ?? 0}</div>
-        <div>input tokens: {u.input_tokens ?? 0}</div>
-        <div>output tokens: {u.output_tokens ?? 0}</div>
-        <div className="text-brand-400">cost: ${(u.cost_usd ?? 0).toFixed(4)}</div>
+      <div className="space-y-1">
+        <div className="flex justify-between font-mono text-xs"><span className="text-ink-muted">requests</span><span className="text-ink">{u.requests ?? 0}</span></div>
+        <div className="flex justify-between font-mono text-xs"><span className="text-ink-muted">input tokens</span><span className="text-ink">{u.input_tokens ?? 0}</span></div>
+        <div className="flex justify-between font-mono text-xs"><span className="text-ink-muted">output tokens</span><span className="text-ink">{u.output_tokens ?? 0}</span></div>
+        <div className="flex justify-between font-mono text-xs"><span className="text-ink-muted">cost (usd)</span><span className="text-brand-400">${(u.cost_usd ?? 0).toFixed(4)}</span></div>
       </div>
     )
   }
