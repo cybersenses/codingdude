@@ -184,19 +184,24 @@ function ToolTimeline({ events }) {
   const [open, setOpen] = useState(false)
   if (!events.length) return null
   return (
-    <div className="my-1 rounded border border-neutral-800 bg-neutral-900/50 text-xs">
+    <div className="my-1 overflow-hidden rounded border border-line bg-surface/60 text-xs">
       <button
-        className="w-full px-2 py-1 text-left text-neutral-400 hover:text-neutral-200"
+        className="flex w-full items-center gap-2 px-2 py-1 text-left text-ink-muted hover:text-ink"
+        aria-expanded={open}
         onClick={() => setOpen(!open)}
       >
-        {open ? '▾' : '▸'} {events.length} tool call{events.length > 1 ? 's' : ''}
+        <span aria-hidden="true">{open ? '\u25be' : '\u25b8'}</span>
+        <span>{events.length} tool call{events.length > 1 ? 's' : ''}</span>
+        <span className="ml-auto font-mono text-[10px] text-ink-muted/70">
+          {events.length ? (events[events.length - 1].tool_name || '') : ''}
+        </span>
       </button>
       {open && (
-        <div className="space-y-1 px-2 pb-2">
+        <div className="space-y-1 border-t border-line px-2 py-2">
           {events.map((e, i) => (
-            <div key={i} className="rounded bg-neutral-950 p-1 font-mono text-neutral-400">
-              <div className="text-brand-500">{e.tool_name || e.type}</div>
-              {e.result && <pre className="whitespace-pre-wrap text-neutral-500">{e.result}</pre>}
+            <div key={i} className="rounded bg-canvas p-1.5 font-mono text-[11px]">
+              <div className="text-accent">{e.tool_name || e.type}</div>
+              {e.result && <pre className="whitespace-pre-wrap text-ink-muted">{e.result}</pre>}
             </div>
           ))}
         </div>
@@ -230,7 +235,7 @@ function EditBlock({ edit, sessionId, onRevert }) {
             }}
           >Revert</button>
         ) : (
-          <span className="text-[10px] text-neutral-500">reverted</span>
+          <span className="text-[10px] text-ink-muted">reverted</span>
         )}
       </div>
       <pre className="whitespace-pre-wrap font-mono text-[10px] leading-tight">
@@ -243,16 +248,26 @@ function EditBlock({ edit, sessionId, onRevert }) {
 
 function ApprovalCard({ command, onDecide }) {
   return (
-    <div className="my-2 rounded border border-warning/60 bg-warning/15 p-3">
-      <div className="mb-2 text-xs font-semibold text-warning">Approval needed</div>
-      <pre className="mb-2 overflow-x-auto rounded bg-neutral-950 p-2 font-mono text-xs text-neutral-200">{command}</pre>
-      <div className="flex gap-2">
-        <button className="rounded bg-brand-700 px-3 py-1 text-xs text-brand-fg hover:bg-brand-600"
-          onClick={() => onDecide('approve')}>Approve</button>
-        <button className="rounded bg-neutral-700 px-3 py-1 text-xs text-ink hover:bg-neutral-600"
-          onClick={() => onDecide('pattern')}>Approve all matching</button>
-        <button className="rounded bg-danger px-3 py-1 text-xs text-danger-fg hover:bg-danger/90"
-          onClick={() => onDecide('deny')}>Deny</button>
+    <div className="my-2 overflow-hidden rounded-lg border border-warning/50 bg-surface">
+      <div className="flex items-center gap-2 border-b border-line bg-warning/10 px-3 py-2">
+        <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-warning"></span>
+        <span className="text-xs font-semibold text-warning">Approval needed</span>
+        <span className="ml-auto text-[11px] text-ink-muted">nothing runs until you decide</span>
+      </div>
+      <pre className="overflow-x-auto border-b border-line bg-canvas px-3 py-2 font-mono text-xs text-ink">{command}</pre>
+      <div className="flex items-center gap-2 px-3 py-2">
+        <button
+          className="rounded bg-brand px-3 py-1.5 text-xs font-medium text-brand-fg hover:bg-brand-hover"
+          onClick={() => onDecide('approve')}
+        >Approve once</button>
+        <button
+          className="rounded border border-line px-3 py-1.5 text-xs text-ink-muted hover:text-ink"
+          onClick={() => onDecide('pattern')}
+        >Approve all matching</button>
+        <button
+          className="ml-auto rounded border border-danger/50 px-3 py-1.5 text-xs text-danger hover:bg-danger/10"
+          onClick={() => onDecide('deny')}
+        >Deny</button>
       </div>
     </div>
   )
