@@ -185,4 +185,58 @@ result, commit SHA, rollback.
   M12 (revert index), M13 (duplicate skill fns), L11 (reload drops events).
 - **Low:** M14 (TS grammar), L1–L8, L12, L13.
 
+### Steps 12–19 (tranche 3)  ✔ — H5, M4, M9, H6, M3, L4, L7
+> NOTE: the "Remaining work" list above predates this tranche; see "Still remaining" below.
+- **H5** `worker.py`/`server.py`/`engine.py`: the worker resolves
+  `config.models.vision` and forwards `vision_model`; the server **sniffs the
+  upload's real media type** (`_image_extension`) so a JPEG is no longer stored
+  and labelled `.png`.
+- **M4** `server.py`/`worker.py`: the bearer token is off the worker **argv** —
+  passed via env `CODEDUDE_WORKER_TOKEN` and appended to the ws URL in-process.
+- **M9** `engine.py` `_verify_claims`: the retry agent's messages are now
+  persisted to the Session (were emitted but dropped).
+- **H6** `engine.py`: added `Engine._record_model_usage`; compaction, memory
+  extraction, claim verification and fix-loop retries are now billed; the budget
+  is re-checked between fix-loop iterations.
+- **M3** `approvals.py`: `OUTSIDE_WORKDIR` compiled `re.IGNORECASE` and broadened
+  (`root/opt/usr/bin/sbin/proc/sys/dev`).
+- **L4** `config.py`: a malformed `config.toml` warns and falls back to defaults
+  (no traceback).
+- **L7** `semantic.py`: `cosine()` now normalises (true cosine similarity).
+- **Tests:** `tests/test_self_fix.py` (H5 keyword + media sniff; H6 aux usage).
+- **Verification:** `uv run ruff check src tests bench.py` → *All checks passed*;
+  `uv run mypy` → *clean*; `uv run pytest -q` → **147 passed**.
+- **Commit:** `1c2af76`. **Rollback:** `git revert 1c2af76`.
+
+### Step 20 (H7) — ATTEMPTED then DEFERRED  ⏸
+- **Attempt:** make *every* run use the streaming path so history is snapshotted
+  per tool turn (crash-safe headless).
+- **Result:** **reverted.** The streaming path used by the test doubles does not
+  carry the `RunUsage` attached to a non-stream `ModelResponse`, so
+  `tests/test_budget.py::test_cap_hard_stops_when_crossed` and `::test_cap_survives_yolo`
+  observed cost=0 → `BudgetExceeded` never raised (**2 failed**). Ruff also flagged
+  the new test.
+- **Why deferred:** forcing streaming changes usage semantics; the budget tests
+  encode a real invariant (usage is recorded even when the cap is crossed). A
+  correct fix needs a **usage-carrying stream path**, or an `agent.iter()` persist
+  hook that still executes the model non-streaming. That is a design decision, not
+  a mechanical edit — **do not blind-apply.** Tree left at the last green commit
+  (`1c2af76`).
+
+---
+
+## Still remaining (as of `1c2af76`)
+
+- **H7** — see above (blocked on usage semantics; needs a decision).
+- **Small, in-place:** M8 (per-server MCP enable override), M10 (one shared
+  shell-resolution helper; no hardcoded bash), M14 (TypeScript grammar for
+  `.ts/.tsx`), L5 (`rewind_to` drops later checkpoints), L6 (JS rename must not
+  touch property keys), L8 (skills `---` frontmatter), L13 (assorted).
+- **NEEDS A RESTART TO TAKE EFFECT (the stop point):**
+  - **M11** — attaching the orphan toolsets (`worktree/knip/ci/audit/repo_map/refactor`)
+    changes *the running agent's own tool surface*; it only applies after the agent
+    process is restarted, and attaching the mutating toolsets needs gating first.
+  - **M12 / M13 / L11** — `frontend/src/App.jsx`; requires `cd frontend && npm run build`
+    and re-serving the UI (committed `frontend/dist` changes).
+
 <!-- END LOG -->
