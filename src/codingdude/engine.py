@@ -481,15 +481,12 @@ class Engine:
                 media = 'image/png' if str(image_path).lower().endswith('.png') else 'image/jpeg'
                 run_prompt = [prompt, BinaryContent(data=image_bytes, media_type=media)]
             try:
-                if emit is None:
-                    # Non-streaming runs preserve full usage reporting (budget).
-                    result = await agent.run(run_prompt, message_history=history or None)
-                else:
-                    result = await self._run_streaming(
-                        agent, run_prompt, history, model_name, traced,
-                        cp_holder=cp_holder,
-                        persist=persist_snapshot,
-                    )
+                result = await self._run_agent(
+                    agent, run_prompt, history, model_name, traced,
+                    cp_holder=cp_holder,
+                    persist=persist_snapshot,
+                    stream=emit is not None,
+                )
             except GateRequired as gate:
                 # ADR-0003: unattended runs abort on gates. The Session keeps
                 # its prior turns; after approval the next run re-issues.
@@ -648,9 +645,18 @@ class Engine:
             )
         return compacted, True
 
-    async def _run_streaming(self, agent, prompt, history, model_name, emit, cp_holder,
-                             persist=None):
-        """Run the agent, emitting AG-UI-shaped events for the UI layer."""
+    async def _run_agent(self, agent, prompt, history, model_name, traced, cp_holder,
+                         persist=None, stream: bool = True):
+        """Drive one agent run; stream AG-UI deltas only when `stream` is set.
+
+        History is snapshotted after every tool turn (self-review H7), so a
+        crash or stop never loses the in-flight exchange — for headless runs
+        too. When streaming, deltas go to the UI via `traced`. When NOT
+        streaming (headless) we deliberately skip `node.stream()` so
+        pydantic-ai executes the model on its non-streaming path and reports
+        exact usage — keeping the Budget Cap correct. `traced` is a no-op
+        when no emitter is attached.
+        """
         from pydantic_ai.messages import (
             FunctionToolCallEvent,
             FunctionToolResultEvent,
@@ -660,13 +666,17 @@ class Engine:
             TextPartDelta,
         )
 
-        emit({'type': 'RUN_STARTED'})
+        emit = traced
+        if stream:
+            emit({'type': 'RUN_STARTED'})
         async with agent.iter(prompt, message_history=history or None) as run:
             async for node in run:
                 if agent.is_model_request_node(node):
+                    if not stream:
+                        continue
                     emit({'type': 'TEXT_MESSAGE_START', 'role': 'assistant'})
-                    async with node.stream(run.ctx) as stream:
-                        async for event in stream:
+                    async with node.stream(run.ctx) as node_stream:
+                        async for event in node_stream:
                             if isinstance(event, PartStartEvent) and isinstance(
                                 event.part, TextPart
                             ):
@@ -694,8 +704,10 @@ class Engine:
                     # Persist incrementally so gates/stops/crashes keep history.
                     if persist is not None:
                         persist(run.all_messages())
-                    async with node.stream(run.ctx) as stream:
-                        async for event in stream:
+                    if not stream:
+                        continue
+                    async with node.stream(run.ctx) as node_stream:
+                        async for event in node_stream:
                             if isinstance(event, FunctionToolCallEvent):
                                 emit({
                                     'type': 'TOOL_CALL_START',

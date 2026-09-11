@@ -195,3 +195,39 @@ async def test_m11_read_only_toolsets_are_attached(engine, workdir):
     outcome = await engine.run(prompt='list tools', workdir=workdir, model=scripted(capture))
     for tool in ('repo_map', 'find_unused_exports', 'ci_status', 'dependency_audit'):
         assert tool in outcome.output, tool
+
+
+async def test_h7_headless_run_persists_incrementally(engine, workdir):
+    """A crash mid-run leaves the partial exchange in the Session (H7)."""
+    from pydantic_ai.exceptions import ModelAPIError
+    from pydantic_ai.messages import ModelResponse, ToolCallPart
+    from pydantic_ai.models.function import FunctionModel
+
+    state = {'n': 0}
+
+    def fn(messages, info):
+        state['n'] += 1
+        if state['n'] == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='list_dir', args={'path': '.'})]
+            )
+        raise ModelAPIError(model_name='crash', message='boom')
+
+    async def stream_fn(messages, info):
+        state['n'] += 1
+        if state['n'] == 1:
+            from pydantic_ai.models.function import DeltaToolCall
+            yield {0: DeltaToolCall(name='list_dir', json_args='{"path": "."}')}
+            return
+        raise ModelAPIError(model_name='crash', message='boom')
+
+    model = FunctionModel(fn, stream_function=stream_fn, model_name='crash')
+    crashed = False
+    try:
+        await engine.run(prompt='do it', workdir=workdir, model=model)
+    except Exception:  # noqa: BLE001 — any failure is fine; we assert on persistence
+        crashed = True
+    assert crashed, 'the crashing run must not report success'
+    sessions = engine._db.list_sessions(workdir)
+    assert sessions
+    assert engine._db.load_messages(sessions[0].session_id)
