@@ -137,6 +137,7 @@ async def run(args) -> int:
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue()
     pending_gate: dict[str, asyncio.Future] = {}
+    pending_ask: dict[str, asyncio.Future] = {}
 
     def on_event(event: dict) -> None:
         loop.call_soon_threadsafe(queue.put_nowait, event)
@@ -160,6 +161,18 @@ async def run(args) -> int:
 
         policy.ask = ask
 
+    async def ask_user_fn(payload):
+        """Surface an interactive question form and wait for the user's answers."""
+        fut = loop.create_future()
+        pending_ask['fut'] = fut
+        on_event({'type': 'ASK_USER', 'questions': payload})
+        try:
+            return await asyncio.wait_for(fut, timeout=1800)
+        except TimeoutError:
+            return {'error': 'no answer (timed out)'}
+
+    policy.ask_user = ask_user_fn
+
     server_url = args.server
     worker_token = os.environ.get('CODEDUDE_WORKER_TOKEN')
     if worker_token:
@@ -179,6 +192,10 @@ async def run(args) -> int:
                     fut = pending_gate.pop('fut', None)
                     if fut and not fut.done():
                         fut.set_result(msg.get('decision', 'deny'))
+                elif msg.get('type') == 'ASK_USER_RESPONSE':
+                    fut = pending_ask.pop('fut', None)
+                    if fut and not fut.done():
+                        fut.set_result(msg.get('answers', {}))
 
         async def runner():
             try:

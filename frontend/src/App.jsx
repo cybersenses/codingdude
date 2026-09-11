@@ -246,6 +246,72 @@ function EditBlock({ edit, sessionId, onRevert }) {
   )
 }
 
+function AskUserCard({ ask, runId }) {
+  const [answers, setAnswers] = useState({})
+  const [sent, setSent] = useState(false)
+  if (sent) return null
+  const submit = () => {
+    const out = (ask.questions || []).map((q) => ({
+      question: q.question,
+      answer: answers[q.question] ?? '',
+    }))
+    call(`/runs/${runId}/ask`, { method: 'POST', body: JSON.stringify({ answers: out }) })
+      .then(() => setSent(true))
+      .catch(() => {})
+  }
+  return (
+    <div className="my-2 overflow-hidden rounded-lg border border-accent/50 bg-surface">
+      <div className="border-b border-line bg-accent/10 px-3 py-2 text-xs font-semibold text-accent">
+        Questions for you
+      </div>
+      <div className="space-y-3 px-3 py-2">
+        {(ask.questions || []).map((q) => (
+          <div key={q.question}>
+            <div className="mb-1 text-xs text-ink">{q.question}</div>
+            {(q.options || []).length > 0 ? (
+              <div className="space-y-1">
+                {(q.options || []).map((o) => (
+                  <label key={o} className="flex items-center gap-2 text-xs text-ink-muted">
+                    <input
+                      type={q.multi ? 'checkbox' : 'radio'}
+                      name={q.question}
+                      checked={q.multi
+                        ? (answers[q.question] || []).includes(o)
+                        : answers[q.question] === o}
+                      onChange={() => setAnswers((a) => {
+                        const cur = a[q.question]
+                        if (q.multi) {
+                          const list = Array.isArray(cur) ? cur : []
+                          return { ...a, [q.question]: list.includes(o)
+                            ? list.filter((x) => x !== o) : [...list, o] }
+                        }
+                        return { ...a, [q.question]: o }
+                      })}
+                    />
+                    {o}
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <input
+                className="w-full rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-ink"
+                value={answers[q.question] || ''}
+                onChange={(e) => setAnswers((a) => ({ ...a, [q.question]: e.target.value }))}
+              />
+            )}
+          </div>
+        ))}
+      </div>
+      <div className="flex justify-end border-t border-line px-3 py-2">
+        <button
+          className="rounded bg-brand px-3 py-1.5 text-xs font-medium text-brand-fg hover:bg-brand-hover"
+          onClick={submit}
+        >Send answers</button>
+      </div>
+    </div>
+  )
+}
+
 function ApprovalCard({ command, onDecide }) {
   return (
     <div className="my-2 overflow-hidden rounded-lg border border-warning/50 bg-surface">
@@ -792,7 +858,7 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
   )
 }
 
-function Chat({ messages, streaming, onStop, onDecide, sessionId, suggestMode, onEditRevert }) {
+function Chat({ messages, streaming, onStop, onDecide, sessionId, suggestMode, onEditRevert, runId }) {
   const bottomRef = useRef(null)
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -821,6 +887,7 @@ function Chat({ messages, streaming, onStop, onDecide, sessionId, suggestMode, o
               <EditBlock key={ei} edit={ed} sessionId={sessionId}
                 onRevert={() => onEditRevert(i, ed)} />
             ))}
+            {m.ask && runId && <AskUserCard ask={m.ask} runId={runId} />}
             {m.gate && !m.gate.startsWith('plan:') && <ApprovalCard command={m.gate} onDecide={onDecide} />}
             {m.gate && m.gate.startsWith('plan:') && sessionId && (
               <>
@@ -1279,6 +1346,9 @@ export default function App() {
               last.gate = ev.command
               setStatus('waiting for approval')
             }
+            if (ev.type === 'ASK_USER') {
+              last.ask = { questions: ev.questions || [], answered: false }
+            }
             if (ev.type === 'REVIEW_FINDINGS') last.review = ev.findings
             if (['RUN_FINISHED', 'RUN_ERROR', 'RUN_CANCELLED'].includes(ev.type)) {
               last.streaming = false
@@ -1407,7 +1477,7 @@ export default function App() {
             yolo={yolo}
             setYolo={setYolo}
           />
-          <Chat messages={messages} streaming={streaming} onStop={stop} onDecide={decide} sessionId={activeSession} suggestMode={suggestMode} onEditRevert={onEditRevert} />
+          <Chat messages={messages} streaming={streaming} onStop={stop} onDecide={decide} sessionId={activeSession} suggestMode={suggestMode} onEditRevert={onEditRevert} runId={runRef.current} />
         </main>
         {dividerFor('right')}
         <RightPanel

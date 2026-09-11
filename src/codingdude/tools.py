@@ -578,3 +578,32 @@ def build_audit_toolset(workdir: Path) -> FunctionToolset:
         return '\n\n'.join(sections) or '(no supported project manifests found)'
 
     return FunctionToolset([dependency_audit])
+
+
+def build_ask_user_toolset(policy):
+    """The `ask_user` tool: interactive questions (radios / checkboxes / text)."""
+    import json as _json
+
+    async def ask_user(questions: str) -> str:
+        """Ask the user one or more questions and wait for their answers.
+
+        `questions` is a JSON array, for example:
+          [{"question": "Which database?", "options": ["postgres", "sqlite"],
+            "multi": false}]
+        Empty `options` renders a free-text field. Returns the answers as JSON.
+        """
+        from pydantic_ai import ModelRetry
+
+        asker = getattr(policy, 'ask_user', None) if policy is not None else None
+        if asker is None:
+            raise ModelRetry(
+                'ask_user needs the interactive UI (it is unavailable in headless runs).'
+            )
+        try:
+            payload = _json.loads(questions) if isinstance(questions, str) else questions
+        except _json.JSONDecodeError as exc:
+            raise ModelRetry(f'questions must be valid JSON: {exc}') from None
+        answers = await asker(payload)
+        return 'User answers (JSON):\n' + _json.dumps(answers, ensure_ascii=False, indent=2)
+
+    return FunctionToolset([ask_user])

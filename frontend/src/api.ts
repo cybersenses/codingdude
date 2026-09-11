@@ -132,6 +132,8 @@ export const api = {
     }),
   activeRuns: (): Promise<{ run_id: string; session_id: string }[]> =>
     call('/runs/active') as Promise<{ run_id: string; session_id: string }[]>,
+  askResponse: (runId: string, answers: Record<string, unknown>): Promise<unknown> =>
+    call(`/runs/${runId}/ask`, { method: 'POST', body: JSON.stringify({ answers }) }),
   eventStreamUrl: (runId: string) =>
     `/api/runs/${runId}/events?token=${encodeURIComponent(getToken())}`,
 }

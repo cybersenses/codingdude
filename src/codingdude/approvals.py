@@ -84,6 +84,7 @@ class ApprovalPolicy:
     patterns: set[str] = field(default_factory=set)
     ask: object | None = None
     on_pattern: object | None = None  # callable(pattern) — engine persists it
+    ask_user: object | None = None  # interactive form asker (ASK_USER / ask_user tool)
     allowed_binaries: set[str] = field(default_factory=lambda: set(DEFAULT_ALLOWED_BINARIES))
 
     def approve_pattern(self, pattern: str) -> None:

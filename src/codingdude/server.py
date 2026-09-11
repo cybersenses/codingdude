@@ -303,6 +303,18 @@ def create_app(
         channel.send_to_worker({'type': 'APPROVAL_RESPONSE', 'decision': body.decision})
         return {'sent': True}
 
+    class AskIn(BaseModel):
+        answers: dict
+
+    @app.post('/runs/{run_id}/ask')
+    def ask_user_response(run_id: str, body: AskIn, _: None = Depends(authorize)) -> dict:
+        """Forward the user's answers to the worker's pending ask_user tool."""
+        channel = channels.get(run_id)
+        if channel is None:
+            raise HTTPException(status_code=404, detail='no such run')
+        channel.send_to_worker({'type': 'ASK_USER_RESPONSE', 'answers': body.answers})
+        return {'sent': True}
+
     @app.get('/sessions/{session_id}/plan')
     def session_plan(session_id: str, _: None = Depends(authorize)) -> dict:
         from .planning import PlanStore
