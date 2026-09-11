@@ -231,3 +231,32 @@ async def test_h7_headless_run_persists_incrementally(engine, workdir):
     sessions = engine._db.list_sessions(workdir)
     assert sessions
     assert engine._db.load_messages(sessions[0].session_id)
+
+
+async def test_m11_ci_tool_degrades_without_gh(monkeypatch, workdir):
+    """A missing `gh` must return a message, not raise WinError 2 (M11)."""
+    import asyncio
+
+    from codingdude import tools
+
+    async def boom(*args, **kwargs):
+        raise FileNotFoundError(2, 'The system cannot find the file specified')
+
+    monkeypatch.setattr(asyncio, 'create_subprocess_exec', boom)
+    ci_status = tools.build_ci_toolset(workdir).tools['ci_status'].function
+    assert 'gh is not installed' in await ci_status()
+
+
+async def test_m11_audit_tool_degrades_without_binary(monkeypatch, workdir):
+    """A missing audit binary must return a message, not raise (M11)."""
+    import asyncio
+
+    from codingdude import tools
+
+    async def boom(*args, **kwargs):
+        raise FileNotFoundError(2, 'The system cannot find the file specified')
+
+    monkeypatch.setattr(asyncio, 'create_subprocess_exec', boom)
+    (workdir / 'pyproject.toml').write_text('[project]\nname = "x"\nversion = "0"\n')
+    audit = tools.build_audit_toolset(workdir).tools['dependency_audit'].function
+    assert 'not installed' in (await audit()).lower()

@@ -487,10 +487,16 @@ def build_ci_toolset(workdir: Path) -> FunctionToolset:
     async def _gh(argv: list[str], timeout: int = 120) -> str:
         import asyncio
 
-        proc = await asyncio.create_subprocess_exec(
-            'gh', *argv, cwd=workdir, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE, env=scrubbed_env(),
-        )
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                'gh', *argv, cwd=workdir, stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE, env=scrubbed_env(),
+            )
+        except FileNotFoundError:
+            return (
+                'gh is not installed - these CI tools need the GitHub CLI '
+                '(https://cli.github.com).'
+            )
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except TimeoutError:
@@ -527,10 +533,13 @@ def build_audit_toolset(workdir: Path) -> FunctionToolset:
     async def _run(cmd: list[str], timeout: int = 300) -> str:
         import asyncio
 
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, cwd=workdir, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE, env=scrubbed_env(),
-        )
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd, cwd=workdir, stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE, env=scrubbed_env(),
+            )
+        except FileNotFoundError:
+            return f'{cmd[0]} is not installed'
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except TimeoutError:
