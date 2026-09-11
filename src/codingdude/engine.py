@@ -365,6 +365,15 @@ class Engine:
             from .mcp_config import load_merged_mcp_toolsets
 
             toolsets.append(build_deadcode_toolset(workdir))
+            # Read-only analysis toolsets (self-review M11). The mutating
+            # orphans (refactor, worktree) stay detached until they are gated.
+            from .repo_map import build_repo_map_toolset
+            from .tools import build_audit_toolset, build_ci_toolset, build_knip_toolset
+
+            toolsets.append(build_repo_map_toolset(workdir))
+            toolsets.append(build_knip_toolset(workdir))
+            toolsets.append(build_ci_toolset(workdir))
+            toolsets.append(build_audit_toolset(workdir))
             try:
                 toolsets.extend(load_merged_mcp_toolsets(self._config_home(), workdir))
             except Exception as exc:  # noqa: BLE001 - bad MCP config must not brick runs
@@ -642,7 +651,6 @@ class Engine:
     async def _run_streaming(self, agent, prompt, history, model_name, emit, cp_holder,
                              persist=None):
         """Run the agent, emitting AG-UI-shaped events for the UI layer."""
-        from pydantic_ai._agent_graph import CallToolsNode
         from pydantic_ai.messages import (
             FunctionToolCallEvent,
             FunctionToolResultEvent,
@@ -682,7 +690,7 @@ class Engine:
                                         'delta': delta.args_delta,
                                     })
                     emit({'type': 'TEXT_MESSAGE_END'})
-                elif isinstance(node, CallToolsNode):
+                elif agent.is_call_tools_node(node):
                     # Persist incrementally so gates/stops/crashes keep history.
                     if persist is not None:
                         persist(run.all_messages())

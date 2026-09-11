@@ -166,3 +166,32 @@ def test_l8_yaml_frontmatter_skill(home):
     assert by_name['yamlskill']['description'] == 'YAML frontmatter'
     assert reg.load('yamlskill') == 'BODY-TEXT'
     assert [s['name'] for s in reg.matching('zap it')] == ['yamlskill']
+
+
+def test_l3_scrubbed_env_drops_secrets_keeps_benign(monkeypatch):
+    """Secret-looking names are scrubbed; benign ones survive (L3)."""
+    from codingdude.tools import scrubbed_env
+
+    monkeypatch.setenv('DEEPSEEK_API_KEY', 'x')
+    monkeypatch.setenv('MY_PASSWORD', 'y')
+    monkeypatch.setenv('PATH_LIKE_VAR', 'z')
+    env = scrubbed_env()
+    assert 'DEEPSEEK_API_KEY' not in env
+    assert 'MY_PASSWORD' not in env
+    assert 'PATH_LIKE_VAR' in env
+
+
+async def test_m11_read_only_toolsets_are_attached(engine, workdir):
+    """The read-only analysis toolsets are actually offered to the model (M11)."""
+    from helpers import scripted
+    from pydantic_ai.messages import ModelResponse, TextPart
+
+    def capture(messages, info):
+        names = sorted(
+            t.name for t in (info.model_request_parameters.function_tools or [])
+        )
+        return ModelResponse(parts=[TextPart(content=','.join(names))])
+
+    outcome = await engine.run(prompt='list tools', workdir=workdir, model=scripted(capture))
+    for tool in ('repo_map', 'find_unused_exports', 'ci_status', 'dependency_audit'):
+        assert tool in outcome.output, tool

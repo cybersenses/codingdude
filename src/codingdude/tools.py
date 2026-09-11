@@ -30,18 +30,27 @@ def shell_argv(command: str, shell_bin: str = 'bash') -> list[str]:
     return ['bash', '-c', command]
 
 
+# Names that contain a marker but are known-safe; extend if a benign
+# variable is ever scrubbed (self-review L3). Empty today — SYSTEMROOT and
+# the other Windows system vars don't contain a marker.
+ENV_ALLOWLIST: frozenset[str] = frozenset()
+
+
 def scrubbed_env() -> dict:
     """Child-process environment with secret-looking variables removed.
 
-    The shell tool must not hand provider keys to arbitrary commands. Windows
-    system vars (SYSTEMROOT etc.) are preserved so networking still works.
+    The shell tool must not hand provider keys to arbitrary commands.
+    Scrubbing stays deliberately conservative — any name *containing* a
+    marker is dropped — so a real secret is never leaked; `ENV_ALLOWLIST`
+    is the escape hatch for a benign name that happens to contain one.
     """
     import os
 
     return {
         k: v
         for k, v in os.environ.items()
-        if not any(marker in k.upper() for marker in SECRET_MARKERS) or k in ('SYSTEMROOT',)
+        if k in ENV_ALLOWLIST
+        or not any(marker in k.upper() for marker in SECRET_MARKERS)
     }
 
 EditEmitter = Callable[[dict], None]
