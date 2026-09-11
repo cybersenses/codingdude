@@ -11,3 +11,4 @@ frontend/dist/
 # runtime + throwaway (self-fix) artifacts
 /.scratch/agent-restart.log
 /_*.py
+/.scratch/ui-*.png
