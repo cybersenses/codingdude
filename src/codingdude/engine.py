@@ -15,7 +15,7 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.toolsets import AbstractToolset
 
 from .checkpoints import CheckpointStore
-from .config import Config
+from .config import Config, parse_thinking
 from .db import Database
 from .messages import decode_messages, encode_messages, sanitize_history
 from .tools import (
@@ -54,6 +54,23 @@ def _zai_fallback(model_name: str, base_url: str | None) -> Model:
 
 def _strip_provider_prefix(model: str) -> str:
     return model.split(':', 1)[1] if ':' in model else model
+
+
+_THINKING_PROVIDERS = ('glm', 'deepseek')
+
+
+def _supports_thinking(model: Model) -> bool:
+    """True when the model (or any failover target) accepts the unified
+    `thinking` setting: ZAI GLM and DeepSeek (V4/flash) profiles."""
+    candidates: list[Model] = [model]
+    candidates.extend(getattr(model, 'models', ()) or ())  # FallbackModel
+    for m in candidates:
+        if type(m).__name__ == 'ZaiModel':
+            return True
+        name = str(getattr(m, 'model_name', '')).lower()
+        if any(p in name for p in _THINKING_PROVIDERS):
+            return True
+    return False
 
 
 logger = logging.getLogger(__name__)
@@ -155,6 +172,7 @@ class Engine:
         return await review_diff_findings(
             self._db, session_id, self._config_home(),
             self._extraction_model or self._build_subagent_model(),
+            thinking=parse_thinking(self._config.models.thinking),
         )
 
     def approve_pattern(self, session_id: str, command: str) -> str:
@@ -268,6 +286,7 @@ class Engine:
                 if on_event:
                     on_event(ec)
 
+            thinking = parse_thinking(self._config.models.thinking)
             toolsets: list[AbstractToolset] = [
                 build_toolset(workdir, on_edit=on_edit_dispatch, approvals=approvals,
                               capture=capture_for_checkpoints)
@@ -301,7 +320,7 @@ class Engine:
             if subagent is not None:
                 from .tools import build_delegation_toolset
 
-                toolsets.append(build_delegation_toolset(workdir, subagent))
+                toolsets.append(build_delegation_toolset(workdir, subagent, thinking=thinking))
 
             toolsets.append(build_web_toolset())
             from .ast_tools import build_ast_toolset
@@ -327,12 +346,13 @@ class Engine:
                 build_planning_toolset(
                     self._db, session_id, approvals, emit,
                     review_model=self._extraction_model,
+                    thinking=thinking,
                 )
             )
 
             from .skills import SkillRegistry, build_skills_toolset
 
-            registry = SkillRegistry(self._config_home(), workdir)
+            registry = SkillRegistry(self._config_home())
             toolsets.append(build_skills_toolset(registry))
 
             from .memory import MemoryStore, build_memory_toolset
@@ -361,9 +381,25 @@ class Engine:
                 )
                 instructions += (
                     '\n\n## Skills (procedures you can load)\n'
-                    'When a task matches a skill, call load_skill(name) and follow it:\n'
+                    'Scan this index before every response. If any skill matches the '
+                    'request — by name, description, or topic — call load_skill(name) '
+                    'BEFORE acting and follow it. Loading a matching skill is mandatory, '
+                    'not optional:\n'
                     + lines
                 )
+                triggered = registry.matching(prompt)
+                if triggered:
+                    preloaded = '\n\n'.join(
+                        f"### Pre-loaded skill: {s['name']} (auto-triggered by this request)\n\n"
+                        + s['body']
+                        for s in triggered
+                    )
+                    instructions += (
+                        '\n\n## Skills auto-triggered by this request\n'
+                        'The matching skill bodies are already loaded here — follow them '
+                        'now. Call load_skill only for a companion file or a different '
+                        'skill from the index.\n\n' + preloaded
+                    )
             if self.embedder is not None:
                 relevant = [
                     content
@@ -384,7 +420,9 @@ class Engine:
 
             from pydantic_ai.settings import ModelSettings
 
-            model_settings = ModelSettings(timeout=300)
+            model_settings: ModelSettings = ModelSettings(timeout=300)
+            if thinking is not None and _supports_thinking(resolved):
+                model_settings['thinking'] = thinking
             agent: Agent = Agent(
                 model=resolved, instructions=instructions, toolsets=toolsets,
                 model_settings=model_settings, retries=2,

@@ -51,15 +51,8 @@ async def test_rename_not_found_is_retryable(home, workdir):
 
 
 async def test_engine_receives_rename_tool(home, workdir):
-    from codingdude.config import load_config
-    from codingdude.db import Database
-    from codingdude.engine import Engine
-
-    engine = Engine(config=load_config(), db=Database.connect(home))
-    toolsets = []
-    # mirror the engine wiring minimally: refactor is read-only, always attached
     from codingdude.refactor import build_refactor_toolset as brt
 
-    toolsets.append(brt(workdir))
+    toolsets = [brt(workdir)]
     names = sorted(t.name for ts in toolsets for t in ts.tools.values())
     assert 'rename_symbol' in names

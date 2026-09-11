@@ -80,6 +80,9 @@ def create_app(
 ) -> FastAPI:
     home = home or config_home()
     token = token or secrets.token_urlsafe(16)
+    from .mcp_config import ensure_default_mcp
+
+    ensure_default_mcp(home)
     app = FastAPI()
     db = Database.connect(home)
     channels: dict[str, RunChannel] = {}
@@ -97,6 +100,38 @@ def create_app(
         if host not in local:
             raise HTTPException(status_code=403, detail='local only')
 
+    def _session_cookie(response: Response) -> Response:
+        response.set_cookie(
+            'cd_session', token, httponly=True, samesite='lax', path='/',
+            max_age=365 * 24 * 3600,
+        )
+        return response
+
+    def _local_browser(request: Request) -> bool:
+        """True when a browser attests this is a same-origin, local page.
+
+        Sec-Fetch-Site (sent by all modern browsers) proves the request wasn't
+        fired from another site, and the Host allowlist defeats DNS rebinding.
+        Together they make a passwordless cookie grant safe on a loopback-only
+        server, so the local user never has to paste a token.
+        """
+        site = request.headers.get('sec-fetch-site', '')
+        if site not in ('same-origin', 'none'):
+            return False
+        host_header = request.headers.get('host', '')
+        hostname = host_header.rsplit(':', 1)[0] if ':' in host_header else host_header
+        allowed = {'127.0.0.1', 'localhost', '[::1]'}
+        if allow_testclient:
+            allowed.add('testserver')
+        if hostname not in allowed:
+            return False
+        origin = request.headers.get('origin', '')
+        if origin and origin != f'http://{host_header}':
+            return False
+        client = request.client.host if request.client else ''
+        local = ('127.0.0.1', '::1') + (('testclient',) if allow_testclient else ())
+        return client in local
+
     class LoginIn(BaseModel):
         password: str
 
@@ -107,18 +142,20 @@ def create_app(
             return {'ok': True}
         raise HTTPException(status_code=401, detail='not logged in')
 
+    @app.post('/auth/local')
+    def auth_local(request: Request) -> Response:
+        """Passwordless session for the local user's browser (see _local_browser)."""
+        if not _local_browser(request):
+            raise HTTPException(status_code=403, detail='local same-origin only')
+        return _session_cookie(Response(content='{"ok": true}', media_type='application/json'))
+
     @app.post('/login')
     def login(body: LoginIn) -> Response:
         if body.password != token:
             raise HTTPException(status_code=401, detail='wrong password')
         # The cookie holds the same secret as the bearer token: localhost-only,
         # HttpOnly so page JS can't read it, same-origin by construction.
-        response = Response(content='{"ok": true}', media_type='application/json')
-        response.set_cookie(
-            'cd_session', token, httponly=True, samesite='lax', path='/',
-            max_age=365 * 24 * 3600,
-        )
-        return response
+        return _session_cookie(Response(content='{"ok": true}', media_type='application/json'))
 
     class SessionIn(BaseModel):
         workdir: str
@@ -176,6 +213,18 @@ def create_app(
         workdir = db.session_workdir(session_id)
         if workdir is None:
             raise HTTPException(status_code=404, detail='no such session')
+
+        # One live worker per session: a resume/redo supersedes the previous
+        # run. Two live workers interleave trace/checkpoint/DB writes and the
+        # browser ends up watching a dead run's event stream. The channel
+        # stays (unconsumed) so a late-attaching viewer still sees the
+        # terminal RUN_CANCELLED; the SSE consumer reaps it.
+        for existing in list(channels.values()):
+            if existing.session_id != session_id:
+                continue
+            if existing.worker is not None and existing.worker.poll() is None:
+                existing.worker.terminate()
+            existing.push({'type': 'RUN_CANCELLED'})
 
         run_id = secrets.token_urlsafe(8)
         channel = RunChannel(run_id, session_id, channels)
@@ -459,14 +508,14 @@ def create_app(
     def get_skills_detail(_: None = Depends(authorize)) -> list[dict]:
         from codingdude.skills import SkillRegistry
 
-        registry = SkillRegistry(home, home)  # global skills for management
+        registry = SkillRegistry(home)
         return registry.detail()
 
     @app.put('/skills/detail/{name}')
     def put_skill(name: str, body: dict, _: None = Depends(authorize)) -> dict:
         from codingdude.skills import SkillRegistry
 
-        registry = SkillRegistry(home, home)
+        registry = SkillRegistry(home)
         saved_to = registry.save(name, body.get('description', ''), body.get('body', ''))
         return {'saved': saved_to}
 
@@ -474,7 +523,7 @@ def create_app(
     def delete_skill(name: str, _: None = Depends(authorize)) -> dict:
         from codingdude.skills import SkillRegistry
 
-        registry = SkillRegistry(home, home)
+        registry = SkillRegistry(home)
         if not registry.delete(name):
             raise HTTPException(status_code=404, detail='no such skill')
         return {'deleted': name}
@@ -617,19 +666,24 @@ def create_app(
     return app
 
 
+def load_or_create_token(home: Path | None = None) -> str:
+    """Stable token: generated once, stored next to the config, reused across
+    restarts so workers and already-logged-in browsers never re-authenticate."""
+    path = (home or config_home()) / 'server-token'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        existing = path.read_text(encoding='utf-8').strip()
+        if existing:
+            return existing
+    token = secrets.token_urlsafe(16)
+    path.write_text(token, encoding='utf-8')
+    return token
+
+
 def serve(host: str = HOST, port: int = 8765) -> None:
     import uvicorn
 
-    # Stable token: generated once, stored next to the config, reused across
-    # restarts so the browser only ever needs it once.
-    token_path = config_home() / 'server-token'
-    token_path.parent.mkdir(parents=True, exist_ok=True)
-    if token_path.exists():
-        token = token_path.read_text(encoding='utf-8').strip()
-    else:
-        token = secrets.token_urlsafe(16)
-        token_path.write_text(token, encoding='utf-8')
-
+    token = load_or_create_token()
     app = create_app(token=token)
     app.state.port = port
     logging.getLogger(__name__).info('codingdude server on http://%s:%s', host, port)

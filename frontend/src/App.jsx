@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import CodeEditor from './CodeEditor.jsx'
-import { api, call, checkAuth, login } from './api'
+import { api, authLocal, call, checkAuth, login } from './api'
 
 export class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -939,9 +939,11 @@ export default function App() {
   }
 
 
-  // Any 401 bounces back to the login screen.
+  // Any 401 tries a silent re-login first; only a failed grant shows the form.
   useEffect(() => {
-    const onUnauthorized = () => setLoggedIn(false)
+    const onUnauthorized = async () => {
+      if (!(await authLocal())) setLoggedIn(false)
+    }
     window.addEventListener('cd-unauthorized', onUnauthorized)
     return () => window.removeEventListener('cd-unauthorized', onUnauthorized)
   }, [])
@@ -969,12 +971,16 @@ export default function App() {
     }
   }, [status, notify])
 
-  // An existing session cookie skips the login screen.
+  // Transparent auth: valid cookie skips login; otherwise the local browser
+  // gets one silently. The password form is only a fallback for old browsers.
   useEffect(() => {
-    checkAuth().then((ok) => {
+    const boot = async () => {
+      let ok = await checkAuth()
+      if (!ok) ok = await authLocal()
       setLoggedIn(ok)
       if (ok) refreshSessions(localStorage.getItem('codingdude-workdir') || '')
-    })
+    }
+    boot()
   }, [])
 
   const refreshSessions = useCallback(async (wd) => {
@@ -1078,9 +1084,22 @@ export default function App() {
             const copy = [...msgs]
             const last = { ...copy[copy.length - 1] }
             if (ev.type === 'TEXT_MESSAGE_CONTENT') last.text += ev.delta
+            if (ev.type === 'TOOL_CALL_START') {
+              // Remember each in-flight tool's args so a pending gate can be
+              // matched to ITS tool's completion (parallel tool calls mean a
+              // sibling's END must not clear the gate card).
+              last.inFlight = { ...(last.inFlight || {}), [ev.tool_name]: ev.args || '' }
+            }
             if (ev.type === 'TOOL_CALL_END') {
               last.toolEvents = [...(last.toolEvents || []), { tool_name: ev.tool_name, result: ev.result }]
-              last.gate = null
+              // Clear the gate only when the gated command itself completed —
+              // not when a sibling tool finished while the gate was pending.
+              let startedCmd = (last.inFlight || {})[ev.tool_name] || ''
+              try { startedCmd = JSON.parse(startedCmd).command || startedCmd } catch {}
+              if (
+                last.gate && startedCmd &&
+                (startedCmd === last.gate || startedCmd.includes(last.gate) || last.gate.includes(startedCmd))
+              ) last.gate = null
               if (ev.tool_name === 'edit_file' || ev.tool_name === 'write_file') setDiffBadge(true)
             }
             if (ev.type === 'EDIT_APPLIED') {

@@ -8,6 +8,7 @@ from pydantic_ai import ModelRetry
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 
 from .approvals import DENIED, NEEDS_GATE
+from .config import ThinkingSetting
 from .directives import project_directives_guard
 from .errors import GateRequired
 
@@ -61,8 +62,11 @@ def build_toolset(
         return target
 
     def list_dir(path: str = '.') -> str:
+        target = resolve(path)
+        if not target.exists():
+            return f'(directory not found: {path} — list_dir "." to see what exists)'
         entries = sorted(
-            resolve(path).iterdir(), key=lambda p: (p.is_file(), p.name.lower())
+            target.iterdir(), key=lambda p: (p.is_file(), p.name.lower())
         )
         return '\n'.join(
             f"{'d' if e.is_dir() else '-'} {e.name}" for e in entries
@@ -76,6 +80,8 @@ def build_toolset(
 
     def grep(pattern: str, path: str = '.') -> str:
         target = resolve(path)
+        if not target.exists():
+            return f'(path not found: {path} — list_dir "." to see what exists)'
         rx = re.compile(pattern)
         results: list[str] = []
         files = [target] if target.is_file() else sorted(target.rglob('*'))
@@ -189,8 +195,27 @@ async def _resolve_gate(policy, command: str, always: bool = False) -> None:
 def build_shell_toolset(workdir: Path, policy, shell_bin: str = 'bash') -> FunctionToolset:
     """The shell tool, gated by the ApprovalPolicy."""
 
+    def _mask_workdir(command: str) -> str:
+        """Blank out references to the Workdir itself before the approval
+        decision: `cd G:/proj && ...` targets the project the agent is
+        already confined to and must not read as an outside path."""
+        resolved = workdir.resolve()
+        backslash = chr(92)
+        variants = {
+            str(workdir),
+            str(resolved),
+            str(resolved).replace(backslash, '/'),
+            str(resolved).lower().replace(backslash, '/'),
+            '/' + workdir.drive.lower() + str(resolved)[2:].replace(backslash, '/'),
+        }
+        masked = command
+        for variant in variants:
+            if variant:
+                masked = masked.replace(variant, '.')
+        return masked
+
     async def shell(command: str, timeout: int = 120) -> str:
-        decision = policy.decide(command)
+        decision = policy.decide(_mask_workdir(command))
         if decision in (NEEDS_GATE, DENIED):
             await _resolve_gate(policy, command, always=decision == DENIED)
         import asyncio
@@ -219,7 +244,9 @@ def build_shell_toolset(workdir: Path, policy, shell_bin: str = 'bash') -> Funct
     return FunctionToolset([shell])
 
 
-def build_delegation_toolset(workdir: Path, subagent_model) -> FunctionToolset:
+def build_delegation_toolset(
+    workdir: Path, subagent_model, thinking: ThinkingSetting | None = None
+) -> FunctionToolset:
     """The `delegate` tool: spawn a read-only Subagent on the cheap model.
 
     Subagents never see edit/write/shell/delegation tools, so Delegation
@@ -228,13 +255,18 @@ def build_delegation_toolset(workdir: Path, subagent_model) -> FunctionToolset:
 
     async def delegate(task: str) -> str:
         from pydantic_ai import Agent
+        from pydantic_ai.settings import ModelSettings
 
         from .prompts import load_prompt
 
+        settings: ModelSettings = ModelSettings(timeout=300)
+        if thinking is not None:
+            settings['thinking'] = thinking
         sub_agent: Agent = Agent(
             model=subagent_model,
             instructions=load_prompt('delegation'),
             toolsets=[build_toolset(workdir, read_only=True)],
+            model_settings=settings,
         )
         result = await sub_agent.run(task)
         return str(result.output)

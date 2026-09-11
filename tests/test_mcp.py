@@ -95,3 +95,33 @@ async def test_engine_uses_mcp_tool(home, workdir):
     )
     assert 'echo_echo' in outcome.output  # prefixed tool name visible to the model
     assert 'echo:ping' in outcome.output  # the MCP server actually answered
+
+
+def test_ensure_default_mcp_seeds_once_and_preserves_user_config(home, monkeypatch):
+    from codingdude.mcp_config import ensure_default_mcp, merged_mcp_config
+
+    monkeypatch.setattr(
+        'codingdude.mcp_config.shutil.which', lambda name: 'C:/bin/codegraph.CMD'
+    )
+    # Fresh home: seeds codegraph with a cmd wrapper for Windows batch shims.
+    ensure_default_mcp(home)
+    merged = merged_mcp_config(home, home)
+    entry = merged['mcpServers']['codegraph']
+    assert entry['command'] == 'cmd'
+    assert entry['args'][:2] == ['/c', 'C:/bin/codegraph.CMD']
+    assert 'CODEGRAPH_MCP_TOOLS' in entry['env']
+
+    # Existing config: user edits win, seeding is a no-op.
+    (home / 'mcp.json').write_text(
+        '{"mcpServers": {"codegraph": {"command": "custom"}}}', encoding='utf-8'
+    )
+    ensure_default_mcp(home)
+    assert merged_mcp_config(home, home)['mcpServers']['codegraph'] == {'command': 'custom'}
+
+
+def test_ensure_default_mcp_skips_when_binary_missing(home, monkeypatch):
+    from codingdude.mcp_config import ensure_default_mcp, merged_mcp_config
+
+    monkeypatch.setattr('codingdude.mcp_config.shutil.which', lambda name: None)
+    ensure_default_mcp(home)
+    assert merged_mcp_config(home, home)['mcpServers'] == {}

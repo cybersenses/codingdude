@@ -89,3 +89,19 @@ def test_prune_caps_per_session(home, tmp_path):
     assert len(listed) == 5
     # newest kept, oldest pruned
     assert listed[0]['id'] == store.list_checkpoints('s1')[0]['id']
+
+
+def test_corrupt_metadata_degrades_gracefully(store, tmp_path):
+    cp_id = store.begin('sx')
+    (tmp_path / 'f.txt').write_text('v1')
+    store.capture_file('sx', cp_id, tmp_path, tmp_path / 'f.txt')
+
+    # Simulate a torn write from a racing worker.
+    meta = store._session_dir('sx') / cp_id / 'metadata.json'
+    meta.write_text('{"files": {"f.txt": {"existed": TRUNC', encoding='utf-8')
+
+    # capture/list/restore must not raise raw JSONDecodeError.
+    store.capture_file('sx', cp_id, tmp_path, tmp_path / 'f.txt')
+    assert store.list_checkpoints('sx') == []
+    with pytest.raises(FileNotFoundError):
+        store.restore_checkpoint('sx', cp_id, tmp_path)

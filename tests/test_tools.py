@@ -93,3 +93,43 @@ async def test_outside_workdir_is_refused_not_crashing(engine, workdir):
         ),
     )
     assert outcome.output == 'refused it'
+
+
+async def test_list_dir_and_grep_missing_path_are_graceful(home, workdir):
+    from codingdude.tools import build_toolset
+
+    toolset = build_toolset(workdir, read_only=True)
+    listing = toolset.tools['list_dir'].function(path='nope')
+    assert 'not found' in listing.lower()
+    matches = toolset.tools['grep'].function(pattern='x', path='nope')
+    assert 'not found' in matches.lower()
+
+
+async def test_shell_masks_workdir_self_reference(home, workdir):
+    """`cd <own workdir>` must not read as an outside path (spurious gate)."""
+    from codingdude.approvals import ApprovalPolicy
+    from codingdude.tools import build_shell_toolset
+
+    workdir.mkdir(parents=True, exist_ok=True)
+    policy = ApprovalPolicy()
+    toolset = build_shell_toolset(workdir, policy)
+    shell = toolset.tools['shell'].function
+
+    # Read-only command that mentions the workdir by every path spelling.
+    cmd = (
+        f'echo "project at {workdir} and {workdir.as_posix()}"; '
+        'git log --oneline | head -3'
+    )
+    out = await shell(cmd)
+    assert 'exit code' in out  # ran without a gate
+
+
+async def test_shell_still_gates_true_outside_paths(home, workdir):
+    from codingdude.approvals import ApprovalPolicy
+
+    workdir.mkdir(parents=True, exist_ok=True)
+    other = workdir.parent / 'elsewhere'
+    cmd = f'cat {other.as_posix()}/secret.txt'
+    # Workdir masking must not hide paths outside the project.
+    decision = ApprovalPolicy().decide(cmd)
+    assert decision != 'approved'

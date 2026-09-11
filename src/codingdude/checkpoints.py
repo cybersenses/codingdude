@@ -49,13 +49,28 @@ class CheckpointStore:
         (cp_dir / 'metadata.json').write_text(json.dumps(meta), encoding='utf-8')
         return cp_id
 
+
+    @staticmethod
+    def _read_meta(meta_path: Path) -> 'dict | None':
+        """Parse a checkpoint's metadata; None when missing or corrupt.
+
+        A corrupt file (torn write from a killed worker) is reported as
+        absent rather than crashing the run with a JSONDecodeError.
+        """
+        if not meta_path.exists():
+            return None
+        try:
+            meta = json.loads(meta_path.read_text(encoding='utf-8'))
+        except json.JSONDecodeError:
+            return None
+        return meta if isinstance(meta, dict) and 'files' in meta else None
+
     def capture_file(self, session_id: str, cp_id: str, workdir: Path, abs_path: Path) -> None:
         """Snapshot one file into the checkpoint (first touch per file)."""
         cp_dir = self._session_dir(session_id) / cp_id
-        meta_path = cp_dir / 'metadata.json'
-        if not meta_path.exists():
+        meta = self._read_meta(cp_dir / 'metadata.json')
+        if meta is None:
             return
-        meta = json.loads(meta_path.read_text(encoding='utf-8'))
         try:
             rel = str(abs_path.relative_to(workdir.resolve())).replace('\\', '/')
         except ValueError:
@@ -69,7 +84,7 @@ class CheckpointStore:
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(abs_path, dest)
             meta['files'][rel] = {'existed': True}
-        meta_path.write_text(json.dumps(meta), encoding='utf-8')
+        (cp_dir / 'metadata.json').write_text(json.dumps(meta), encoding='utf-8')
 
     def list_checkpoints(self, session_id: str) -> list[dict]:
         session_dir = self._session_dir(session_id)
@@ -77,10 +92,9 @@ class CheckpointStore:
             return []
         out = []
         for cp_dir in sorted(session_dir.iterdir(), key=lambda p: p.name, reverse=True):
-            meta_path = cp_dir / 'metadata.json'
-            if not meta_path.exists():
+            meta = self._read_meta(cp_dir / 'metadata.json')
+            if meta is None:
                 continue
-            meta = json.loads(meta_path.read_text(encoding='utf-8'))
             out.append({
                 'id': meta['id'],
                 'created_at': meta['created_at'],
@@ -91,10 +105,9 @@ class CheckpointStore:
     def restore_checkpoint(self, session_id: str, cp_id: str, workdir: Path) -> dict:
         """Restore every file captured in this checkpoint."""
         cp_dir = self._session_dir(session_id) / cp_id
-        meta_path = cp_dir / 'metadata.json'
-        if not meta_path.exists():
-            raise FileNotFoundError(f'no such checkpoint: {cp_id}')
-        meta = json.loads(meta_path.read_text(encoding='utf-8'))
+        meta = self._read_meta(cp_dir / 'metadata.json')
+        if meta is None:
+            raise FileNotFoundError(f'no such (or corrupt) checkpoint: {cp_id}')
         restored = []
         for rel, info in meta['files'].items():
             target = workdir.resolve() / rel
@@ -112,10 +125,9 @@ class CheckpointStore:
 
     def restore_file(self, session_id: str, cp_id: str, rel_path: str, workdir: Path) -> dict:
         cp_dir = self._session_dir(session_id) / cp_id
-        meta_path = cp_dir / 'metadata.json'
-        if not meta_path.exists():
-            raise FileNotFoundError(f'no such checkpoint: {cp_id}')
-        meta = json.loads(meta_path.read_text(encoding='utf-8'))
+        meta = self._read_meta(cp_dir / 'metadata.json')
+        if meta is None:
+            raise FileNotFoundError(f'no such (or corrupt) checkpoint: {cp_id}')
         info = meta['files'].get(rel_path)
         if not info:
             raise FileNotFoundError(f'{rel_path} not in checkpoint {cp_id}')
@@ -140,10 +152,9 @@ class CheckpointStore:
         later = cps[cps.index(cp_id) + 1:]
         later_files: dict[str, list[str]] = {}
         for later_id in later:
-            meta_path = session_dir / later_id / 'metadata.json'
-            if not meta_path.exists():
+            meta = self._read_meta(session_dir / later_id / 'metadata.json')
+            if meta is None:
                 continue
-            meta = json.loads(meta_path.read_text(encoding='utf-8'))
             for rel in meta['files']:
                 later_files.setdefault(rel, [])
         live_workdir = Path(workdir).resolve()
@@ -161,10 +172,9 @@ class CheckpointStore:
         cutoff = _now() - self.max_age_days * 86400
         entries = []
         for cp_dir in session_dir.iterdir():
-            meta_path = cp_dir / 'metadata.json'
-            if not meta_path.exists():
+            meta = self._read_meta(cp_dir / 'metadata.json')
+            if meta is None:
                 continue
-            meta = json.loads(meta_path.read_text(encoding='utf-8'))
             entries.append((meta.get('created_at', 0), cp_dir))
         entries.sort(key=lambda e: e[0], reverse=True)
         # keep room for the checkpoint about to be created

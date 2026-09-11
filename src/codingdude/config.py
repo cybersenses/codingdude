@@ -6,6 +6,7 @@ import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal, cast
 
 
 def _default_config_toml(lineup: ModelLineup) -> str:
@@ -14,8 +15,11 @@ def _default_config_toml(lineup: ModelLineup) -> str:
         '[models]\n'
         f'main = "{lineup.main}"\n'
         f'subagent = "{lineup.subagent}"\n'
-        f'fallback = "{lineup.fallback}"\n\n'
-        '[shell]\n'
+        f'fallback = "{lineup.fallback}"\n'
+        '# Thinking depth for GLM models: minimal | low | medium | high | xhigh | off\n'
+        '# (cost lever: low/medium while testing; unset = provider default)\n'
+        '# thinking = "low"\n'
+        '\n[shell]\n'
         '# "bash" (Git Bash) or "powershell"\n'
         'default = "bash"\n'
     )
@@ -33,6 +37,27 @@ class ModelLineup:
     # Vision-capable model for image input (e.g. "zai:glm-5v"). Image prompts
     # route here; None disables image input.
     vision: str | None = None
+    # Thinking depth for models that support it (ZAI GLM profiles): one of
+    # minimal | low | medium | high | xhigh (or off/none to disable). None
+    # leaves provider defaults. Cost lever: low/medium while testing.
+    thinking: str | None = None
+
+
+THINKING_LEVELS = ('minimal', 'low', 'medium', 'high', 'xhigh')
+ThinkingLevel = Literal['minimal', 'low', 'medium', 'high', 'xhigh']
+ThinkingSetting = bool | ThinkingLevel
+
+
+def parse_thinking(value: str | None) -> ThinkingSetting | None:
+    """Config string -> pydantic-ai `thinking` setting (bool | level | None)."""
+    if value is None or value == '':
+        return None
+    val = value.strip().lower()
+    if val in ('off', 'none', 'false', 'disabled'):
+        return False
+    if val in THINKING_LEVELS:
+        return cast(ThinkingLevel, val)
+    raise ValueError(f'invalid thinking level {value!r}; use one of {THINKING_LEVELS} or off')
 
 
 @dataclass(frozen=True)
@@ -97,6 +122,7 @@ def load_config(home: Path | None = None) -> Config:
             fallback=models.get('fallback', defaults.models.fallback),
             fallback_base_url=models.get('fallback_base_url', defaults.models.fallback_base_url),
             vision=models.get('vision', defaults.models.vision),
+            thinking=models.get('thinking', defaults.models.thinking),
         ),
         shell=ShellConfig(default=shell.get('default', defaults.shell.default)),
         providers=ProviderKeys(

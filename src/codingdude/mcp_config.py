@@ -7,6 +7,7 @@ one (`~/.codingdude/mcp.json`).
 """
 
 import json
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -27,6 +28,41 @@ def merged_mcp_config(home: Path, workdir: Path) -> dict:
     merged['mcpServers'].update(project['mcpServers'])
     merged['disabled'] = sorted(set(merged['disabled']) | set(project['disabled']))
     return merged
+
+
+def ensure_default_mcp(home: Path) -> None:
+    """Seed the global mcp.json with default servers on first use.
+
+    Only when the file doesn't exist yet — an existing config is never
+    touched. The command is resolved to an absolute path at seed time so
+    Windows stdio spawning works (npm shims are .cmd files).
+    """
+    path = home / 'mcp.json'
+    if path.exists():
+        return
+    codegraph = shutil.which('codegraph')
+    if not codegraph:
+        return
+    args = ['serve', '--mcp']
+    command = codegraph
+    if codegraph.lower().endswith(('.cmd', '.bat')):
+        # Windows can't CreateProcess a batch shim directly — go through cmd.
+        command, args = 'cmd', ['/c', codegraph, *args]
+    servers = {
+        'codegraph': {
+            'type': 'stdio',
+            'command': command,
+            'args': args,
+            # The granular graph tools are cheap for agents and complement
+            # the single 'explore' tool the vendor enables by default.
+            'env': {'CODEGRAPH_MCP_TOOLS': 'explore,search,callers,callees,impact'},
+        },
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({'mcpServers': servers, 'disabled': []}, indent=2),
+        encoding='utf-8',
+    )
 
 
 def list_mcp_servers(home: Path, workdir: Path) -> list[dict]:

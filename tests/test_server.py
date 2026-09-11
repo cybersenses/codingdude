@@ -224,3 +224,85 @@ def test_interactive_approval_roundtrip(server, tmp_path):
     assert types[-1] == 'RUN_FINISHED'
     contents = ''.join(e.get('delta', '') for e in seen if e['type'] == 'TEXT_MESSAGE_CONTENT')
     assert 'gated-ran' in contents
+
+
+def test_passwordless_local_auth_grants_session(server):
+    app, base = server
+    # No cookie -> unauthorized.
+    assert httpx.get(f'{base}/sessions?workdir=/', timeout=5).status_code == 401
+    # A same-origin local browser gets a session with no secret at all.
+    r = httpx.post(f'{base}/auth/local', headers={'sec-fetch-site': 'same-origin'}, timeout=5)
+    assert r.status_code == 200
+    cookie = r.cookies.get('cd_session')
+    assert cookie
+    # The issued cookie authorizes normal endpoints.
+    r2 = httpx.get(
+        f'{base}/sessions?workdir=/', cookies={'cd_session': cookie}, timeout=5
+    )
+    assert r2.status_code == 200
+
+
+def test_passwordless_grant_rejects_cross_site_and_rebinding(server):
+    app, base = server
+    # Cross-site fetch (CSRF vector).
+    r = httpx.post(
+        f'{base}/auth/local', headers={'sec-fetch-site': 'cross-site'}, timeout=5
+    )
+    assert r.status_code == 403
+    # Foreign Origin claiming same-origin.
+    r = httpx.post(
+        f'{base}/auth/local',
+        headers={'sec-fetch-site': 'same-origin', 'origin': 'https://evil.example'},
+        timeout=5,
+    )
+    assert r.status_code == 403
+    # DNS rebinding: attacker domain resolving to 127.0.0.1.
+    r = httpx.post(
+        f'{base}/auth/local',
+        headers={'sec-fetch-site': 'same-origin', 'host': 'evil.example'},
+        timeout=5,
+    )
+    assert r.status_code == 403
+    # No Sec-Fetch attestation (old browser or non-browser client).
+    r = httpx.post(f'{base}/auth/local', timeout=5)
+    assert r.status_code == 403
+
+
+def test_passwordless_grant_allows_typed_url(server):
+    app, base = server
+    r = httpx.post(f'{base}/auth/local', headers={'sec-fetch-site': 'none'}, timeout=5)
+    assert r.status_code == 200
+
+
+def test_token_stable_across_restarts(tmp_path):
+    from codingdude.server import load_or_create_token
+
+    home = tmp_path / 'home'
+    t1 = load_or_create_token(home)
+    t2 = load_or_create_token(home)
+    assert t1 == t2
+    assert (home / 'server-token').read_text(encoding='utf-8').strip() == t1
+
+
+def test_second_run_supersedes_live_run_for_session(server, tmp_path):
+    app, base = server
+    workdir = tmp_path / 'proj5'
+    workdir.mkdir()
+    session_id = create_session(base, workdir)
+    r1 = httpx.post(
+        f'{base}/sessions/{session_id}/runs',
+        json={'prompt': 'first', 'model': 'codingdude-test:sleep'},
+        headers=auth(),
+        timeout=30,
+    ).json()['run_id']
+    time.sleep(3)
+    # A second run for the same session must cancel the first worker.
+    r2 = httpx.post(
+        f'{base}/sessions/{session_id}/runs',
+        json={'prompt': 'resume', 'model': 'codingdude-test:echo'},
+        headers=auth(),
+        timeout=30,
+    ).json()['run_id']
+    assert r2 != r1
+    events = collect_sse(base, r1, timeout=15)
+    assert events[-1]['type'] == 'RUN_CANCELLED'

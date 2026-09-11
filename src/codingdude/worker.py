@@ -139,7 +139,10 @@ async def run(args) -> int:
             # Single writer: gate requests flow through the same queue as
             # every other event, so frames can never interleave.
             on_event({'type': 'GATE_REQUEST', 'command': command})
-            decision = await fut
+            try:
+                decision = await asyncio.wait_for(fut, timeout=600)
+            except TimeoutError:
+                decision = 'deny'
             if decision == 'pattern':
                 engine.approve_pattern(args.session, command)
             return decision

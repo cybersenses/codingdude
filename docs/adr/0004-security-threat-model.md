@@ -7,7 +7,7 @@ CodingDude runs arbitrary model-chosen shell commands on the user's machine, gat
 - Destructive filesystem operations (`rm`, deletions) — always-gated.
 - Secret leakage to child processes: subprocess environments are scrubbed of variables matching KEY/TOKEN/SECRET/PASSWORD/CREDENTIAL, so a hallucinated `curl` can't exfiltrate provider keys from env.
 - Path escape via file tools: all file operations resolve and must stay inside the Workdir.
-- Network exposure: the server binds 127.0.0.1 with bearer/cookie auth.
+- Network exposure: the server binds 127.0.0.1 with bearer/cookie auth. Local browsers are authenticated *transparently* (`POST /auth/local` grants the session cookie with no secret): the grant requires a modern-browser `Sec-Fetch-Site: same-origin|none` attestation, a `Host` allowlist of `127.0.0.1`/`localhost`/`[::1]` (defeats DNS rebinding), and an `Origin` match when present (defeats CSRF). Non-browser local clients (workers, headless scripts) keep using the stable bearer token from `~/.codingdude/server-token`; they get no cookie without the browser attestation.
 
 **What we explicitly do NOT defend against (documented limits):**
 - The shell tier check is a *heuristic regex*, not a sandbox. A compound command can reach outside the Workdir in ways the regex misses. The Workdir boundary is hard only for the file tools.

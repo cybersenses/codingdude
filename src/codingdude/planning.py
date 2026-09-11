@@ -13,6 +13,8 @@ from pathlib import Path
 from pydantic_ai import ModelRetry
 from pydantic_ai.toolsets import FunctionToolset
 
+from .config import ThinkingSetting
+
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
@@ -80,7 +82,7 @@ class PlanStore:
 
 
 def build_planning_toolset(
-    db, session_id: str, policy, emit, review_model=None
+    db, session_id: str, policy, emit, review_model=None, thinking=None
 ) -> FunctionToolset:
     store = PlanStore(db)
     emit = emit or (lambda event: None)
@@ -152,27 +154,27 @@ def build_planning_toolset(
     return FunctionToolset([propose_plan, update_step])
 
 
-async def review_diff_findings(db, session_id: str, config_home, review_model) -> str:
+async def review_diff_findings(db, session_id: str, config_home, review_model, thinking: ThinkingSetting | None = None) -> str:
     """On-demand review of the Session's working-tree diff (UI 'Run review')."""
     from .config import config_home as _ch
     from .directives import build_directive_layers
 
     workdir = db.session_workdir(session_id)
     checklist = build_directive_layers(_ch(), Path(workdir)) if workdir else ''
-    return await _review_impl(db, session_id, review_model, checklist, plan=None)
+    return await _review_impl(db, session_id, review_model, checklist, plan=None, thinking=thinking)
 
 
-async def _run_review(db, session_id: str, review_model, plan: dict) -> str:
+async def _run_review(db, session_id: str, review_model, plan: dict, thinking: ThinkingSetting | None = None) -> str:
     """Review pass: diff + plan + directives checklist → findings (or '')."""
     from .config import config_home
     from .directives import build_directive_layers
 
     workdir = db.session_workdir(session_id)
     checklist = build_directive_layers(config_home(), Path(workdir)) if workdir else ''
-    return await _review_impl(db, session_id, review_model, checklist, plan=plan)
+    return await _review_impl(db, session_id, review_model, checklist, plan=plan, thinking=thinking)
 
 
-async def _review_impl(db, session_id: str, review_model, checklist: str, plan) -> str:
+async def _review_impl(db, session_id: str, review_model, checklist: str, plan, thinking: ThinkingSetting | None = None) -> str:
     import subprocess
 
     from pydantic_ai import Agent
@@ -185,7 +187,12 @@ async def _review_impl(db, session_id: str, review_model, checklist: str, plan) 
         )
         diff = diff_process.stdout
 
-    reviewer = Agent(model=review_model)
+    from pydantic_ai.settings import ModelSettings
+
+    settings: ModelSettings = ModelSettings(timeout=300)
+    if thinking is not None:
+        settings['thinking'] = thinking
+    reviewer = Agent(model=review_model, model_settings=settings)
     plan_section = ''
     if plan:
         plan_section = (

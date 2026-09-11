@@ -67,6 +67,17 @@ export async function login(password: string): Promise<void> {
   if (!res.ok) throw new Error('wrong password')
 }
 
+// Passwordless: the server grants a session when the browser proves the page
+// is local and same-origin (Sec-Fetch-Site + Host checks server-side).
+export async function authLocal(): Promise<boolean> {
+  try {
+    const res = await fetch('/api/auth/local', { method: 'POST' })
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
 export async function checkAuth(): Promise<boolean> {
   try {
     const res = await fetch('/api/auth/check')
