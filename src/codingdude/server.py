@@ -41,6 +41,19 @@ HOST = '127.0.0.1'  # localhost only, by design
 _STARTED_AT = datetime.now(UTC).isoformat()
 
 
+def _git_sha() -> str:
+    """Short git SHA of the running checkout, or '' if unavailable."""
+    try:
+        out = subprocess.run(
+            ['git', 'rev-parse', '--short', 'HEAD'],
+            cwd=Path(__file__).resolve().parents[2],
+            capture_output=True, text=True, timeout=5,
+        )
+        return out.stdout.strip() if out.returncode == 0 else ''
+    except (OSError, subprocess.SubprocessError):
+        return ''
+
+
 def _image_extension(data: bytes) -> str:
     """Sniff the real media type so a JPEG upload isn't stored as `.png`."""
     if data[:8] == b'\x89PNG\r\n\x1a\n':
@@ -662,7 +675,12 @@ def create_app(
 
     @app.get('/health')
     def health() -> dict:
-        return {'ok': True, 'version': __version__, 'started_at': _STARTED_AT}
+        return {
+            'ok': True,
+            'version': __version__,
+            'git_sha': _git_sha(),
+            'started_at': _STARTED_AT,
+        }
 
     @app.middleware('http')
     async def strip_api_prefix(request, call_next):

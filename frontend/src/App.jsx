@@ -7,6 +7,7 @@ import { api, authLocal, call, checkAuth, login } from './api'
 // so a stale bundle (or a server that hasn't restarted) is obvious on screen.
 const UI_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'dev'
 const UI_BUILD = typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : ''
+const UI_SHA = typeof __GIT_SHA__ !== 'undefined' ? __GIT_SHA__ : ''
 const shortStamp = (iso) => (iso ? iso.slice(5, 16).replace('T', ' ') : '')
 
 export class ErrorBoundary extends React.Component {
@@ -1286,7 +1287,7 @@ export default function App() {
           )}
         </span>
         <span className="text-neutral-600" title="frontend build · backend server build">
-          ui v{UI_VERSION} {shortStamp(UI_BUILD)} · srv v{srv?.version ?? '?'} {shortStamp(srv?.started_at)}
+          ui v{UI_VERSION}{UI_SHA ? `+${UI_SHA}` : ''} {shortStamp(UI_BUILD)} · srv v{srv?.version ?? '?'}{srv?.git_sha ? `+${srv.git_sha}` : ''} {shortStamp(srv?.started_at)}
         </span>
         <span className={streaming ? 'text-brand-400' : ''}>{status}</span>
       </footer>
