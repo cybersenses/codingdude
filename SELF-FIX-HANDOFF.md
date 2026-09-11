@@ -269,4 +269,28 @@ result, commit SHA, rollback.
 > done**; M8, M14, L5, L6, L8 remain in-place, and M11 (tool wiring) +
 > M12/M13/L11 (frontend) still need a **restart/rebuild** — use `codingdude.restart`.
 
+### Steps 24–27 (tranche 6)  ✔ — M8, M14, L5, L8
+- **M8** `mcp_config.py`: added a per-server `enabled` override, so a project can
+  re-enable a server that is disabled globally (project wins).
+- **M14** new `src/codingdude/jslang.py`: `.ts`/`.tsx` parse with the TypeScript
+  grammar (`language_typescript`/`language_tsx`, `functools.cache`d); `deadcode`,
+  `refactor` and `repo_map` all use it; falls back to JS if TS is unavailable.
+- **L5** `checkpoints.py`: `rewind_to` now deletes the undone later checkpoints,
+  and checkpoints are ordered by `created_at` — the old **name** order was
+  unreliable for same-second checkpoints (this surfaced via the new test).
+- **L8** `skills.py`: `_parse_frontmatter` now also accepts `---` `key: value`
+  frontmatter (with `[a, b]` lists) alongside the original JSON form.
+- **L6 (JS rename hits property keys) — VERIFIED as a non-issue:** property
+  accesses (`o.old`) and object keys (`{ old: 2 }`) are `property_identifier`
+  nodes, which `_js_replace` (matching `identifier`) never touches. Probe output
+  left both untouched and renamed only the binding. **No code change made.**
+- **Tests:** `tests/test_self_fix.py` (M8 re-enable, M14 TS parse, L5 rewind, L8 yaml).
+- **Verification:** ruff clean; mypy clean (28 files); pytest **156 passed**.
+- **Commit:** `42c929e`. **Rollback:** `git revert 42c929e`.
+
+> **In-place set is COMPLETE** (C1, H1–H6, H8, H9, M1–M3, M5–M12, M14, L4, L5,
+> L7–L10, L13). The only things left are the **restart-only** items —
+> **M11** (tool wiring) and **M12/M13/L11** (frontend rebuild) — then
+> `python -m codingdude.restart` to bounce the server onto the new code.
+
 <!-- END LOG -->
