@@ -849,7 +849,7 @@ function Chat({ messages, streaming, onStop, onDecide, sessionId, suggestMode, o
   )
 }
 
-function Prompt({ onSend, disabled, suggestMode, setSuggestMode, fixLoop, setFixLoop }) {
+function Prompt({ onSend, disabled, suggestMode, setSuggestMode, fixLoop, setFixLoop, models, model, setModel, yolo, setYolo }) {
   const [text, setText] = useState('')
   const [image, setImage] = useState(null) // {b64, name}
   const fileRef = useRef(null)
@@ -932,6 +932,24 @@ function Prompt({ onSend, disabled, suggestMode, setSuggestMode, fixLoop, setFix
         <input type="checkbox" checked={fixLoop} onChange={(e) => setFixLoop(e.target.checked)} />
         fix until green
       </label>
+      {models && (
+        <select
+          className="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-ink"
+          value={model}
+          onChange={(e) => setModel(e.target.value)}
+          title={model && models.models[model] ? models.models[model] : 'configured default (main)'}
+          aria-label="Model"
+        >
+          <option value="">default (main)</option>
+          {['main', 'subagent', 'fallback', 'vision'].map((k) =>
+            models.models[k] ? <option key={k} value={k}>{k} — {models.models[k]}</option> : null
+          )}
+        </select>
+      )}
+      <label className={`flex items-center gap-1 text-[10px] ${yolo ? 'text-danger' : 'text-neutral-400'}`} title="auto-approve every gated action for this session">
+        <input type="checkbox" checked={yolo} onChange={(e) => setYolo(e.target.checked)} />
+        yolo
+      </label>
       <label
         className={`cursor-pointer text-sm ${notify ? '' : 'grayscale opacity-50'}`}
         title="notify when a run finishes or waits"
@@ -967,6 +985,9 @@ export default function App() {
   const [theme, setTheme] = useState(() =>
     localStorage.getItem('cd-theme') === 'light' ? 'light' : 'dark'
   )
+  const [models, setModels] = useState(null)
+  const [model, setModel] = useState(() => localStorage.getItem('cd-model') || '')
+  const [yolo, setYolo] = useState(() => localStorage.getItem('cd-yolo') === '1')
   const [suggestMode, setSuggestMode] = useState(() => localStorage.getItem('cd-suggest') === '1')
   const [fixLoop, setFixLoop] = useState(false)
   const runRef = useRef(null)
@@ -1034,6 +1055,14 @@ export default function App() {
     document.documentElement.dataset.theme = theme
     localStorage.setItem('cd-theme', theme)
   }, [theme])
+
+  // Model + YOLO: fetch the lineup once, persist the choice per browser.
+  useEffect(() => {
+    if (!loggedIn) return
+    api.listModels().then(setModels).catch(() => {})
+  }, [loggedIn])
+  useEffect(() => { localStorage.setItem('cd-model', model) }, [model])
+  useEffect(() => { localStorage.setItem('cd-yolo', yolo ? '1' : '0') }, [yolo])
 
   // Notifications: tab title + sound + toast on run state changes.
   const [notify, setNotify] = useState(() => localStorage.getItem('cd-notify') === '1')
@@ -1201,7 +1230,14 @@ export default function App() {
     setStatus('running')
     setError('')
     api
-      .startRun(activeSession, prompt, null, fixLoop, image ? image.b64 : null)
+      .startRun(
+        activeSession,
+        prompt,
+        model && models ? models.models[model] : null,
+        fixLoop,
+        image ? image.b64 : null,
+        yolo,
+      )
       .then(({ run_id }) => {
         runRef.current = run_id
         const es = new EventSource(api.eventStreamUrl(run_id))
@@ -1365,6 +1401,11 @@ export default function App() {
             setSuggestMode={(v) => { setSuggestMode(v); localStorage.setItem('cd-suggest', v ? '1' : '0') }}
             fixLoop={fixLoop}
             setFixLoop={setFixLoop}
+            models={models}
+            model={model}
+            setModel={setModel}
+            yolo={yolo}
+            setYolo={setYolo}
           />
           <Chat messages={messages} streaming={streaming} onStop={stop} onDecide={decide} sessionId={activeSession} suggestMode={suggestMode} onEditRevert={onEditRevert} />
         </main>

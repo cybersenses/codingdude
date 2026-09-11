@@ -731,6 +731,22 @@ def create_app(
         finally:
             inbox_task.cancel()
 
+    @app.get('/models')
+    def list_models(_: None = Depends(authorize)) -> dict:
+        """The configured model lineup, for the UI's model selector."""
+        from .config import load_config
+
+        cfg = load_config()
+        return {
+            'default': 'main',
+            'models': {
+                'main': cfg.models.main,
+                'subagent': cfg.models.subagent,
+                'fallback': cfg.models.fallback,
+                'vision': cfg.models.vision,
+            },
+        }
+
     @app.get('/health')
     def health() -> dict:
         return {

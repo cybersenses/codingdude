@@ -23,6 +23,11 @@ export interface UsageTotals {
   cost_usd: number | null
 }
 
+export interface ModelsInfo {
+  default: string
+  models: Record<string, string | null>
+}
+
 export interface Project {
   id: number
   name: string
@@ -102,16 +107,18 @@ export const api = {
   listSessions: (workdir: string): Promise<SessionInfo[]> =>
     call<SessionInfo[]>(`/sessions?workdir=${encodeURIComponent(workdir)}`),
   getMessages: (sessionId: string) => call(`/sessions/${sessionId}/messages`),
+  listModels: (): Promise<ModelsInfo> => call<ModelsInfo>('/models'),
   startRun: (
     sessionId: string,
     prompt: string,
     model: string | null = null,
     fixLoop = false,
     imageB64: string | null = null,
+    yolo = false,
   ): Promise<{ run_id: string }> =>
     call<{ run_id: string }>(`/sessions/${sessionId}/runs`, {
       method: 'POST',
-      body: JSON.stringify({ prompt, model, fix_loop: fixLoop, image_b64: imageB64 }),
+      body: JSON.stringify({ prompt, model, fix_loop: fixLoop, image_b64: imageB64, yolo }),
     }),
   cancelRun: (runId: string): Promise<unknown> => call(`/runs/${runId}`, { method: 'DELETE' }),
   approve: (runId: string, decision: ApprovalDecision): Promise<unknown> =>
