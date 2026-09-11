@@ -327,4 +327,25 @@ result, commit SHA, rollback.
 > **Activation:** `python -m codingdude.restart` bounces the server onto this
 > code so M4 (token-env), M11 (toolsets), L2/L3 and the frontend all take effect.
 
+### Step 20 (H7) — RESOLVED  ✔ (design decision)
+- **Decision:** `engine.py` now always drives a run through `agent.iter()`
+  (`_run_agent`), persisting history on **every tool turn** — so headless runs
+  are crash-safe too. Streaming is **opt-in**: the worker passes an emitter
+  (`stream=True`) for live UI deltas; headless (`emit is None`) skips
+  `node.stream()`.
+- **Why it works:** probing pydantic-ai 2.40 showed that iterating the graph
+  *without* calling `node.stream()` still executes the model and reports
+  **exact usage** (`RunUsage` identical to `agent.run`). The earlier
+  always-stream attempt broke the Budget-Cap tests because the test doubles
+  attach usage to the non-stream response only — so streaming must stay opt-in.
+- **Result:** H7 satisfied without changing usage semantics.
+- **Tests:** `test_h7_headless_run_persists_incrementally` (crash mid-run leaves
+  the partial exchange in the Session); all `test_budget.py` tests still pass.
+- **Verification:** ruff clean; mypy clean; pytest **159 passed**.
+- **Commit:** `fd23e2a`. **Rollback:** `git revert fd23e2a`.
+
+> **Every finding in `cdissues.md` is now closed** — fixed, verified as a
+> non-issue, or (for the mutating orphans `refactor`/`worktree`) intentionally
+> deferred pending a gating design. Nothing outstanding.
+
 <!-- END LOG -->
