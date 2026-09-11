@@ -293,4 +293,38 @@ result, commit SHA, rollback.
 > **M11** (tool wiring) and **M12/M13/L11** (frontend rebuild) — then
 > `python -m codingdude.restart` to bounce the server onto the new code.
 
+### Steps 28–30 (tranche 7)  ✔ — L2, L3, M11
+- **L2** `engine.py`: dropped the private `pydantic_ai._agent_graph.CallToolsNode`
+  import; the streaming loop uses the public `agent.is_call_tools_node(node)`.
+- **L3** `tools.py`: `scrubbed_env` lost the redundant `SYSTEMROOT` clause (it
+  never matched a marker); added `ENV_ALLOWLIST` as the escape hatch, keeping the
+  deliberately-conservative substring scrub.
+- **M11** `engine.py`: attached the **read-only** orphan toolsets — `repo_map`,
+  `find_unused_exports` (knip), `ci_status`/`ci_failures`, `dependency_audit`.
+  The **mutating** orphans (`refactor`, `worktree`) stay detached until gated.
+- **Tests:** `tests/test_self_fix.py` (L3 scrub, M11 tools present).
+- **Verification:** ruff clean; mypy clean; pytest **158 passed**.
+- **Commit:** `bb50019`. **Rollback:** `git revert bb50019`.
+
+### Steps 31–33 (tranche 8, frontend)  ✔ — M12, M13, L11
+- **M12** `App.jsx`: `Chat` revert now passes the **message** index (inner edit
+  index renamed `ei`), so reverting removes the right block.
+- **M13** `App.jsx`: removed the dead first `editSkill`/`saveSkill`/`deleteSkill`
+  set that referenced the undefined `setSkillSaved`.
+- **L11** `App.jsx` `loadMessages`: reload rebuilds the tool timeline from stored
+  `tool-call`/`tool-return` parts, so a resumed session shows tool activity.
+- **Build:** `npm run build` green. `frontend/dist/` is **gitignored**, so only
+  `App.jsx` is committed; the rebuilt bundle is on disk and the server serves it.
+- **⚠ Lesson:** do NOT issue concurrent `edit_file` calls against the same file —
+  three at once raced and corrupted `App.jsx` (had to `git checkout` and re-apply
+  all three atomically via a script).
+- **Commit:** `131a23a`. **Rollback:** `git revert 131a23a`.
+
+> **Remaining:** only **H7** (a design decision — see the H7 entry above).
+> Everything else in `cdissues.md` is closed, verified-as-non-issue, or
+> intentionally deferred (mutating orphans `refactor`/`worktree`).
+>
+> **Activation:** `python -m codingdude.restart` bounces the server onto this
+> code so M4 (token-env), M11 (toolsets), L2/L3 and the frontend all take effect.
+
 <!-- END LOG -->
