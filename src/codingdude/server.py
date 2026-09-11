@@ -767,6 +767,7 @@ def create_app(
     async def session_exec(session_id: str, body: ExecIn, _: None = Depends(authorize)) -> dict:
         """Run a shell command in the Workdir and return the output (Terminal panel)."""
         import asyncio
+
         from .tools import scrubbed_env
 
         workdir = db.session_workdir(session_id)
