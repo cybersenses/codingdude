@@ -49,3 +49,15 @@ Specifically:
 - Full write-up: `ROADMAP.md` → R1.
 
 ## Comments
+
+- 2026-09-11: **Display half done** (commit `0805b3d`). Added `GET /sessions/{id}/renders`
+  (lists image files in the Workdir, newest first) and `GET /sessions/{id}/render?path=…`
+  (serves one, Workdir-confined via `resolve_workdir_path`), plus a **Renders** panel in the
+  right rail that shows them as a thumbnail grid (click opens full size). Covers the
+  `.scratch/*.png` artifacts and any preview images in the workdir.
+- 2026-09-11: **Vision half is blocked by the harness, not this repo.** Experiment: reading a
+  PNG through the file tool returns raw bytes (mojibake), *not* an image content block — so the
+  agent cannot see renders through its current tool channel. Closing "vision in the loop"
+  requires an image-returning capability (a tool/attachment that feeds the model an image),
+  which lives outside `src/codingdude/**`. Remaining work: run-attachments on the trace/timeline,
+  before/after comparison, and the vision channel itself.
