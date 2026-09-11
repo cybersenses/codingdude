@@ -60,3 +60,35 @@ def test_m6_delete_session_removes_plans(db, workdir):
         'SELECT COUNT(*) AS c FROM plans WHERE session_id = ?', (sid,)
     ).fetchone()['c']
     assert remaining == 0
+
+
+def test_h5_worker_forwards_vision_model():
+    """The worker must forward the configured vision model to the engine."""
+    from codingdude.worker import engine_run_kwargs
+
+    class Args:
+        prompt = 'p'
+        workdir = '.'
+        session = 's'
+        fix_loop = False
+        image = None
+
+    assert engine_run_kwargs(Args(), None)['vision_model'] is None
+    assert engine_run_kwargs(Args(), None, 'zai:glm-5v')['vision_model'] == 'zai:glm-5v'
+
+
+def test_h5_image_extension_sniffs_media_type():
+    """A JPEG upload must not be mislabelled PNG (server-side sniff)."""
+    from codingdude.server import _image_extension
+
+    assert _image_extension(b'\x89PNG\r\n\x1a\nrest') == '.png'
+    assert _image_extension(b'\xff\xd8\xff\xe0rest') == '.jpg'
+
+
+async def test_h6_aux_model_usage_is_recorded(engine, workdir):
+    """Memory extraction is billed to the session, not lost (H6)."""
+    from helpers import say, scripted
+
+    engine._extraction_model = scripted(say('- the project uses uv'))
+    outcome = await engine.run(prompt='hello', workdir=workdir, model=scripted(say('done')))
+    assert engine._db.session_usage(outcome.session_id)['requests'] >= 2

@@ -196,6 +196,26 @@ class Engine:
         if spent >= self._budget_cap_usd:
             raise BudgetExceeded(spent_usd=spent, cap_usd=self._budget_cap_usd)
 
+    def _record_model_usage(self, session_id: str, model, usage) -> None:
+        """Bill an auxiliary model call to the Session (self-review H6).
+
+        Compaction, memory extraction, claim verification and fix-loop
+        retries are real spend; leaving them out under-counted the cost
+        meter and let the Budget Cap be exceeded.
+        """
+        try:
+            cost = getattr(usage, 'cost', None)
+            self._db.record_usage(
+                session_id,
+                model=str(getattr(model, 'model_name', model)),
+                requests=getattr(usage, 'requests', 0) or 0,
+                input_tokens=getattr(usage, 'input_tokens', 0) or 0,
+                output_tokens=getattr(usage, 'output_tokens', 0) or 0,
+                cost_usd=float(cost) if cost is not None else None,
+            )
+        except Exception:  # noqa: BLE001 - accounting must never fail a run
+            pass
+
     @staticmethod
     def _scrubbed() -> dict:
         from .tools import scrubbed_env
@@ -273,7 +293,9 @@ class Engine:
                 decode_messages(self._db.load_messages(session_id))
             )
             traced({'type': 'USER_PROMPT', 'text': prompt})
-            history, compacted = await self._maybe_compact(history, resolved, on_event)
+            history, compacted = await self._maybe_compact(
+                history, resolved, on_event, session_id
+            )
             if compacted:
                 self._db.replace_messages(
                     session_id, [encode_messages([m]) for m in history]
@@ -508,10 +530,12 @@ class Engine:
                     + 'Fix the failures. Do not declare success until the tests pass.',
                     message_history=history,
                 )
+                self._record_model_usage(session_id, resolved, result.usage)
                 self._db.replace_messages(
                     session_id,
                     [encode_messages([m]) for m in result.all_messages()],
                 )
+                self._check_budget(session_id)
 
         usage = result.usage
         self._db.record_usage(
@@ -554,6 +578,7 @@ class Engine:
             )
         except Exception:  # noqa: BLE001 — extraction must never fail a run
             return
+        self._record_model_usage(session_id, self._extraction_model, result.usage)
         store = MemoryStore(self._db)
         known = {e['content'] for e in store.all_entries()}
         for line in result.output.splitlines():
@@ -562,7 +587,7 @@ class Engine:
                 store.add(fact, scope='workdir', workdir=str(workdir))
                 known.add(fact)
 
-    async def _maybe_compact(self, history, resolved: Model, on_event):
+    async def _maybe_compact(self, history, resolved: Model, on_event, session_id: str):
         """Compact old turns into a summary when history passes the threshold.
 
         Returns (history, compacted?) — compacted True means history changed.
@@ -588,6 +613,7 @@ class Engine:
             f'for continuity, in at most 200 words:\n\n{digest[:8000]}'
         )
         summary = summary_result.output
+        self._record_model_usage(session_id, resolved, summary_result.usage)
         compacted = [
             ModelRequest(
                 parts=[UserPromptPart(content=f'[Earlier conversation, compacted]\n{summary}')]
@@ -704,6 +730,7 @@ class Engine:
             audit = await auditor.run(audit_prompt)
         except Exception:  # noqa: BLE001 — verification must never fail the run
             return
+        self._record_model_usage(session_id, self._extraction_model, audit.usage)
         unsupported = [
             line.strip().lstrip('-•* ')
             for line in audit.output.splitlines()
@@ -728,6 +755,10 @@ class Engine:
                 f'{findings}\nBack these claims by actually running the checks now '
                 '(use the tools), or correct your summary.',
                 message_history=history + list(result.new_messages()),
+            )
+            self._record_model_usage(session_id, resolved, retry.usage)
+            self._db.replace_messages(
+                session_id, [encode_messages([m]) for m in retry.all_messages()]
             )
             emit({'type': 'CLAIMS_ADDRESSED', 'response': str(retry.output)[:1500]})
         except Exception:  # noqa: BLE001 — best effort; report unverified either way

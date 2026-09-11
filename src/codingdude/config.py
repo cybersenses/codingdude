@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import tomllib
 from dataclasses import dataclass, field
@@ -111,7 +112,13 @@ def load_config(home: Path | None = None) -> Config:
         )
         return defaults
 
-    raw = tomllib.loads(config_path.read_text(encoding='utf-8'))
+    try:
+        raw = tomllib.loads(config_path.read_text(encoding='utf-8'))
+    except (tomllib.TOMLDecodeError, OSError) as exc:
+        logging.getLogger(__name__).warning(
+            'invalid config.toml (%s); using defaults', exc
+        )
+        return defaults
     models = raw.get('models', {})
     shell = raw.get('shell', {})
     providers = raw.get('providers', {})

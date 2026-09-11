@@ -13,6 +13,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import sys
 
 import websockets
@@ -122,6 +123,12 @@ async def run(args) -> int:
     except Exception:  # noqa: BLE001 — extraction is best-effort
         pass
     model = await _resolve_model(args.model)
+    vision_model = None
+    if config.models.vision:
+        try:
+            vision_model = await _resolve_model(config.models.vision)
+        except Exception:  # noqa: BLE001 — image input is best-effort
+            vision_model = None
 
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue()
@@ -149,7 +156,11 @@ async def run(args) -> int:
 
         policy.ask = ask
 
-    async with websockets.connect(args.server) as ws:
+    server_url = args.server
+    worker_token = os.environ.get('CODEDUDE_WORKER_TOKEN')
+    if worker_token:
+        server_url += ('&' if '?' in server_url else '?') + 'token=' + worker_token
+    async with websockets.connect(server_url) as ws:
         async def sender():
             while True:
                 event = await queue.get()
@@ -168,7 +179,7 @@ async def run(args) -> int:
         async def runner():
             try:
                 outcome = await engine.run(
-                    **engine_run_kwargs(args, model),
+                    **engine_run_kwargs(args, model, vision_model),
                     approvals=policy,
                     emit=on_event,
                 )
@@ -216,7 +227,7 @@ def trace_terminal(session_id: str, event: dict) -> None:
         f.write(_json.dumps({'ts': _dt.now(_UTC).isoformat(), **event}) + '\n')
 
 
-def engine_run_kwargs(args, model) -> dict:
+def engine_run_kwargs(args, model, vision_model=None) -> dict:
     """The engine.run(...) keyword arguments for a worker invocation.
 
     Kept in one place so a new engine parameter can't be silently dropped
@@ -230,6 +241,7 @@ def engine_run_kwargs(args, model) -> dict:
         'model': model,
         'fix_loop': args.fix_loop,
         'image_path': image_path_arg(args),
+        'vision_model': vision_model,
     }
 
 

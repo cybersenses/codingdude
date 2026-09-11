@@ -55,7 +55,9 @@ MULTI_TOKEN_BINARIES = frozenset({
 # Heuristic for commands reaching outside the Workdir (home dirs, parent dirs,
 # absolute paths). Best-effort by nature — the file tools are the hard boundary.
 OUTSIDE_WORKDIR = re.compile(
-    r'(\.\.[\\/]|~[\\/]|(?:[A-Za-z]:)[\\/]|/(?:home|Users|etc|var|tmp)/)',
+    r'(\.\.[\\/]|~[\\/]|(?:[A-Za-z]:)[\\/]'
+    r'|/(?:home|Users|etc|var|tmp|root|opt|usr|bin|sbin|proc|sys|dev)/)',
+    re.IGNORECASE,
 )
 
 DEFAULT_ALLOWED_BINARIES = {

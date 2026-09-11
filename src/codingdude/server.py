@@ -9,6 +9,7 @@ those events to browser-facing SSE in AG-UI shape and persists state to SQLite
 import asyncio
 import json
 import logging
+import os
 import secrets
 import subprocess
 import sys
@@ -32,6 +33,15 @@ from .db import Database
 from .events import TERMINAL_EVENTS
 
 HOST = '127.0.0.1'  # localhost only, by design
+
+
+def _image_extension(data: bytes) -> str:
+    """Sniff the real media type so a JPEG upload isn't stored as `.png`."""
+    if data[:8] == b'\x89PNG\r\n\x1a\n':
+        return '.png'
+    if data[:3] == b'\xff\xd8\xff':
+        return '.jpg'
+    return '.png'
 
 
 class RunChannel:
@@ -232,7 +242,7 @@ def create_app(
 
         cmd = [
             sys.executable, '-m', 'codingdude.worker',
-            '--server', f'ws://{HOST}:{app.state.port}/runs/{run_id}/ws?token={token}',
+            '--server', f'ws://{HOST}:{app.state.port}/runs/{run_id}/ws',
             '--session', session_id,
             '--workdir', workdir,
             '--prompt', body.prompt,
@@ -251,10 +261,13 @@ def create_app(
 
             uploads = home / 'uploads'
             uploads.mkdir(parents=True, exist_ok=True)
-            image_file = uploads / f'{_uuid.uuid4().hex[:8]}.png'
-            image_file.write_bytes(base64.b64decode(body.image_b64))
+            data = base64.b64decode(body.image_b64)
+            image_file = uploads / f'{_uuid.uuid4().hex[:8]}{_image_extension(data)}'
+            image_file.write_bytes(data)
             cmd += ['--image', str(image_file)]
-        channel.worker = subprocess.Popen(cmd)
+        channel.worker = subprocess.Popen(
+            cmd, env={**os.environ, 'CODEDUDE_WORKER_TOKEN': token}
+        )
 
         return {'run_id': run_id}
 
