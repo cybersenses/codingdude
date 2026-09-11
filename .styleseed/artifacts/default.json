@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "id": "default",
+  "target": {
+    "kind": "route",
+    "locator": "/"
+  },
+  "selection": {
+    "grammar": "technical-instrument",
+    "adapter": "product-ui",
+    "domain": "developer-tools",
+    "page": "dashboard",
+    "recipe": "developer-platform",
+    "palette": "warm-clay-commerce",
+    "profile": "none",
+    "fallback": "operations-console"
+  },
+  "decisions": {
+    "primaryDecision": "Primary decision pending artifact-specific migration.",
+    "primaryAction": "Primary action pending artifact-specific migration.",
+    "signatureMove": "Signature move pending artifact-specific migration."
+  },
+  "implementation": {
+    "sourceRoots": [
+      "src"
+    ],
+    "tokenFiles": []
+  },
+  "validation": {
+    "scoreFloor": 80,
+    "requiredRenders": [
+      {
+        "id": "desktop-loaded",
+        "state": "loaded",
+        "viewport": {
+          "width": 1440,
+          "height": 1000
+        }
+      }
+    ],
+    "temporal": {
+      "required": false,
+      "scenarios": []
+    },
+    "humanAcceptance": false
+  }
+}

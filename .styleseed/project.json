@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "projectId": "pydantic",
+  "defaults": {
+    "agent": "codex",
+    "domain": "developer-tools",
+    "adapter": "product-ui",
+    "recipe": "developer-platform",
+    "palette": "warm-clay-commerce",
+    "profile": "none",
+    "fallback": "operations-console"
+  },
+  "brand": {
+    "keyColor": "#ED7D31",
+    "paletteCharacter": "balanced",
+    "paletteMode": "dark",
+    "paletteHarmony": "auto",
+    "surfaceTemperature": "warm",
+    "fontFamilies": [
+      "system-ui"
+    ],
+    "radius": "soft",
+    "elevation": "restrained-shadow",
+    "density": "comfortable",
+    "motion": {
+      "seed": "spring",
+      "intensity": "restrained"
+    },
+    "imageryRole": "product-proof-first"
+  }
+}

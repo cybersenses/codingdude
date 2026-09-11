@@ -1,0 +1,189 @@
+{
+  "schemaVersion": 1,
+  "generator": {
+    "name": "StyleSeed Palette Engine",
+    "version": "1.0.0",
+    "colorSpace": "OKLCH",
+    "targetGamut": "sRGB"
+  },
+  "input": {
+    "keyColor": "#ED7D31",
+    "mode": "dark",
+    "character": "balanced",
+    "harmony": "auto",
+    "temperature": "warm"
+  },
+  "normalizedKey": {
+    "hex": "#ED7D31",
+    "oklch": {
+      "l": 0.7045,
+      "c": 0.1621,
+      "h": 50.6
+    }
+  },
+  "decisions": {
+    "character": "Balanced character controls lightness/chroma before hue harmony.",
+    "accent": {
+      "hue": 262.6,
+      "offset": -148,
+      "method": "auto",
+      "avoidsStatusCollisionBy": 114.6
+    },
+    "primaryAdjustedForContrast": false,
+    "accentAdjustedForContrast": false,
+    "allocation": {
+      "dominant": "60% canvas and surfaces",
+      "secondary": "30% chrome, type, and supporting structure",
+      "accent": "10% primary/accent emphasis combined"
+    }
+  },
+  "ramps": {
+    "primary": {
+      "50": "#FFF7F2",
+      "100": "#FFE5D7",
+      "200": "#FFCBAE",
+      "300": "#FEA572",
+      "400": "#E08349",
+      "500": "#C6641F",
+      "600": "#A84E00",
+      "700": "#873D00",
+      "800": "#622B00",
+      "900": "#401A00",
+      "950": "#210A00"
+    },
+    "accent": {
+      "50": "#F5F9FF",
+      "100": "#E1ECFF",
+      "200": "#C3D8FF",
+      "300": "#9BBEFF",
+      "400": "#729DEF",
+      "500": "#5480D7",
+      "600": "#3D68BD",
+      "700": "#2A519F",
+      "800": "#17387D",
+      "900": "#04205D",
+      "950": "#000C37"
+    }
+  },
+  "roles": {
+    "background": "#060301",
+    "surface": "#0F0C09",
+    "chrome": "#1F1811",
+    "foreground": "#F5F1EE",
+    "mutedForeground": "#A9A39E",
+    "chromeForeground": "#F5F1EE",
+    "border": "#3F362D",
+    "primary": "#F98E4B",
+    "primaryForeground": "#050302",
+    "accent": "#96BBFF",
+    "accentForeground": "#050302",
+    "focus": "#95C9FF",
+    "success": "#73D083",
+    "successForeground": "#050302",
+    "warning": "#E1AD57",
+    "warningForeground": "#050302",
+    "danger": "#FF968A",
+    "dangerForeground": "#050302"
+  },
+  "contrast": [
+    {
+      "foreground": "foreground",
+      "background": "background",
+      "ratio": 18.31,
+      "minimum": 4.5,
+      "pass": true
+    },
+    {
+      "foreground": "mutedForeground",
+      "background": "background",
+      "ratio": 8.24,
+      "minimum": 4.5,
+      "pass": true
+    },
+    {
+      "foreground": "foreground",
+      "background": "surface",
+      "ratio": 17.36,
+      "minimum": 4.5,
+      "pass": true
+    },
+    {
+      "foreground": "chromeForeground",
+      "background": "chrome",
+      "ratio": 15.62,
+      "minimum": 4.5,
+      "pass": true
+    },
+    {
+      "foreground": "primaryForeground",
+      "background": "primary",
+      "ratio": 8.82,
+      "minimum": 4.5,
+      "pass": true
+    },
+    {
+      "foreground": "accentForeground",
+      "background": "accent",
+      "ratio": 10.63,
+      "minimum": 4.5,
+      "pass": true
+    },
+    {
+      "foreground": "successForeground",
+      "background": "success",
+      "ratio": 10.86,
+      "minimum": 4.5,
+      "pass": true
+    },
+    {
+      "foreground": "warningForeground",
+      "background": "warning",
+      "ratio": 10.11,
+      "minimum": 4.5,
+      "pass": true
+    },
+    {
+      "foreground": "dangerForeground",
+      "background": "danger",
+      "ratio": 9.78,
+      "minimum": 4.5,
+      "pass": true
+    },
+    {
+      "foreground": "focus",
+      "background": "background",
+      "ratio": 11.83,
+      "minimum": 3,
+      "pass": true
+    },
+    {
+      "foreground": "focus",
+      "background": "surface",
+      "ratio": 11.21,
+      "minimum": 3,
+      "pass": true
+    }
+  ],
+  "valid": true,
+  "assetBrief": {
+    "anchors": [
+      "#060301",
+      "#F98E4B",
+      "#96BBFF"
+    ],
+    "hierarchy": "background dominant; primary identifies the product/action; accent is rare supporting emphasis",
+    "avoid": [
+      "equal-area competing accents",
+      "rainbow category decoration",
+      "text baked into generated imagery"
+    ]
+  },
+  "reasoning": [
+    "Character is chosen before harmony: lightness and chroma drive perceived calm or intensity more reliably than hue geometry alone.",
+    "The key hue is preserved while chroma is reduced to the sRGB gamut boundary instead of clipping RGB channels.",
+    "The auto accent candidate is scored for separation from the key and reserved success, warning, and danger hues.",
+    "Reference colors are mapped through semantic roles; components should never consume raw ramp values directly.",
+    "Every text, action, status, and focus pair is checked after generation; failing fills are moved in lightness while preserving hue identity."
+  ],
+  "css": ":root {\n  --ss-background: #060301;\n  --ss-surface: #0F0C09;\n  --ss-chrome: #1F1811;\n  --ss-foreground: #F5F1EE;\n  --ss-muted-foreground: #A9A39E;\n  --ss-chrome-foreground: #F5F1EE;\n  --ss-border: #3F362D;\n  --ss-primary: #F98E4B;\n  --ss-primary-foreground: #050302;\n  --ss-accent: #96BBFF;\n  --ss-accent-foreground: #050302;\n  --ss-focus: #95C9FF;\n  --ss-success: #73D083;\n  --ss-success-foreground: #050302;\n  --ss-warning: #E1AD57;\n  --ss-warning-foreground: #050302;\n  --ss-danger: #FF968A;\n  --ss-danger-foreground: #050302;\n  --ss-primary-50: #FFF7F2;\n  --ss-primary-100: #FFE5D7;\n  --ss-primary-200: #FFCBAE;\n  --ss-primary-300: #FEA572;\n  --ss-primary-400: #E08349;\n  --ss-primary-500: #C6641F;\n  --ss-primary-600: #A84E00;\n  --ss-primary-700: #873D00;\n  --ss-primary-800: #622B00;\n  --ss-primary-900: #401A00;\n  --ss-primary-950: #210A00;\n  --ss-accent-50: #F5F9FF;\n  --ss-accent-100: #E1ECFF;\n  --ss-accent-200: #C3D8FF;\n  --ss-accent-300: #9BBEFF;\n  --ss-accent-400: #729DEF;\n  --ss-accent-500: #5480D7;\n  --ss-accent-600: #3D68BD;\n  --ss-accent-700: #2A519F;\n  --ss-accent-800: #17387D;\n  --ss-accent-900: #04205D;\n  --ss-accent-950: #000C37;\n}"
+}

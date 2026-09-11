@@ -1,0 +1,135 @@
+{
+  "schemaVersion": 2,
+  "artifactId": "default",
+  "engineVersion": "4.1.0",
+  "engineRevision": "sha256:b7452d014022391d6c99e50bbe38e79c14587399d0a6b676b2f32a2c6784588e",
+  "distributionIntegrity": "verified",
+  "selection": {
+    "agent": "generic",
+    "grammar": "technical-instrument",
+    "grammarSource": "built-in:technical-instrument",
+    "referenceContract": null,
+    "fallback": "operations-console",
+    "adapter": "product-ui",
+    "domain": "developer-tools",
+    "page": "dashboard",
+    "recipe": "developer-platform",
+    "recipeSelection": "developer-platform",
+    "palette": "warm-clay-commerce",
+    "paletteSelection": "warm-clay-commerce",
+    "paletteGeneration": {
+      "keyColor": "#ED7D31",
+      "mode": "dark",
+      "character": "balanced",
+      "harmony": "auto",
+      "temperature": "warm"
+    },
+    "profile": "none"
+  },
+  "inputs": [
+    {
+      "id": "project",
+      "path": ".styleseed/project.json",
+      "sha256": "sha256:1bc6acd9e5befde201d9fe1c01c919fa91de3094255648eafb436c4d593009aa",
+      "bytes": 719
+    },
+    {
+      "id": "artifact",
+      "path": ".styleseed/artifacts/default.json",
+      "sha256": "sha256:e91fdd8897fb3fb15dbd88679a4f339f5a49323a9e1f7c9ff28798a4f0bea06d",
+      "bytes": 1060
+    }
+  ],
+  "sources": [
+    {
+      "id": "agent-execution",
+      "path": "catalog:agents",
+      "sha256": "sha256:f86e45c6bbd3a49bc8c115f4955653d54c7f472daad3203251bcf588a4d1d31e",
+      "bytes": 211
+    },
+    {
+      "id": "core",
+      "path": "catalog:core",
+      "sha256": "sha256:0e1221ffd4e855c796820d8e90705c139d4045c85acbd0a7b611c68bd73a6b28",
+      "bytes": 5458
+    },
+    {
+      "id": "grammar",
+      "path": "built-in:technical-instrument",
+      "sha256": "sha256:d1c0daadd01bb0bd9c507edf377ecf1c5a1f906132711752557ed1318cf83dee",
+      "bytes": 903
+    },
+    {
+      "id": "adapter",
+      "path": "catalog:adapters/product-ui",
+      "sha256": "sha256:7b5b5c34b0b235dca329e6384ccb94c66ee65a348bbe7142277ae7bbda3c13b0",
+      "bytes": 714
+    },
+    {
+      "id": "domain",
+      "path": "catalog:domains/developer-tools",
+      "sha256": "sha256:75abbca1f53f589841658c4f596bc5b5fe4ea6f768cf72e0ddd078950668dd16",
+      "bytes": 849
+    },
+    {
+      "id": "page",
+      "path": "catalog:pages/dashboard",
+      "sha256": "sha256:dad3ba4be04cf4ce9cb7457fc0fe22dac9d45c70618650a667b08fd1fa72a42a",
+      "bytes": 785
+    },
+    {
+      "id": "recipe",
+      "path": "catalog:recipes/developer-platform",
+      "sha256": "sha256:69854f65ad674e20973e08c03f95aaf6fe5a794a9c6fb6f696f6a9bd57a87053",
+      "bytes": 1216
+    },
+    {
+      "id": "palette",
+      "path": "catalog:palettes/warm-clay-commerce",
+      "sha256": "sha256:3a9946d2c53024ebb6455b31db1250e38bb1ca5d4f198126862ca346cb69e787",
+      "bytes": 2219
+    },
+    {
+      "id": "craft",
+      "path": "catalog:craft",
+      "sha256": "sha256:9f8b9c38d3ec1dc6d476a149b7c3502b27c51cbb55bce397a696b44335a22d21",
+      "bytes": 3564
+    }
+  ],
+  "methodHash": "sha256:7f68753f4cfcf467cf8fe49819acd94d9caeddbdb6f46ca107f704c5f9832257",
+  "validationHash": "sha256:1e649516ae042731bcd76fe6d686fdae5e60920a051142abe6e9b789303af2b4",
+  "validationSlices": {
+    "target": "sha256:fd89b3b7c61fa08e9a1055ecd5c5678651b23752e9a5d07d80a2fb7f5ac1ae14",
+    "implementation": "sha256:129c047b1e686ec5b232117a120b88439e50ad7a48f626ae5256380473382dec",
+    "scoreFloor": "sha256:48449a14a4ff7d79bb7a1b6f3d488eba397c36ef25634c111b49baf362511afc",
+    "requiredRenders": "sha256:ef056daffcfc63fedfeae2118a4a43fcf55ce31fd1dd0b2b293ac838575b6281",
+    "temporal": "sha256:c5ec5a78d8447626a8d2c39addbf2843320eb8e491b9e7c1e92927a135b06bba",
+    "humanAcceptance": "sha256:fcbcf165908dd18a9e49f7ff27810176db8e9f63b4352213741664245224f8aa"
+  },
+  "bundle": {
+    "kind": "bundle",
+    "path": ".styleseed/bundles/default.md",
+    "sha256": "sha256:8f4d90a07f81bc2ee70c569fc3441aac2a9e6e0cc19466242f147797e4b833d8",
+    "bytes": 16847
+  },
+  "outputs": [
+    {
+      "kind": "bundle",
+      "path": ".styleseed/bundles/default.md",
+      "sha256": "sha256:8f4d90a07f81bc2ee70c569fc3441aac2a9e6e0cc19466242f147797e4b833d8",
+      "bytes": 16847
+    },
+    {
+      "kind": "palette-json",
+      "path": ".styleseed/palettes/default.json",
+      "sha256": "sha256:ca4314bb443b8c7aaa6974b1b990904268f6475ce3e36ae0b316ace34117ed6b",
+      "bytes": 5914
+    },
+    {
+      "kind": "palette-css",
+      "path": ".styleseed/palettes/default.css",
+      "sha256": "sha256:c3c396d197fcdc10523ba46bb9e2af78a045ddc521f0f32f7d698560895ec109",
+      "bytes": 1157
+    }
+  ]
+}

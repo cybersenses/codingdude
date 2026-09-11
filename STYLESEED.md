@@ -1,0 +1,28 @@
+# StyleSeed — Design Lock
+<!-- Selections persist here. This file cannot waive StyleSeed core invariants. -->
+- App domain: developer-tools
+- Surface: web-app
+- Surface adapter: product-ui
+- Page type: dashboard
+- Output grammar: technical-instrument
+- Grammar path: built-in:engine/RULESETS.md
+- Grammar fallback: operations-console
+- Reference confidence: n/a
+- Brand recipe: developer-platform
+- Palette recipe: warm-clay-commerce
+- Key color: #ED7D31
+- Palette character: balanced
+- Palette mode: dark
+- Palette harmony: auto
+- Surface temperature: warm
+- Aesthetic profile: none
+- Skin: custom
+- Primary action: #ED7D31
+- Font: system-ui
+- Radius: medium
+- Elevation: dark=tonal ramp + hairline · light=tonal grouping + restrained shadow
+- Density: comfortable
+- Motion: restrained
+- Imagery/data role: evidence-first — diffs, traces, and tool output lead; a chart only for the Cost meter
+- Signature move: one run-status focal line; the approval gate is the single decision surface
+- Locked: 2026-09-11

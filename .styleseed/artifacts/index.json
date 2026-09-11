@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "artifacts": [
+    {
+      "id": "default",
+      "config": "default.json"
+    }
+  ]
+}
