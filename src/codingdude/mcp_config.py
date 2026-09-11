@@ -6,6 +6,7 @@ file (`<workdir>/.codingdude/mcp.json`) wins per server name over the global
 one (`~/.codingdude/mcp.json`).
 """
 
+import hashlib
 import json
 import shutil
 import tempfile
@@ -109,6 +110,7 @@ def load_merged_mcp_toolsets(home: Path, workdir: Path) -> list:
     if not enabled_servers:
         return []
     merged = {'mcpServers': enabled_servers}
-    tmp = Path(tempfile.gettempdir()) / f'codingdude-mcp-{abs(hash(json.dumps(merged, sort_keys=True)))}.json'
+    digest = hashlib.sha256(json.dumps(merged, sort_keys=True).encode()).hexdigest()[:16]
+    tmp = Path(tempfile.gettempdir()) / f'codingdude-mcp-{digest}.json'
     tmp.write_text(json.dumps(merged), encoding='utf-8')
     return mcp.load_mcp_toolsets(tmp)

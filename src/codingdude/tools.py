@@ -19,6 +19,17 @@ SKIP_DIRS = {'.git', '.venv', 'node_modules', '__pycache__', '.mypy_cache', '.py
 SECRET_MARKERS = ('KEY', 'TOKEN', 'SECRET', 'PASSWORD', 'CREDENTIAL')
 
 
+def shell_argv(command: str, shell_bin: str = 'bash') -> list[str]:
+    """Argv to run `command` under the configured shell (bash or powershell).
+
+    One place, so the shell tool / coverage / fix-loop can't drift onto a
+    hardcoded `bash` on Windows (self-review M10).
+    """
+    if shell_bin == 'powershell':
+        return ['powershell', '-NoProfile', '-Command', command]
+    return ['bash', '-c', command]
+
+
 def scrubbed_env() -> dict:
     """Child-process environment with secret-looking variables removed.
 
@@ -230,10 +241,7 @@ def build_shell_toolset(workdir: Path, policy, shell_bin: str = 'bash') -> Funct
             await _resolve_gate(policy, command, always=decision == DENIED)
         import asyncio
 
-        if shell_bin == 'powershell':
-            argv = ['powershell', '-NoProfile', '-Command', command]
-        else:
-            argv = ['bash', '-c', command]
+        argv = shell_argv(command, shell_bin)
         proc = await asyncio.create_subprocess_exec(
             *argv,
             cwd=workdir,

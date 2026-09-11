@@ -92,3 +92,13 @@ async def test_h6_aux_model_usage_is_recorded(engine, workdir):
     engine._extraction_model = scripted(say('- the project uses uv'))
     outcome = await engine.run(prompt='hello', workdir=workdir, model=scripted(say('done')))
     assert engine._db.session_usage(outcome.session_id)['requests'] >= 2
+
+
+def test_m10_shell_argv_selects_the_configured_shell():
+    """One helper drives bash vs powershell (no hardcoded bash) (M10)."""
+    from codingdude.tools import shell_argv
+
+    assert shell_argv('ls -la', 'bash') == ['bash', '-c', 'ls -la']
+    assert shell_argv('Get-ChildItem', 'powershell') == [
+        'powershell', '-NoProfile', '-Command', 'Get-ChildItem'
+    ]

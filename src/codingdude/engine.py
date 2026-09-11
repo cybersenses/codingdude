@@ -228,9 +228,13 @@ class Engine:
         workdir = self._db.session_workdir(session_id)
         if not workdir:
             return False
-        result = subprocess.run(
-            ['git', 'diff', 'HEAD'], cwd=workdir, capture_output=True, text=True, timeout=30
-        )
+        try:
+            result = subprocess.run(
+                ['git', 'diff', 'HEAD'], cwd=workdir,
+                capture_output=True, text=True, timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
         return bool(result.stdout.strip())
 
     async def run(
@@ -501,9 +505,15 @@ class Engine:
         if fix_loop and approvals is not None:
             import asyncio
 
+            from .config import load_project_config
+            from .tools import shell_argv
+
+            shell_bin = load_project_config(workdir).get(
+                'shell', self._config.shell.default
+            )
             for _ in range(max_test_iterations):
                 proc = await asyncio.create_subprocess_exec(
-                    'bash', '-c', test_command,
+                    *shell_argv(test_command, shell_bin),
                     cwd=workdir, stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE, env=self._scrubbed(),
                 )
