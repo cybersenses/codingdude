@@ -21,7 +21,7 @@ import websockets
 from .events import TERMINAL_EVENTS
 
 
-async def _resolve_model(name: str | None):
+async def _resolve_model(name: str | None, base_url: str | None = None):
     if not name:
         return None
     # Test hook: deterministic scripted models so subprocess tests need no keys.
@@ -99,6 +99,10 @@ async def _resolve_model(name: str | None):
                 yield gated_response(messages).parts[0].content
 
         return FunctionModel(gated, stream_function=gated_stream, model_name='test-gated')
+    if name.startswith('zai:') and base_url:
+        from codingdude.engine import _model_from_name
+
+        return _model_from_name(name, base_url)
     from pydantic_ai.models import infer_model
 
     return infer_model(name)
@@ -122,7 +126,7 @@ async def run(args) -> int:
         engine._extraction_model = await _resolve_model(config.models.subagent)
     except Exception:  # noqa: BLE001 — extraction is best-effort
         pass
-    model = await _resolve_model(args.model)
+    model = await _resolve_model(args.model, config.models.fallback_base_url)
     vision_model = None
     if config.models.vision:
         try:

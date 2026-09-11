@@ -56,6 +56,22 @@ def _strip_provider_prefix(model: str) -> str:
     return model.split(':', 1)[1] if ':' in model else model
 
 
+def _model_from_name(name: str, base_url: str | None) -> Model:
+    """A model from a `provider:name` string.
+
+    A Z.AI model must use the configured endpoint: the coding-plan endpoint
+    (`fallback_base_url`) rejects keys/requests sent to the standard one with
+    `code 1113` (insufficient balance). Previously the custom endpoint applied
+    only to the configured fallback, so a zai `main` or a run/selector override
+    fell through to the standard endpoint and failed.
+    """
+    if name.startswith('zai:') and base_url:
+        return _zai_fallback(_strip_provider_prefix(name), base_url)
+    from pydantic_ai.models import infer_model
+
+    return infer_model(name)
+
+
 _THINKING_PROVIDERS = ('glm', 'deepseek')
 
 
@@ -130,18 +146,17 @@ class Engine:
         """
         primary = main or self._config.models.main
         fallback_name = fallback or self._config.models.fallback
+        base_url = self._config.models.fallback_base_url
         try:
-            if (
-                isinstance(fallback_name, str)
-                and self._config.models.fallback_base_url
-                and fallback_name.startswith('zai:')
-            ):
-                fallback_model = _zai_fallback(
-                    _strip_provider_prefix(fallback_name),
-                    self._config.models.fallback_base_url,
-                )
-                return FallbackModel(primary, fallback_model)
-            return FallbackModel(primary, fallback_name)
+            primary_model = (
+                primary if isinstance(primary, Model) else _model_from_name(primary, base_url)
+            )
+            fallback_model = (
+                fallback_name
+                if isinstance(fallback_name, Model)
+                else _model_from_name(fallback_name, base_url)
+            )
+            return FallbackModel(primary_model, fallback_model)
         except Exception as exc:  # noqa: BLE001 — any provider-construction failure
             logger.warning('fallback model unavailable (%s); running without failover', exc)
             if isinstance(primary, Model):
