@@ -100,4 +100,24 @@ Steps may be merged if trivially related; each commit names the ids it closes.
 Each entry: **status**, files touched, the exact verification command + observed
 result, commit SHA, rollback.
 
+### Step 0 — baseline + docs  ✔
+- **Commit:** `e63c85d` (config identity set first: `user.name=CodingDude`, `user.email=codingdude@local`).
+- **Verification:** `uv run ruff check .` → *All checks passed*; `uv run mypy` → *no issues in 26 files*; `uv run pytest -q` → **131 passed**.
+- **Rollback point:** `b049b29` (pre-doc).
+
+### Step 1 — C1: pattern persistence (Critical)  ✔
+- **Files:** `src/codingdude/approvals.py`, `src/codingdude/tools.py`,
+  `tests/test_shell.py`, `tests/test_interactive_approvals.py`.
+- **Change:** added `INTERPRETERS` + `MULTI_TOKEN_BINARIES`; rewrote
+  `ApprovalPolicy.pattern_for()` (interpreters → exact command, multi-token
+  families → two tokens); `_resolve_gate()` now persists
+  `policy.pattern_for(command)` instead of `command.split()[0]`; `decide()`
+  returns `NEEDS_GATE` for an empty command (was `IndexError`).
+- **Red→green:** new tests failed first (`python -m pytest -q` persisted as
+  `python`), then passed after the fix.
+- **Verification:** `uv run pytest tests/test_shell.py tests/test_interactive_approvals.py tests/test_git.py -q`
+  → **22 passed**; full `uv run pytest -q` → **135 passed**; ruff + mypy clean.
+- **Commit:** `f0e371c`.
+- **Rollback:** `git revert f0e371c` or `git reset --hard aad1ff0`.
+
 <!-- END LOG -->
