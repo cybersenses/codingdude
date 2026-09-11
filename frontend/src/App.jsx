@@ -336,7 +336,7 @@ function TreeNode({ node, depth, onOpen }) {
   }
   return (
     <button
-      className="block w-full truncate text-left text-xs text-neutral-300 hover:text-white"
+      className="block w-full truncate rounded px-1 text-left text-xs text-ink-muted hover:bg-surface hover:text-ink"
       style={{ paddingLeft: depth * 10 + 14 }}
       onClick={() => onOpen(node.path)}
       title={node.path}
@@ -527,7 +527,11 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
     setSkillList((list) => list.filter((s) => s.name !== name))
   }
 
-  let body = <div className="text-neutral-600">nothing yet</div>
+  let body = (
+    <div className="rounded border border-line bg-surface p-4 text-xs text-ink-muted">
+      Select a session to see diffs, files, cost and trace.
+    </div>
+  )
   if (tab === 'Standards') {
     const modes = ['directives', 'skills', 'checklist']
     body = (
@@ -631,11 +635,14 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
       <div className="space-y-2">
         <div className="space-y-0.5 font-mono text-[10px]">
           {(data.trace || []).slice().reverse().map((e, i) => (
-            <div key={i} className={colors[e.type] || 'text-neutral-400'}>
-              {(e.ts || '').slice(11, 19)} {e.type} {e.command || e.tool_name || e.delta || ''}
+            <div key={i} className={`truncate rounded px-1 hover:bg-surface ${colors[e.type] || 'text-ink-muted'}`}>
+              <span className="text-ink-muted">{(e.ts || '').slice(11, 19)}</span> {e.type}{' '}
+              {e.command || e.tool_name || e.delta || ''}
             </div>
           ))}
-          {(!data.trace || !data.trace.length) && <div className="text-neutral-600">no events yet</div>}
+          {(!data.trace || !data.trace.length) && (
+            <div className="px-1 text-ink-muted">no events yet</div>
+          )}
         </div>
         {data.checkpoints && data.checkpoints.length > 0 && (
           <div className="space-y-1 border-t border-neutral-800 pt-2">
@@ -724,11 +731,11 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
 
   return (
     <aside className="flex shrink-0 flex-col overflow-hidden border-l border-neutral-800 bg-neutral-950 p-3" style={{ width }}>
-      <div className="mb-2 flex flex-wrap gap-1">
+      <div className="mb-2 flex flex-wrap gap-1 border-b border-line pb-2">
         {tabs.map((t) => (
           <button
             key={t}
-            className={`relative rounded px-2 py-0.5 text-xs ${tab === t ? 'bg-neutral-800 text-brand-300' : 'text-neutral-500 hover:text-neutral-300'}`}
+            className={`relative rounded px-2 py-0.5 text-xs ${tab === t ? 'bg-surface text-brand' : 'text-ink-muted hover:text-ink'}`}
             onClick={() => setTab(t)}
           >
             {t}
