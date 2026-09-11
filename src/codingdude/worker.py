@@ -168,13 +168,9 @@ async def run(args) -> int:
         async def runner():
             try:
                 outcome = await engine.run(
-                    prompt=args.prompt,
-                    workdir=workdir_path(args),
-                    session_id=args.session,
-                    model=model,
+                    **engine_run_kwargs(args, model),
                     approvals=policy,
                     emit=on_event,
-                    image_path=image_path_arg(args),
                 )
                 if outcome.status == 'gate_aborted':
                     terminal = {
@@ -218,6 +214,23 @@ def trace_terminal(session_id: str, event: dict) -> None:
     trace_dir.mkdir(parents=True, exist_ok=True)
     with open(trace_dir / f'{session_id}.jsonl', 'a', encoding='utf-8') as f:
         f.write(_json.dumps({'ts': _dt.now(_UTC).isoformat(), **event}) + '\n')
+
+
+def engine_run_kwargs(args, model) -> dict:
+    """The engine.run(...) keyword arguments for a worker invocation.
+
+    Kept in one place so a new engine parameter can't be silently dropped
+    between the worker's CLI and the engine (self-review H2: `--fix-loop` was
+    parsed but never forwarded, so the UI's "fix until green" did nothing).
+    """
+    return {
+        'prompt': args.prompt,
+        'workdir': workdir_path(args),
+        'session_id': args.session,
+        'model': model,
+        'fix_loop': args.fix_loop,
+        'image_path': image_path_arg(args),
+    }
 
 
 def workdir_path(args):

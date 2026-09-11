@@ -120,4 +120,16 @@ result, commit SHA, rollback.
 - **Commit:** `f0e371c`.
 - **Rollback:** `git revert f0e371c` or `git reset --hard aad1ff0`.
 
+### Step 2 — H1: gated git/coverage tools only with an ApprovalPolicy  ✔
+- **Files:** `src/codingdude/engine.py`, `tests/test_git.py`, `tests/test_shell.py`.
+- **Change:** moved `build_git_toolset`/`build_coverage_toolset` inside the
+  `if approvals is not None:` block (they crashed on a `None` policy).
+- **Red→green:** `test_git_commit_without_policy_does_not_crash` failed with
+  `AttributeError: 'NoneType' object has no attribute 'decide'`, then passed.
+- **Incidental fix:** `test_default_run_has_no_shell_tool` was vacuous (this
+  pydantic-ai has no `info.tools`); rewritten to assert the command never runs.
+- **Verification:** `uv run pytest tests/test_shell.py tests/test_git.py tests/test_tools.py -q`
+  → **24 passed**; full `uv run pytest -q` → **136 passed**; ruff + mypy clean.
+- **Commit:** `3c28975`. **Rollback:** `git revert 3c28975`.
+
 <!-- END LOG -->
