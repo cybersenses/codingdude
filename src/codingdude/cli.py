@@ -76,6 +76,12 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument('--fix-loop', action='store_true', help='run tests after the task and feed failures back until green (max 3 rounds)')
     serve_cmd = sub.add_parser('serve', help='start the web server + UI')
     serve_cmd.add_argument('--port', type=int, default=8765)
+    restart_cmd = sub.add_parser(
+        'restart', help='kill and relaunch the CodingDude server (the agent) in place'
+    )
+    restart_cmd.add_argument('--port', type=int, default=8765)
+    restart_cmd.add_argument('--status', action='store_true', help='report PID + health, do nothing')
+    restart_cmd.add_argument('--dry-run', action='store_true', help='show what would be bounced')
 
     args = parser.parse_args(argv)
     if args.command == 'serve':
@@ -83,6 +89,11 @@ def main(argv: list[str] | None = None) -> int:
 
         serve(port=args.port)
         return 0
+    if args.command == 'restart':
+        from . import restart as _restart
+
+        flags = ['--status'] if args.status else (['--dry-run'] if args.dry_run else [])
+        return _restart.main([*flags, '--port', str(args.port)])
     if args.command != 'run':
         parser.print_help()
         return 0
