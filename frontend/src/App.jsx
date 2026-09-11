@@ -456,31 +456,6 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
   }
 
 
-  async function editSkill(name) {
-    const list = await call('/skills/detail')
-    const s = list.find((x) => x.name === name)
-    if (s) setEditingSkill(s)
-  }
-
-  async function saveSkill() {
-    if (!editingSkill?.name) return
-    await call(`/skills/detail/${encodeURIComponent(editingSkill.name)}`, {
-      method: 'PUT',
-      body: JSON.stringify({ description: editingSkill.description, body: editingSkill.body }),
-    })
-    setEditingSkill(null)
-    setSkillSaved('saved')
-    setTimeout(() => setSkillSaved(''), 2000)
-  }
-
-  async function deleteSkill(name) {
-    await fetch(`/api/skills/detail/${encodeURIComponent(name)}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${localStorage.getItem('codingdude-token') || ''}` },
-    }).then((r) => r.json())
-    setEditingSkill(null)
-  }
-
   // Standards sub-tab state: directives editor, skills manager, review checklist.
   const [stdMode, setStdMode] = useState('directives')
   const [directivesDraft, setDirectivesDraft] = useState(null)
@@ -748,8 +723,8 @@ function Chat({ messages, streaming, onStop, onDecide, sessionId, suggestMode, o
                 <pre className="whitespace-pre-wrap text-neutral-300">{m.review}</pre>
               </div>
             )}
-            {m.edits && suggestMode && m.edits.map((ed, i) => (
-              <EditBlock key={i} edit={ed} sessionId={sessionId}
+            {m.edits && suggestMode && m.edits.map((ed, ei) => (
+              <EditBlock key={ei} edit={ed} sessionId={sessionId}
                 onRevert={() => onEditRevert(i, ed)} />
             ))}
             {m.gate && !m.gate.startsWith('plan:') && <ApprovalCard command={m.gate} onDecide={onDecide} />}
@@ -1056,16 +1031,32 @@ export default function App() {
     } catch {
       return // transient server hiccup; the trace poll will retry
     }
+    // Rebuild the timeline from stored messages, including tool calls, so a
+    // resumed session shows what happened instead of just prose (L11).
     const turns = []
+    let pendingTools = []
+    const flush = (text) => {
+      turns.push({ role: 'assistant', text, toolEvents: pendingTools })
+      pendingTools = []
+    }
     for (const m of raw) {
       for (const p of m.parts || []) {
         if (p.part_kind === 'user-prompt') {
+          if (pendingTools.length) flush('')
           turns.push({ role: 'user', text: p.content })
+        } else if (p.part_kind === 'tool-call') {
+          pendingTools.push({ tool_name: p.tool_name })
+        } else if (p.part_kind === 'tool-return') {
+          const t = pendingTools.find(
+            (x) => x.tool_name === p.tool_name && x.result === undefined
+          )
+          if (t) t.result = typeof p.content === 'string' ? p.content : JSON.stringify(p.content)
         } else if (p.part_kind === 'text' && m.kind === 'response') {
-          turns.push({ role: 'assistant', text: p.content })
+          flush(p.content)
         }
       }
     }
+    if (pendingTools.length) flush('')
     setMessages(turns)
   }
 
