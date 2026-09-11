@@ -760,6 +760,31 @@ def create_app(
             },
         }
 
+    class ExecIn(BaseModel):
+        command: str
+
+    @app.post('/sessions/{session_id}/exec')
+    async def session_exec(session_id: str, body: ExecIn, _: None = Depends(authorize)) -> dict:
+        """Run a shell command in the Workdir and return the output (Terminal panel)."""
+        import asyncio
+        from .tools import scrubbed_env
+
+        workdir = db.session_workdir(session_id)
+        if not workdir:
+            raise HTTPException(status_code=404, detail='no such session')
+        proc = await asyncio.create_subprocess_exec(
+            'bash', '-c', body.command, cwd=workdir,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            env=scrubbed_env(),
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+        except TimeoutError:
+            proc.kill()
+            return {'exit': -1, 'output': 'timed out'}
+        output = (stdout.decode(errors='replace') + stderr.decode(errors='replace')).strip()
+        return {'exit': proc.returncode, 'output': output[:8000]}
+
     @app.get('/health')
     def health() -> dict:
         return {

@@ -501,6 +501,53 @@ function FileExplorer({ sessionId }) {
 }
 
 
+function Terminal({ sessionId }) {
+  const [cmd, setCmd] = useState('')
+  const [output, setOutput] = useState([])
+  const [busy, setBusy] = useState(false)
+  const run = async () => {
+    if (!cmd.trim() || busy) return
+    setBusy(true)
+    try {
+      const r = await call(`/sessions/${sessionId}/exec`, {
+        method: 'POST',
+        body: JSON.stringify({ command: cmd.trim() }),
+      })
+      setOutput((o) => [...o, { cmd: cmd.trim(), exit: r.exit, out: r.output }])
+    } catch { /* transient */ }
+    setBusy(false)
+    setCmd('')
+  }
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-2">
+      <div className="min-h-0 flex-1 overflow-auto rounded bg-canvas p-2 font-mono text-[11px]">
+        {output.length === 0 && <div className="text-ink-muted">no commands yet</div>}
+        {output.map((o, i) => (
+          <div key={i} className="mb-2">
+            <div className="text-accent">$ {o.cmd}</div>
+            <pre className="whitespace-pre-wrap text-ink-muted">{o.out || '(no output)'}</pre>
+            <div className={o.exit === 0 ? 'text-success' : 'text-danger'}>exit {o.exit}</div>
+          </div>
+        ))}
+      </div>
+      <div className="flex gap-1">
+        <input
+          className="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 font-mono text-xs text-ink"
+          value={cmd}
+          onChange={(e) => setCmd(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); run() } }}
+          placeholder="shell command…"
+        />
+        <button
+          className="rounded bg-brand px-2 py-1 text-xs text-brand-fg"
+          onClick={run}
+          disabled={busy}
+        >run</button>
+      </div>
+    </div>
+  )
+}
+
 function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
   const tabs = ['Diff', 'Renders', 'Files', 'Terminal', 'Trace', 'Cost', 'Memory', 'MCP', 'Standards']
   const [tab, setTab] = useState('Diff')
@@ -736,7 +783,7 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
       </div>
     )
   } else if (tab === 'Terminal') {
-    body = <div className="text-neutral-600">command output lives in the chat tool timeline</div>
+    body = <Terminal sessionId={sessionId} />
   } else if (tab === 'MCP' && data.mcp) {
     body = (
       <div className="space-y-1">
