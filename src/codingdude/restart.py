@@ -189,17 +189,22 @@ def bounce(port: int = DEFAULT_PORT, wait: int = 60) -> dict:
     return {'killed': pids, 'new_pid': new_pid, 'healthy': False}
 
 
-def trigger_restart(port: int = DEFAULT_PORT) -> int:
-    """Spawn a DETACHED bounce helper and return immediately.
+def trigger_restart(port: int = DEFAULT_PORT, delay: int = 5) -> int:
+    """Spawn a DETACHED bounce helper (after `delay` s) and return immediately.
 
-    This is the function to call from inside a running agent: it returns the
-    helper's PID, then the helper kills/relaunches the server even as the
-    caller's own worker process is torn down.
+    This is the function to call from inside a running agent. The delay lets the
+    *calling* run finish and emit its terminal event before the server goes down;
+    without it the run dies mid-stream. The helper then kills/relaunches the
+    server even as the caller's own worker process is torn down.
     """
     repo = _repo_root()
     log_path = repo / '.scratch' / 'agent-restart.log'
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    argv = [sys.executable, '-m', 'codingdude.restart', '--bounce', '--port', str(port)]
+    code = (
+        f'import time; time.sleep({delay}); '
+        f'from codingdude.restart import bounce; print(bounce(port={port}))'
+    )
+    argv = [sys.executable, '-c', code]
     return _spawn_detached(argv, repo, log_path)
 
 

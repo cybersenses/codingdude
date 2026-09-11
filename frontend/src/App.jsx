@@ -3,6 +3,12 @@ import ReactMarkdown from 'react-markdown'
 import CodeEditor from './CodeEditor.jsx'
 import { api, authLocal, call, checkAuth, login } from './api'
 
+// Injected at build time by vite.config.js — makes the running build visible
+// so a stale bundle (or a server that hasn't restarted) is obvious on screen.
+const UI_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'dev'
+const UI_BUILD = typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : ''
+const shortStamp = (iso) => (iso ? iso.slice(5, 16).replace('T', ' ') : '')
+
 export class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props)
@@ -867,6 +873,7 @@ export default function App() {
   const [refreshKey, setRefreshKey] = useState(0)
   const [diffBadge, setDiffBadge] = useState(false)
   const [status, setStatus] = useState('idle')
+  const [srv, setSrv] = useState(null)
   const [suggestMode, setSuggestMode] = useState(() => localStorage.getItem('cd-suggest') === '1')
   const [fixLoop, setFixLoop] = useState(false)
   const runRef = useRef(null)
@@ -922,6 +929,12 @@ export default function App() {
     window.addEventListener('cd-unauthorized', onUnauthorized)
     return () => window.removeEventListener('cd-unauthorized', onUnauthorized)
   }, [])
+
+  // Backend build marker (version + boot time): fetched once logged in.
+  useEffect(() => {
+    if (!loggedIn) return
+    call('/health').then(setSrv).catch(() => {})
+  }, [loggedIn])
 
   // Notifications: tab title + sound + toast on run state changes.
   const [notify, setNotify] = useState(() => localStorage.getItem('cd-notify') === '1')
@@ -1271,6 +1284,9 @@ export default function App() {
           {activeSession && !sessions.some((s) => s.session_id === activeSession) && (
             <span className="text-red-400"> · ⚠ session not in selected project</span>
           )}
+        </span>
+        <span className="text-neutral-600" title="frontend build · backend server build">
+          ui v{UI_VERSION} {shortStamp(UI_BUILD)} · srv v{srv?.version ?? '?'} {shortStamp(srv?.started_at)}
         </span>
         <span className={streaming ? 'text-brand-400' : ''}>{status}</span>
       </footer>

@@ -13,6 +13,7 @@ import os
 import secrets
 import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import (
@@ -28,11 +29,16 @@ from fastapi import (
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from . import __version__
 from .config import config_home
 from .db import Database
 from .events import TERMINAL_EVENTS
 
 HOST = '127.0.0.1'  # localhost only, by design
+
+# When this server process started — surfaced in the UI so a restart is
+# visible (a stale server shows an old boot time).
+_STARTED_AT = datetime.now(UTC).isoformat()
 
 
 def _image_extension(data: bytes) -> str:
@@ -656,7 +662,7 @@ def create_app(
 
     @app.get('/health')
     def health() -> dict:
-        return {'ok': True}
+        return {'ok': True, 'version': __version__, 'started_at': _STARTED_AT}
 
     @app.middleware('http')
     async def strip_api_prefix(request, call_next):

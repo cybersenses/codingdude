@@ -1,0 +1,29 @@
+{'killed': [25668], 'new_pid': 24200, 'healthy': True}
+ 8765 ===
+Exception in callback _ProactorBasePipeTransport._call_connection_lost(None)
+handle: <Handle _ProactorBasePipeTransport._call_connection_lost(None)>
+Traceback (most recent call last):
+  File "C:\Users\norma\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\asyncio\events.py", line 88, in _run
+    self._context.run(self._callback, *self._args)
+  File "C:\Users\norma\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\asyncio\proactor_events.py", line 165, in _call_connection_lost
+    self._sock.shutdown(socket.SHUT_RDWR)
+ConnectionResetError: [WinError 10054] An existing connection was forcibly closed by the remote host
+[CodeGraph] v1.6.0 is available (this server is running v1.5.0). Update with `codegraph upgrade`.
+time=2026-09-11T13:23:29.416+02:00 level=INFO msg="starting server" version=1.12.1 host="" readOnly=false lockdownEnabled=false
+GitHub MCP Server running on stdio
+time=2026-09-11T13:23:29.422+02:00 level=INFO msg="server run start"
+time=2026-09-11T13:23:29.422+02:00 level=INFO msg="server connecting"
+time=2026-09-11T13:23:29.422+02:00 level=INFO msg="server session connected" session_id=""
+time=2026-09-11T13:23:29.423+02:00 level=INFO msg="client log level set" level=""
+time=2026-09-11T13:23:29.427+02:00 level=INFO msg="client log level set" level=debug
+time=2026-09-11T13:25:11.042+02:00 level=INFO msg="client log level set" level=debug
+time=2026-09-11T13:35:42.070+02:00 level=INFO msg="server session disconnected" session_id=""
+time=2026-09-11T13:35:42.070+02:00 level=INFO msg="server session ended"
+[CodeGraph] v1.6.0 is available (this server is running v1.5.0). Update with `codegraph upgrade`.
+time=2026-09-11T14:09:00.190+02:00 level=INFO msg="starting server" version=1.12.1 host="" readOnly=false lockdownEnabled=false
+GitHub MCP Server running on stdio
+time=2026-09-11T14:09:00.211+02:00 level=INFO msg="server run start"
+time=2026-09-11T14:09:00.211+02:00 level=INFO msg="server connecting"
+time=2026-09-11T14:09:00.211+02:00 level=INFO msg="server session connected" session_id=""
+time=2026-09-11T14:09:00.212+02:00 level=INFO msg="client log level set" level=""
+time=2026-09-11T14:09:00.217+02:00 level=INFO msg="client log level set" level=debug
