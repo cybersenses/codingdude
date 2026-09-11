@@ -12,3 +12,5 @@ frontend/dist/
 /.scratch/agent-restart.log
 /_*.py
 /.scratch/ui-*.png
+/.scratch/gate-*.png
+/.scratch/gate-preview.html
