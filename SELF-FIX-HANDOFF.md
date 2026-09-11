@@ -348,4 +348,21 @@ result, commit SHA, rollback.
 > non-issue, or (for the mutating orphans `refactor`/`worktree`) intentionally
 > deferred pending a gating design. Nothing outstanding.
 
+## Ownership & current state (2026-09-11)
+
+- **CodingDude is now the sole maintainer** of this codebase. A second agent/session contributed
+  `bbf998f` (*"apply fallback_base_url to ANY zai model"* — the fix for code 1113) and the
+  directive setup, and will not touch the repo again. Treat that commit as part of the baseline,
+  **not** as drift.
+- `~/.codingdude/config.toml` was updated externally at the same time:
+  `main/subagent = deepseek:deepseek-flash`, `fallback = zai:glm-5.3-flash`,
+  `fallback_base_url = https://api.z.ai/api/coding/paas/v4`, `thinking = low`.
+- ⚠️ That file also holds **live provider API keys** — never commit it, and treat it as sensitive.
+- Open items: **R1 vision half** (blocked by the harness — see the H7/Step-20 entry), **R2**
+  (hang after reply, needs repro), and **GLM plan coverage for `glm-5.3-flash`** (account-side:
+  code 1113 on a plan with balance usually means the model isn't in the plan, or the endpoint
+  doesn't match the key type).
+- The server was last bounced at 14:35:52Z on `bbf998f`; use `python -m codingdude.restart`
+  (or `codingdude restart`) to pick up newer code — check the footer `srv v…+<sha>` to confirm.
+
 <!-- END LOG -->
