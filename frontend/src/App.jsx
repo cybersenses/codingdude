@@ -436,7 +436,7 @@ function FileExplorer({ sessionId }) {
 
 
 function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
-  const tabs = ['Diff', 'Files', 'Terminal', 'Trace', 'Cost', 'Memory', 'MCP', 'Standards']
+  const tabs = ['Diff', 'Renders', 'Files', 'Terminal', 'Trace', 'Cost', 'Memory', 'MCP', 'Standards']
   const [tab, setTab] = useState('Diff')
   const [data, setData] = useState({})
 
@@ -453,6 +453,10 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
           const tr = await call(`/sessions/${sessionId}/trace`)
           const cps = await call(`/sessions/${sessionId}/checkpoints`)
           setData((d) => ({ ...d, trace: tr, checkpoints: cps }))
+        }
+        if (tab === 'Renders') {
+          const r = await call(`/sessions/${sessionId}/renders`)
+          setData((d) => ({ ...d, renders: r }))
         }
       } catch { /* transient */ }
       if (!stop) setTimeout(poll, 4000)
@@ -725,6 +729,33 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
         <div className="flex justify-between font-mono text-xs"><span className="text-ink-muted">input tokens</span><span className="text-ink">{u.input_tokens ?? 0}</span></div>
         <div className="flex justify-between font-mono text-xs"><span className="text-ink-muted">output tokens</span><span className="text-ink">{u.output_tokens ?? 0}</span></div>
         <div className="flex justify-between font-mono text-xs"><span className="text-ink-muted">cost (usd)</span><span className="text-brand-400">${(u.cost_usd ?? 0).toFixed(4)}</span></div>
+      </div>
+    )
+  } else if (tab === 'Renders') {
+    const renders = data.renders || []
+    body = renders.length === 0 ? (
+      <div className="rounded border border-line bg-surface p-4 text-xs text-ink-muted">
+        No images rendered in this workdir yet. Screenshots and previews appear here.
+      </div>
+    ) : (
+      <div className="grid grid-cols-2 gap-2">
+        {renders.map((r) => (
+          <a
+            key={r.path}
+            href={`/api/sessions/${sessionId}/render?path=${encodeURIComponent(r.path)}`}
+            target="_blank"
+            rel="noreferrer"
+            className="overflow-hidden rounded border border-line bg-surface hover:border-brand"
+          >
+            <img
+              alt={r.name}
+              loading="lazy"
+              src={`/api/sessions/${sessionId}/render?path=${encodeURIComponent(r.path)}`}
+              className="h-24 w-full bg-canvas object-contain"
+            />
+            <div className="truncate px-1 py-0.5 font-mono text-[10px] text-ink-muted">{r.path}</div>
+          </a>
+        ))}
       </div>
     )
   }

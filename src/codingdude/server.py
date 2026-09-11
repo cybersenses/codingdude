@@ -398,6 +398,53 @@ def create_app(
             'is_markdown': path.lower().endswith(('.md', '.markdown')),
         }
 
+    @app.get('/sessions/{session_id}/renders')
+    def session_renders(session_id: str, _: None = Depends(authorize)) -> list[dict]:
+        """Image files in the Workdir, newest first (screenshots, previews)."""
+        workdir = db.session_workdir(session_id)
+        if not workdir:
+            raise HTTPException(status_code=404, detail='no such session')
+        root = Path(workdir)
+        exts = {'.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg'}
+        skip = {'.git', '.venv', 'node_modules', '__pycache__', '.mypy_cache', '.pytest_cache'}
+        rendered: list[tuple[int, dict]] = []
+        for p in sorted(root.rglob('*')):
+            if not p.is_file() or p.suffix.lower() not in exts:
+                continue
+            if any(part in skip for part in p.relative_to(root).parts):
+                continue
+            st = p.stat()
+            rendered.append((
+                int(st.st_mtime),
+                {
+                    'path': p.relative_to(root).as_posix(),
+                    'name': p.name,
+                    'bytes': st.st_size,
+                    'mtime': int(st.st_mtime),
+                },
+            ))
+        rendered.sort(key=lambda entry: entry[0], reverse=True)
+        return [entry for _mtime, entry in rendered][:300]
+
+    @app.get('/sessions/{session_id}/render')
+    def session_render(session_id: str, path: str, _: None = Depends(authorize)) -> Response:
+        """Serve one rendered image (Workdir-confined)."""
+        from codingdude.tools import resolve_workdir_path
+
+        workdir = db.session_workdir(session_id)
+        if not workdir:
+            raise HTTPException(status_code=404, detail='no such session')
+        target, error = resolve_workdir_path(workdir, path)
+        if error or target is None:
+            raise HTTPException(status_code=400, detail=error or 'bad path')
+        if not target.is_file():
+            raise HTTPException(status_code=404, detail='not found')
+        media = {
+            '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+            '.webp': 'image/webp', '.gif': 'image/gif', '.svg': 'image/svg+xml',
+        }.get(target.suffix.lower(), 'application/octet-stream')
+        return Response(content=target.read_bytes(), media_type=media)
+
     class FileSaveIn(BaseModel):
         path: str
         content: str
