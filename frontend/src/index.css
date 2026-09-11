@@ -1,30 +1,140 @@
 @import "tailwindcss";
 
-/* Design tokens: the single source for CodingDude's look. Components should
-   reference these (bg-brand, text-brand, border-line, bg-surface, ...) rather
-   than raw palette classes, so a re-theme is a change to this file only. */
-@theme {
-  --color-brand: #10b981;
-  --color-brand-400: #34d399;
-  --color-brand-500: #10b981;
-  --color-brand-600: #059669;
-  --color-brand-700: #047857;
-  --color-brand-800: #065f46;
-  --color-brand-900: #064e3b;
-  --color-brand-dark: #059669;
-  --color-brand-light: #6ee7b7;
-  --color-surface: #0a0a0a;
-  --color-panel: #111111;
-  --color-line: #262626;
-  --color-ink: #e5e5e5;
-  --color-ink-muted: #a3a3a3;
-  --color-danger: #e11d48;
-  --color-warn: #f59e0b;
+/* ===========================================================================
+   CodingDude skin — StyleSeed "technical-instrument" × developer-platform,
+   warm medium-orange base (#ED7D31). Source of truth: STYLESEED.md and
+   .styleseed/palettes/{dark,light}.css. Regenerate with:
+       node .styleseed/tools/gen-themes.mjs
+   :root = dark (the locked default). <html data-theme="light"> = light mode.
+   Components reference tokens (bg-brand-*, text-brand-*, bg-surface, text-ink,
+   border-line, ...) so re-theming stays a change to this file.
+   =========================================================================== */
+
+/* ---- dark (locked default) ------------------------------------------------ */
+:root {
+  --ss-background: #060301;
+  --ss-surface: #0f0c09;
+  --ss-chrome: #1f1811;
+  --ss-foreground: #f5f1ee;
+  --ss-muted-foreground: #a9a39e;
+  --ss-chrome-foreground: #f5f1ee;
+  --ss-border: #3f362d;
+  --ss-primary: #f98e4b;
+  --ss-primary-foreground: #050302;
+  --ss-accent: #96bbff;
+  --ss-accent-foreground: #050302;
+  --ss-focus: #95c9ff;
+  --ss-success: #73d083;
+  --ss-warning: #e1ad57;
+  --ss-danger: #ff968a;
+  --ss-primary-50: #fff7f2;
+  --ss-primary-100: #ffe5d7;
+  --ss-primary-200: #ffcbae;
+  --ss-primary-300: #fea572;
+  --ss-primary-400: #e08349;
+  --ss-primary-500: #c6641f;
+  --ss-primary-600: #a84e00;
+  --ss-primary-700: #873d00;
+  --ss-primary-800: #622b00;
+  --ss-primary-900: #401a00;
+  --ss-primary-950: #210a00;
+  --ss-accent-50: #f5f9ff;
+  --ss-accent-100: #e1ecff;
+  --ss-accent-200: #c3d8ff;
+  --ss-accent-300: #9bbeff;
+  --ss-accent-400: #729def;
+  --ss-accent-500: #5480d7;
+  --ss-accent-600: #3d68bd;
+  --ss-accent-700: #2a519f;
+  --ss-accent-800: #17387d;
+  --ss-accent-900: #04205d;
+  --ss-accent-950: #000c37;
+  color-scheme: dark;
+}
+
+/* ---- light ---------------------------------------------------------------- */
+:root[data-theme="light"] {
+  --ss-background: #faf2ea;
+  --ss-surface: #fffcf9;
+  --ss-chrome: #eadfd6;
+  --ss-foreground: #0d0b08;
+  --ss-muted-foreground: #544f4a;
+  --ss-chrome-foreground: #0d0b08;
+  --ss-border: #c4b8ae;
+  --ss-primary: #9c4800;
+  --ss-primary-foreground: #fffbf8;
+  --ss-accent: #355aa4;
+  --ss-accent-foreground: #fffbf8;
+  --ss-focus: #355aa4;
+  --ss-success: #006425;
+  --ss-warning: #6e4b00;
+  --ss-danger: #902824;
+  --ss-accent-400: #799ee5;
+  --ss-accent-500: #5b82cc;
+  --ss-accent-600: #4469b2;
+  --ss-accent-700: #315295;
+  --ss-accent-800: #1d3a74;
+  --ss-accent-900: #0a2255;
+  color-scheme: light;
+}
+
+@theme inline {
+  /* Brand / primary action — existing bg-brand-*, text-brand-* map here. */
+  --color-brand: var(--ss-primary);
+  --color-brand-fg: var(--ss-primary-foreground);
+  --color-brand-hover: var(--ss-primary-600);
+  --color-brand-50: var(--ss-primary-50);
+  --color-brand-100: var(--ss-primary-100);
+  --color-brand-200: var(--ss-primary-200);
+  --color-brand-300: var(--ss-primary-300);
+  --color-brand-400: var(--ss-primary);
+  --color-brand-500: var(--ss-primary);
+  --color-brand-600: var(--ss-primary-600);
+  --color-brand-700: var(--ss-primary);
+  --color-brand-800: var(--ss-primary-800);
+  --color-brand-900: var(--ss-primary-900);
+  --color-brand-950: var(--ss-primary-950);
+
+  /* Semantic surfaces, lines and text. */
+  --color-canvas: var(--ss-background);
+  --color-surface: var(--ss-surface);
+  --color-chrome: var(--ss-chrome);
+  --color-line: var(--ss-border);
+  --color-ink: var(--ss-foreground);
+  --color-ink-muted: var(--ss-muted-foreground);
+
+  /* Semantic status + companion accent. */
+  --color-accent: var(--ss-accent);
+  --color-success: var(--ss-success);
+  --color-warning: var(--ss-warning);
+  --color-danger: var(--ss-danger);
+  --color-warn: var(--ss-warning);
+  --color-focus: var(--ss-focus);
+
+  /* Bind Tailwind's neutral scale to the theme so existing neutral-* classes
+     re-theme in light and dark without touching every component. */
+  --color-neutral-950: var(--ss-background);
+  --color-neutral-900: var(--ss-surface);
+  --color-neutral-800: var(--ss-chrome);
+  --color-neutral-700: var(--ss-chrome);
+  --color-neutral-600: var(--ss-muted-foreground);
+  --color-neutral-500: var(--ss-muted-foreground);
+  --color-neutral-400: var(--ss-muted-foreground);
+  --color-neutral-300: var(--ss-foreground);
+  --color-neutral-200: var(--ss-foreground);
+  --color-neutral-100: var(--ss-foreground);
+  --color-neutral-50: var(--ss-foreground);
 }
 
 @layer base {
+  html,
   body {
-    background-color: var(--color-surface);
-    color: var(--color-ink);
+    background-color: var(--ss-background);
+    color: var(--ss-foreground);
+  }
+  /* Keep focus rings visible against both themes. */
+  :focus-visible {
+    outline: 2px solid var(--ss-focus);
+    outline-offset: 2px;
   }
 }
