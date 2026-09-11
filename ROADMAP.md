@@ -57,5 +57,30 @@ feature to display them**:
 
 ---
 
+## R2 — Agent appears to hang after the user replies
+**Status:** open (potential, needs repro) · **Area:** run lifecycle / event stream / UI feedback
+
+### Problem
+During a session the user replied to a question but the agent showed no visible response for a
+while — it looked hung — until they prodded ("did you hang up on the last task?"). It is unproven
+whether the run was actually stalled, the UI failed to show progress, or an event was dropped.
+
+### Impact
+Users can't tell whether the agent is working, waiting, or dead — so they re-prompt or lose trust.
+
+### Desired behaviour
+- An immediate, unambiguous "working" state when a reply starts a run.
+- A watchdog: if a run is alive but emits nothing for N seconds, show "still working…" instead of
+  looking idle.
+- Guarantee every user reply reliably starts (or resumes) a run, with a clear error when it can't.
+
+### Evidence / notes
+- Observed 2026-09-11: after the user answered a question the agent appeared to hang; the user
+  asked "did you hang up on the last task?", after which it continued.
+- Suspects: run-start not surfaced promptly; a dropped/missed SSE or gate event; a polling gap.
+- Needs a repro and a look at the worker → server → SSE path and the UI run-state indicator.
+
+---
+
 ## Backlog (unscoped)
 _Open a new `## R<n>` section per item as it is identified._
