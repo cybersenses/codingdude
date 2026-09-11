@@ -563,13 +563,14 @@ def create_app(
         return out
 
     @app.get('/sessions/{session_id}/trace')
-    def session_trace(session_id: str, _: None = Depends(authorize)) -> list[dict]:
-        """Replayable run trace: every traced event for the session."""
+    def session_trace(session_id: str, limit: int = 50, _: None = Depends(authorize)) -> list[dict]:
+        """Replayable run trace: the last `limit` traced events (default 50)."""
         trace_file = home / 'traces' / f'{session_id}.jsonl'
         if not trace_file.exists():
             return []
+        lines = trace_file.read_text(encoding='utf-8').splitlines()
         out = []
-        for line in trace_file.read_text(encoding='utf-8').splitlines():
+        for line in lines[-limit:]:
             if line.strip():
                 try:
                     out.append(json.loads(line))

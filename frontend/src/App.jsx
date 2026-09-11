@@ -516,7 +516,7 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
         if (tab === 'Memory') { const m = await call('/memory'); setData((d) => ({ ...d, memory: m })) }
         if (tab === 'MCP') { const m = await api.listMcp(sessionId); setData((d) => ({ ...d, mcp: m })) }
         if (tab === 'Trace') {
-          const tr = await call(`/sessions/${sessionId}/trace`)
+          const tr = await call(`/sessions/${sessionId}/trace?limit=50`)
           const cps = await call(`/sessions/${sessionId}/checkpoints`)
           setData((d) => ({ ...d, trace: tr, checkpoints: cps }))
         }
