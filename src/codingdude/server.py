@@ -615,7 +615,8 @@ def create_app(
         ws: WebSocket, run_id: str, ws_token: str = Query('', alias='token')
     ):
         host = ws.client.host if ws.client else ''
-        if ws_token != token or host not in ('127.0.0.1', '::1', 'testclient'):
+        local = ('127.0.0.1', '::1') + (('testclient',) if allow_testclient else ())
+        if ws_token != token or host not in local:
             await ws.close(code=4401)
             return
         await ws.accept()

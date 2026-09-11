@@ -193,7 +193,7 @@ class Database:
         self._conn.commit()
 
     def delete_session(self, session_id: str) -> None:
-        for table in ('messages', 'approvals', 'usage'):
+        for table in ('messages', 'approvals', 'usage', 'plans'):
             self._conn.execute(
                 f'DELETE FROM {table} WHERE session_id = ?', (session_id,)
             )

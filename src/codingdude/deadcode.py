@@ -17,8 +17,17 @@ SKIP_NAMES = {'.git', '.venv', 'node_modules', '__pycache__', '.mypy_cache', '.p
 
 
 def _iter_source_files(workdir: Path, extensions: set[str], path: str = '.'):
-    root = Path(workdir)
+    root = Path(workdir).resolve()
     target = (root / path).resolve() if path else root
+    try:
+        target.relative_to(root)
+    except ValueError:
+        from pydantic_ai import ModelRetry
+
+        raise ModelRetry(
+            f'Path {path!r} is outside the Workdir. '
+            'Only paths inside the Workdir are accessible.'
+        ) from None
     if target.is_file():
         yield target
         return

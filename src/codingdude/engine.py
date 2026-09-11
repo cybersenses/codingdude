@@ -259,7 +259,12 @@ class Engine:
 
         try:
             self._check_budget(session_id)
-            resolved = model if isinstance(model, Model) else self.build_model()
+            if isinstance(model, Model):
+                resolved = model
+            elif isinstance(model, str):
+                resolved = self.build_model(main=model)
+            else:
+                resolved = self.build_model()
             if image_path is not None and vision_model is not None:
                 resolved = vision_model
             model_name = getattr(resolved, 'model_name', str(resolved))
@@ -334,7 +339,10 @@ class Engine:
             from .mcp_config import load_merged_mcp_toolsets
 
             toolsets.append(build_deadcode_toolset(workdir))
-            toolsets.extend(load_merged_mcp_toolsets(self._config_home(), workdir))
+            try:
+                toolsets.extend(load_merged_mcp_toolsets(self._config_home(), workdir))
+            except Exception as exc:  # noqa: BLE001 - bad MCP config must not brick runs
+                logger.warning('MCP toolsets unavailable (%s); continuing without them', exc)
 
             if self.embedder is not None:
                 from .semantic import SemanticIndex, build_semantic_toolset

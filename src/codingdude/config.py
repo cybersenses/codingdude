@@ -148,7 +148,14 @@ def load_project_config(workdir: Path) -> dict:
     if not path.exists():
         return {}
     raw = tomllib.loads(path.read_text(encoding='utf-8'))
-    out = {}
-    if 'shell' in raw.get('shell', {}):
-        out['shell'] = raw['shell']['shell']
+    out: dict = {}
+    shell = raw.get('shell')
+    # Accept the documented top-level string (`shell = "powershell"`) and the
+    # global-config table shape (`[shell] default = ...` / `[shell] shell = ...`).
+    if isinstance(shell, str):
+        out['shell'] = shell
+    elif isinstance(shell, dict):
+        value = shell.get('default') or shell.get('shell')
+        if value:
+            out['shell'] = value
     return out

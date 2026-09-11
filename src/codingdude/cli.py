@@ -93,8 +93,6 @@ def main(argv: list[str] | None = None) -> int:
         db=Database.connect(config_home()),
         budget_cap_usd=args.budget,
     )
-    if args.fix_loop:
-        args.fix_loop = True
     from .approvals import ApprovalPolicy
 
     return run_headless(

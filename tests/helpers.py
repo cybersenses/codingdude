@@ -31,5 +31,3 @@ def scripted(fn) -> FunctionModel:
                 yield part.content
 
     return FunctionModel(fn, stream_function=stream_fn, model_name='scripted')
-
-    return FunctionModel(fn, stream_function=stream_fn, model_name='scripted')

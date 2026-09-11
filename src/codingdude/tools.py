@@ -53,7 +53,7 @@ def build_toolset(
     def resolve(path: str) -> Path:
         target = (workdir / path).resolve()
         try:
-            target.relative_to(workdir)
+            target.relative_to(workdir.resolve())
         except ValueError:
             raise ModelRetry(
                 f'Path {path!r} is outside the Workdir. '
@@ -102,8 +102,15 @@ def build_toolset(
         return '\n'.join(results) or '(no matches)'
 
     def glob(pattern: str) -> str:
+        root = workdir.resolve()
+        # Refuse patterns that climb out of the Workdir (mirrors resolve()).
+        if Path(pattern).is_absolute() or '..' in Path(pattern).parts:
+            raise ModelRetry(
+                f'Glob pattern {pattern!r} escapes the Workdir. '
+                'Use a relative pattern inside the project.'
+            )
         matches = sorted(
-            str(m.relative_to(workdir)) for m in workdir.glob(pattern) if m.is_file()
+            str(m.relative_to(root)) for m in root.glob(pattern) if m.is_file()
         )
         return '\n'.join(matches) or '(no matches)'
 
@@ -392,14 +399,20 @@ def build_coverage_toolset(workdir: Path, policy) -> FunctionToolset:
     async def run_coverage(source: str = '.') -> str:
         from .approvals import NEEDS_GATE
 
-        command = f'python -m pytest --cov={source} --cov-report=term-missing -q'
+        # `source` is model-supplied: keep it a relative in-Workdir path and
+        # pass argv (never a shell), so `.; rm -rf /` cannot execute (H3).
+        if not source or Path(source).is_absolute() or '..' in Path(source).parts:
+            raise ModelRetry(f'{source!r} is not a relative in-Workdir coverage source.')
+        argv = ['python', '-m', 'pytest', f'--cov={source}',
+                '--cov-report=term-missing', '-q']
+        command = ' '.join(argv)
         decision = policy.decide(command)
         if decision in (NEEDS_GATE, DENIED):
             await _resolve_gate(policy, command, always=decision == DENIED)
         import asyncio
 
         proc = await asyncio.create_subprocess_exec(
-            'bash', '-c', command,
+            *argv,
             cwd=workdir, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE, env=scrubbed_env(),
         )
