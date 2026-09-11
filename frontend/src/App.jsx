@@ -456,7 +456,7 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
         }
         if (tab === 'Renders') {
           const r = await call(`/sessions/${sessionId}/renders`)
-          setData((d) => ({ ...d, renders: r }))
+          setData((d) => ({ ...d, renders: r.renders, renderStart: r.session_start }))
         }
       } catch { /* transient */ }
       if (!stop) setTimeout(poll, 4000)
@@ -733,29 +733,40 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
     )
   } else if (tab === 'Renders') {
     const renders = data.renders || []
+    const renderStart = data.renderStart || 0
+    const tile = (r) => (
+      <a
+        key={r.path}
+        href={`/api/sessions/${sessionId}/render?path=${encodeURIComponent(r.path)}`}
+        target="_blank"
+        rel="noreferrer"
+        className="overflow-hidden rounded border border-line bg-surface hover:border-brand"
+      >
+        <img
+          alt={r.name}
+          loading="lazy"
+          src={`/api/sessions/${sessionId}/render?path=${encodeURIComponent(r.path)}`}
+          className="h-24 w-full bg-canvas object-contain"
+        />
+        <div className="truncate px-1 py-0.5 font-mono text-[10px] text-ink-muted">{r.path}</div>
+      </a>
+    )
+    const group = (label, items) => (
+      items.length === 0 ? null : (
+        <div className="space-y-1">
+          <div className="text-[10px] uppercase tracking-wide text-ink-muted">{label}</div>
+          <div className="grid grid-cols-2 gap-2">{items.map(tile)}</div>
+        </div>
+      )
+    )
     body = renders.length === 0 ? (
       <div className="rounded border border-line bg-surface p-4 text-xs text-ink-muted">
         No images rendered in this workdir yet. Screenshots and previews appear here.
       </div>
     ) : (
-      <div className="grid grid-cols-2 gap-2">
-        {renders.map((r) => (
-          <a
-            key={r.path}
-            href={`/api/sessions/${sessionId}/render?path=${encodeURIComponent(r.path)}`}
-            target="_blank"
-            rel="noreferrer"
-            className="overflow-hidden rounded border border-line bg-surface hover:border-brand"
-          >
-            <img
-              alt={r.name}
-              loading="lazy"
-              src={`/api/sessions/${sessionId}/render?path=${encodeURIComponent(r.path)}`}
-              className="h-24 w-full bg-canvas object-contain"
-            />
-            <div className="truncate px-1 py-0.5 font-mono text-[10px] text-ink-muted">{r.path}</div>
-          </a>
-        ))}
+      <div className="space-y-3">
+        {group('This session', renders.filter((r) => r.mtime >= renderStart))}
+        {group('Earlier', renders.filter((r) => r.mtime < renderStart))}
       </div>
     )
   }

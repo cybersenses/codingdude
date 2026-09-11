@@ -399,11 +399,19 @@ def create_app(
         }
 
     @app.get('/sessions/{session_id}/renders')
-    def session_renders(session_id: str, _: None = Depends(authorize)) -> list[dict]:
+    def session_renders(session_id: str, _: None = Depends(authorize)) -> dict:
         """Image files in the Workdir, newest first (screenshots, previews)."""
         workdir = db.session_workdir(session_id)
         if not workdir:
             raise HTTPException(status_code=404, detail='no such session')
+        session_start = 0
+        for info in db.list_sessions(Path(workdir)):
+            if info.session_id == session_id:
+                try:
+                    session_start = int(datetime.fromisoformat(info.created_at).timestamp())
+                except ValueError:
+                    session_start = 0
+                break
         root = Path(workdir)
         exts = {'.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg'}
         skip = {'.git', '.venv', 'node_modules', '__pycache__', '.mypy_cache', '.pytest_cache'}
@@ -424,7 +432,10 @@ def create_app(
                 },
             ))
         rendered.sort(key=lambda entry: entry[0], reverse=True)
-        return [entry for _mtime, entry in rendered][:300]
+        return {
+            'session_start': session_start,
+            'renders': [entry for _mtime, entry in rendered][:300],
+        }
 
     @app.get('/sessions/{session_id}/render')
     def session_render(session_id: str, path: str, _: None = Depends(authorize)) -> Response:
