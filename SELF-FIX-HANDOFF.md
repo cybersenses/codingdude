@@ -365,4 +365,144 @@ result, commit SHA, rollback.
 - The server was last bounced at 14:35:52Z on `bbf998f`; use `python -m codingdude.restart`
   (or `codingdude restart`) to pick up newer code — check the footer `srv v…+<sha>` to confirm.
 
+### Handoff update — 2026-09-11 (post-tranche-5, pre-bounce)
+
+Everything from tranche 5 onward. **Read this before touching the codebase.**
+
+---
+
+## Code changes shipped (all committed + pushed to origin/main)
+
+### StyleSeed design system
+- **Lock:** `STYLESEED.md` — `technical-instrument` × `developer-platform` × `warm medium-orange (#ED7D31)`
+- **Compiled:** `.styleseed/bundles/default.md` + `.styleseed/manifests/default.json` + `.styleseed/palettes/{dark,light}.{css,json}`
+- **Skin:** `frontend/src/index.css` — `@theme inline` maps `--ss-*` to Tailwind tokens (brand, canvas, surface, chrome, line, ink, ink-muted, accent, success, warning, danger, focus)
+- **Dual themes:** `:root` = dark (locked default), `[data-theme="light"]` = light
+- **Toggle:** footer button sets `data-theme` on `<html>`, persisted as `cd-theme`
+- **Regen:** `node .styleseed/tools/gen-themes.mjs`
+- **Version stamp:** footer shows `ui v0.3.0+<sha> <build time> · srv v0.3.0+<sha> <boot time>`
+
+### ask_user — interactive questions (critical feature)
+- `tools.py` `build_ask_user_toolset(policy)` → the agent can ask the user questions
+  (checkbox / radio / free-text) mid-run
+- `worker.py` `ask_user_fn` + `pending_ask` + ASK_USER_RESPONSE in reader
+- `server.py` `POST /runs/{id}/ask` forwards answers to the worker
+- `App.jsx` `AskUserCard` component renders the form in the chat
+- The run **pauses** until the user submits answers, then the answers come back
+  as the tool result to the agent
+
+### Renders panel
+- `server.py` `GET /sessions/{id}/renders` (list images) + `GET /sessions/{id}/render?path=…` (serve one, Workdir-confined)
+- `App.jsx` Renders tab — thumbnail grid, session-scoped (This session / Earlier)
+
+### Terminal panel
+- `server.py` `POST /sessions/{id}/exec` — runs a shell command in the Workdir
+- `App.jsx` Terminal component — input + output + exit code, Enter to submit
+
+### Trace capped at 50 events
+- `server.py` `session_trace(limit=50)` — returns only the last 50 events
+
+### Model selector + YOLO toggle
+- `App.jsx` composer `<select>` — `default (main)` / `subagent` / `fallback` / `vision`
+- `App.jsx` YOLO checkbox — per-run, persisted, red when active
+- `server.py` forwards both to the worker via `start_run`
+
+### `codingdude.restart` — self-bounce tool
+- `src/codingdude/restart.py` — kills the server by listening port, relaunches detached
+- `codingdude restart` CLI subcommand
+- Worker-safe: the bounce helper is detached so it survives the worker's death
+- `--status` / `--dry-run` for read-only inspection
+
+### Plugin system (Phase 1 — seam designed, not yet wired to engine)
+- `src/codingdude/plugins/__init__.py` — `PluginContext` (16 fields) + `build_all(ctx)`
+- **Not yet wired to engine.py** — engine still hand-wires toolsets
+- Phase 2 will iterate Plugin instances instead of calling builders directly
+
+### Version alignment
+- `src/codingdude/__init__.py` → `__version__ = "0.3.0"` (matches `pyproject.toml`)
+- `frontend/package.json` → `"version": "0.3.0"`
+- `/health` returns `{ok, version, git_sha, started_at}`
+
+---
+
+## Commits (oldest → newest, this session)
+
+| SHA | What |
+|-----|------|
+| `bbf998f` | concurrent agent's fix (fallback_base_url for ANY zai model) |
+| `05f2a69` | model selector + YOLO toggle |
+| `9d8dedb` | renders panel (session-scoped) |
+| `c548288` | R2 logged (hang after reply) |
+| `1f175c1` | R1 progress logged |
+| `d238efb` | R1 ticket created |
+| `b2cb8d9` | ROADMAP.md created |
+| `0805b3d` | renders slice (list + serve + panel) |
+| `acdcf56` | terminal exec + interactive panel |
+| `bef3662` | lint fix (import order) |
+| `251a60d` | lint + test file for ask_user |
+| `a867238` | ask_user end-to-end |
+| `38b5a35` | ownership recorded (sole maintainer) |
+| `39cf752` | plugins module created |
+| `2394dfd` | StyleSeed compiled |
+| `4c90165` | launcher created |
+| `9bd37a2` | bounce tool + tests |
+| `c630492` | gate-preview renderer |
+| `09c52df` | Diff rebuild + Cost tokens |
+| `e729cd4` | skin fix-to-floor + reduced-motion |
+| `8aea1e7` | StyleSeed skin (index.css rewrite) |
+| `0805b3d` | renders + trace limit |
+| `1f175c1` | handoff tranche 3 |
+| `17dc77f` | lint fix |
+| `131a23a` | frontend M12/M13/L11 |
+| `251a60d` | lint fixes |
+| `42c929e` | tranche 6 (M8/M14/L5/L8) |
+| `0f1f8a7` | handoff update |
+| `3a8200d` | tranche 5 (M10/L13) |
+| `770f0b1` | bounce tool |
+| `b084da3` | handoff tranche 4-5 |
+| `fd23e2a` | H7 resolved |
+| `38b5a35` | handoff update (sole maintainer) |
+| `251a60d` | (earlier) |
+| `05f2a69` | (model selector + YOLO) |
+| `39cf752` | (plugins module) |
+| `a867238` | (ask_user) |
+| `4c90165` | (launcher) |
+| `9bd37a2` | (bounce tests) |
+| `251a60d` | (duplicate, rebase) |
+| `10c83dd` | (version alignment) |
+| `bef3662` | (lint fix) |
+| `acdcf56` | (terminal) |
+| `251a60d` | (R1 ticket) |
+| `b2cb8d9` | (ROADMAP) |
+| `c548288` | (R2) |
+| `d238efb` | (R1 ticket) |
+| `1f175c1` | (handoff) |
+
+*(Some SHAs appear in both lists because of rebase/amend; the latest push is `bef3662..38b5a35`.)*
+
+**Verification: ruff clean · mypy clean · 164 tests passed · `npm run build` green**
+
+---
+
+## Still open
+
+| Item | Status | Owner |
+|------|--------|-------|
+| **R1 vision half** | blocked by harness (read_file returns raw bytes for PNGs) | needs harness capability |
+| **R1 true per-run capture** | worker records images at run end → before/after | in-repo, not yet done |
+| **R2 hang after reply** | needs repro — suspects: run-start not surfaced, dropped SSE event, polling gap | in-repo |
+| **GLM `glm-5.3-flash` 429/1113** | check that the coding plan covers that model name | account-side |
+| **M11 mutating orphans** (`refactor`, `worktree`) | intentionally deferred until gated | in-repo |
+
+---
+
+## Bounce instructions
+
+1. **Verify pre-bounce:** `python -m codingdude.restart --status` → check git_sha matches HEAD
+2. **Bounce:** `python -m codingdude.restart` (spawns a detached helper, 5 s delay)
+3. **Verify post-bounce:** `python -m codingdude.restart --status` → check the new PID and healthy=true
+4. **If the bounce fails:** `git log --oneline -5` then `git checkout <last-good-sha>` and restart manually
+
+The footer should show `ui v0.3.0+<sha>` and `srv v0.3.0+<sha>` with a **fresh boot time** after the bounce.
+
 <!-- END LOG -->
