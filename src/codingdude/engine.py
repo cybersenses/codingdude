@@ -15,6 +15,7 @@ from pydantic_ai.models.fallback import FallbackModel
 
 from .checkpoints import CheckpointStore
 from .config import Config, parse_thinking
+from .context import ContextManager
 from .db import Database
 from .messages import decode_messages, encode_messages, sanitize_history
 from .tools import (
@@ -366,6 +367,14 @@ class Engine:
                 emitter=traced,
             )
             toolsets = build_all(plugin_ctx)
+
+            cm = ContextManager(model_limit=128_000)
+            ctx_stats = cm.usage(history)
+            if ctx_stats.needs_compaction:
+                logger.info(
+                    'Context usage %.0f%% (%d/%d tokens) — compaction recommended',
+                    ctx_stats.usage_percent * 100, ctx_stats.total_tokens, ctx_stats.model_limit,
+                )
 
             from .memory import MemoryStore
             from .skills import SkillRegistry
