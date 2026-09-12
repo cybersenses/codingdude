@@ -928,7 +928,9 @@ function Chat({ messages, streaming, onStop, onDecide, sessionId, suggestMode, o
                 m.role === 'user' ? 'bg-brand-700 text-brand-fg' : 'bg-neutral-800 text-neutral-200'
               }`}
             >
-              {m.text}
+              {m.role === 'user'
+                ? m.text
+                : <ReactMarkdown>{m.text}</ReactMarkdown>}
               {m.streaming && <span className="animate-pulse">▍</span>}
             </div>
             {m.toolEvents && <ToolTimeline events={m.toolEvents} />}
