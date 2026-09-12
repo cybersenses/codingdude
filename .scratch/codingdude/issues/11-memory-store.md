@@ -4,12 +4,12 @@
 
 **Blocked by:** 05 (Session lifecycle), 09 (React shell)
 
-**Status:** partially resolved — engine complete, UI panel pending (ticket 10)
+**Status:** resolved — engine + server endpoints + UI Memory panel (ticket 10) complete
 
 - [x] A scripted run banks a fact via the remember tool; it persists scoped (global or Workdir)
 - [x] A new Session on the same Workdir demonstrably receives the relevant Memory Entries in context
 - [x] Post-session extraction adds a fact the run didn't explicitly remember
-- [ ] The forget tool removes an entry; the UI panel lists and deletes entries *(forget tool done and tested; the UI panel lands with ticket 10's right-panel work — server endpoints `GET/DELETE /memory` still to add)*
+- [x] The forget tool removes an entry; the UI panel lists and deletes entries *(server endpoints `GET/DELETE /memory` exist; Memory tab in the right panel)*
 
 ## Comments
 

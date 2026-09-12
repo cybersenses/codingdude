@@ -4,11 +4,11 @@
 
 **Blocked by:** 05 (Session lifecycle), 09 (React shell)
 
-**Status:** partially resolved — engine + CLI complete, UI setter pending (ticket 10)
+**Status:** resolved — engine + CLI complete; budget passes via the start-run body (UI input deferred to backlog)
 
 - [x] With no cap set, runs behave exactly as before
 - [x] Setting a cap then driving a scripted spendy run hard-stops at the cap with a distinct final event (BudgetExceeded; worker emits RUN_ERROR code=budget; headless exit 3)
-- [x] The cost meter reflects accumulating spend across the Session (usage table, meter UI lands with ticket 10)
+- [x] The cost meter reflects accumulating spend across the Session (usage table, Cost tab in the right panel)
 - [x] `--yolo` runs still stop at the cap
 
 ## Comments
