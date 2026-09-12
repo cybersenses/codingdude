@@ -257,10 +257,10 @@ function AskUserCard({ ask, runId }) {
     if (sending) return
     setSending(true)
     setError('')
-    const out = (ask.questions || []).map((q) => ({
-      question: q.question,
-      answer: answers[q.question] ?? '',
-    }))
+    const out = {}
+    for (const q of ask.questions || []) {
+      out[q.question] = answers[q.question] ?? ''
+    }
     call(`/runs/${runId}/ask`, { method: 'POST', body: JSON.stringify({ answers: out }) })
       .then(() => setSent(true))
       .catch((e) => { setError(String(e)); setSending(false) })
