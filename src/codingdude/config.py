@@ -42,6 +42,9 @@ class ModelLineup:
     # minimal | low | medium | high | xhigh (or off/none to disable). None
     # leaves provider defaults. Cost lever: low/medium while testing.
     thinking: str | None = None
+    # Max response tokens (None = provider default). Increase if the model
+    # hits the provider token limit before finishing its response.
+    max_tokens: int | None = None
 
 
 THINKING_LEVELS = ('minimal', 'low', 'medium', 'high', 'xhigh')
@@ -130,6 +133,7 @@ def load_config(home: Path | None = None) -> Config:
             fallback_base_url=models.get('fallback_base_url', defaults.models.fallback_base_url),
             vision=models.get('vision', defaults.models.vision),
             thinking=models.get('thinking', defaults.models.thinking),
+            max_tokens=models.get('max_tokens', defaults.models.max_tokens),
         ),
         shell=ShellConfig(default=shell.get('default', defaults.shell.default)),
         providers=ProviderKeys(
