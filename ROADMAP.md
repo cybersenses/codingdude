@@ -82,5 +82,80 @@ Users can't tell whether the agent is working, waiting, or dead — so they re-p
 
 ---
 
+## R3 — Context management system
+**Status:** critical · **Area:** engine / LLM reliability
+
+### Problem
+CodingDude has **no real context management**. The only mechanism is `_maybe_compact()`,
+which summarizes old turns into one message when the history exceeds a threshold. There is:
+
+- No context window monitoring — we don't know how close we are to the model's limit
+- No token counting — we estimate by character count, which is inaccurate
+- No sliding window — old messages are summarized, not selectively retained
+- No importance-based retention — a `git push` approval matters more than a `ls` output, but both are treated identically
+- No RAG retrieval — context that falls off the window is gone forever
+- No per-model context limits — different models have different windows, we don't adapt
+- No automatic compaction trigger — compaction is manual and uses a hardcoded threshold
+
+### Impact
+- Long sessions silently degrade: the model loses access to earlier decisions, code, and context
+- The context limit can be **overrun without warning**, causing API errors or silent truncation
+- Important context (approval decisions, architecture decisions, user preferences) is treated
+  the same as throwaway tool output
+- The user has no visibility into how full the context is
+
+### Desired behaviour
+- A `ContextManager` class that tracks token usage per turn, per model context limits, and
+  compaction state
+- **Sliding window** with importance scoring: tool results with exit codes > architecture
+  decisions > user preferences > small talk
+- **Auto-compaction** when approaching the limit: summarize + retain high-importance context
+- **Per-model context limits** loaded from the config or provider metadata
+- A **`context_usage` field** on the run so the UI can show a context meter (e.g. 78% used)
+- RAG-style retrieval of compacted context (the summary is embedded and retrievable)
+
+### Acceptance (rough)
+- A run with 200+ messages auto-compacts before hitting the context limit
+- Important context (user decisions, approval results) survives compaction
+- The UI shows a context usage meter
+- Token counting is accurate (within 10% of the provider's count)
+
+---
+
+## R4 — First-class planning data (roadmap, tickets, designs in the database)
+**Status:** critical · **Area:** product / data model / UI
+
+### Problem
+Roadmaps, tickets, design decisions, and handoff docs live as **markdown files the agent has
+to remember to update**. They are not in the database, not in the UI, and not automatically
+maintained. If the agent forgets to update them, they go stale (which happened with tickets
+11/12/14/16 — the engine shipped but the tickets weren't updated).
+
+### Impact
+- Planning docs go stale silently — the user trusts them but they're wrong
+- Work is invisible — there's no UI surface showing "what are we working on and what's left"
+- Cross-referencing is manual — the agent has to read markdown files to know what's done
+- No before/after or progress tracking — you can't see how the project evolved
+
+### Desired behaviour
+- **Database tables:** `roadmap_items`, `tickets`, `design_decisions` — first-class data with
+  CRUD server endpoints
+- **UI panels:** a Planning tab (or sidebar section) showing the roadmap, open tickets, and
+  design decisions — sortable, filterable, with status indicators
+- **Agent tools:** the agent can read/update roadmap items and tickets via tools (not just
+  markdown file edits)
+- **Auto-sync:** when the agent completes work, the related ticket/roadmap item is updated
+  automatically (not by the agent remembering to edit a file)
+- **Traceability:** each ticket links to the commits that closed it
+
+### Acceptance (rough)
+- The user opens the UI and sees the roadmap, open tickets, and design decisions — no
+  markdown files needed
+- The agent updates a ticket's status as part of completing work, not as a separate
+  documentation chore
+- All planning data survives a bounce (stored in SQLite, not in markdown)
+
+---
+
 ## Backlog (unscoped)
 _Open a new `## R<n>` section per item as it is identified._
