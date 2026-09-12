@@ -249,15 +249,21 @@ function EditBlock({ edit, sessionId, onRevert }) {
 function AskUserCard({ ask, runId }) {
   const [answers, setAnswers] = useState({})
   const [sent, setSent] = useState(false)
+  const [error, setError] = useState('')
+  const [sending, setSending] = useState(false)
+  if (!ask || !ask.questions || !ask.questions.length) return null
   if (sent) return null
   const submit = () => {
+    if (sending) return
+    setSending(true)
+    setError('')
     const out = (ask.questions || []).map((q) => ({
       question: q.question,
       answer: answers[q.question] ?? '',
     }))
     call(`/runs/${runId}/ask`, { method: 'POST', body: JSON.stringify({ answers: out }) })
       .then(() => setSent(true))
-      .catch(() => {})
+      .catch((e) => { setError(String(e)); setSending(false) })
   }
   return (
     <div className="my-2 overflow-hidden rounded-lg border border-accent/50 bg-surface">
@@ -302,11 +308,13 @@ function AskUserCard({ ask, runId }) {
           </div>
         ))}
       </div>
+      {error && <div className="px-3 py-1 text-xs text-danger">{error}</div>}
       <div className="flex justify-end border-t border-line px-3 py-2">
         <button
           className="rounded bg-brand px-3 py-1.5 text-xs font-medium text-brand-fg hover:bg-brand-hover"
           onClick={submit}
-        >Send answers</button>
+          disabled={sending}
+        >{sending ? 'Sending…' : 'Send answers'}</button>
       </div>
     </div>
   )
