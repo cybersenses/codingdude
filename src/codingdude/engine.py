@@ -12,7 +12,6 @@ from pathlib import Path
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
 from pydantic_ai.models.fallback import FallbackModel
-from pydantic_ai.toolsets import AbstractToolset
 
 from .checkpoints import CheckpointStore
 from .config import Config, parse_thinking
@@ -20,9 +19,6 @@ from .db import Database
 from .messages import decode_messages, encode_messages, sanitize_history
 from .tools import (
     GateRequired,
-    build_shell_toolset,
-    build_toolset,
-    build_web_toolset,
 )
 
 
@@ -333,94 +329,49 @@ class Engine:
                     on_event(ec)
 
             thinking = parse_thinking(self._config.models.thinking)
-            toolsets: list[AbstractToolset] = [
-                build_toolset(workdir, on_edit=on_edit_dispatch, approvals=approvals,
-                              capture=capture_for_checkpoints)
-            ]
-            if approvals is not None:
-                from .config import load_project_config
 
-                # Pattern Approvals are session-scoped: load what past runs saved.
+            # Pattern Approvals are session-scoped: load what past runs saved.
+            if approvals is not None:
                 approvals.patterns.update(self._db.session_patterns(session_id))
                 if fix_loop:
-                    # The user pre-authorized the test loop when enabling the
-                    # mode: approve the exact command, never a broad interpreter
-                    # token (self-review C3).
                     approvals.patterns.add(test_command.strip())
-                # New pattern approvals persist for the rest of the Session.
                 approvals.on_pattern = (
                     lambda pattern: self._db.record_pattern_approval(session_id, pattern)
                 )
-                project_shell = load_project_config(workdir).get(
-                    'shell', self._config.shell.default
-                )
-                toolsets.append(
-                    build_shell_toolset(workdir, approvals, shell_bin=project_shell)
-                )
-                # Git/coverage tools gate through the same policy; without one
-                # they must not be attached, or a gated call crashes on the
-                # None policy (self-review H1).
-                from .tools import build_ask_user_toolset, build_coverage_toolset, build_git_toolset
 
-                toolsets.append(build_git_toolset(workdir, approvals))
-                toolsets.append(build_coverage_toolset(workdir, approvals))
-                toolsets.append(build_ask_user_toolset(approvals))
-
-            subagent = subagent_model or self._build_subagent_model()
-            if subagent is not None:
-                from .tools import build_delegation_toolset
-
-                toolsets.append(build_delegation_toolset(workdir, subagent, thinking=thinking))
-
-            toolsets.append(build_web_toolset())
-            from .ast_tools import build_ast_toolset
-
-            toolsets.append(build_ast_toolset(workdir))
-
-            from .deadcode import build_deadcode_toolset
-            from .mcp_config import load_merged_mcp_toolsets
-
-            toolsets.append(build_deadcode_toolset(workdir))
-            # Read-only analysis toolsets (self-review M11). The mutating
-            # orphans (refactor, worktree) stay detached until they are gated.
-            from .repo_map import build_repo_map_toolset
-            from .tools import build_audit_toolset, build_ci_toolset, build_knip_toolset
-
-            toolsets.append(build_repo_map_toolset(workdir))
-            toolsets.append(build_knip_toolset(workdir))
-            toolsets.append(build_ci_toolset(workdir))
-            toolsets.append(build_audit_toolset(workdir))
-            try:
-                toolsets.extend(load_merged_mcp_toolsets(self._config_home(), workdir))
-            except Exception as exc:  # noqa: BLE001 - bad MCP config must not brick runs
-                logger.warning('MCP toolsets unavailable (%s); continuing without them', exc)
-
-            if self.embedder is not None:
-                from .semantic import SemanticIndex, build_semantic_toolset
-
-                toolsets.append(
-                    build_semantic_toolset(workdir, SemanticIndex(self.embedder, self._db))
-                )
-
-            from .planning import build_planning_toolset
-
-            toolsets.append(
-                build_planning_toolset(
-                    self._db, session_id, approvals, emit,
-                    review_model=self._extraction_model,
-                    thinking=thinking,
-                )
+            from .config import load_project_config
+            project_shell = load_project_config(workdir).get(
+                'shell', self._config.shell.default
             )
+            subagent = subagent_model or self._build_subagent_model()
 
-            from .skills import SkillRegistry, build_skills_toolset
+            from .plugins import PluginContext, build_all
+
+            plugin_ctx = PluginContext(
+                workdir=workdir,
+                config=self._config,
+                db=self._db,
+                session_id=session_id,
+                home=self._config_home(),
+                shell_bin=project_shell,
+                test_command=test_command,
+                fix_loop=fix_loop,
+                approvals=approvals,
+                subagent_model=subagent,
+                thinking=thinking,
+                review_model=self._extraction_model,
+                embedder=self.embedder,
+                on_edit=on_edit_dispatch,
+                capture=capture_for_checkpoints,
+                emitter=traced,
+            )
+            toolsets = build_all(plugin_ctx)
+
+            from .memory import MemoryStore
+            from .skills import SkillRegistry
 
             registry = SkillRegistry(self._config_home())
-            toolsets.append(build_skills_toolset(registry))
-
-            from .memory import MemoryStore, build_memory_toolset
-
             store = MemoryStore(self._db)
-            toolsets.append(build_memory_toolset(store, str(workdir)))
 
             instructions = INSTRUCTIONS
             from .repo_map import build_repo_map

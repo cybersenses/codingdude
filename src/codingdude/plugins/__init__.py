@@ -15,7 +15,7 @@ from pydantic_ai.toolsets import AbstractToolset
 
 from codingdude.approvals import ApprovalPolicy
 from codingdude.ast_tools import build_ast_toolset
-from codingdude.config import Config, parse_thinking
+from codingdude.config import Config, ThinkingSetting
 from codingdude.db import Database
 from codingdude.deadcode import build_deadcode_toolset
 from codingdude.mcp_config import load_merged_mcp_toolsets
@@ -52,7 +52,7 @@ class PluginContext:
     fix_loop: bool = False
     approvals: ApprovalPolicy | None = None
     subagent_model: Model | None = None
-    thinking: str | None = None
+    thinking: ThinkingSetting | None = None
     review_model: Model | None = None
     embedder: object | None = None
     on_edit: Callable | None = None
@@ -79,7 +79,7 @@ def build_all(ctx: PluginContext) -> list[AbstractToolset]:
             build_ask_user_toolset(ctx.approvals),
         ])
 
-    thinking_setting = parse_thinking(ctx.thinking)
+    thinking_setting = ctx.thinking
     if ctx.subagent_model is not None:
         toolsets.append(build_delegation_toolset(
             ctx.workdir, ctx.subagent_model, thinking=thinking_setting,
