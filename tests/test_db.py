@@ -37,3 +37,34 @@ def test_usage_accumulates_per_session(home, workdir):
     assert totals['input_tokens'] == 11
     assert totals['output_tokens'] == 7
     assert abs(totals['cost_usd'] - 0.03) < 1e-9
+
+
+def test_context_snapshot_roundtrip_and_migration(home, workdir):
+    db = Database.connect(home)
+    session_id = db.create_session(workdir)
+    db.update_session_context(session_id, total_tokens=96_000, model_limit=128_000)
+    sessions = db.list_sessions(workdir)
+    info = next(s for s in sessions if s.session_id == session_id)
+    assert info.context_tokens == 96_000
+    assert info.context_limit == 128_000
+
+
+def test_context_columns_added_to_legacy_database(home, workdir):
+    """A sessions table created before R3 gains the context columns in place."""
+    db = Database.connect(home)
+    # Simulate a legacy DB by dropping the columns via table rebuild.
+    db._conn.executescript(
+        """
+        CREATE TABLE sessions_legacy (session_id TEXT PRIMARY KEY,
+            workdir TEXT NOT NULL, created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL, title TEXT);
+        DROP TABLE sessions;
+        ALTER TABLE sessions_legacy RENAME TO sessions;
+        """
+    )
+    db._conn.commit()
+    db2 = Database.connect(home)
+    session_id = db2.create_session(workdir)
+    db2.update_session_context(session_id, 1000, 2000)
+    info = db2.list_sessions(workdir)[0]
+    assert (info.context_tokens, info.context_limit) == (1000, 2000)

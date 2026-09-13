@@ -83,7 +83,20 @@ Users can't tell whether the agent is working, waiting, or dead — so they re-p
 ---
 
 ## R3 — Context management system
-**Status:** critical · **Area:** engine / LLM reliability
+**Status:** done · **Area:** engine / LLM reliability
+
+Shipped: `ContextManager` (token estimation, per-model limits via
+`models.context_limit` config or the known-limits table, importance scoring,
+`plan_compaction`), token- or char-threshold auto-compaction wired into
+`engine.run` with importance-based retention, compaction summaries stored as
+retrievable Memory (RAG into future runs' instructions), a persisted
+`context_tokens`/`context_limit` snapshot per session (provider-reported input
+tokens preferred over the estimate), and a context meter in the session sidebar
+(over 80% turns red).
+
+---
+
+## Original R3 problem statement (pre-implementation)
 
 ### Problem
 CodingDude has **no real context management**. The only mechanism is `_maybe_compact()`,

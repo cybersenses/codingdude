@@ -8,6 +8,8 @@ export interface SessionInfo {
   created_at: string
   updated_at: string
   title: string | null
+  context_tokens: number | null
+  context_limit: number | null
 }
 
 export interface TraceEvent {

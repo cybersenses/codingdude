@@ -306,3 +306,19 @@ def test_second_run_supersedes_live_run_for_session(server, tmp_path):
     assert r2 != r1
     events = collect_sse(base, r1, timeout=15)
     assert events[-1]['type'] == 'RUN_CANCELLED'
+
+
+def test_session_list_includes_context_fields(server, tmp_path):
+    app, base = server
+    workdir = tmp_path / 'ctx-proj'
+    workdir.mkdir()
+    session_id = create_session(base, workdir)
+    app.state.db.update_session_context(session_id, 96_000, 200_000)
+    r = httpx.get(
+        f'{base}/sessions', params={'workdir': str(workdir)},
+        headers=auth(), timeout=10,
+    )
+    assert r.status_code == 200
+    row = r.json()[0]
+    assert row['context_tokens'] == 96_000
+    assert row['context_limit'] == 200_000

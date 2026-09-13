@@ -12,7 +12,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     workdir TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    title TEXT
+    title TEXT,
+    context_tokens INTEGER,
+    context_limit INTEGER
 );
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -111,6 +113,8 @@ class SessionInfo:
     created_at: str
     updated_at: str
     title: str | None
+    context_tokens: int | None = None
+    context_limit: int | None = None
 
 
 class Database:
@@ -118,6 +122,35 @@ class Database:
 
     def __init__(self, conn: sqlite3.Connection):
         self._conn = conn
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Add columns introduced after a database was created (R3).
+
+        CREATE TABLE IF NOT EXISTS won't alter existing databases, so new
+        sessions-table columns are added here, guarded by a PRAGMA check.
+        """
+        existing = {
+            r['name'] for r in self._conn.execute('PRAGMA table_info(sessions)')
+        }
+        for column, decl in (
+            ('context_tokens', 'INTEGER'),
+            ('context_limit', 'INTEGER'),
+        ):
+            if column not in existing:
+                self._conn.execute(f'ALTER TABLE sessions ADD COLUMN {column} {decl}')
+        self._conn.commit()
+
+    def update_session_context(
+        self, session_id: str, total_tokens: int, model_limit: int
+    ) -> None:
+        """Persist the latest context-window snapshot for the UI meter."""
+        self._conn.execute(
+            'UPDATE sessions SET context_tokens = ?, context_limit = ?'
+            ' WHERE session_id = ?',
+            (total_tokens, model_limit, session_id),
+        )
+        self._conn.commit()
 
     @classmethod
     def connect(cls, home: Path) -> 'Database':

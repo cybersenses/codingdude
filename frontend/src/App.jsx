@@ -173,6 +173,21 @@ function Sidebar({ workdir, setWorkdir, sessions, activeSession, onSelect, onNew
             {runningSessions.has(s.session_id) && (
               <span className="ml-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-success" />
             )}
+            {s.context_limit != null && s.context_tokens != null && s.context_tokens > 0 && (
+              <span className="mt-0.5 flex items-center gap-1" title={`Context: ${Math.round((s.context_tokens / s.context_limit) * 100)}% of ${Math.round(s.context_limit / 1000)}k tokens`}>
+                <span className="h-0.5 flex-1 overflow-hidden rounded bg-neutral-800">
+                  <span
+                    className={`block h-full ${
+                      s.context_tokens / s.context_limit > 0.8 ? 'bg-danger' : 'bg-brand-600'
+                    }`}
+                    style={{ width: `${Math.min(100, (s.context_tokens / s.context_limit) * 100)}%` }}
+                  />
+                </span>
+                <span className="text-[9px] text-neutral-500">
+                  {Math.round((s.context_tokens / s.context_limit) * 100)}%
+                </span>
+              </span>
+            )}
           </button>
         ))}
       </div>

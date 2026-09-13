@@ -335,6 +335,9 @@ class Engine:
                 'model_limit': ctx_stats.model_limit,
                 'usage_percent': round(ctx_stats.usage_percent, 4),
             })
+            self._db.update_session_context(
+                session_id, ctx_stats.total_tokens, ctx_stats.model_limit
+            )
 
             cp_holder: list[str] = []
 
@@ -496,6 +499,9 @@ class Engine:
         self._db.replace_messages(
             session_id, [encode_messages([m]) for m in result.all_messages()]
         )
+        # Prefer the provider's own token count for the final request (it
+        # includes instructions + history); fall back to the estimate.
+        self._persist_actual_context(session_id, result, cm)
 
         # Fix-until-green loop: run the tests, feed failures back, repeat.
         if fix_loop and approvals is not None:
@@ -618,6 +624,30 @@ class Engine:
             model_limit=model_limit_for(model_name, self._config.models.context_limit)
         )
 
+    def _persist_actual_context(self, session_id: str, result, cm) -> None:
+        """Refresh the session's context snapshot with the run's final usage.
+
+        The provider-reported input tokens of the last request are the true
+        context size (instructions + full history); the estimate is the
+        fallback when usage isn't reported. Accounting must never fail a run.
+        """
+        try:
+            response = getattr(result, 'response', None)
+            usage = getattr(response, 'usage', None)
+            input_tokens = getattr(usage, 'input_tokens', None)
+            messages = result.all_messages()
+            estimated = cm.usage(messages).total_tokens
+            total = (
+                input_tokens
+                if isinstance(input_tokens, int) and input_tokens > 0
+                else estimated
+            )
+            self._db.update_session_context(
+                session_id, total, cm.model_limit
+            )
+        except Exception as exc:  # noqa: BLE001 - accounting must never fail a run
+            logger.warning('context snapshot not persisted: %s', exc)
+
     async def _maybe_compact(self, history, resolved: Model, on_event, session_id: str,
                              cm: ContextManager | None = None):
         """Compact old turns into a summary when history approaches the
@@ -637,7 +667,19 @@ class Engine:
 
         from pydantic_ai.messages import ModelRequest, UserPromptPart
 
-        old, keep = history[:-1], history[-1:]
+        # Importance-based retention (R3): recent + high-importance messages
+        # stay verbatim; everything else is summarised.
+        keep_idx, summarise_idx = cm.plan_compaction(history) if cm is not None else (
+            [len(history) - 1], list(range(len(history) - 1))
+        )
+        if not summarise_idx:
+            # Everything scored as recent/high-importance (e.g. a history of
+            # short user prompts): retention would keep the overflow, so fall
+            # back to the last message verbatim.
+            old, keep = history[:-1], history[-1:]
+        else:
+            old = [history[i] for i in summarise_idx]
+            keep = [history[i] for i in keep_idx]
         digest = '\n'.join(
             f'- {p.content}'
             for m in old
@@ -651,6 +693,18 @@ class Engine:
         )
         summary = summary_result.output
         self._record_model_usage(session_id, resolved, summary_result.usage)
+        # RAG: the summary becomes retrievable Memory, so facts that fell out
+        # of the window resurface in future runs' instructions (R3).
+        try:
+            from .memory import MemoryStore
+
+            MemoryStore(self._db).add(
+                f'Compacted conversation summary: {summary}',
+                scope='workdir',
+                workdir=self._db.session_workdir(session_id) or '',
+            )
+        except Exception as exc:  # noqa: BLE001 - retrieval must not fail compaction
+            logger.warning('compaction summary not stored as memory: %s', exc)
         compacted = [
             ModelRequest(
                 parts=[UserPromptPart(content=f'[Earlier conversation, compacted]\n{summary}')]
