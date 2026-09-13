@@ -48,6 +48,37 @@ export interface MemoryEntry {
   created_at: string
 }
 
+export interface RoadmapItem {
+  id: number
+  title: string
+  status: 'open' | 'in_progress' | 'done'
+  body: string
+  updated_at: string
+}
+
+export interface Ticket {
+  id: number
+  title: string
+  status: 'todo' | 'in_progress' | 'done'
+  body: string
+  blocked_by: string | null
+  commit_sha: string | null
+  updated_at: string
+}
+
+export interface DesignDecision {
+  id: number
+  title: string
+  body: string
+  updated_at: string
+}
+
+export interface PlanningData {
+  roadmap: RoadmapItem[]
+  tickets: Ticket[]
+  decisions: DesignDecision[]
+}
+
 export type ApprovalDecision = 'approve' | 'pattern' | 'deny'
 
 export async function call<T = unknown>(path: string, options: RequestInit = {}): Promise<T> {
@@ -136,4 +167,26 @@ export const api = {
     call(`/runs/${runId}/ask`, { method: 'POST', body: JSON.stringify({ answers }) }),
   eventStreamUrl: (runId: string) =>
     `/api/runs/${runId}/events?token=${encodeURIComponent(getToken())}`,
+  getPlanning: (workdir: string): Promise<PlanningData> =>
+    call<PlanningData>(`/planning?workdir=${encodeURIComponent(workdir)}`),
+  setRoadmapStatus: (workdir: string, id: number, status: string): Promise<unknown> =>
+    call(`/planning/roadmap/${id}?workdir=${encodeURIComponent(workdir)}`, {
+      method: 'PUT', body: JSON.stringify({ status }),
+    }),
+  setTicketStatus: (workdir: string, id: number, status: string): Promise<unknown> =>
+    call(`/planning/tickets/${id}?workdir=${encodeURIComponent(workdir)}`, {
+      method: 'PUT', body: JSON.stringify({ status }),
+    }),
+  addRoadmapItem: (workdir: string, title: string): Promise<{ id: number }> =>
+    call(`/planning/roadmap?workdir=${encodeURIComponent(workdir)}`, {
+      method: 'POST', body: JSON.stringify({ title }),
+    }) as Promise<{ id: number }>,
+  addTicket: (workdir: string, title: string): Promise<{ id: number }> =>
+    call(`/planning/tickets?workdir=${encodeURIComponent(workdir)}`, {
+      method: 'POST', body: JSON.stringify({ title }),
+    }) as Promise<{ id: number }>,
+  addDecision: (workdir: string, title: string, body: string): Promise<{ id: number }> =>
+    call(`/planning/decisions?workdir=${encodeURIComponent(workdir)}`, {
+      method: 'POST', body: JSON.stringify({ title, body }),
+    }) as Promise<{ id: number }>,
 }

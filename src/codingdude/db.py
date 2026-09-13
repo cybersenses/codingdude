@@ -69,6 +69,34 @@ CREATE TABLE IF NOT EXISTS projects (
     workdir TEXT NOT NULL UNIQUE,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS roadmap_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workdir TEXT NOT NULL,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'in_progress', 'done')),
+    body TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS tickets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workdir TEXT NOT NULL,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'todo' CHECK (status IN ('todo', 'in_progress', 'done')),
+    body TEXT NOT NULL DEFAULT '',
+    blocked_by TEXT,
+    commit_sha TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS design_decisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workdir TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 

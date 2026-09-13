@@ -507,6 +507,138 @@ def create_app(
     def remove_project(project_id: int, _: None = Depends(authorize)) -> dict:
         return {'deleted': db.delete_project(project_id)}
 
+    # ---- first-class planning data (R4): roadmap, tickets, decisions ----
+
+    def _workdir_or_404(workdir: str) -> str:
+        resolved = str(Path(workdir).resolve())
+        if not Path(resolved).is_dir():
+            raise HTTPException(status_code=404, detail='no such workdir')
+        return resolved
+
+    class RoadmapIn(BaseModel):
+        title: str
+        body: str = ''
+        status: str | None = None  # update only
+
+    @app.get('/planning')
+    def get_planning(workdir: str, _: None = Depends(authorize)) -> dict:
+        from .roadmap import RoadmapStore
+
+        store = RoadmapStore(db)
+        resolved = _workdir_or_404(workdir)
+        return {
+            'roadmap': store.list_roadmap(resolved),
+            'tickets': store.list_tickets(resolved),
+            'decisions': store.list_decisions(resolved),
+        }
+
+    @app.post('/planning/roadmap')
+    def add_roadmap_item(workdir: str, body: RoadmapIn, _: None = Depends(authorize)) -> dict:
+        from .roadmap import RoadmapStore
+
+        item_id = RoadmapStore(db).create_roadmap_item(
+            _workdir_or_404(workdir), body.title, body.body
+        )
+        return {'id': item_id}
+
+    class RoadmapUpdate(BaseModel):
+        status: str
+        body: str | None = None
+
+    @app.put('/planning/roadmap/{item_id}')
+    def change_roadmap_item(item_id: int, workdir: str, body: RoadmapUpdate,
+                            _: None = Depends(authorize)) -> dict:
+        from .roadmap import ROADMAP_STATUSES, RoadmapStore
+
+        if body.status not in ROADMAP_STATUSES:
+            raise HTTPException(status_code=422, detail='bad status')
+        fields: dict = {'status': body.status}
+        if body.body is not None:
+            fields['body'] = body.body
+        changed = RoadmapStore(db).update_roadmap_item(_workdir_or_404(workdir), item_id, **fields)
+        if not changed:
+            raise HTTPException(status_code=404, detail='no such roadmap item')
+        return {'updated': item_id}
+
+    @app.delete('/planning/roadmap/{item_id}')
+    def remove_roadmap_item(item_id: int, workdir: str, _: None = Depends(authorize)) -> dict:
+        from .roadmap import RoadmapStore
+
+        return {'deleted': RoadmapStore(db).delete_roadmap_item(_workdir_or_404(workdir), item_id)}
+
+    class TicketIn(BaseModel):
+        title: str
+        body: str = ''
+        blocked_by: str | None = None
+        status: str | None = None  # update only
+
+    @app.post('/planning/tickets')
+    def add_ticket(workdir: str, body: TicketIn, _: None = Depends(authorize)) -> dict:
+        from .roadmap import RoadmapStore
+
+        ticket_id = RoadmapStore(db).create_ticket(
+            _workdir_or_404(workdir), body.title, body.body, body.blocked_by
+        )
+        return {'id': ticket_id}
+
+    class TicketUpdate(BaseModel):
+        status: str
+        body: str | None = None
+
+    @app.put('/planning/tickets/{ticket_id}')
+    def change_ticket(ticket_id: int, workdir: str, body: TicketUpdate,
+                      _: None = Depends(authorize)) -> dict:
+        from .roadmap import TICKET_STATUSES, RoadmapStore
+
+        if body.status not in TICKET_STATUSES:
+            raise HTTPException(status_code=422, detail='bad status')
+        fields: dict = {'status': body.status}
+        if body.body is not None:
+            fields['body'] = body.body
+        changed = RoadmapStore(db).update_ticket(_workdir_or_404(workdir), ticket_id, **fields)
+        if not changed:
+            raise HTTPException(status_code=404, detail='no such ticket')
+        return {'updated': ticket_id}
+
+    @app.delete('/planning/tickets/{ticket_id}')
+    def remove_ticket(ticket_id: int, workdir: str, _: None = Depends(authorize)) -> dict:
+        from .roadmap import RoadmapStore
+
+        return {'deleted': RoadmapStore(db).delete_ticket(_workdir_or_404(workdir), ticket_id)}
+
+    class DecisionIn(BaseModel):
+        title: str
+        body: str = ''
+
+    @app.post('/planning/decisions')
+    def add_decision(workdir: str, body: DecisionIn, _: None = Depends(authorize)) -> dict:
+        from .roadmap import RoadmapStore
+
+        decision_id = RoadmapStore(db).create_decision(_workdir_or_404(workdir), body.title, body.body)
+        return {'id': decision_id}
+
+    class DecisionUpdate(BaseModel):
+        body: str
+
+    @app.put('/planning/decisions/{decision_id}')
+    def change_decision(decision_id: int, workdir: str, body: DecisionUpdate,
+                        _: None = Depends(authorize)) -> dict:
+        from .roadmap import RoadmapStore
+
+        changed = RoadmapStore(db).update_decision(
+            _workdir_or_404(workdir), decision_id, body=body.body
+        )
+        if not changed:
+            raise HTTPException(status_code=404, detail='no such decision')
+        return {'updated': decision_id}
+
+    @app.delete('/planning/decisions/{decision_id}')
+    def remove_decision(decision_id: int, workdir: str, _: None = Depends(authorize)) -> dict:
+        from .roadmap import RoadmapStore
+
+        return {'deleted': RoadmapStore(db).delete_decision(_workdir_or_404(workdir), decision_id)}
+
+
     @app.post('/sessions/{session_id}/review')
     async def run_review(session_id: str, _: None = Depends(authorize)) -> dict:
         workdir = db.session_workdir(session_id)

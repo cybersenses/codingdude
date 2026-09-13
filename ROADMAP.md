@@ -123,7 +123,18 @@ which summarizes old turns into one message when the history exceeds a threshold
 ---
 
 ## R4 — First-class planning data (roadmap, tickets, designs in the database)
-**Status:** critical · **Area:** product / data model / UI
+**Status:** done · **Area:** product / data model / UI
+
+Shipped: `roadmap_items` / `tickets` / `design_decisions` tables (scoped by project
+workdir, survives bounces), CRUD endpoints under `/planning/*`, an agent toolset
+(`list_planning`, `update_roadmap_item`, `create_ticket`, `update_ticket`,
+`record_decision`), and a Planning tab in the right panel. Closing a ticket
+(agent tool or UI) stamps the current HEAD sha as the closing commit.
+
+---
+
+## Original R4 problem statement (pre-implementation)
+
 
 ### Problem
 Roadmaps, tickets, design decisions, and handoff docs live as **markdown files the agent has

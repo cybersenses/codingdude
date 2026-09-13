@@ -556,13 +556,126 @@ function Terminal({ sessionId }) {
   )
 }
 
-function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
-  const tabs = ['Diff', 'Renders', 'Files', 'Terminal', 'Trace', 'Cost', 'Memory', 'MCP', 'Standards']
+function Planning({ workdir }) {
+  const [data, setData] = useState(null)
+  const [newTitle, setNewTitle] = useState('')
+  const [kind, setKind] = useState('ticket')
+
+  async function refresh() {
+    if (!workdir) return
+    try { setData(await api.getPlanning(workdir)) } catch { /* transient */ }
+  }
+  useEffect(() => { refresh() }, [workdir])
+
+  async function setStatus(fn, id, status) {
+    await fn(workdir, id, status).catch(() => {})
+    refresh()
+  }
+  async function add() {
+    const title = newTitle.trim()
+    if (!title) return
+    const fn = kind === 'ticket' ? api.addTicket
+      : kind === 'roadmap' ? api.addRoadmapItem : api.addDecision
+    await fn(workdir, title, '').catch(() => {})
+    setNewTitle('')
+    refresh()
+  }
+
+  if (!workdir) {
+    return <div className="rounded border border-line bg-surface p-4 text-xs text-ink-muted">Select a project first.</div>
+  }
+  if (!data) {
+    return <div className="text-ink-muted">loading…</div>
+  }
+  const statusColor = (s) => s === 'done' ? 'text-success'
+    : s === 'in_progress' ? 'text-warning' : 'text-ink-muted'
+  return (
+    <div className="space-y-3">
+      <div className="flex gap-1">
+        <select
+          className="rounded border border-neutral-700 bg-neutral-900 px-1 py-0.5 text-[10px] text-ink"
+          value={kind}
+          onChange={(e) => setKind(e.target.value)}
+          aria-label="Planning item type"
+        >
+          <option value="ticket">ticket</option>
+          <option value="roadmap">roadmap</option>
+          <option value="decision">decision</option>
+        </select>
+        <input
+          className="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-900 px-2 py-0.5 text-xs text-ink"
+          placeholder="new title…"
+          value={newTitle}
+          onChange={(e) => setNewTitle(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add() } }}
+        />
+        <button className="rounded bg-brand-700 px-2 py-0.5 text-[10px] text-brand-fg" onClick={add}>add</button>
+      </div>
+
+      <div>
+        <div className="text-[10px] uppercase tracking-wide text-ink-muted">Roadmap</div>
+        {data.roadmap.length === 0 && <div className="text-neutral-600">empty</div>}
+        {data.roadmap.map((r) => (
+          <div key={r.id} className="flex items-center gap-1 rounded bg-neutral-900 p-1">
+            <span className={`min-w-0 flex-1 truncate text-xs ${statusColor(r.status)}`} title={r.body}>
+              #{r.id} {r.title}
+            </span>
+            <select
+              className="rounded border border-neutral-700 bg-neutral-900 px-1 text-[10px] text-ink"
+              value={r.status}
+              onChange={(e) => setStatus(api.setRoadmapStatus, r.id, e.target.value)}
+              aria-label={`Roadmap status for ${r.title}`}
+            >
+              <option value="open">open</option>
+              <option value="in_progress">in progress</option>
+              <option value="done">done</option>
+            </select>
+          </div>
+        ))}
+      </div>
+
+      <div>
+        <div className="text-[10px] uppercase tracking-wide text-ink-muted">Tickets</div>
+        {data.tickets.length === 0 && <div className="text-neutral-600">empty</div>}
+        {data.tickets.map((t) => (
+          <div key={t.id} className="flex items-center gap-1 rounded bg-neutral-900 p-1">
+            <span className={`min-w-0 flex-1 truncate text-xs ${statusColor(t.status)}`} title={t.body}>
+              #{t.id} {t.title}{t.commit_sha && <span className="ml-1 font-mono text-[10px] text-neutral-500">@{t.commit_sha}</span>}
+            </span>
+            <select
+              className="rounded border border-neutral-700 bg-neutral-900 px-1 text-[10px] text-ink"
+              value={t.status}
+              onChange={(e) => setStatus(api.setTicketStatus, t.id, e.target.value)}
+              aria-label={`Ticket status for ${t.title}`}
+            >
+              <option value="todo">todo</option>
+              <option value="in_progress">in progress</option>
+              <option value="done">done</option>
+            </select>
+          </div>
+        ))}
+      </div>
+
+      <div>
+        <div className="text-[10px] uppercase tracking-wide text-ink-muted">Design decisions</div>
+        {data.decisions.length === 0 && <div className="text-neutral-600">empty</div>}
+        {data.decisions.map((d) => (
+          <div key={d.id} className="rounded bg-neutral-900 p-1" title={d.body}>
+            <div className="truncate text-xs text-neutral-300">#{d.id} {d.title}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width, workdir }) {
+  const tabs = ['Diff', 'Planning', 'Renders', 'Files', 'Terminal', 'Trace', 'Cost', 'Memory', 'MCP', 'Standards']
   const [tab, setTab] = useState('Diff')
   const [data, setData] = useState({})
 
   useEffect(() => {
-    if (!sessionId || tab === 'Files' || tab === 'Standards' || tab === 'Terminal') return
+    if (!sessionId || tab === 'Files' || tab === 'Standards' || tab === 'Terminal' || tab === 'Planning') return
     let stop = false
     async function poll() {
       try {
@@ -792,6 +905,8 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width }) {
     )
   } else if (tab === 'Terminal') {
     body = <Terminal sessionId={sessionId} />
+  } else if (tab === 'Planning') {
+    body = <Planning workdir={workdir} />
   } else if (tab === 'MCP' && data.mcp) {
     body = (
       <div className="space-y-1">
@@ -1542,6 +1657,7 @@ export default function App() {
           sessionId={activeSession}
           refreshKey={refreshKey}
           diffBadge={diffBadge}
+          workdir={workdir}
         />
       </div>
       <footer className="flex items-center justify-between border-t border-neutral-800 bg-neutral-950 px-3 py-1 text-[10px] text-neutral-500">
