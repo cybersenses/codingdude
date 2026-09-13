@@ -674,7 +674,8 @@ class Engine:
         emit = traced
         if stream:
             emit({'type': 'RUN_STARTED'})
-        async with agent.iter(prompt, message_history=history or None) as run:
+        async with agent.iter(prompt, message_history=history or None,
+                              usage_limits=usage_limits) as run:
             async for node in run:
                 if agent.is_model_request_node(node):
                     if not stream:
