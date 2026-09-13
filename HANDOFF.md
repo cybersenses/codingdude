@@ -4,11 +4,10 @@ Left mid-session after a large autonomous push. If you're reading this, pick up
 from here.
 
 ## State at handoff
-- HEAD `61c1d05` + a new commit closing **R1 and R2** (see ROADMAP.md statuses).
-  All gates ran green before commit: **192 tests passed, ruff clean, mypy clean
-  (32 files), `npm run build` ok**.
-- Roadmap now: R1 **done**, R2 **done**, R3 **done**, R4 **done**. Backlog
-  section is empty — next work should open new `## R<n>` items.
+- HEAD `ad8b4c7` (pushed): R1–R4 **done**; **R5–R10 opened** from the
+  "ultimate agentic coding tool" gap analysis (see ROADMAP.md). Tickets #1–#6
+  map 1:1 to them; decision #1 prioritizes **R5 (sandboxes), R6 (living
+  artifacts), R7 (replay evals)** as the next wave.
 
 ## What was just shipped
 - **R2 (hang):** real culprit was `es.onerror` in `frontend/src/App.jsx` — it
