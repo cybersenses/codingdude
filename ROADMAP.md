@@ -198,7 +198,7 @@ maintained. If the agent forgets to update them, they go stale (which happened w
 ---
 
 ## R5 — Sandboxed prototype environments (throwaway, previewable, disposable)
-**Status:** open · **Area:** execution / prototyping / collaboration
+**Status:** done (tier 1 `b3ceefd`: worktree+venv lifecycle; tier 2: container tier — `sandbox_create` tier param, docker CLI subprocess, worktree mounted at `/workspace`, preview port mapping, gated promote unchanged) · **Area:** execution / prototyping / collaboration
 
 ### Problem
 The agent runs everything in the user's real working environment. Prototyping

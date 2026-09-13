@@ -61,3 +61,21 @@ R9 plan diffing/cross-machine leases; R10 UI panel + per-step latency.
   `python -m codingdude.restart` only as delivery, not as the task.
 - Workdir-scoped planning data lives via the planning agent tools; keep
   ROADMAP.md statuses in sync when you close items.
+
+## R5 tier 2 shipped (container tier)
+- Docker verified working after WSL default-distro fix (`wsl --set-default
+  Ubuntu`); from the agent's shell the CLI resolves as `docker.exe` (enable
+  Docker Desktop WSL integration for plain `docker` inside Ubuntu — optional).
+- `sandbox_create(name, tier=''|'worktree'|'container')`: default prefers
+  container when `docker_usable()` (CLI + daemon check); explicit
+  `container` errors when Docker is unusable — never a silent fallback.
+  Container `python:3.12-alpine`, name `codingdude-sb-<name>`, worktree
+  mounted at `/workspace`, preview port mapped to container 8000; stale
+  container pre-removed so names are reusable. Exec routes via
+  `docker exec`; teardown removes the container, then tier-1 teardown.
+- Gates: 248 pytest passed, ruff clean, mypy clean (39 files). Ticket #8 closed.
+- Environment notes: agent shell is WSL bash; gates run via `uv.exe run`.
+  WSL `git` normalization briefly swept CRLF→LF across the repo — commit
+  reverted, `core.autocrlf=false` set (repo + global). A `python` shim
+  (symlink to python3 in WindowsApps) fixes `python` inside WSL for the
+  shell capture-hook test.
