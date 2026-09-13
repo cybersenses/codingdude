@@ -197,5 +197,176 @@ maintained. If the agent forgets to update them, they go stale (which happened w
 
 ---
 
+## R5 — Sandboxed prototype environments (throwaway, previewable, disposable)
+**Status:** open · **Area:** execution / prototyping / collaboration
+
+### Problem
+The agent runs everything in the user's real working environment. Prototyping
+boldly — spinning up 2–3 competing approaches with real servers and databases —
+risks clobbering real code. "Prototype with the user" therefore degrades into
+talk plus small patches. There is no way to give the user a URL and say "click
+this prototype".
+
+### Impact
+- Prototypes are conservative and half-real; architecture decisions get made on
+  descriptions instead of clickable artifacts.
+- Competing approaches can't be tried side by side.
+- Failures during prototyping can damage the user's actual workspace.
+
+### Desired behaviour
+- One tool call spins up an isolated environment: ephemeral worktree + container
+  (or venv) + seeded throwaway DB + preview URL surfaced in the session UI.
+- The user can open and interact with each prototype; the agent can render and
+  screenshot it (plugging into R1's vision loop).
+- Environments are disposable: teardown on demand or when the session ends, with
+  nothing written back to the real workdir unless the user promotes it.
+
+### Acceptance (rough)
+- The agent builds two competing variants of a small feature in separate
+  sandboxes; the user clicks both via preview URLs and picks one.
+- Teardown leaves the real workdir byte-identical.
+
+---
+
+## R6 — Living-artifact collaboration channel
+**Status:** open · **Area:** UI / collaboration / specs
+
+### Problem
+Design collaboration happens through flat chat text. Wireframes, state models,
+and specs are prose or static screenshots. The `grilling`/`prototype` skills
+interview well, but the *medium* is a text box — the user can't point at a
+diagram, edit a spec inline, or pick between rendered options.
+
+### Impact
+- Misunderstandings survive until implementation because the user reviews words,
+  not artifacts.
+- "Pick one" decisions (layouts, state shapes, API designs) are clumsy in prose.
+
+### Desired behaviour
+- The agent can emit interactive artifacts to the session UI: editable spec
+  blocks, choice cards with side-by-side previews, simple diagrams/wireframes.
+- User interactions on an artifact (edits, picks, annotations) flow back into the
+  conversation and into planning data (tickets/decisions).
+- Skills (`grilling`, `prototype`, `to-spec`) use this channel as their default
+  medium.
+
+### Acceptance (rough)
+- An ADR or spec written during a session is editable by the user in the UI, and
+  the agent reads the edited version on its next turn.
+- A "choose between two options" decision renders as two cards; the user's pick
+  is recorded as a design decision automatically.
+
+---
+
+## R7 — Session-replay eval harness (regression-test the agent's process)
+**Status:** open · **Area:** quality / self-improvement / evals
+
+### Problem
+`bench.py` exercises the engine with a scripted model. There is no way to record
+a *real* session and replay it as a regression test of the agent's process: did
+it ask before assuming, run the verification gates, update the ticket? Process
+quality currently regresses silently.
+
+### Impact
+- Changes to prompts, skills, or engine behavior can't be validated — we find out
+  by living through the regression.
+- The self-improvement loop has no measurement; "better" is vibes.
+
+### Desired behaviour
+- Record real runs (messages, tool calls, trace events) into a replayable format.
+- Replay through the engine with a scripted/mock model and assert on *process*
+  properties: gates ran before completion claims, questions asked before
+  irreversible steps, planning data updated, verification evidence cited.
+- A curated set of recorded scenarios runs in CI alongside unit tests.
+
+### Acceptance (rough)
+- A deliberately broken skill (e.g. skips verification) fails the replay suite.
+- The current release passes all recorded scenarios.
+
+---
+
+## R8 — Architecture guardrails (linter + contract-first codegen)
+**Status:** open · **Area:** architecture / codegen / tooling
+
+### Problem
+Codegraph tells the agent what *is* connected; nothing tells it when what it's
+*writing* violates the architecture — leaky module seams, duplicated behavior,
+config drift. And there is no mechanism that keeps implementation honest against
+an approved domain model: the agent can drift from its own spec. Recorded design
+decisions are never consulted again.
+
+### Impact
+- Architecture erodes one convenient-but-wrong edit at a time.
+- Specs and code diverge; the divergence is found in review or not at all.
+- ADRs become decoration instead of constraints.
+
+### Desired behaviour
+- An architecture linter the agent runs before finishing: flags seam violations,
+  duplicated behaviors, and boundary leaks using the deep-module vocabulary from
+  `codebase-design`.
+- Contract-first codegen: from an approved domain model, emit typed interfaces +
+  failing tests as the skeleton; implementation fills the contract.
+- ADR enforcement: when a change contradicts a recorded decision, the agent must
+  surface the conflict and get the user to explicitly overturn the ADR before
+  proceeding.
+
+### Acceptance (rough)
+- A PR that reintroduces a known-leaky seam is flagged by the linter.
+- A feature built contract-first compiles against generated interfaces and its
+  generated tests, and any deviation is an explicit, visible contract change.
+
+---
+
+## R9 — Resumable long-horizon work (crash-safe execution claims)
+**Status:** open · **Area:** engine / reliability / planning integration
+
+### Problem
+Wayfinder plans multi-session work, but execution state lives in one agent
+session. Memory survives a bounce; *in-flight edits and progress* don't. A crash
+mid-ticket loses the claim, the partial work, and the verification record.
+
+### Impact
+- Long tasks are fragile; recovery is manual archaeology over git status.
+- Parallel or handed-off work can double-execute.
+
+### Desired behaviour
+- Tickets carry resumable state: claimed-by, plan, step progress, per-step
+  verification evidence, so a fresh session picks up exactly where the last left
+  off.
+- Work claims are crash-safe: stale claims are detected and reclaimable.
+- The agent's first move on a claimed ticket is "read the resume state", not
+  "re-derive everything from git".
+
+### Acceptance (rough)
+- Kill the agent mid-ticket; a new session resumes it with no duplicated work and
+  evidence for each completed step.
+
+---
+
+## R10 — Cost and latency telemetry per task
+**Status:** open · **Area:** observability / engine / UI
+
+### Problem
+Neither the agent nor the user knows what a task cost (tokens, wall time, per
+step) until the provider bill. Tradeoffs like "verify deeply" vs "fast draft"
+are made blind.
+
+### Impact
+- No basis for cost-aware decisions; runaway runs go unnoticed.
+- The user can't see where time/money goes (compaction? vision? sub-agents?).
+
+### Desired behaviour
+- Per-run and per-step token/cost/latency accounting, persisted with the session
+  (R3 already snapshots context tokens — extend, don't duplicate).
+- A UI panel showing cost per run/step; trace events carry the numbers.
+- The agent can query its own budget mid-run and adapt (e.g. skip optional
+  re-verification when over budget).
+
+### Acceptance (rough)
+- After a run, the UI shows tokens/cost/duration per step and total, within a
+  small margin of the provider-reported usage.
+
+---
+
 ## Backlog (unscoped)
 _Open a new `## R<n>` section per item as it is identified._
