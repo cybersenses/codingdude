@@ -6,6 +6,7 @@ and instructions(). The PluginContext and build_all() interface stay the same.
 """
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -103,8 +104,12 @@ async def build_all(ctx: PluginContext) -> list[AbstractToolset]:
         # Pre-flight: a flaky MCP spawn must degrade to "no MCP this run",
         # not kill the run mid-flight (agent can't fix itself otherwise).
         toolsets.extend(await verify_mcp_toolsets(names, mcp_toolsets))
-    except Exception:
-        pass
+    except Exception as exc:
+        # MCP is optional: config/spawn problems degrade the run, they never
+        # kill it — but they are never silent (self-review M7).
+        logging.getLogger(__name__).warning(
+            'MCP toolsets unavailable this run: %s', exc,
+        )
 
     if ctx.embedder is not None:
         toolsets.append(build_semantic_toolset(

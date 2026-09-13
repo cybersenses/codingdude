@@ -16,6 +16,35 @@ So every finding below is a *logic/design* issue, not a lint or type error.
 
 Severity legend:
 
+## Status addendum — reconciled against HEAD (`90b882d` + this session)
+
+The vast majority of this review has since been fixed and verified in code
+(this session, commit pending). Verified fixed:
+
+- **C1** — `_resolve_gate()` and the engine both persist via `policy.pattern_for()` now (`tools.py:219`, `engine.py:195`).
+- **H1** — shell/git/coverage/ask_user toolsets are attached only when `approvals is not None` (`plugins/__init__.py`).
+- **H2** — worker forwards `fix_loop` (`worker.py:263`).
+- **H3** — `run_coverage` builds an argv list and rejects absolute/`..` sources (`tools.py:419`).
+- **H4** — `load_project_config` accepts top-level string and both table shapes (`config.py:168`).
+- **H5** — worker resolves `config.models.vision` and passes `vision_model` (`worker.py:130`).
+- **H6** — usage recorded for compaction, extraction, claims retry via `_record_model_usage` (`engine.py`).
+- **H7** — all runs drive `agent.iter` with incremental `persist` on every CallToolsNode (`engine.py:693`, `:728`).
+- **H8** — `deadcode._iter_source_files` containment check raises `ModelRetry` on escape.
+- **H9** — string model overrides resolved (`engine.py:309`).
+- **M11 (partial)** — knip/ci/audit/repo_map toolsets now attached. `refactor` and `worktree` toolsets remain deliberately orphaned pending a gating decision (known open item).
+- **M12, M13** — frontend revert index and duplicate skill handlers fixed.
+- **M14** — `.ts`/`.tsx` parse via the TypeScript grammar (`jslang.py`).
+- **L13 (MCP temp file)** — stable sha256-digest temp name.
+
+Fixed this session:
+
+- **M7 (residual)** — the MCP setup `try/except` in `plugins/__init__.py` swallowed *all* failures silently (`except Exception: pass`). Now logs a warning; runs still degrade instead of dying.
+- **New: Windows process-list parsing** — `restart._ps_processes` crashed with `JSONDecodeError` when any process on the host had a control character in its command line; now `json.loads(out, strict=False)` + regression via the existing restart tests.
+
+Still open (tracked, not forgotten): **M11 remainder** (gate or attach `refactor`/`worktree` toolsets), **L1** (`Engine.run()` decomposition), **M6** (migration ladder), **M3/M4/M5** (hardening), frontend **L11/L13** polish items, and the harness-blocked **R1 vision half**.
+
+---
+
 - **Critical** — approval/security bypass, path escape, or cross-project leak.
 - **High** — broken feature, wrong result, or latent correctness/safety bug in a shipped path.
 - **Medium** — real bug or fragility with narrower impact.

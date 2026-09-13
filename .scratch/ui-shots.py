@@ -1,5 +1,6 @@
 """Screenshot the running CodingDude UI in both themes (pixel gate helper)."""
 import pathlib
+
 from playwright.sync_api import sync_playwright
 
 OUT = pathlib.Path('.scratch')

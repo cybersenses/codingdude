@@ -1,6 +1,7 @@
 """Render the rebuilt ApprovalCard + ToolTimeline with the real built CSS."""
 import glob
 import pathlib
+
 from playwright.sync_api import sync_playwright
 
 css = sorted(glob.glob('frontend/dist/assets/index-*.css'))[-1]

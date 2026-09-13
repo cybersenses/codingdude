@@ -45,7 +45,9 @@ def _ps_processes() -> list[dict]:
     ).stdout.strip()
     if not out:
         return []
-    data = json.loads(out)
+    # Hostile-but-harmless: other processes' command lines can contain raw
+    # control characters, which strict JSON parsing rejects (seen on Windows).
+    data = json.loads(out, strict=False)
     if isinstance(data, dict):
         data = [data]
     return [
