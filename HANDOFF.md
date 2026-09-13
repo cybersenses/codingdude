@@ -1,13 +1,22 @@
 # Handoff note — to the next agent on duty
 
-Left mid-session after a large autonomous push. If you're reading this, pick up
-from here.
+Left after planning R5–R11 end-to-end. If you're reading this, pick up from here.
 
 ## State at handoff
-- HEAD `ad8b4c7` (pushed): R1–R4 **done**; **R5–R10 opened** from the
-  "ultimate agentic coding tool" gap analysis (see ROADMAP.md). Tickets #1–#6
-  map 1:1 to them; decision #1 prioritizes **R5 (sandboxes), R6 (living
-  artifacts), R7 (replay evals)** as the next wave.
+- HEAD `70068e8` (pushed): R1–R4 **done**; R5–R11 **planned, not started**.
+- `docs/PLANS-R5-R11.md` = the ratified plan per item (designs, tracer-bullet
+  cuts, explicitly-not-building list). Design decisions #2–#3 record the
+  postures; tickets #1–#7 each carry their plan summary in the body.
+- **Execution order (ratified):** R7-thin → R5-tracer → R11-tracer →
+  R6-tracer → R9 → R8 → R10 — one thin vertical slice per item per session;
+  thickening passes get new tickets once each tracer bullet closes.
+- User is installing Docker Desktop and adding the Docker MCP server (for
+  ad-hoc use only — R5's lifecycle is native `sandbox.py`, not MCP-driven).
+
+## Next action
+Start R7-thin (ticket #3): export sessions+trace events → `tests/scenarios/*.json`,
+replay via the `bench.py` scripted-model infra, 3–4 process-property scenarios,
+local gate only.
 
 ## What was just shipped
 - **R2 (hang):** real culprit was `es.onerror` in `frontend/src/App.jsx` — it
