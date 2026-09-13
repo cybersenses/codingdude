@@ -14,6 +14,35 @@ DEFAULT_MODEL_LIMIT = 128_000
 DEFAULT_COMPACT_AT = 0.80
 CHARS_PER_TOKEN = 4
 
+# Known context windows (tokens) by provider:model substring, most specific
+# first. Anything unmatched falls back to DEFAULT_MODEL_LIMIT.
+_MODEL_LIMITS: tuple[tuple[str, int], ...] = (
+    ('glm-5', 200_000),
+    ('glm-4.5', 128_000),
+    ('glm', 128_000),
+    ('deepseek', 128_000),
+    ('claude', 200_000),
+    ('gpt-4o', 128_000),
+    ('gpt-5', 400_000),
+    ('gemini-2', 1_000_000),
+    ('gemini', 128_000),
+)
+
+
+def model_limit_for(name: str, override: int | None = None) -> int:
+    """Context window (tokens) for a `provider:model` name.
+
+    An explicit `models.context_limit` config override always wins; otherwise
+    the known-limits table applies; otherwise the default.
+    """
+    if override:
+        return override
+    lower = name.lower()
+    for needle, limit in _MODEL_LIMITS:
+        if needle in lower:
+            return limit
+    return DEFAULT_MODEL_LIMIT
+
 
 @dataclass(frozen=True)
 class ContextStats:

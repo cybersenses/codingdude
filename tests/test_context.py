@@ -1,5 +1,5 @@
 """Tests for the ContextManager (token estimation, limits, importance)."""
-from codingdude.context import ContextManager
+from codingdude.context import ContextManager, model_limit_for
 
 
 class FakePart:
@@ -44,3 +44,13 @@ def test_needs_compaction():
     large = [FakeMessage(FakePart("x" * 1000))]
     assert not cm.usage(small).needs_compaction
     assert cm.usage(large).needs_compaction
+
+
+def test_model_limit_for():
+    # Known provider names resolve from the table.
+    assert model_limit_for("deepseek:deepseek-v4-pro") == 128_000
+    assert model_limit_for("zai:glm-5.3") == 200_000
+    # Unknown names fall back to the default.
+    assert model_limit_for("openai:gpt-99") == 128_000
+    # An explicit config override always wins.
+    assert model_limit_for("zai:glm-5.3", override=64_000) == 64_000

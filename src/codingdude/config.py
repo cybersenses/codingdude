@@ -45,6 +45,10 @@ class ModelLineup:
     # Max response tokens (None = provider default). Increase if the model
     # hits the provider token limit before finishing its response.
     max_tokens: int | None = None
+    # Context window (tokens) override for the main model. None = inferred
+    # from the model name (see context.model_limit_for). Drives compaction
+    # timing and the UI context meter.
+    context_limit: int | None = None
 
 
 THINKING_LEVELS = ('minimal', 'low', 'medium', 'high', 'xhigh')
@@ -134,6 +138,7 @@ def load_config(home: Path | None = None) -> Config:
             vision=models.get('vision', defaults.models.vision),
             thinking=models.get('thinking', defaults.models.thinking),
             max_tokens=models.get('max_tokens', defaults.models.max_tokens),
+            context_limit=models.get('context_limit', defaults.models.context_limit),
         ),
         shell=ShellConfig(default=shell.get('default', defaults.shell.default)),
         providers=ProviderKeys(

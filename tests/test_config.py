@@ -51,3 +51,20 @@ def test_thinking_level_round_trip(home):
     config = load_config()
     assert config.models.thinking == 'low'
     assert config.models.main == 'deepseek:deepseek-flash'
+
+
+def test_context_limit_round_trip(home):
+    home.mkdir(parents=True)
+    (home / 'config.toml').write_text(
+        '[models]\nmain = "deepseek:deepseek-flash"\n'
+        'subagent = "deepseek:deepseek-flash"\nfallback = "zai:glm-5.3-flash"\n'
+        'context_limit = 64000\n'
+    )
+    assert load_config().models.context_limit == 64000
+    # Absent key -> None (limit inferred from the model name instead).
+    home.mkdir(exist_ok=True)
+    (home / 'config.toml').write_text(
+        '[models]\nmain = "deepseek:deepseek-flash"\n'
+        'subagent = "deepseek:deepseek-flash"\nfallback = "zai:glm-5.3-flash"\n'
+    )
+    assert load_config().models.context_limit is None
