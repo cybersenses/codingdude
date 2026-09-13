@@ -111,7 +111,9 @@ def load_merged_mcp_toolsets(home: Path, workdir: Path) -> list:
     """Toolsets for every enabled MCP server; empty list when none configured.
 
     The merged config is written to a temp file for pydantic-ai's loader,
-    which speaks the same mcpServers JSON shape.
+    which speaks the same mcpServers JSON shape. Spawn happens lazily at
+    agent enter time, so a broken server would otherwise kill the run
+    mid-flight — see `verify_mcp_toolsets`.
     """
     config = merged_mcp_config(home, workdir)
     enabled_servers = {
@@ -126,3 +128,60 @@ def load_merged_mcp_toolsets(home: Path, workdir: Path) -> list:
     tmp = Path(tempfile.gettempdir()) / f'codingdude-mcp-{digest}.json'
     tmp.write_text(json.dumps(merged), encoding='utf-8')
     return mcp.load_mcp_toolsets(tmp)
+
+
+def _find_list_tools(obj, depth: int = 0):
+    """The inner toolset that speaks `list_tools` (PrefixedToolset wraps it)."""
+    if hasattr(obj, 'list_tools'):
+        return obj
+    if depth > 6:
+        return None
+    for value in getattr(obj, '__dict__', {}).values():
+        found = _find_list_tools(value, depth + 1)
+        if found is not None:
+            return found
+    return None
+
+
+async def verify_mcp_toolsets(names: list[str], toolsets: list, attempts: int = 2) -> list:
+    """Pre-flight every MCP server: connect, list tools, retry once.
+
+    A server that can't initialize is dropped for this run with a warning
+    instead of raising mid-run — before this, one flaky codegraph spawn
+    killed the whole run before the agent could do anything about it.
+    """
+    import logging
+
+    healthy: list = []
+    for name, toolset in zip(names, toolsets, strict=False):
+        inner = _find_list_tools(toolset)
+        ok = False
+        last_exc: Exception | None = None
+        for _attempt in range(max(1, attempts)):
+            try:
+                if inner is None:
+                    ok = True  # nothing to verify; keep it
+                    break
+                async with inner:
+                    await inner.list_tools()
+                ok = True
+                break
+            except Exception as exc:  # noqa: BLE001 — spawn failures are expected flakiness
+                last_exc = exc
+        if ok:
+            healthy.append(toolset)
+        else:
+            logging.getLogger(__name__).warning(
+                'MCP server %s failed to initialize (%s); disabled for this run',
+                name, last_exc,
+            )
+    return healthy
+
+
+def merged_mcp_server_names(home: Path, workdir: Path) -> list[str]:
+    """Enabled server names in the same order load_merged_mcp_toolsets yields."""
+    config = merged_mcp_config(home, workdir)
+    return [
+        name for name in config['mcpServers']
+        if name not in config['disabled']
+    ]

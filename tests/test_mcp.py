@@ -125,3 +125,39 @@ def test_ensure_default_mcp_skips_when_binary_missing(home, monkeypatch):
     monkeypatch.setattr('codingdude.mcp_config.shutil.which', lambda name: None)
     ensure_default_mcp(home)
     assert merged_mcp_config(home, home)['mcpServers'] == {}
+
+
+def test_verify_drops_broken_server_keeps_healthy(home, tmp_path, monkeypatch):
+    """A flaky MCP spawn must be dropped for the run, never raise."""
+    import asyncio
+
+    from codingdude.mcp_config import (
+        load_merged_mcp_toolsets,
+        merged_mcp_server_names,
+        verify_mcp_toolsets,
+    )
+
+    # codegraph (healthy) + a guaranteed-broken binary.
+    home.mkdir(parents=True, exist_ok=True)
+    (home / 'mcp.json').write_text(
+        json.dumps({
+            'mcpServers': {
+                'codegraph': {
+                    'type': 'stdio',
+                    'command': 'cmd',
+                    'args': ['/c', r'C:\Users\norma\AppData\Local\codegraph\current\bin\codegraph.CMD', 'serve', '--mcp'],
+                },
+                'broken': {
+                    'type': 'stdio',
+                    'command': str(tmp_path / 'definitely-missing.exe'),
+                    'args': [],
+                },
+            },
+            'disabled': [],
+        }),
+        encoding='utf-8',
+    )
+    names = merged_mcp_server_names(home, tmp_path)
+    toolsets = load_merged_mcp_toolsets(home, tmp_path)
+    healthy = asyncio.run(verify_mcp_toolsets(names, toolsets, attempts=1))
+    assert len(healthy) == 1  # broken dropped, codegraph kept

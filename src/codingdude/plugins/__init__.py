@@ -18,7 +18,11 @@ from codingdude.ast_tools import build_ast_toolset
 from codingdude.config import Config, ThinkingSetting
 from codingdude.db import Database
 from codingdude.deadcode import build_deadcode_toolset
-from codingdude.mcp_config import load_merged_mcp_toolsets
+from codingdude.mcp_config import (
+    load_merged_mcp_toolsets,
+    merged_mcp_server_names,
+    verify_mcp_toolsets,
+)
 from codingdude.memory import MemoryStore, build_memory_toolset
 from codingdude.planning import build_planning_toolset
 from codingdude.repo_map import build_repo_map_toolset
@@ -60,7 +64,7 @@ class PluginContext:
     emitter: Callable | None = None
 
 
-def build_all(ctx: PluginContext) -> list[AbstractToolset]:
+async def build_all(ctx: PluginContext) -> list[AbstractToolset]:
     """Build every toolset for the current run."""
     toolsets: list[AbstractToolset] = [
         build_toolset(
@@ -94,7 +98,11 @@ def build_all(ctx: PluginContext) -> list[AbstractToolset]:
     toolsets.append(build_audit_toolset(ctx.workdir))
 
     try:
-        toolsets.extend(load_merged_mcp_toolsets(ctx.home, ctx.workdir))
+        names = merged_mcp_server_names(ctx.home, ctx.workdir)
+        mcp_toolsets = load_merged_mcp_toolsets(ctx.home, ctx.workdir)
+        # Pre-flight: a flaky MCP spawn must degrade to "no MCP this run",
+        # not kill the run mid-flight (agent can't fix itself otherwise).
+        toolsets.extend(await verify_mcp_toolsets(names, mcp_toolsets))
     except Exception:
         pass
 

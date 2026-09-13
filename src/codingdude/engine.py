@@ -385,7 +385,7 @@ class Engine:
                 capture=capture_for_checkpoints,
                 emitter=traced,
             )
-            toolsets = build_all(plugin_ctx)
+            toolsets = await build_all(plugin_ctx)
 
             from .memory import MemoryStore
             from .skills import SkillRegistry
