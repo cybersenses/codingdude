@@ -3,6 +3,33 @@ import ReactMarkdown from 'react-markdown'
 import CodeEditor from './CodeEditor.jsx'
 import { api, authLocal, call, checkAuth, login } from './api'
 
+// R6: render-only mermaid diagrams inside spec blocks. Renders each
+// ```mermaid fence to SVG; on failure the raw fence stays visible.
+function Mermaid({ code }) {
+  const ref = useRef(null)
+  const [error, setError] = useState(null)
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const mermaid = (await import('mermaid')).default
+        mermaid.initialize({ startOnLoad: false, theme: 'dark' })
+        const { svg } = await mermaid.render(`mmd-${Math.random().toString(36).slice(2)}`, code)
+        if (!cancelled && ref.current) {
+          ref.current.innerHTML = svg
+          setError(null)
+        }
+      } catch (e) {
+        if (!cancelled) setError(String(e?.message || e))
+      }
+    })()
+    return () => { cancelled = true }
+  }, [code])
+  return error
+    ? <div className="text-[9px] text-red-400">mermaid render failed: {error}</div>
+    : <div ref={ref} className="mermaid-svg overflow-auto [&_svg]:max-w-full" />
+}
+
 // Injected at build time by vite.config.js — makes the running build visible
 // so a stale bundle (or a server that hasn't restarted) is obvious on screen.
 const UI_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'dev'
@@ -636,7 +663,14 @@ function Artifacts({ sessionId }) {
           ) : (
             <div>
               {a.payload.markdown.includes('```mermaid') && (
-                <div className="mb-1 text-[9px] text-neutral-500">mermaid render-only (tracer)</div>
+                <div className="mb-1">
+                  {a.payload.markdown
+                    .split(/```mermaid\n?/)
+                    .slice(1)
+                    .map((chunk, i) => (
+                      <Mermaid key={i} code={chunk.split('```')[0]} />
+                    ))}
+                </div>
               )}
               <textarea
                 className="h-28 w-full rounded bg-neutral-950 p-1 font-mono text-[10px] text-neutral-300"
@@ -1074,6 +1108,17 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width, workdir }
               <div key={m.model} className="flex justify-between font-mono text-[10px] text-ink-muted">
                 <span className="truncate">{m.model}</span>
                 <span className="ml-2 shrink-0">{m.requests} req · {m.input_tokens}/{m.output_tokens} tok · ${(m.cost_usd ?? 0).toFixed(4)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {(u.by_request || []).length > 0 && (
+          <div className="mt-2">
+            <div className="text-[10px] font-semibold uppercase text-ink-muted">per request</div>
+            {(u.by_request || []).map((r, i) => (
+              <div key={i} className="flex justify-between font-mono text-[10px] text-ink-muted">
+                <span className="truncate">{i + 1}. {r.model}</span>
+                <span className="ml-2 shrink-0">{r.requests} req · {r.input_tokens}/{r.output_tokens} tok · ${(r.cost_usd ?? 0).toFixed(4)}</span>
               </div>
             ))}
           </div>

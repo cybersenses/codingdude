@@ -1,31 +1,41 @@
 # Handoff note — to the next agent on duty
 
-Left after planning R5–R11 end-to-end. If you're reading this, pick up from here.
+Left with the **entire R1–R11 roadmap closed**: every item has a shipped tracer
+and (R5–R10) a thickening pass. Backlog is empty — next session brainstorms the
+next wave.
 
 ## State at handoff
-- HEAD (this commit): R1–R4 done; **all six Docker-free tracers shipped**:
-  R7-thin (#3), R5 tier-1 (#1), R11 (#7 `references`), R6 (#2 `artifacts`),
-  R9 (#5 `execution` — ticket_execution attempt lineage, stale-aware claims,
-  per-step evidence, resume-state tools), R8 (#4 `archlint` — seam-leak +
-  duplicate-body linter, fix-or-waive via design decisions), R10 (#6
-  `telemetry` — models.pricing config, RUN_USAGE event). 244 tests, ruff,
-  mypy (39 files) green. Thickening (real-session recording, curated scenarios, CI)
-  still open on R7. Next: **R11-tracer** (ticket #7) — reference/ folder + section index +
-  search_references/read_reference tools + pin-staleness warning.
-- `docs/PLANS-R5-R11.md` = the ratified plan per item (designs, tracer-bullet
-  cuts, explicitly-not-building list). Design decisions #2–#3 record the
-  postures; tickets #1–#7 each carry their plan summary in the body.
-- **Execution order (ratified):** R7-thin → R5-tracer → R11-tracer →
-  R6-tracer → R9 → R8 → R10 — one thin vertical slice per item per session;
-  thickening passes get new tickets once each tracer bullet closes.
-- User is installing Docker Desktop and adding the Docker MCP server (for
-  ad-hoc use only — R5's lifecycle is native `sandbox.py`, not MCP-driven).
+- HEAD (this commit): R1–R11 all done. 261 pytest, ruff, mypy (39 files),
+  npm build green. All pushed.
+- **Deliberately deferred as information-thin (not debt):**
+  R7 curated eval scenario *library* (content, not mechanism);
+  R8 contract-first codegen (needs a codegen design).
+- **Standing deliberately-open verification gaps (do not "fix" by surprise):**
+  no live end-to-end check of SSE reattach or the vision pixel gate with a
+  real model (unit-tested with TestModel only); renders live in the workdir,
+  not the DB; user has not reported memory/compaction issues since the
+  `request_limit` change.
+- Environment notes: WSL git has no credential helper — push via
+  `timeout 90 git.exe -C "G:\\pydantic" push`. Use `docker.exe` from WSL
+  (no plain `docker` on Ubuntu PATH). Gates via
+  `/mnt/c/Users/norma/.local/bin/uv.exe run`.
+
+## Recently shipped (thickening wave, `9d922da` + this commit)
+- R6: artifacts SSE push (`ArtifactStore.watch`, EventSource + poll
+  fallback); mermaid fences in spec blocks render to SVG client-side.
+- R7: `codingdude eval --record SESSION_ID` + `--scenarios DIR` CI runner.
+- R8: `missing-contract` rule, stale-waiver retirement, new
+  `adr-contradiction` rule (decision references a module that no longer
+  exists → flagged for revisit/retirement; waiverable).
+- R9: `ExecutionStore.drift()` (done-without-evidence, out-of-order steps)
+  surfaced in `get_resume_state`.
+- R10: `session_usage` → `by_model` + `by_request` breakdowns; Cost tab
+  renders both.
+- R5: container tier (tier param on `sandbox_create`, docker CLI subprocess).
 
 ## Next action
-Docker-free tracer queue EXHAUSTED. Only remaining roadmap work needs Docker
-Desktop: R5 tier 2 (container tier). Deliberately-open thickeners: R6 SSE
-push/worker-interrupt; R8 contract-first codegen + ADR-contradiction checks;
-R9 plan diffing/cross-machine leases; R10 UI panel + per-step latency.
+Roadmap closed. Brainstorm the next feature wave with the user and open new
+`## R<n>` roadmap items.
 
 ## What was just shipped
 - **R2 (hang):** real culprit was `es.onerror` in `frontend/src/App.jsx` — it

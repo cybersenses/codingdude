@@ -236,3 +236,40 @@ async def test_wired_into_build_all(tmp_path, monkeypatch):
     toolsets = await build_all(ctx)
     names = {t.name for ts in toolsets for t in getattr(ts, 'tools', {}).values()}
     assert {'arch_lint', 'waive_finding'} <= names
+
+
+def test_adr_contradiction_flags_decision_about_missing_module(workdir, db):
+    """R8 thickener: a recorded decision referencing a module that no longer
+    exists in the workdir may be contradicted by the code — flagged
+    advisory-style so the decision gets revisited or retired."""
+    write(workdir, 'pkg/live.py', 'def ok():\n    return 1\n')
+    store = RoadmapStore(db)
+    store.create_decision(
+        str(workdir),
+        'Keep retries in pkg/gone.py',
+        'All retry logic lives in  / pkg/gone.py.',
+    )
+    lint = ArchLint(db=db, workdir=str(workdir))
+    findings = [f for f in lint.check(workdir) if f['rule'] == 'adr-contradiction']
+    assert len(findings) == 1
+    assert 'pkg/gone.py' in findings[0]['message']
+    assert findings[0]['fingerprint']
+    # and no false positive for a decision about a module that exists
+    store.create_decision(
+        str(workdir),
+        'Keep retries in pkg/live.py',
+        'Retry logic lives in pkg/live.py.',
+    )
+    findings = [f for f in lint.check(workdir) if f['rule'] == 'adr-contradiction']
+    assert len(findings) == 1
+
+
+def test_adr_contradiction_is_waivable(workdir, db):
+    write(workdir, 'pkg/a.py', 'x = 1\n')
+    store = RoadmapStore(db)
+    store.create_decision(str(workdir), 'x', 'see pkg/missing.py')
+    lint = ArchLint(db=db, workdir=str(workdir))
+    (f,) = [f for f in lint.check(workdir) if f['rule'] == 'adr-contradiction']
+    lint.waive(f['fingerprint'], 'module intentionally removed')
+    waived = [f for f in lint.check(workdir) if f['rule'] == 'adr-contradiction']
+    assert waived and waived[0].get('waived') is True

@@ -7,6 +7,7 @@ decision (workdir-scoped) so overturning architecture is always visible.
 import ast
 import hashlib
 import json
+import re
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,6 +45,7 @@ class ArchLint:
         findings += self._private_access(workdir)
         findings += self._duplicate_bodies(workdir)
         findings += self._missing_contract(workdir)
+        findings += self._adr_contradiction(workdir)
         waivers = self._waivers(workdir)
         for f in findings:
             if f['fingerprint'] in waivers:
@@ -173,6 +175,39 @@ class ArchLint:
                 })
         return findings
 
+    def _adr_contradiction(self, workdir: Path) -> list[dict]:
+        """A recorded design decision that references a module (``pkg/mod.py``
+        or ``pkg.mod``) which no longer exists may be contradicted by the
+        code — flagged so the decision is revisited or retired."""
+        if self.db is None:
+            return []
+        src_root = workdir / 'src'
+        search_roots = [src_root] if src_root.is_dir() else [workdir]
+        findings: list[dict] = []
+        for decision in RoadmapStore(self.db).list_decisions(str(workdir)):
+            if decision['title'].startswith(WAIVER_PREFIX + ' '):
+                continue  # waivers already have stale-waiver hygiene
+            text = f"{decision['title']} {decision.get('body') or ''}"
+            missing = sorted({
+                ref
+                for ref in _referenced_modules(text)
+                if not any((root / ref).exists() for root in search_roots)
+                and not any((root / ref.replace('.', '/')).with_suffix('.py').exists()
+                            for root in search_roots)
+            })
+            if missing:
+                findings.append({
+                    'rule': 'adr-contradiction',
+                    'fingerprint': _fp('adr-contradiction', decision['id'], missing[0]),
+                    'message': (
+                        f"decision #{decision['id']} '{decision['title']}' references "
+                        f"{missing[0]} which no longer exists — the code may have "
+                        f"moved on; revisit or retire the decision"
+                    ),
+                    'locations': [f"decision #{decision['id']}: {ref}" for ref in missing],
+                })
+        return findings
+
     def _stale_waivers(self, workdir: Path) -> set[str]:
         """Waivers whose finding no longer fires — the fix shipped, so the
         recorded decision should be retired (ADR hygiene)."""
@@ -230,6 +265,18 @@ def _body_key(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
     _Canonicalize().visit(copy)
     norm = ast.dump(ast.Module(body=[copy], type_ignores=[]), include_attributes=False)
     return hashlib.sha256(norm.encode()).hexdigest()[:12]
+
+
+def _referenced_modules(text: str) -> set[str]:
+    """Module paths/dotted names a decision text refers to: `pkg/mod.py`,
+    `pkg/mod`, ``pkg.mod`` (only multi-part dotted names count)."""
+    refs: set[str] = set()
+    for m in re.finditer(r'[\w./]+\.py\b', text):
+        refs.add(m.group(0))
+    for m in re.finditer(r'\b(?:\w+\.)+\w+\b', text):
+        if not m.group(0).endswith('.py'):
+            refs.add(m.group(0))
+    return refs
 
 
 def _fp(rule: str, *parts: object) -> str:

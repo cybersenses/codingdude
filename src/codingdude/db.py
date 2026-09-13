@@ -367,4 +367,14 @@ class Database:
                 (session_id,),
             ).fetchall()
         ]
+        # one row per recorded request batch (a run or an auxiliary call),
+        # chronological — the Cost tab's per-step view
+        usage['by_request'] = [
+            dict(r)
+            for r in self._conn.execute(
+                'SELECT model, requests, input_tokens, output_tokens, cost_usd, created_at'
+                ' FROM usage WHERE session_id = ? ORDER BY id',
+                (session_id,),
+            ).fetchall()
+        ]
         return usage

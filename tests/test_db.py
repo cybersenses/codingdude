@@ -56,6 +56,20 @@ def test_session_usage_includes_per_model_breakdown(home, workdir):
     assert by_model['m2']['output_tokens'] == 2
 
 
+def test_session_usage_includes_per_request_breakdown(home, workdir):
+    """R10 thickener: per-request rows (one per run/aux call) in chronological
+    order, so the Cost tab can show where in the session spend happened."""
+    db = Database.connect(home)
+    session_id = db.create_session(workdir)
+    db.record_usage(session_id, model='m1', requests=3, input_tokens=10, output_tokens=5, cost_usd=0.01)
+    db.record_usage(session_id, model='m2', requests=1, input_tokens=1, output_tokens=2, cost_usd=0.02)
+    by_request = db.session_usage(session_id)['by_request']
+    assert [r['model'] for r in by_request] == ['m1', 'm2']
+    assert by_request[0]['requests'] == 3
+    assert by_request[1]['cost_usd'] == pytest.approx(0.02)
+    assert all('created_at' in r for r in by_request)
+
+
 def test_context_snapshot_roundtrip_and_migration(home, workdir):
     db = Database.connect(home)
     session_id = db.create_session(workdir)
