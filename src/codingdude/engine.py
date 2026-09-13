@@ -110,7 +110,7 @@ class Engine:
         self,
         config: Config,
         db: Database,
-        compaction_threshold: int | None = None,
+        compaction_threshold: int | None = 80_000,
         extraction_model: Model | None = None,
         budget_cap_usd: float | None = None,
         embedder=None,
@@ -442,7 +442,7 @@ class Engine:
 
             from pydantic_ai.settings import ModelSettings
 
-            model_settings: ModelSettings = ModelSettings(timeout=300, max_tokens=16384)
+            model_settings: ModelSettings = ModelSettings(timeout=300, max_tokens=65536)
             if self._config.models.max_tokens:
                 model_settings['max_tokens'] = self._config.models.max_tokens
             if thinking is not None and _supports_thinking(resolved):
