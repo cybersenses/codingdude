@@ -3,12 +3,12 @@
 Left after planning R5–R11 end-to-end. If you're reading this, pick up from here.
 
 ## State at handoff
-- HEAD `78ed9a4` (pushed): R1–R4 **done**; **R7-thin tracer DONE** (ticket #3
-  closed): `codingdude.evals` (export/replay/checks/run_scenarios) +
-  `tests/scenarios/*.json` incl. deliberately-failing broken-skill. 200 tests,
-  ruff, mypy green. Thickening (real-session recording, curated scenarios, CI)
-  still open on R7. Next: **R5-tracer** (ticket #1) — worktree+venv tier 1,
-  no Docker needed.
+- HEAD `b3ceefd`: R1–R4 done; **R7-thin tracer DONE** (#3), **R5 tracer DONE**
+  (#1): `codingdude.sandbox` tier-1 worktree+venv sandbox —
+  sandbox_create/exec/teardown/promote, gated promote, teardown byte-identical
+  guarantee, wired into `plugins.build_all`. 207 tests, ruff, mypy green. Thickening (real-session recording, curated scenarios, CI)
+  still open on R7. Next: **R11-tracer** (ticket #7) — reference/ folder + section index +
+  search_references/read_reference tools + pin-staleness warning.
 - `docs/PLANS-R5-R11.md` = the ratified plan per item (designs, tracer-bullet
   cuts, explicitly-not-building list). Design decisions #2–#3 record the
   postures; tickets #1–#7 each carry their plan summary in the body.
@@ -19,8 +19,9 @@ Left after planning R5–R11 end-to-end. If you're reading this, pick up from he
   ad-hoc use only — R5's lifecycle is native `sandbox.py`, not MCP-driven).
 
 ## Next action
-Start R5-tracer (ticket #1): `sandbox.py` tier 1 — git worktree + ephemeral venv,
-create/exec/teardown tools, byte-identical teardown guarantee.
+Start R11-tracer (ticket #7): `reference/` folder + section-level index in the
+workdir-scoped SQLite + search_references/read_reference tools + pin-vs-version
+staleness warning. Spec first, then TDD (same flow as R7/R5 tracers).
 
 ## What was just shipped
 - **R2 (hang):** real culprit was `es.onerror` in `frontend/src/App.jsx` — it
