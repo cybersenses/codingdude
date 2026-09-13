@@ -26,8 +26,40 @@ def _git(workdir: Path, *args: str) -> subprocess.CompletedProcess[str]:
                           text=True, env=scrubbed_env())
 
 
-def docker_available() -> bool:
-    return shutil.which('docker') is not None
+def docker_cli() -> str | None:
+    """Resolve a usable docker CLI ('docker', or 'docker.exe' from WSL)."""
+    for name in ('docker', 'docker.exe'):
+        path = shutil.which(name)
+        if path is not None:
+            return path
+    return None
+
+
+def docker_usable() -> bool:
+    """CLI present AND daemon answering — a broken daemon must not be chosen."""
+    cli = docker_cli()
+    if cli is None:
+        return False
+    proc = subprocess.run(
+        [cli, 'version', '--format', '{{.Server.Version}}'],
+        capture_output=True, text=True, env=scrubbed_env(), timeout=30)
+    return proc.returncode == 0
+
+
+def container_image_ready(image: str) -> bool:
+    """True when the image is available locally or can be pulled."""
+    if not docker_usable():
+        return False
+    cli = docker_cli()
+    assert cli is not None  # docker_usable() proved the CLI exists
+    ok = subprocess.run([cli, 'image', 'inspect', image],
+                        capture_output=True, text=True,
+                        env=scrubbed_env()).returncode == 0
+    if ok:
+        return True
+    pull = subprocess.run([cli, 'pull', image], capture_output=True, text=True,
+                          env=scrubbed_env())
+    return pull.returncode == 0
 
 
 def free_port() -> int:
@@ -71,9 +103,16 @@ def _status(workdir: Path) -> str:
     return '\n'.join(line for line in lines if not line.endswith(WORKTREE_DIRNAME + '/'))
 
 
-def _tier_line() -> str:
+def _tier_line(tier: str = 'worktree+venv', image: str | None = None) -> str:
+    if tier == 'container':
+        return f'tier=container image={image} docker=available'
     return (f'tier=worktree+venv docker='
-            f'{"available" if docker_available() else "absent"}')
+            f'{"available" if docker_usable() else "absent"}')
+
+
+CONTAINER_IMAGE = 'python:3.12-alpine'
+CONTAINER_PREFIX = 'codingdude-sb-'
+CONTAINER_MOUNT = '/workspace'
 
 
 async def _run(argv: list[str], cwd: Path, timeout: int) -> str:
@@ -97,11 +136,47 @@ def build_sandbox_toolset(workdir: Path, policy) -> FunctionToolset:
     def sandbox_path(name: str) -> Path:
         return workdir / WORKTREE_DIRNAME / name
 
-    async def sandbox_create(name: str) -> str:
+    async def _container_running(container: str) -> bool:
+        proc = subprocess.run(
+            [docker_cli() or 'docker', 'inspect', '-f',
+             '{{.State.Running}}', container],
+            capture_output=True, text=True, env=scrubbed_env())
+        return proc.returncode == 0 and 'true' in proc.stdout
+
+    async def sandbox_create(name: str, tier: str = '') -> str:
+        if tier not in ('', 'worktree', 'container'):
+            return (f"error: unknown tier {tier!r} — use 'worktree' or "
+                    "'container'")
+        want_container = tier == 'container' or (
+            tier == '' and docker_usable())
+        if want_container and not docker_usable():
+            if tier == 'container':
+                return ('error: docker requested but not available — no '
+                        'sandbox created')
+            want_container = False  # default tier: fall back, report it
         try:
             sandbox = create_worktree(workdir, name)
         except WorktreeError as exc:
             return f'error: {exc}'
+        if want_container:
+            container = CONTAINER_PREFIX + name
+            # Deterministic names: a stale container must not block reuse.
+            subprocess.run(
+                [docker_cli() or 'docker', 'rm', '-f', container],
+                capture_output=True, text=True, env=scrubbed_env())
+            port = free_port()
+            run = await _run([
+                docker_cli() or 'docker', 'run', '-d', '--name', container,
+                '-v', f'{sandbox}:{CONTAINER_MOUNT}', '-w', CONTAINER_MOUNT,
+                '-p', f'{port}:8000', CONTAINER_IMAGE, 'sleep', 'infinity'],
+                workdir, 120)
+            if not run.startswith('exit 0'):
+                _git(workdir, 'worktree', 'remove', '--force', str(sandbox))
+                _git(workdir, 'worktree', 'prune')
+                return f'error: container start failed: {run}'
+            return (f'sandbox ready: {sandbox} (branch {BRANCH_PREFIX}{name}, '
+                    f'container {container}) preview=http://localhost:{port} '
+                    f'{_tier_line("container", CONTAINER_IMAGE)}')
         ok, detail = _make_venv(sandbox)
         if not ok:
             # Fail fast: a sandbox without a venv is not a sandbox; remove the
@@ -122,6 +197,12 @@ def build_sandbox_toolset(workdir: Path, policy) -> FunctionToolset:
         decision = policy.decide(command)
         if decision in (NEEDS_GATE, DENIED):
             await _resolve_gate(policy, command, always=decision == DENIED)
+        container = CONTAINER_PREFIX + name
+        if await _container_running(container):
+            summary = await _run([
+                docker_cli() or 'docker', 'exec', '-w', CONTAINER_MOUNT,
+                container, 'sh', '-c', command], sandbox, EXEC_TIMEOUT)
+            return f'{summary} {_tier_line("container", CONTAINER_IMAGE)}'
         env_bin = _venv_bin(sandbox)
         env = scrubbed_env()
         path_key = next((k for k in env if k.lower() == 'path'), 'PATH')
@@ -145,6 +226,10 @@ def build_sandbox_toolset(workdir: Path, policy) -> FunctionToolset:
         if not sandbox.exists():
             return f'error: no sandbox named {name} — nothing to tear down'
         before = _status(workdir)
+        # Container tier: remove the container first (ignore absent).
+        subprocess.run(
+            [docker_cli() or 'docker', 'rm', '-f', CONTAINER_PREFIX + name],
+            capture_output=True, text=True, env=scrubbed_env())
         _git(workdir, 'worktree', 'remove', '--force', str(sandbox))
         _git(workdir, 'worktree', 'prune')
         _git(workdir, 'branch', '-D', f'{BRANCH_PREFIX}{name}')

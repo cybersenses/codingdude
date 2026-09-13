@@ -10,8 +10,12 @@ import subprocess
 import pytest
 
 from codingdude.approvals import ApprovalPolicy
-from codingdude.sandbox import build_sandbox_toolset
+from codingdude.sandbox import build_sandbox_toolset, container_image_ready, docker_cli
 from codingdude.tools import GateRequired
+
+IMAGE = 'python:3.12-alpine'
+
+docker_ready = container_image_ready(IMAGE)
 
 
 def git(workdir, *args):
@@ -40,7 +44,8 @@ def policy(**kw):
 
 async def test_create_reports_tier_preview_and_layout(repo):
     toolset = build_sandbox_toolset(repo, policy())
-    result = await toolset.tools['sandbox_create'].function(name='proto')
+    result = await toolset.tools['sandbox_create'].function(
+        name='proto', tier='worktree')
     assert 'tier=worktree+venv' in result
     assert 'preview=http://localhost:' in result
     box = repo / '.codingdude-worktrees' / 'proto'
@@ -113,3 +118,62 @@ async def test_promote_merges_and_tears_down(repo):
     assert 'promoted' in result
     assert (repo / 'feature.txt').read_text() == 'f'
     assert not (repo / '.codingdude-worktrees' / 'feat').exists()
+
+
+# ---- tier 2: container ----
+
+
+async def test_explicit_worktree_tier_wins_when_docker_exists(repo):
+    if not docker_cli():
+        pytest.skip('docker CLI not available')
+    toolset = build_sandbox_toolset(repo, policy())
+    result = await toolset.tools['sandbox_create'].function(
+        name='t1', tier='worktree')
+    assert 'tier=worktree+venv' in result
+
+
+@pytest.mark.skipif(not docker_ready, reason='docker or image unavailable')
+async def test_container_create_exec_and_teardown(repo):
+    toolset = build_sandbox_toolset(repo, policy(yolo=True))
+    result = await toolset.tools['sandbox_create'].function(
+        name='box', tier='container')
+    assert 'tier=container' in result
+    assert f'image={IMAGE}' in result
+    assert 'preview=http://localhost:' in result
+    ps = subprocess.run(
+        ['docker', 'ps', '--format', '{{.Names}}', '--filter',
+         'name=codingdude-sb-box'], capture_output=True, text=True)
+    assert 'codingdude-sb-box' in ps.stdout
+    exec_result = await toolset.tools['sandbox_exec'].function(
+        name='box', command='sh -c "touch made.txt"')
+    assert 'exit 0' in exec_result
+    assert (repo / '.codingdude-worktrees' / 'box' / 'made.txt').exists()
+    dup = await toolset.tools['sandbox_create'].function(
+        name='box', tier='container')
+    assert 'error:' in dup
+    teardown = await toolset.tools['sandbox_teardown'].function(name='box')
+    assert 'workdir clean' in teardown
+    ps_after = subprocess.run(
+        ['docker', 'ps', '-a', '--format', '{{.Names}}',
+         '--filter', 'name=codingdude-sb-box'],
+        capture_output=True, text=True)
+    assert 'codingdude-sb-box' not in ps_after.stdout
+    assert not (repo / '.codingdude-worktrees' / 'box').exists()
+
+
+async def test_container_tier_errors_when_docker_unusable(repo, monkeypatch):
+    import codingdude.sandbox as sb
+    monkeypatch.setattr(sb, 'docker_usable', lambda: False)
+    toolset = build_sandbox_toolset(repo, policy())
+    result = await toolset.tools['sandbox_create'].function(
+        name='nx', tier='container')
+    assert 'error:' in result and 'docker' in result.lower()
+    assert not (repo / '.codingdude-worktrees' / 'nx').exists()
+
+
+async def test_default_tier_prefers_worktree_without_docker(repo, monkeypatch):
+    import codingdude.sandbox as sb
+    monkeypatch.setattr(sb, 'docker_usable', lambda: False)
+    toolset = build_sandbox_toolset(repo, policy())
+    result = await toolset.tools['sandbox_create'].function(name='auto')
+    assert 'tier=worktree+venv' in result
