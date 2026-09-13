@@ -304,6 +304,10 @@ class Engine:
                 session_id, [encode_messages([m]) for m in msgs]
             )
 
+        from datetime import UTC as _UTC
+        from datetime import datetime as _dt
+
+        started = _dt.now(_UTC)
         try:
             self._check_budget(session_id)
             if isinstance(model, Model):
@@ -551,14 +555,26 @@ class Engine:
                 self._check_budget(session_id)
 
         usage = result.usage
+        run_cost = float(usage.cost) if usage.cost is not None else None
         self._db.record_usage(
             session_id,
             model=model_name,
             requests=usage.requests or 0,
             input_tokens=usage.input_tokens or 0,
             output_tokens=usage.output_tokens or 0,
-            cost_usd=float(usage.cost) if usage.cost is not None else None,
+            cost_usd=run_cost,
         )
+        from .telemetry import run_usage_event
+
+        traced(run_usage_event(
+            model_name=model_name,
+            requests=usage.requests or 0,
+            input_tokens=usage.input_tokens or 0,
+            output_tokens=usage.output_tokens or 0,
+            cost_usd=run_cost,
+            duration_s=(_dt.now(_UTC) - started).total_seconds(),
+            pricing=self._config.models.pricing,
+        ))
         if self._extraction_model is not None:
             await self._extract_memory(session_id, workdir)
         if self._diff_nonempty(session_id):

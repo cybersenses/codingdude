@@ -55,6 +55,10 @@ class ModelLineup:
     # Max model requests per run. pydantic-ai defaults to 50, which a long
     # agentic session exhausts; raise it so long runs aren't cut off.
     request_limit: int = 500
+    # Cost rates per model (R10): name-or-substring -> USD per 1M tokens.
+    # e.g. pricing = { deepseek-v4-pro = { input = 0.27, output = 1.1 } }
+    # Models without an entry are 'unpriced' (tokens-only accounting).
+    pricing: dict[str, dict[str, float]] | None = None
 
 
 THINKING_LEVELS = ('minimal', 'low', 'medium', 'high', 'xhigh')
@@ -146,6 +150,7 @@ def load_config(home: Path | None = None) -> Config:
             max_tokens=models.get('max_tokens', defaults.models.max_tokens),
             context_limit=models.get('context_limit', defaults.models.context_limit),
             request_limit=models.get('request_limit', defaults.models.request_limit),
+            pricing=models.get('pricing', defaults.models.pricing),
         ),
         shell=ShellConfig(default=shell.get('default', defaults.shell.default)),
         providers=ProviderKeys(

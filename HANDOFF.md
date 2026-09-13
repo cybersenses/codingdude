@@ -3,12 +3,13 @@
 Left after planning R5–R11 end-to-end. If you're reading this, pick up from here.
 
 ## State at handoff
-- HEAD `04f60ca`: R1–R4 done; tracers done: **R7-thin** (#3), **R5 tier-1**
-  (#1, worktree+venv sandbox), **R11** (#7, `codingdude.references`), **R6**
-  (#2, `codingdude.artifacts` — choice cards + spec blocks, agent tools
-  emit_choice_card/emit_spec_block/get_artifact_feedback, server endpoints
-  GET /sessions/{id}/artifacts + POST /artifacts/{id}/respond, frontend
-  Artifacts tab; feedback returns via agent poll). 220 tests, ruff, mypy green. Thickening (real-session recording, curated scenarios, CI)
+- HEAD (this commit): R1–R4 done; **all six Docker-free tracers shipped**:
+  R7-thin (#3), R5 tier-1 (#1), R11 (#7 `references`), R6 (#2 `artifacts`),
+  R9 (#5 `execution` — ticket_execution attempt lineage, stale-aware claims,
+  per-step evidence, resume-state tools), R8 (#4 `archlint` — seam-leak +
+  duplicate-body linter, fix-or-waive via design decisions), R10 (#6
+  `telemetry` — models.pricing config, RUN_USAGE event). 244 tests, ruff,
+  mypy (39 files) green. Thickening (real-session recording, curated scenarios, CI)
   still open on R7. Next: **R11-tracer** (ticket #7) — reference/ folder + section index +
   search_references/read_reference tools + pin-staleness warning.
 - `docs/PLANS-R5-R11.md` = the ratified plan per item (designs, tracer-bullet
@@ -21,10 +22,10 @@ Left after planning R5–R11 end-to-end. If you're reading this, pick up from he
   ad-hoc use only — R5's lifecycle is native `sandbox.py`, not MCP-driven).
 
 ## Next action
-Docker-free queue exhausted. Next: either R5 tier 2 (container tier — needs
-Docker Desktop) or begin thickening passes (R9/R8/R10 tracers, which are
-Docker-free). R6 non-goals for later: SSE artifact push, worker-interrupt on
-response, annotations, ticket/decision auto-creation from picks.
+Docker-free tracer queue EXHAUSTED. Only remaining roadmap work needs Docker
+Desktop: R5 tier 2 (container tier). Deliberately-open thickeners: R6 SSE
+push/worker-interrupt; R8 contract-first codegen + ADR-contradiction checks;
+R9 plan diffing/cross-machine leases; R10 UI panel + per-step latency.
 
 ## What was just shipped
 - **R2 (hang):** real culprit was `es.onerror` in `frontend/src/App.jsx` — it

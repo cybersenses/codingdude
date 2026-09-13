@@ -14,7 +14,6 @@ from pathlib import Path
 from pydantic_ai import FunctionToolset
 
 from .db import Database
-
 from .roadmap import RoadmapStore
 
 WAIVER_PREFIX = 'ARCH-WAIVER'

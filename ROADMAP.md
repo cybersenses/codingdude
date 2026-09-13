@@ -344,7 +344,7 @@ mid-ticket loses the claim, the partial work, and the verification record.
 ---
 
 ## R10 — Cost and latency telemetry per task
-**Status:** open · **Area:** observability / engine / UI
+**Status:** tracer done — `models.pricing` config, RUN_USAGE event (tokens/cost/duration per run) with provider→pricing→unpriced fallback. UI panel + per-step breakdown deliberately open. · **Area:** observability / engine / UI
 
 ### Problem
 Neither the agent nor the user knows what a task cost (tokens, wall time, per
