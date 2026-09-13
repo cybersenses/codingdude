@@ -286,7 +286,7 @@ quality currently regresses silently.
 ---
 
 ## R8 — Architecture guardrails (linter + contract-first codegen)
-**Status:** open · **Area:** architecture / codegen / tooling
+**Status:** tracer done — archlint (private-access seam leaks, duplicate bodies) with fix-or-waive; waivers recorded as design decisions. Contract-first codegen + ADR-contradiction detection deliberately open. · **Area:** architecture / codegen / tooling
 
 ### Problem
 Codegraph tells the agent what *is* connected; nothing tells it when what it's

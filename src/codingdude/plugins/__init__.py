@@ -15,6 +15,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.toolsets import AbstractToolset
 
 from codingdude.approvals import ApprovalPolicy
+from codingdude.archlint import ArchLint, build_archlint_toolset
 from codingdude.artifacts import build_artifacts_toolset
 from codingdude.ast_tools import build_ast_toolset
 from codingdude.config import Config, ThinkingSetting
@@ -110,6 +111,7 @@ async def build_all(ctx: PluginContext) -> list[AbstractToolset]:
             ctx.vision_model, ctx.workdir, emitter=ctx.emitter,
         ))
     toolsets.append(build_ast_toolset(ctx.workdir))
+    toolsets.append(build_archlint_toolset(ctx.workdir, ArchLint(db=ctx.db, workdir=str(ctx.workdir))))
     toolsets.append(build_deadcode_toolset(ctx.workdir))
     toolsets.append(build_repo_map_toolset(ctx.workdir))
     toolsets.append(build_knip_toolset(ctx.workdir))
