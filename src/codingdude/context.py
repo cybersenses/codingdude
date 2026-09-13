@@ -88,3 +88,19 @@ class ContextManager:
                 elif "exit" in lower:
                     score = max(score, 7)
         return score
+
+    def plan_compaction(self, messages, keep_recent: int = 10) -> tuple[list[int], list[int]]:
+        """Partition messages into keep and summarise sets by importance.
+
+        keep: recent + high-importance (score >= 7). summarise: rest.
+        """
+        n = len(messages)
+        recent_start = max(0, n - keep_recent)
+        keep, summarise = [], []
+        for i, msg in enumerate(messages):
+            imp = self.importance(msg)
+            if i >= recent_start or imp >= 7:
+                keep.append(i)
+            else:
+                summarise.append(i)
+        return keep, summarise

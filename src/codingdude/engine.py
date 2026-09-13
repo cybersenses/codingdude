@@ -442,7 +442,7 @@ class Engine:
 
             from pydantic_ai.settings import ModelSettings
 
-            model_settings: ModelSettings = ModelSettings(timeout=300)
+            model_settings: ModelSettings = ModelSettings(timeout=300, max_tokens=16384)
             if self._config.models.max_tokens:
                 model_settings['max_tokens'] = self._config.models.max_tokens
             if thinking is not None and _supports_thinking(resolved):
