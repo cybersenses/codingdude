@@ -28,6 +28,7 @@ from codingdude.memory import MemoryStore, build_memory_toolset
 from codingdude.planning import build_planning_toolset
 from codingdude.repo_map import build_repo_map_toolset
 from codingdude.roadmap import RoadmapStore, build_roadmap_toolset
+from codingdude.sandbox import build_sandbox_toolset
 from codingdude.semantic import SemanticIndex, build_semantic_toolset
 from codingdude.skills import SkillRegistry, build_skills_toolset
 from codingdude.tools import (
@@ -90,6 +91,7 @@ async def build_all(ctx: PluginContext) -> list[AbstractToolset]:
             ),
             build_git_toolset(ctx.workdir, ctx.approvals),
             build_coverage_toolset(ctx.workdir, ctx.approvals),
+            build_sandbox_toolset(ctx.workdir, ctx.approvals),
             build_ask_user_toolset(ctx.approvals),
         ])
 
