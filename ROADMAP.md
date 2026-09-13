@@ -259,7 +259,7 @@ diagram, edit a spec inline, or pick between rendered options.
 ---
 
 ## R7 — Session-replay eval harness (regression-test the agent's process)
-**Status:** open · **Area:** quality / self-improvement / evals
+**Status:** tracer done (thin slice: `codingdude.evals` + `tests/scenarios/`; thickening — real-session recording, curated library, CI promotion — remains open) · **Area:** quality / self-improvement / evals
 
 ### Problem
 `bench.py` exercises the engine with a scripted model. There is no way to record

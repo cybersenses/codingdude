@@ -3,7 +3,12 @@
 Left after planning R5–R11 end-to-end. If you're reading this, pick up from here.
 
 ## State at handoff
-- HEAD `70068e8` (pushed): R1–R4 **done**; R5–R11 **planned, not started**.
+- HEAD `78ed9a4` (pushed): R1–R4 **done**; **R7-thin tracer DONE** (ticket #3
+  closed): `codingdude.evals` (export/replay/checks/run_scenarios) +
+  `tests/scenarios/*.json` incl. deliberately-failing broken-skill. 200 tests,
+  ruff, mypy green. Thickening (real-session recording, curated scenarios, CI)
+  still open on R7. Next: **R5-tracer** (ticket #1) — worktree+venv tier 1,
+  no Docker needed.
 - `docs/PLANS-R5-R11.md` = the ratified plan per item (designs, tracer-bullet
   cuts, explicitly-not-building list). Design decisions #2–#3 record the
   postures; tickets #1–#7 each carry their plan summary in the body.
@@ -14,9 +19,8 @@ Left after planning R5–R11 end-to-end. If you're reading this, pick up from he
   ad-hoc use only — R5's lifecycle is native `sandbox.py`, not MCP-driven).
 
 ## Next action
-Start R7-thin (ticket #3): export sessions+trace events → `tests/scenarios/*.json`,
-replay via the `bench.py` scripted-model infra, 3–4 process-property scenarios,
-local gate only.
+Start R5-tracer (ticket #1): `sandbox.py` tier 1 — git worktree + ephemeral venv,
+create/exec/teardown tools, byte-identical teardown guarantee.
 
 ## What was just shipped
 - **R2 (hang):** real culprit was `es.onerror` in `frontend/src/App.jsx` — it
