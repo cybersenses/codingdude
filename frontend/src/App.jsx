@@ -985,10 +985,11 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width, workdir }
   } else if (tab === 'Renders') {
     const renders = data.renders || []
     const renderStart = data.renderStart || 0
-    const tile = (r) => (
+    const src = (r) => `/api/sessions/${sessionId}/render?path=${encodeURIComponent(r.path)}`
+    const tile = (r, label) => (
       <a
         key={r.path}
-        href={`/api/sessions/${sessionId}/render?path=${encodeURIComponent(r.path)}`}
+        href={src(r)}
         target="_blank"
         rel="noreferrer"
         className="overflow-hidden rounded border border-line bg-surface hover:border-brand"
@@ -996,17 +997,44 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width, workdir }
         <img
           alt={r.name}
           loading="lazy"
-          src={`/api/sessions/${sessionId}/render?path=${encodeURIComponent(r.path)}`}
+          src={src(r)}
           className="h-24 w-full bg-canvas object-contain"
         />
-        <div className="truncate px-1 py-0.5 font-mono text-[10px] text-ink-muted">{r.path}</div>
+        <div className="truncate px-1 py-0.5 font-mono text-[10px] text-ink-muted">
+          {label ? `${label} · ` : ''}{r.path}
+        </div>
       </a>
     )
+    // Pair renders that differ only by theme or revision (R1): foo-dark.png /
+    // foo-light.png and foo-before.png / foo-after.png show side-by-side.
+    const PAIRS = [['dark', 'light'], ['before', 'after']]
+    const paired = new Set()
+    const pairGroups = []
+    for (const r of renders) {
+      if (paired.has(r.path)) continue
+      const m = r.name.match(/^(.*?)[-_.](dark|light|before|after)\.[^.]+$/i)
+      if (!m) continue
+      for (const [a, b] of PAIRS) {
+        if (m[2].toLowerCase() !== a) continue
+        const sib = renders.find((x) => {
+          if (paired.has(x.path)) return false
+          const mm = x.name.match(/^(.*?)[-_.](dark|light|before|after)\.[^.]+$/i)
+          return mm && mm[1].toLowerCase() === m[1].toLowerCase()
+            && mm[2].toLowerCase() === b
+        })
+        if (!sib) continue
+        paired.add(r.path)
+        paired.add(sib.path)
+        const label = (x) => x.name.match(/[-_.](dark|light|before|after)\./i)[1].toLowerCase()
+        pairGroups.push({ base: m[1], left: r, right: sib, llabel: label(r), rlabel: label(sib) })
+      }
+    }
+    const rest = renders.filter((r) => !paired.has(r.path))
     const group = (label, items) => (
       items.length === 0 ? null : (
         <div className="space-y-1">
           <div className="text-[10px] uppercase tracking-wide text-ink-muted">{label}</div>
-          <div className="grid grid-cols-2 gap-2">{items.map(tile)}</div>
+          <div className="grid grid-cols-2 gap-2">{items.map((r) => tile(r))}</div>
         </div>
       )
     )
@@ -1016,8 +1044,22 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width, workdir }
       </div>
     ) : (
       <div className="space-y-3">
-        {group('This session', renders.filter((r) => r.mtime >= renderStart))}
-        {group('Earlier', renders.filter((r) => r.mtime < renderStart))}
+        {pairGroups.length > 0 && (
+          <div className="space-y-2">
+            <div className="text-[10px] uppercase tracking-wide text-ink-muted">Comparisons</div>
+            {pairGroups.map((g) => (
+              <div key={g.base + g.left.path} className="rounded border border-line bg-surface p-1">
+                <div className="px-1 pb-1 font-mono text-[10px] text-accent">{g.base}</div>
+                <div className="grid grid-cols-2 gap-2">
+                  {tile(g.left, g.llabel)}
+                  {tile(g.right, g.rlabel)}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {group('This session', rest.filter((r) => r.mtime >= renderStart))}
+        {group('Earlier', rest.filter((r) => r.mtime < renderStart))}
       </div>
     )
   }
@@ -1231,6 +1273,7 @@ export default function App() {
   const [activeSession, setActiveSession] = useState(null)
   const [messages, setMessages] = useState([])
   const [streaming, setStreaming] = useState(false)
+  const [quietSeconds, setQuietSeconds] = useState(0) // seconds since last run event (watchdog)
   const [error, setError] = useState('')
   const [refreshKey, setRefreshKey] = useState(0)
   const [diffBadge, setDiffBadge] = useState(false)
@@ -1246,6 +1289,7 @@ export default function App() {
   const [fixLoop, setFixLoop] = useState(false)
   const runRef = useRef(null)
   const esRef = useRef(null)
+  const lastEventRef = useRef(Date.now()) // watchdog: last SSE event timestamp
 
   // Resizable panes: widths persist across sessions.
   const [sidebarWidth, setSidebarWidth] = useState(
@@ -1481,6 +1525,7 @@ export default function App() {
       { role: 'assistant', text: '', streaming: true, toolEvents: [] },
     ])
     setStreaming(true)
+    lastEventRef.current = Date.now()
     setStatus('running')
     setError('')
     api
@@ -1494,17 +1539,43 @@ export default function App() {
       )
       .then(({ run_id }) => {
         runRef.current = run_id
-        const es = new EventSource(api.eventStreamUrl(run_id))
-        esRef.current = es
-        es.onmessage = (e) => {
-          let ev
-          try {
-            ev = JSON.parse(e.data)
-          } catch (err) {
-            console.warn('skipping malformed SSE data', e.data)
-            return
-          }
-          setMessages((msgs) => {
+        attach(run_id)
+      })
+      .catch((e) => {
+        setStreaming(false)
+        setError(String(e.message))
+      })
+  }
+
+  // Watchdog (R2): a live run that emits nothing for a while must not look
+  // dead — surface "still working…" with the quiet duration.
+  useEffect(() => {
+    if (!streaming) {
+      setQuietSeconds(0)
+      return
+    }
+    const t = setInterval(() => {
+      setQuietSeconds(Math.floor((Date.now() - lastEventRef.current) / 1000))
+    }, 1000)
+    return () => clearInterval(t)
+  }, [streaming])
+
+  function attach(run_id, attempt = 0) {
+    // (R2) SSE errors used to silently fake a finished run — the "agent hung"
+    // report. Instead: reattach with backoff while the run is alive, and only
+    // conclude the run ended once the server says the worker is gone.
+    const es = new EventSource(api.eventStreamUrl(run_id))
+    esRef.current = es
+    es.onmessage = (e) => {
+      lastEventRef.current = Date.now()
+      let ev
+      try {
+        ev = JSON.parse(e.data)
+      } catch (err) {
+        console.warn('skipping malformed SSE data', e.data)
+        return
+      }
+      setMessages((msgs) => {
             const copy = [...msgs]
             const last = { ...copy[copy.length - 1] }
             if (ev.type === 'TEXT_MESSAGE_CONTENT') last.text += ev.delta
@@ -1547,23 +1618,45 @@ export default function App() {
             }
             copy[copy.length - 1] = last
             return copy
-          })
-        }
-        es.onerror = () => {
-          es.close()
-          setStreaming(false)
-          setMessages((msgs) => {
-            const copy = [...msgs]
-            copy[copy.length - 1] = { ...copy[copy.length - 1], streaming: false }
-            return copy
-          })
-          loadMessages(activeSession)
-        }
       })
-      .catch((e) => {
+    }
+    es.onerror = () => {
+      es.close()
+      if (attempt >= 5) {
+        // Server unreachable repeatedly: say so instead of pretending the
+        // run finished cleanly.
         setStreaming(false)
-        setError(String(e.message))
-      })
+        setStatus('error')
+        setError('lost connection to the run — the agent may still be working; reopen the session to reload its output')
+        setMessages((msgs) => {
+          const copy = [...msgs]
+          copy[copy.length - 1] = { ...copy[copy.length - 1], streaming: false }
+          return copy
+        })
+        return
+      }
+      setStatus('connection lost — reconnecting…')
+      setTimeout(() => {
+        call(`/runs/${run_id}/alive`)
+          .then(({ alive }) => {
+            if (alive) {
+              attach(run_id, attempt + 1)
+            } else {
+              // Worker already gone (run finished while we were detached):
+              // reload the persisted exchange and finish cleanly.
+              setStreaming(false)
+              setStatus('finished')
+              setMessages((msgs) => {
+                const copy = [...msgs]
+                copy[copy.length - 1] = { ...copy[copy.length - 1], streaming: false }
+                return copy
+              })
+              loadMessages(activeSession)
+            }
+          })
+          .catch(() => attach(run_id, attempt + 1))
+      }, 1000 * (attempt + 1))
+    }
   }
 
   function onEditRevert(msgIndex, edit) {
@@ -1694,7 +1787,13 @@ export default function App() {
           {theme === 'dark' ? 'dark' : 'light'}
         </button>
         <span className={streaming ? 'text-brand-400' : ''}>{status}</span>
+        {streaming && quietSeconds >= 30 && (
+          <span className="ml-2 animate-pulse text-neutral-400">
+            still working… (no output for {quietSeconds}s)
+          </span>
+        )}
       </footer>
     </div>
   )
 }
+

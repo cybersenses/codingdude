@@ -42,6 +42,7 @@ from codingdude.tools import (
     build_toolset,
     build_web_toolset,
 )
+from codingdude.vision import build_vision_toolset
 
 
 @dataclass
@@ -60,6 +61,7 @@ class PluginContext:
     subagent_model: Model | None = None
     thinking: ThinkingSetting | None = None
     review_model: Model | None = None
+    vision_model: Model | None = None
     embedder: object | None = None
     on_edit: Callable | None = None
     capture: Callable | None = None
@@ -77,9 +79,15 @@ async def build_all(ctx: PluginContext) -> list[AbstractToolset]:
         ),
     ]
 
+    def on_render(rel_path: str) -> None:
+        if ctx.emitter is not None:
+            ctx.emitter({'type': 'RENDER_CAPTURED', 'path': rel_path})
+
     if ctx.approvals is not None:
         toolsets.extend([
-            build_shell_toolset(ctx.workdir, ctx.approvals, shell_bin=ctx.shell_bin),
+            build_shell_toolset(
+                ctx.workdir, ctx.approvals, shell_bin=ctx.shell_bin, on_render=on_render,
+            ),
             build_git_toolset(ctx.workdir, ctx.approvals),
             build_coverage_toolset(ctx.workdir, ctx.approvals),
             build_ask_user_toolset(ctx.approvals),
@@ -92,6 +100,10 @@ async def build_all(ctx: PluginContext) -> list[AbstractToolset]:
         ))
 
     toolsets.append(build_web_toolset())
+    if ctx.vision_model is not None:
+        toolsets.append(build_vision_toolset(
+            ctx.vision_model, ctx.workdir, emitter=ctx.emitter,
+        ))
     toolsets.append(build_ast_toolset(ctx.workdir))
     toolsets.append(build_deadcode_toolset(ctx.workdir))
     toolsets.append(build_repo_map_toolset(ctx.workdir))

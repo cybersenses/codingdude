@@ -293,6 +293,17 @@ def create_app(
     class ApprovalIn(BaseModel):
         decision: str  # 'approve' | 'pattern' | 'deny'
 
+    @app.get('/runs/{run_id}/alive')
+    def run_alive(run_id: str, _: None = Depends(authorize)) -> dict:
+        """Watchdog probe (R2): is this run's worker process still running?
+
+        Lets a reconnecting UI distinguish 'run alive, reattach the stream'
+        from 'run already finished while detached'.
+        """
+        channel = channels.get(run_id)
+        alive = channel is not None and channel.worker is not None and channel.worker.poll() is None
+        return {'alive': alive}
+
     @app.post('/runs/{run_id}/approve')
     def approve(run_id: str, body: ApprovalIn, _: None = Depends(authorize)) -> dict:
         channel = channels.get(run_id)

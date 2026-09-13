@@ -133,3 +133,24 @@ async def test_shell_still_gates_true_outside_paths(home, workdir):
     # Workdir masking must not hide paths outside the project.
     decision = ApprovalPolicy().decide(cmd)
     assert decision != 'approved'
+
+
+async def test_shell_capture_hook_registers_new_renders(home, workdir):
+    """A command that creates an image auto-registers it as a render (R1)."""
+    from codingdude.approvals import ApprovalPolicy
+    from codingdude.tools import build_shell_toolset
+
+    workdir.mkdir(parents=True, exist_ok=True)
+    captured = []
+    toolset = build_shell_toolset(
+        workdir, ApprovalPolicy(yolo=True), on_render=captured.append,
+    )
+    shell = toolset.tools['shell'].function
+    script = (
+        "import pathlib; p = pathlib.Path('shot.png'); p.write_bytes(b'x'); "
+        "pathlib.Path('ignored.txt').write_text('x')"
+    )
+    out = await shell(f'python -c "{script}"')
+    assert 'exit code: 0' in out
+    assert 'shot.png' in captured
+    assert 'ignored.txt' not in captured

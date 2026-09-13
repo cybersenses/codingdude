@@ -322,3 +322,34 @@ def test_session_list_includes_context_fields(server, tmp_path):
     row = r.json()[0]
     assert row['context_tokens'] == 96_000
     assert row['context_limit'] == 200_000
+
+
+def test_run_alive_watchdog_probe(server, tmp_path):
+    """/runs/{id}/alive (R2): true while the worker runs, false afterwards.
+
+    A reconnecting UI uses this to choose between reattaching the stream and
+    concluding the run finished while it was detached.
+    """
+    app, base = server
+    workdir = tmp_path / 'proj-alive'
+    workdir.mkdir()
+    session_id = create_session(base, workdir)
+    r = httpx.post(
+        f'{base}/sessions/{session_id}/runs',
+        json={'prompt': 'ponder', 'model': 'codingdude-test:sleep'},
+        headers=auth(),
+        timeout=30,
+    )
+    run_id = r.json()['run_id']
+    time.sleep(3)
+    alive = httpx.get(f'{base}/runs/{run_id}/alive', headers=auth(), timeout=10)
+    assert alive.status_code == 200
+    assert alive.json() == {'alive': True}
+
+    app.state.channels[run_id].worker.kill()
+    app.state.channels[run_id].worker.wait(timeout=10)
+    dead = httpx.get(f'{base}/runs/{run_id}/alive', headers=auth(), timeout=10)
+    assert dead.json() == {'alive': False}
+
+    unknown = httpx.get(f'{base}/runs/no-such-run/alive', headers=auth(), timeout=10)
+    assert unknown.json() == {'alive': False}

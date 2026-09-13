@@ -1,6 +1,7 @@
 """Coding tools: list, read, grep, glob, plus surgical edits — all confined to the Workdir."""
 
 import re
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -222,8 +223,16 @@ async def _resolve_gate(policy, command: str, always: bool = False) -> None:
             policy.on_pattern(pattern)
 
 
-def build_shell_toolset(workdir: Path, policy, shell_bin: str = 'bash') -> FunctionToolset:
-    """The shell tool, gated by the ApprovalPolicy."""
+def build_shell_toolset(
+    workdir: Path, policy, shell_bin: str = 'bash',
+    on_render: Callable[[str], None] | None = None,
+) -> FunctionToolset:
+    """The shell tool, gated by the ApprovalPolicy.
+
+    `on_render(relative_path)` is called for image files a command creates
+    (capture hook, R1): screenshots auto-register as renders instead of
+    staying orphan scratch files.
+    """
 
     def _mask_workdir(command: str) -> str:
         """Blank out references to the Workdir itself before the approval
@@ -251,6 +260,7 @@ def build_shell_toolset(workdir: Path, policy, shell_bin: str = 'bash') -> Funct
         import asyncio
 
         argv = shell_argv(command, shell_bin)
+        started = time.time()
         proc = await asyncio.create_subprocess_exec(
             *argv,
             cwd=workdir,
@@ -263,12 +273,40 @@ def build_shell_toolset(workdir: Path, policy, shell_bin: str = 'bash') -> Funct
         except TimeoutError:
             proc.kill()
             return 'exit code: -1 (timed out)'
+        if on_render is not None:
+            _register_new_renders(workdir, started, on_render)
         output = (stdout.decode(errors='replace') + stderr.decode(errors='replace')).strip()
         if len(output) > 8000:
             output = output[:4000] + '\n...\n' + output[-4000:]
         return f'exit code: {proc.returncode}\n{output}'
 
     return FunctionToolset([shell])
+
+
+IMAGE_SUFFIXES = {'.png', '.jpg', '.jpeg', '.webp', '.gif'}
+_RENDER_SCAN_SKIP = {'.git', '.venv', 'node_modules', '__pycache__'}
+
+
+def _register_new_renders(workdir: Path, started: float, on_render: Callable[[str], None]) -> None:
+    """Report image files created/modified since `started` (best-effort).
+
+    A render-producing command (screenshot, pixel gate) must surface its
+    output; scanning for fresh images after the command is the cheapest
+    reliable hook. Failures here never fail the command itself.
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+    try:
+        for p in workdir.rglob('*'):
+            if not p.is_file() or p.suffix.lower() not in IMAGE_SUFFIXES:
+                continue
+            if any(part in _RENDER_SCAN_SKIP for part in p.parts):
+                continue
+            if p.stat().st_mtime >= started:
+                on_render(p.relative_to(workdir).as_posix())
+    except OSError as exc:
+        logger.warning('render capture scan failed: %s', exc)
 
 
 def build_delegation_toolset(

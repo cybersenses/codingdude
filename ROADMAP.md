@@ -7,7 +7,16 @@ Status is one of `open`, `in-progress`, `done`.
 ---
 
 ## R1 — See what the agent rendered (visual results + vision-in-the-loop)
-**Status:** open · **Area:** observability / verification / UI · **Surfaced by:** the StyleSeed pixel gate
+**Status:** done · **Area:** observability / verification / UI · **Surfaced by:** the StyleSeed pixel gate
+
+Shipped: an `inspect_image` agent tool (`vision.py`) that routes any Workdir
+image through the configured `models.vision` model and returns the critique as
+text — so a pixel gate can be judged, not just rendered (IMAGE_INSPECTED trace
+events record every inspection); a shell capture hook that auto-registers
+image files a command creates as RENDER_CAPTURED events; and Renders-tab
+pairing — renders named `*-dark`/`*-light` or `*-before`/`*-after` display
+side-by-side as comparisons. The gallery itself (workdir image scan + session
+grouping) predates this item.
 
 ### Problem
 CodingDude (and its skills) can **produce** visual results — screenshots from the
@@ -58,7 +67,14 @@ feature to display them**:
 ---
 
 ## R2 — Agent appears to hang after the user replies
-**Status:** open (potential, needs repro) · **Area:** run lifecycle / event stream / UI feedback
+**Status:** done · **Area:** run lifecycle / event stream / UI feedback
+
+Shipped: `/runs/{id}/alive` watchdog probe (true while the run's worker
+process lives); the UI no longer fakes a finished run on SSE error — it
+reattaches with backoff while the run is alive, says "lost connection" after
+repeated failures, and concludes cleanly (reloading persisted messages) when
+the worker is already gone; a client watchdog shows "still working… (no
+output for Ns)" when a live run is quiet past 30 s instead of looking idle.
 
 ### Problem
 During a session the user replied to a question but the agent showed no visible response for a

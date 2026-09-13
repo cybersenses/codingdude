@@ -383,6 +383,7 @@ class Engine:
                 subagent_model=subagent,
                 thinking=thinking,
                 review_model=self._extraction_model,
+                vision_model=vision_model,
                 embedder=self.embedder,
                 on_edit=on_edit_dispatch,
                 capture=capture_for_checkpoints,
