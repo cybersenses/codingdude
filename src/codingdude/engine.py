@@ -568,30 +568,46 @@ class Engine:
         )
 
     async def _extract_memory(self, session_id: str, workdir: Path) -> None:
-        """Post-session pass: bank durable facts the run didn't explicitly remember."""
+        """Post-session pass: bank durable facts the run didn't explicitly remember
+        and retire entries this session made obsolete (via `FORGET:` lines)."""
         from pydantic_ai import Agent
 
         from .memory import MemoryStore
 
+        store = MemoryStore(self._db)
+        known = store.all_entries()
+        known_lines = '\n'.join(f"- {e['content']}" for e in known[:50])
         transcript = '\n'.join(self._db.load_messages(session_id))[:12000]
         agent: Agent = Agent(model=self._extraction_model)
         try:
             result = await agent.run(
                 'From this conversation transcript, extract durable facts worth '
                 'remembering for future sessions (preferences, project facts, '
-                'decisions). One fact per line, no numbering. Return only lines '
-                'worth keeping — if none, return nothing.\n\n' + transcript
+                'decisions). One fact per line, no numbering. Do not restate a '
+                'fact already in the known entries below. If a known entry became '
+                'obsolete or was completed during this conversation, emit a line '
+                'exactly `FORGET: <distinctive substring of that entry>` so it is '
+                'deleted. Return only lines worth keeping — if none, return '
+                'nothing.\n\nKnown entries:\n'
+                + known_lines
+                + '\n\nTranscript:\n'
+                + transcript
             )
         except Exception:  # noqa: BLE001 — extraction must never fail a run
             return
         self._record_model_usage(session_id, self._extraction_model, result.usage)
-        store = MemoryStore(self._db)
-        known = {e['content'] for e in store.all_entries()}
         for line in result.output.splitlines():
-            fact = line.strip().lstrip('-•* ')
-            if fact and fact not in known:
-                store.add(fact, scope='workdir', workdir=str(workdir))
-                known.add(fact)
+            line = line.strip().lstrip('-•* ')
+            if not line:
+                continue
+            if line.upper().startswith('FORGET:'):
+                substring = line[len('FORGET:'):].strip()
+                if substring:
+                    store.delete_substring(substring)
+                continue
+            if store.duplicate_ids(line):
+                continue
+            store.add(line, scope='workdir', workdir=str(workdir))
 
     def _context_manager(self, model_name: str) -> ContextManager:
         """The ContextManager for the resolved model: per-model context limit

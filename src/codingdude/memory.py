@@ -5,14 +5,35 @@ retrieved at Session start, and are inspectable/deletable (UI panel reads
 list/delete directly).
 """
 
+import re
 from datetime import UTC, datetime
 
 from pydantic_ai.toolsets import FunctionToolset
+
+_DUPLICATE_JACCARD = 0.8
+
+
+def _tokens(text: str) -> frozenset[str]:
+    return frozenset(re.findall(r'[a-z0-9]+', text.lower()))
+
+
+def _similar(a: frozenset[str], b: frozenset[str]) -> bool:
+    """Near-duplicate detection: paraphrases of the same fact share most tokens."""
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    return len(a & b) / len(a | b) >= _DUPLICATE_JACCARD
 
 
 class MemoryStore:
     def __init__(self, db):
         self._db = db
+
+    def duplicate_ids(self, content: str) -> list[int]:
+        """Ids of existing entries that duplicate `content` (paraphrase-tolerant)."""
+        tokens = _tokens(content)
+        return [r['id'] for r in self.all_entries() if _similar(tokens, _tokens(r['content']))]
 
     def add(self, content: str, scope: str = 'global', workdir: str | None = None) -> int:
         cur = self._db._conn.execute(
@@ -55,6 +76,9 @@ class MemoryStore:
             return (hits, row['created_at'])
 
         ranked = sorted(rows, key=score, reverse=True)
+        best_hits = score(ranked[0])[0] if ranked else 0
+        if best_hits > 0:
+            ranked = [row for row in ranked if score(row)[0] > 0]
         return ranked[:top_n]
 
     def retrieve_semantic(self, embedder, workdir: str | None, query: str, top_n: int = 10) -> list[tuple[str, float]]:

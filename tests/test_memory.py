@@ -112,3 +112,59 @@ async def test_post_session_extraction_banks_missed_facts(home, db, workdir):
     entries = [e['content'] for e in MemoryStore(db).all_entries()]
     assert 'explicit fact' in entries
     assert any('snake_case' in c for c in entries)
+
+
+async def test_extraction_skips_paraphrase_duplicates(home, db, workdir):
+    from codingdude.config import load_config
+    from codingdude.engine import Engine
+
+    MemoryStore(db).add(
+        'the self-review was incomplete and cdissues.md still needs to be written',
+        scope='workdir', workdir=str(workdir),
+    )
+
+    def extractor(messages, info):
+        return ModelResponse(parts=[TextPart(content=(
+            'the self-review task was incomplete and cdissues.md still needed '
+            'to be written'
+        ))])
+
+    engine = Engine(config=load_config(), db=db, extraction_model=scripted(extractor))
+    await engine.run(prompt='x', workdir=workdir, model=scripted(echo))
+
+    entries = [e['content'] for e in MemoryStore(db).all_entries()]
+    assert len(entries) == 1
+
+
+async def test_extraction_forgets_obsolete_entries(home, db, workdir):
+    from codingdude.config import load_config
+    from codingdude.engine import Engine
+
+    MemoryStore(db).add(
+        'cdissues.md still needs to be written', scope='workdir', workdir=str(workdir),
+    )
+
+    def extractor(messages, info):
+        return ModelResponse(parts=[TextPart(content=(
+            'FORGET: cdissues.md still needs\n'
+            'cdissues.md was written and the review closed'
+        ))])
+
+    engine = Engine(config=load_config(), db=db, extraction_model=scripted(extractor))
+    await engine.run(prompt='x', workdir=workdir, model=scripted(echo))
+
+    entries = [e['content'] for e in MemoryStore(db).all_entries()]
+    assert entries == ['cdissues.md was written and the review closed']
+
+
+def echo(messages, info):
+    return ModelResponse(parts=[TextPart(content='done')])
+
+
+async def test_retrieval_drops_zero_hit_noise(db, workdir):
+    store = MemoryStore(db)
+    store.add('unrelated fact about baking bread', scope='workdir', workdir=str(workdir))
+    store.add('the project uses uv and ruff', scope='workdir', workdir=str(workdir))
+
+    hits = [e['content'] for e in store.retrieve(str(workdir), query='ruff tooling')]
+    assert hits == ['the project uses uv and ruff']
