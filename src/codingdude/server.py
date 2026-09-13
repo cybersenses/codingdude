@@ -337,6 +337,17 @@ def create_app(
 
         return ArtifactStore(db, session_id).list()
 
+    @app.get('/sessions/{session_id}/artifacts/events')
+    def artifact_events(session_id: str, _: None = Depends(authorize)) -> StreamingResponse:
+        """SSE push (R6): snapshot, then emitted/answered deltas, live."""
+        from .artifacts import ArtifactStore
+
+        def sse():
+            for event in ArtifactStore(db, session_id).watch(poll_seconds=1.0):
+                yield f'data: {json.dumps(event)}\n\n'
+
+        return StreamingResponse(sse(), media_type='text/event-stream')
+
     @app.post('/artifacts/{artifact_id}/respond')
     def artifact_respond(artifact_id: str, body: ArtifactResponseIn, _: None = Depends(authorize)) -> dict:
         """Record the user's answer: a choice-card pick or an edited spec block."""

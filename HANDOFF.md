@@ -62,6 +62,26 @@ R9 plan diffing/cross-machine leases; R10 UI panel + per-step latency.
 - Workdir-scoped planning data lives via the planning agent tools; keep
   ROADMAP.md statuses in sync when you close items.
 
+## R5–R10 thickeners shipped (all in one slice)
+- **R6 SSE push**: `ArtifactStore.watch()` tails the artifacts table
+  (snapshot → emitted/answered deltas); `GET /sessions/{id}/artifacts/events`
+  streams it as SSE; the Artifacts panel consumes EventSource live with
+  automatic fallback to the old 4s poll on stream error.
+- **R7 recording + CI**: `codingdude eval --record SESSION_ID --name N --out
+  FILE [--check ...]` exports a real session's persisted messages into a
+  scenario; `codingdude eval --scenarios DIR --workdir WD` replays a suite and
+  exits 1 with readable FAIL lines (CI-ready).
+- **R8 contract-first + ADR hygiene**: archlint gains `missing-contract`
+  (public top-level functions/classes under src/ need docstring contracts,
+  waivable like any finding) and stale-waiver reporting (a waiver whose finding
+  no longer fires is surfaced for retirement).
+- **R9 plan diffing**: `ExecutionStore.drift(ticket_id)` flags steps claimed
+  done without evidence and out-of-order completion; surfaced in
+  `get_resume_state` as a reconcile-before-finishing warning.
+- **R10 per-model telemetry**: `session_usage` returns `by_model` rows
+  (requests/tokens/cost per model); Cost tab renders the breakdown.
+- Gates: 258 pytest passed, ruff clean, mypy clean (39 files), npm build ok.
+
 ## R5 tier 2 shipped (container tier)
 - Docker verified working after WSL default-distro fix (`wsl --set-default
   Ubuntu`); from the agent's shell the CLI resolves as `docker.exe` (enable

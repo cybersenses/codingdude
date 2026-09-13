@@ -140,6 +140,31 @@ class ExecutionStore:
         ).fetchone()
         return dict(row) if row else None
 
+    def drift(self, ticket_id: int) -> dict:
+        """Plan diffing (R9 thickener): compare the latest attempt's claimed
+        plan against its actual step progress. Flags steps marked 'done'
+        without verification evidence, and steps completed out of order."""
+        state = self.resume_state(ticket_id)
+        if state is None:
+            raise KeyError(f'no execution history for ticket #{ticket_id}')
+        steps = json.loads(state['steps_json'])
+        without_evidence = [
+            i for i, s in enumerate(steps)
+            if s['status'] == 'done' and not s.get('evidence')
+        ]
+        out_of_order = []
+        seen_todo = False
+        for i, s in enumerate(steps):
+            if s['status'] != 'done':
+                seen_todo = True
+            elif seen_todo:
+                out_of_order.append(i)
+        return {
+            'attempt_id': state['id'],
+            'done_without_evidence': without_evidence,
+            'out_of_order': out_of_order,
+        }
+
     def _by_id(self, attempt_id: int) -> dict | None:
         row = self.db._conn.execute(
             'SELECT * FROM ticket_execution WHERE id = ? AND workdir = ?',
@@ -206,6 +231,12 @@ def build_execution_toolset(store: ExecutionStore, session_id: str) -> FunctionT
             if ev:
                 line += f' — evidence: {ev}'
             lines.append(line)
+        drift = store.drift(ticket_id)
+        if drift['done_without_evidence'] or drift['out_of_order']:
+            lines.append(
+                f"drift: done-without-evidence steps {drift['done_without_evidence']}, "
+                f"out-of-order steps {drift['out_of_order']} — reconcile before finishing"
+            )
         return '\n'.join(lines)
 
     return FunctionToolset([

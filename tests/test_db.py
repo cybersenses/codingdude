@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import pytest
 from pydantic_ai.messages import ModelResponse, TextPart
 
 from codingdude.db import Database
@@ -37,6 +38,22 @@ def test_usage_accumulates_per_session(home, workdir):
     assert totals['input_tokens'] == 11
     assert totals['output_tokens'] == 7
     assert abs(totals['cost_usd'] - 0.03) < 1e-9
+
+
+def test_session_usage_includes_per_model_breakdown(home, workdir):
+    """R10 thickener: the Cost tab needs a per-model split, not just totals."""
+    db = Database.connect(home)
+    session_id = db.create_session(workdir)
+    db.record_usage(session_id, model='m1', requests=1, input_tokens=10, output_tokens=5, cost_usd=0.01)
+    db.record_usage(session_id, model='m2', requests=1, input_tokens=1, output_tokens=2, cost_usd=0.02)
+    db.record_usage(session_id, model='m1', requests=1, input_tokens=1, output_tokens=2, cost_usd=None)
+    by_model = {row['model']: row for row in db.session_usage(session_id)['by_model']}
+    assert set(by_model) == {'m1', 'm2'}
+    assert by_model['m1']['requests'] == 2
+    assert by_model['m1']['input_tokens'] == 11
+    assert by_model['m1']['cost_usd'] == pytest.approx(0.01)
+    assert by_model['m2']['requests'] == 1
+    assert by_model['m2']['output_tokens'] == 2
 
 
 def test_context_snapshot_roundtrip_and_migration(home, workdir):

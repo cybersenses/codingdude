@@ -577,13 +577,28 @@ function Artifacts({ sessionId }) {
 
   useEffect(() => {
     if (!sessionId) return
-    let stop = false
-    async function poll() {
-      try { setItems(await call(`/sessions/${sessionId}/artifacts`)) } catch { /* transient */ }
-      if (!stop) setTimeout(poll, 4000)
+    let closed = false
+    let fallback = null
+    // R6: live push via SSE; fall back to the old 4s poll if the stream dies.
+    const startPolling = () => {
+      if (closed || fallback) return
+      const poll = async () => {
+        try { setItems(await call(`/sessions/${sessionId}/artifacts`)) } catch { /* transient */ }
+        if (!closed) fallback = setTimeout(poll, 4000)
+      }
+      poll()
     }
-    poll()
-    return () => { stop = true }
+    const es = new EventSource(api.artifactStreamUrl(sessionId))
+    es.onmessage = (e) => {
+      try {
+        const evt = JSON.parse(e.data)
+        if (evt.event === 'snapshot') setItems(evt.artifacts)
+        else if (evt.event === 'emitted') setItems((xs) => [evt.artifact, ...xs.filter((a) => a.id !== evt.artifact.id)])
+        else if (evt.event === 'answered') setItems((xs) => xs.map((a) => (a.id === evt.artifact.id ? evt.artifact : a)))
+      } catch { /* malformed frame: ignore */ }
+    }
+    es.onerror = () => { es.close(); startPolling() }
+    return () => { closed = true; es.close(); if (fallback) clearTimeout(fallback) }
   }, [sessionId])
 
   async function respond(id, body) {
@@ -1052,6 +1067,17 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width, workdir }
         <div className="flex justify-between font-mono text-xs"><span className="text-ink-muted">input tokens</span><span className="text-ink">{u.input_tokens ?? 0}</span></div>
         <div className="flex justify-between font-mono text-xs"><span className="text-ink-muted">output tokens</span><span className="text-ink">{u.output_tokens ?? 0}</span></div>
         <div className="flex justify-between font-mono text-xs"><span className="text-ink-muted">cost (usd)</span><span className="text-brand-400">${(u.cost_usd ?? 0).toFixed(4)}</span></div>
+        {(u.by_model || []).length > 0 && (
+          <div className="mt-2">
+            <div className="text-[10px] font-semibold uppercase text-ink-muted">by model</div>
+            {(u.by_model || []).map((m) => (
+              <div key={m.model} className="flex justify-between font-mono text-[10px] text-ink-muted">
+                <span className="truncate">{m.model}</span>
+                <span className="ml-2 shrink-0">{m.requests} req · {m.input_tokens}/{m.output_tokens} tok · ${(m.cost_usd ?? 0).toFixed(4)}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     )
   } else if (tab === 'Renders') {

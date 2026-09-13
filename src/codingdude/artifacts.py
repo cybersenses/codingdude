@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import secrets
+import time
+from collections.abc import Iterator
 from datetime import UTC, datetime
 
 from pydantic_ai.toolsets import FunctionToolset
@@ -82,6 +84,27 @@ class ArtifactStore:
         if artifact['status'] != 'answered':
             return None
         return json.loads(artifact['response_json'])
+
+    def watch(self, poll_seconds: float = 1.0) -> Iterator[dict]:
+        """Tail the artifacts table (R6 SSE push): an initial snapshot event,
+        then an 'emitted' or 'answered' delta per change. Sync generator —
+        Starlette iterates it in a threadpool for the streaming endpoint."""
+        seen: dict[str, str] = {}
+        first = True
+        while True:
+            current = {a['id']: a['status'] for a in self.list()}
+            if first:
+                yield {'event': 'snapshot', 'artifacts': self.list()}
+                first = False
+            else:
+                for artifact_id, status in current.items():
+                    previous = seen.get(artifact_id)
+                    if previous is None:
+                        yield {'event': 'emitted', 'artifact': self._get(artifact_id)}
+                    elif previous != status:
+                        yield {'event': 'answered', 'artifact': self._get(artifact_id)}
+            seen = current
+            time.sleep(poll_seconds)
 
     def _get(self, artifact_id: str) -> dict:
         row = self._db._conn.execute(

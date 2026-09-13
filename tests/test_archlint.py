@@ -151,6 +151,75 @@ async def test_toolset_round_trip(workdir, db):
     assert 'fix this or waive' not in final and 'WAIVED' in final
 
 
+def test_missing_contract_flagged_under_src(workdir):
+    """R8 thickener: contract-first — public functions under src/ need a
+    docstring contract."""
+    write(workdir, 'src/pkg/mod.py', '''
+        def public_api():
+            return 1
+    ''')
+    findings = ArchLint().check(workdir)
+    contract = [f for f in findings if f['rule'] == 'missing-contract']
+    assert len(contract) == 1
+    assert 'mod.py' in contract[0]['locations'][0]
+    assert 'public_api' in contract[0]['locations'][0]
+
+
+def test_documented_public_api_not_flagged(workdir):
+    write(workdir, 'src/pkg/mod.py', '''
+        def public_api():
+            """Contract: returns one."""
+            return 1
+
+
+        class Widget:
+            """Contract: a thing."""
+
+            def helper(self):
+                return 2
+    ''')
+    assert ArchLint().check(workdir) == []
+
+
+def test_private_and_outside_src_not_contract_checked(workdir):
+    """The contract rule only applies to public code under src/."""
+    write(workdir, 'pkg/mod.py', '''
+        def undocumented():
+            return 1
+    ''')
+    write(workdir, 'src/pkg/inner.py', '''
+        def _private():
+            return 'different'
+    ''')
+    assert ArchLint().check(workdir) == []
+
+
+def test_missing_contract_waivable(workdir, db):
+    write(workdir, 'src/pkg/mod.py', '''
+        def public_api():
+            return 1
+    ''')
+    lint = ArchLint(db=db, workdir=str(workdir))
+    findings = lint.check(workdir)
+    assert not findings[0].get('waived')
+    lint.waive(findings[0]['fingerprint'], 'transitional seam')
+    assert all(f.get('waived') for f in lint.check(workdir))
+
+
+def test_stale_waiver_reported_for_retirement(workdir, db):
+    """ADR hygiene: a waiver whose finding is fixed should be retired."""
+    write(workdir, 'src/pkg/mod.py', '''
+        def public_api():
+            """Contract: fine."""
+            return 1
+    ''')
+    lint = ArchLint(db=db, workdir=str(workdir))
+    lint.waive('deadbeef0000', 'finding that no longer exists')
+    report = lint.report(workdir)
+    assert 'stale-waiver' in report
+    assert 'deadbeef0000' in report
+
+
 async def test_wired_into_build_all(tmp_path, monkeypatch):
     """Upstream check: arch_lint reaches a real engine toolset."""
     from codingdude.config import Config

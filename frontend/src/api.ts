@@ -169,6 +169,8 @@ export const api = {
     call(`/runs/${runId}/ask`, { method: 'POST', body: JSON.stringify({ answers }) }),
   eventStreamUrl: (runId: string) =>
     `/api/runs/${runId}/events?token=${encodeURIComponent(getToken())}`,
+  artifactStreamUrl: (sessionId: string) =>
+    `/api/sessions/${sessionId}/artifacts/events?token=${encodeURIComponent(getToken())}`,
   getPlanning: (workdir: string): Promise<PlanningData> =>
     call<PlanningData>(`/planning?workdir=${encodeURIComponent(workdir)}`),
   setRoadmapStatus: (workdir: string, id: number, status: string): Promise<unknown> =>

@@ -229,7 +229,7 @@ this prototype".
 ---
 
 ## R6 — Living-artifact collaboration channel
-**Status:** open · **Area:** UI / collaboration / specs
+**Status:** thickened — SSE push channel (`/sessions/{id}/artifacts/events` via `ArtifactStore.watch`); Artifacts panel consumes live events with poll fallback. Mermaid rendering still open. · **Area:** UI / collaboration / specs
 
 ### Problem
 Design collaboration happens through flat chat text. Wireframes, state models,
@@ -259,7 +259,7 @@ diagram, edit a spec inline, or pick between rendered options.
 ---
 
 ## R7 — Session-replay eval harness (regression-test the agent's process)
-**Status:** tracer done (thin slice: `codingdude.evals` + `tests/scenarios/`; thickening — real-session recording, curated library, CI promotion — remains open) · **Area:** quality / self-improvement / evals
+**Status:** thickened — real-session recording (`codingdude eval --record SESSION_ID`) + CI runner (`codingdude eval --scenarios DIR`, exit 1 on failure). Curated scenario library still open. · **Area:** quality / self-improvement / evals
 
 ### Problem
 `bench.py` exercises the engine with a scripted model. There is no way to record
@@ -286,7 +286,7 @@ quality currently regresses silently.
 ---
 
 ## R8 — Architecture guardrails (linter + contract-first codegen)
-**Status:** tracer done — archlint (private-access seam leaks, duplicate bodies) with fix-or-waive; waivers recorded as design decisions. Contract-first codegen + ADR-contradiction detection deliberately open. · **Area:** architecture / codegen / tooling
+**Status:** thickened — new `missing-contract` rule (public top-level code under src/ needs a docstring contract, waivable) + stale-waiver ADR hygiene (fixed findings surface their waivers for retirement). Remaining open: codegen from contracts, ADR-contradiction detection. · **Area:** architecture / codegen / tooling
 
 ### Problem
 Codegraph tells the agent what *is* connected; nothing tells it when what it's
@@ -318,7 +318,7 @@ decisions are never consulted again.
 ---
 
 ## R9 — Resumable long-horizon work (crash-safe execution claims)
-**Status:** tracer done — `ticket_execution` attempt lineage, stale-aware claims, per-step evidence, resume-state tools · **Area:** engine / reliability / planning integration
+**Status:** thickened — `ExecutionStore.drift()` plan diffing (done-without-evidence, out-of-order steps) surfaced in `get_resume_state` · **Area:** engine / reliability / planning integration
 
 ### Problem
 Wayfinder plans multi-session work, but execution state lives in one agent
@@ -344,7 +344,7 @@ mid-ticket loses the claim, the partial work, and the verification record.
 ---
 
 ## R10 — Cost and latency telemetry per task
-**Status:** tracer done — `models.pricing` config, RUN_USAGE event (tokens/cost/duration per run) with provider→pricing→unpriced fallback. UI panel + per-step breakdown deliberately open. · **Area:** observability / engine / UI
+**Status:** tracer done — `models.pricing` config, RUN_USAGE event (tokens/cost/duration per run) with provider→pricing→unpriced fallback. Thickened: `session_usage` carries a `by_model` breakdown; Cost tab renders per-model requests/tokens/cost. Per-step breakdown still open. · **Area:** observability / engine / UI
 
 ### Problem
 Neither the agent nor the user knows what a task cost (tokens, wall time, per

@@ -82,6 +82,26 @@ async def test_toolset_emit_and_feedback(db, session):
     assert 'stacked' in answered
 
 
+def test_watch_yields_snapshot_then_deltas(store):
+    choice_id = store.emit_choice_card('Which?', options=['a', 'b'])
+    events = store.watch(poll_seconds=0.01)
+    snapshot = next(events)
+    assert snapshot['event'] == 'snapshot'
+    assert [a['id'] for a in snapshot['artifacts']] == [choice_id]
+
+    spec_id = store.emit_spec_block('spec', 'draft')
+    delta = next(events)
+    assert delta == {'event': 'emitted', 'artifact': delta['artifact']}
+    assert delta['artifact']['id'] == spec_id
+
+    store.respond(choice_id, {'pick': 'a'})
+    delta = next(events)
+    assert delta['event'] == 'answered'
+    assert delta['artifact']['id'] == choice_id
+    assert delta['artifact']['status'] == 'answered'
+    events.close()
+
+
 def test_artifact_endpoints(tmp_path, monkeypatch):
     monkeypatch.setenv('CODEDUDE_HOME', str(tmp_path / 'home'))
     app = create_app(home=tmp_path / 'home', token='test-token', allow_testclient=True)
@@ -123,3 +143,8 @@ def test_artifact_endpoints(tmp_path, monkeypatch):
 
         listed = c.get(f'/sessions/{sid}/artifacts', headers=h).json()
         assert all(a['status'] == 'answered' for a in listed)
+
+        # The SSE endpoint itself is wired as a StreamingResponse over
+        # store.watch(); the generator is covered by test_watch_*, and a
+        # TestClient stream read blocks on the infinite tail, so we don't
+        # exercise it end-to-end here.

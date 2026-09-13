@@ -43,6 +43,7 @@ class ArchLint:
         findings: list[dict] = []
         findings += self._private_access(workdir)
         findings += self._duplicate_bodies(workdir)
+        findings += self._missing_contract(workdir)
         waivers = self._waivers(workdir)
         for f in findings:
             if f['fingerprint'] in waivers:
@@ -50,9 +51,11 @@ class ArchLint:
         return findings
 
     def report(self, workdir: Path | str) -> str:
+        workdir = Path(workdir)
         active = [f for f in self.check(workdir) if not f.get('waived')]
         waived = [f for f in self.check(workdir) if f.get('waived')]
-        if not active and not waived:
+        stale = sorted(self._stale_waivers(workdir))
+        if not active and not waived and not stale:
             return 'arch_lint: clean — no seam leaks or duplicated bodies found.'
         lines = []
         for f in active:
@@ -64,6 +67,11 @@ class ArchLint:
             )
         for f in waived:
             lines.append(f"[{f['rule']}] WAIVED ({f['fingerprint']}): {f['message']}")
+        for fingerprint in sorted(self._stale_waivers(workdir)):
+            lines.append(
+                f'[stale-waiver] WAIVER {fingerprint} matches no finding — '
+                'retire the decision (fix shipped; the waiver is obsolete)'
+            )
         return '\n'.join(lines)
 
     def waive(self, fingerprint: str, reason: str) -> str:
@@ -137,6 +145,39 @@ class ArchLint:
         return findings
 
     # ---- waivers ----
+
+    def _missing_contract(self, workdir: Path) -> list[dict]:
+        # Contract-first codegen (R8): every public top-level function or
+        # class under src/ must carry a docstring contract. Waivable like
+        # any other finding.
+        findings: list[dict] = []
+        for path, tree in _trees(workdir):
+            if 'src' not in path.parts:
+                continue
+            hits = [
+                f'{path.name}:{node.lineno} ({node.name})'
+                for node in tree.body
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                and not node.name.startswith('_')
+                and not ast.get_docstring(node)
+            ]
+            if hits:
+                findings.append({
+                    'rule': 'missing-contract',
+                    'fingerprint': _fp('missing-contract', path.name, hits),
+                    'message': (
+                        f'public code under src/ without a docstring contract: '
+                        f'{path.name} — document the contract or waive explicitly'
+                    ),
+                    'locations': hits,
+                })
+        return findings
+
+    def _stale_waivers(self, workdir: Path) -> set[str]:
+        """Waivers whose finding no longer fires — the fix shipped, so the
+        recorded decision should be retired (ADR hygiene)."""
+        waived_fingerprints = {f['fingerprint'] for f in self.check(workdir)}
+        return self._waivers(workdir) - waived_fingerprints
 
     def _waivers(self, workdir: Path) -> set[str]:
         if self.db is None:

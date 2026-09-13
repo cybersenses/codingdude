@@ -355,4 +355,16 @@ class Database:
             ' SUM(cost_usd) AS cost_usd FROM usage WHERE session_id = ?',
             (session_id,),
         ).fetchone()
-        return dict(row)
+        usage = dict(row)
+        usage['by_model'] = [
+            dict(r)
+            for r in self._conn.execute(
+                'SELECT model, COALESCE(SUM(requests), 0) AS requests,'
+                ' COALESCE(SUM(input_tokens), 0) AS input_tokens,'
+                ' COALESCE(SUM(output_tokens), 0) AS output_tokens,'
+                ' SUM(cost_usd) AS cost_usd'
+                ' FROM usage WHERE session_id = ? GROUP BY model ORDER BY model',
+                (session_id,),
+            ).fetchall()
+        ]
+        return usage

@@ -63,6 +63,38 @@ def run_headless(
     return 0
 
 
+def _run_eval(args) -> int:
+    """R7 thickener: record real sessions as scenarios, replay suites in CI.
+    Exit 0 only when every declared check passes."""
+    from .evals import export_scenario, run_scenarios, write_scenario
+
+    if args.record:
+        db = Database.connect(config_home())
+        scenario = export_scenario(db, args.record, args.name, checks=args.check)
+        out = args.out
+        if out is None:
+            raise SystemExit('--out is required when recording a scenario')
+        write_scenario(scenario, out)
+        print(f"recorded session {args.record} -> {out} ({len(scenario['responses'])} responses)")
+        return 0
+
+    if args.scenarios is None:
+        print('eval needs --scenarios (replay) or --record SESSION_ID (record)', file=sys.stderr)
+        return 2
+
+    failures = asyncio.run(run_scenarios(
+        args.scenarios, args.workdir.resolve(), config_home(),
+    ))
+    if failures:
+        for failure in failures:
+            print(f'FAIL {failure}', file=sys.stderr)
+        print(f'{len(failures)} check(s) failed', file=sys.stderr)
+        return 1
+    print('1 scenario passed' if sum(1 for _ in args.scenarios.glob('*.json')) == 1
+          else f'{sum(1 for _ in args.scenarios.glob("*.json"))} scenarios passed')
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog='codingdude')
     parser.add_argument('--version', action='version', version=f'codingdude {__version__}')
@@ -82,6 +114,15 @@ def main(argv: list[str] | None = None) -> int:
     restart_cmd.add_argument('--port', type=int, default=8765)
     restart_cmd.add_argument('--status', action='store_true', help='report PID + health, do nothing')
     restart_cmd.add_argument('--dry-run', action='store_true', help='show what would be bounced')
+    eval_cmd = sub.add_parser(
+        'eval', help='replay recorded scenarios as CI checks (R7), or record one from a real session'
+    )
+    eval_cmd.add_argument('--scenarios', type=Path, default=None, help='directory of scenario JSON files to replay')
+    eval_cmd.add_argument('--workdir', type=Path, default=Path.cwd(), help='workdir to replay scenarios against')
+    eval_cmd.add_argument('--record', default=None, metavar='SESSION_ID', help='record a scenario from a real session instead of replaying')
+    eval_cmd.add_argument('--name', default='recorded', help='scenario name when recording')
+    eval_cmd.add_argument('--out', type=Path, default=None, help='output path for the recorded scenario JSON')
+    eval_cmd.add_argument('--check', action='append', default=[], help='check name to attach when recording (repeatable)')
 
     args = parser.parse_args(argv)
     if args.command == 'serve':
@@ -94,6 +135,8 @@ def main(argv: list[str] | None = None) -> int:
 
         flags = ['--status'] if args.status else (['--dry-run'] if args.dry_run else [])
         return _restart.main([*flags, '--port', str(args.port)])
+    if args.command == 'eval':
+        return _run_eval(args)
     if args.command != 'run':
         parser.print_help()
         return 0

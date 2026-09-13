@@ -90,8 +90,37 @@ def test_release_done_closes_attempt_and_ticket(store, db, ticket):
     assert row['status'] == 'done'
 
 
-def test_resume_state_none_for_unknown_ticket(store):
-    assert store.resume_state(999) is None
+def test_drift_flags_done_without_evidence_and_out_of_order(store, ticket):
+    """R9 thickener: plan diffing — a step claimed 'done' without evidence,
+    and steps completed out of order, are surfaced as drift."""
+    attempt = store.claim(ticket, 's1', plan_steps=['step a', 'step b', 'step c'])
+    assert store.drift(ticket) == {
+        'attempt_id': attempt['id'],
+        'done_without_evidence': [],
+        'out_of_order': [],
+    }
+    store.set_step(attempt['id'], 0, 'done', evidence='tests: 3 passed')
+    store.set_step(attempt['id'], 1, 'done')  # no evidence
+    store.set_step(attempt['id'], 2, 'done', evidence='lint clean')  # sequential, evidenced
+    drift = store.drift(ticket)
+    assert drift['done_without_evidence'] == [1]
+    assert drift['out_of_order'] == []
+
+    attempt2 = store.claim(ticket, 's1')
+    steps = json.loads(attempt2['steps_json'])
+    steps[0] = {'text': 'step a', 'status': 'todo', 'evidence': None}
+    steps[2] = {'text': 'step c', 'status': 'done', 'evidence': 'ok'}
+    store.db._conn.execute(
+        'UPDATE ticket_execution SET steps_json = ? WHERE id = ?',
+        (json.dumps(steps), attempt2['id']),
+    )
+    store.db._conn.commit()
+    drift = store.drift(ticket)
+    assert drift['out_of_order'] == [1, 2]
+    assert drift['done_without_evidence'] == [1]
+
+
+def test_resume_state_none_for_unknown_ticket(store):    assert store.resume_state(999) is None
 
 
 def test_heartbeat_refreshes(store, ticket):
