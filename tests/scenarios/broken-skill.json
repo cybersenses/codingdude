@@ -1,0 +1,9 @@
+{
+  "name": "broken-skill",
+  "comment": "Deliberately failing: the agent skips the verification-following directive. run_scenarios must report this with a readable assertion.",
+  "prompt": "say hi",
+  "responses": [
+    { "text": "no-directive", "tool_calls": [] }
+  ],
+  "checks": ["directive_echo"]
+}

@@ -1,0 +1,17 @@
+{
+  "name": "edit-surgical",
+  "prompt": "Change the greeting in src/app.py from \"hi\" to \"hello\". Use edit_file.",
+  "responses": [
+    {
+      "text": null,
+      "tool_calls": [
+        {
+          "tool_name": "edit_file",
+          "args": {"path": "src/app.py", "old_text": "\"hi\"", "new_text": "\"hello\""}
+        }
+      ]
+    },
+    { "text": "done", "tool_calls": [] }
+  ],
+  "checks": ["user_prompt_first", "tool_call_executed"]
+}

@@ -1,0 +1,17 @@
+{
+  "name": "plan-headless-abort",
+  "prompt": "Design and build a whole caching layer with three modules.",
+  "responses": [
+    {
+      "text": null,
+      "tool_calls": [
+        {
+          "tool_name": "propose_plan",
+          "args": {"goal": "caching layer", "steps": ["a", "b", "c"], "files_to_touch": [], "risks": "none"}
+        }
+      ]
+    },
+    { "text": "done", "tool_calls": [] }
+  ],
+  "checks": ["plan_gated_headless"]
+}
