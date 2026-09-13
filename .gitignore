@@ -14,3 +14,6 @@ frontend/dist/
 /.scratch/ui-*.png
 /.scratch/gate-*.png
 /.scratch/gate-preview.html
+
+reference/
+pydantic-ai-main/
