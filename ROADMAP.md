@@ -370,3 +370,53 @@ are made blind.
 
 ## Backlog (unscoped)
 _Open a new `## R<n>` section per item as it is identified._
+
+---
+
+## R11 — Per-project reference knowledgebase (curated library manuals)
+**Status:** open · **Area:** knowledge / engine / UI · **Surfaced by:** the Pydantic-docs session
+
+### Problem
+When the user dropped the actual Pydantic documentation into the workdir, the
+agent used it constantly and it measurably improved the quality and speed of
+solutions. But this only worked because the user manually fetched the docs —
+there is **no built-in place or workflow** for per-project reference material:
+
+- No convention for where manuals live or how they get indexed.
+- The agent has no way to *discover* or *query* the reference corpus; whether
+  it helps depends on whether a file happens to be grep'd at the right moment.
+- Docs go stale: nothing tracks which library version a manual covers vs. what
+  the project actually uses.
+- The pattern (fetch → store → retrieve) must be repeated by hand every project.
+
+### Impact
+- The single highest-leverage context intervention observed so far stays
+  accidental instead of systematic.
+- Hallucinated/outdated API usage persists when no manual is present.
+- RAG summaries (R3 compaction) cover *this session's* history only — there is
+  no durable, project-scoped knowledge layer.
+
+### Desired behaviour
+- A **per-project `references/` folder** (or tracked store) where manuals,
+  API docs, ADRs of dependencies, etc. are stored — user-supplied or
+  agent-fetched on demand ("pin the pydantic v2 docs for this project").
+- **Agent tooling to use it:** a `search_references` / `read_reference` tool so
+  retrieval is deliberate and cheap, not a lucky grep. Index at ingest
+  (section-level), not at query time over raw dumps.
+- **Freshness awareness:** each reference records the library version it
+  documents; the agent is warned (or the reference flagged) when the pinned
+  dependency in `pyproject.toml`/`package.json` diverges.
+- **Skill guidance:** skills like `ss-setup`/`implement` prompt to check whether
+  relevant references exist before relying on model memory.
+
+### Acceptance (rough)
+- A user can add a manual (file or URL) to a project and the agent can find and
+  cite the right section mid-task without the user naming the file.
+- A deliberately outdated manual produces a visible staleness warning tied to
+  the dependency pin.
+
+### Evidence / notes
+- Proven pattern: ingesting real Pydantic docs during a session let the agent
+  resolve multiple integration issues it would otherwise have guessed at.
+- Rides on the existing workdir-scoped Memory infrastructure (R3) — likely an
+  additional store + tools, not a new retrieval engine.
