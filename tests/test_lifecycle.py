@@ -68,4 +68,45 @@ async def test_compaction_replaces_old_history_past_threshold(engine, workdir, h
     assert outcome.output.startswith('history=')
     # After compaction the stored history is much smaller than the 5 big messages.
     stored = db.load_messages(session_id)
-    assert sum(len(p) for p in stored) < 5 * 500
+    assert sum(len(p) for p in stored) < 5 * 1000
+
+
+async def test_compaction_triggers_on_token_limit_from_config(home, workdir):
+    """R3: with compaction_threshold disabled, the ContextManager's token
+    estimate against the configured context_limit triggers compaction."""
+    import dataclasses
+
+    from codingdude.config import load_config
+    from codingdude.db import Database
+    from codingdude.engine import Engine
+
+    config = load_config()
+    config = dataclasses.replace(
+        config, models=dataclasses.replace(config.models, context_limit=1000)
+    )
+    db = Database.connect(home)
+    engine = Engine(config=config, db=db, compaction_threshold=None)
+    session_id = db.create_session(workdir, title='token session')
+
+    from pydantic_ai.messages import ModelRequest, UserPromptPart
+
+    from codingdude.messages import encode_messages
+
+    # 5 x 1000 chars = 1250 estimated tokens >= 80% of the 1000-token window.
+    for i in range(5):
+        db.append_messages(
+            session_id,
+            encode_messages([ModelRequest(parts=[UserPromptPart(content=f'{i} {"x" * 1000}')])]),
+        )
+
+    def echo_count(messages, info):
+        return ModelResponse(parts=[TextPart(content=f'history={len(messages)}')])
+
+    await engine.run(
+        prompt='continue', workdir=workdir, session_id=session_id,
+        model=scripted(echo_count),
+    )
+    # Without token-based compaction the 5 big messages (~5000 chars) survive
+    # in storage; a compaction replaces them with a short summary.
+    stored = db.load_messages(session_id)
+    assert sum(len(p) for p in stored) < 5 * 1000

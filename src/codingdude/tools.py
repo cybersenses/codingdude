@@ -283,6 +283,7 @@ def build_delegation_toolset(
     async def delegate(task: str) -> str:
         from pydantic_ai import Agent
         from pydantic_ai.settings import ModelSettings
+        from pydantic_ai.usage import UsageLimits
 
         from .prompts import load_prompt
 
@@ -295,7 +296,9 @@ def build_delegation_toolset(
             toolsets=[build_toolset(workdir, read_only=True)],
             model_settings=settings,
         )
-        result = await sub_agent.run(task)
+        result = await sub_agent.run(
+            task, usage_limits=UsageLimits(request_limit=200)
+        )
         return str(result.output)
 
     return FunctionToolset([delegate])

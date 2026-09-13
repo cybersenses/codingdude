@@ -12,6 +12,21 @@ def test_first_run_creates_config_with_model_defaults(home):
     assert (home / 'config.toml').exists()
 
 
+def test_request_limit_defaults_above_library_default(home):
+    """pydantic-ai caps a run at 50 model requests by default, which kills
+    long agentic sessions — CodingDude must raise it (configurable)."""
+    config = load_config()
+    assert config.models.request_limit > 50
+
+
+def test_request_limit_override_is_read(home):
+    home.mkdir(parents=True)
+    (home / 'config.toml').write_text(
+        '[models]\nrequest_limit = 999\n', encoding='utf-8'
+    )
+    assert load_config().models.request_limit == 999
+
+
 def test_existing_config_is_read_not_overwritten(home):
     home.mkdir(parents=True)
     (home / 'config.toml').write_text(

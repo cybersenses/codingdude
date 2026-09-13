@@ -20,6 +20,9 @@ def _default_config_toml(lineup: ModelLineup) -> str:
         '# Thinking depth for GLM models: minimal | low | medium | high | xhigh | off\n'
         '# (cost lever: low/medium while testing; unset = provider default)\n'
         '# thinking = "low"\n'
+        '# Max model requests per run (pydantic-ai default 50 is too low for\n'
+        '# long agentic sessions)\n'
+        '# request_limit = 500\n'
         '\n[shell]\n'
         '# "bash" (Git Bash) or "powershell"\n'
         'default = "bash"\n'
@@ -49,6 +52,9 @@ class ModelLineup:
     # from the model name (see context.model_limit_for). Drives compaction
     # timing and the UI context meter.
     context_limit: int | None = None
+    # Max model requests per run. pydantic-ai defaults to 50, which a long
+    # agentic session exhausts; raise it so long runs aren't cut off.
+    request_limit: int = 500
 
 
 THINKING_LEVELS = ('minimal', 'low', 'medium', 'high', 'xhigh')
@@ -139,6 +145,7 @@ def load_config(home: Path | None = None) -> Config:
             thinking=models.get('thinking', defaults.models.thinking),
             max_tokens=models.get('max_tokens', defaults.models.max_tokens),
             context_limit=models.get('context_limit', defaults.models.context_limit),
+            request_limit=models.get('request_limit', defaults.models.request_limit),
         ),
         shell=ShellConfig(default=shell.get('default', defaults.shell.default)),
         providers=ProviderKeys(

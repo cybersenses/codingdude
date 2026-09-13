@@ -228,6 +228,17 @@ class Engine:
         except Exception:  # noqa: BLE001 - accounting must never fail a run
             pass
 
+    def _usage_limits(self):
+        """Per-run request cap (config `models.request_limit`, default 500).
+
+        Without an explicit limit pydantic-ai applies its library default of
+        50 model requests per run, which kills long agentic sessions with
+        'would exceed the request_limit of 50'.
+        """
+        from pydantic_ai.usage import UsageLimits
+
+        return UsageLimits(request_limit=self._config.models.request_limit)
+
     @staticmethod
     def _scrubbed() -> dict:
         from .tools import scrubbed_env
@@ -309,13 +320,21 @@ class Engine:
                 decode_messages(self._db.load_messages(session_id))
             )
             traced({'type': 'USER_PROMPT', 'text': prompt})
+            cm = self._context_manager(model_name)
             history, compacted = await self._maybe_compact(
-                history, resolved, on_event, session_id
+                history, resolved, on_event, session_id, cm=cm
             )
             if compacted:
                 self._db.replace_messages(
                     session_id, [encode_messages([m]) for m in history]
                 )
+            ctx_stats = cm.usage(history)
+            traced({
+                'type': 'CONTEXT_USAGE',
+                'total_tokens': ctx_stats.total_tokens,
+                'model_limit': ctx_stats.model_limit,
+                'usage_percent': round(ctx_stats.usage_percent, 4),
+            })
 
             cp_holder: list[str] = []
 
@@ -367,14 +386,6 @@ class Engine:
                 emitter=traced,
             )
             toolsets = build_all(plugin_ctx)
-
-            cm = ContextManager(model_limit=128_000)
-            ctx_stats = cm.usage(history)
-            if ctx_stats.needs_compaction:
-                logger.info(
-                    'Context usage %.0f%% (%d/%d tokens) — compaction recommended',
-                    ctx_stats.usage_percent * 100, ctx_stats.total_tokens, ctx_stats.model_limit,
-                )
 
             from .memory import MemoryStore
             from .skills import SkillRegistry
@@ -464,6 +475,7 @@ class Engine:
                     cp_holder=cp_holder,
                     persist=persist_snapshot,
                     stream=emit is not None,
+                    usage_limits=self._usage_limits(),
                 )
             except GateRequired as gate:
                 # ADR-0003: unattended runs abort on gates. The Session keeps
@@ -581,15 +593,30 @@ class Engine:
                 store.add(fact, scope='workdir', workdir=str(workdir))
                 known.add(fact)
 
-    async def _maybe_compact(self, history, resolved: Model, on_event, session_id: str):
-        """Compact old turns into a summary when history passes the threshold.
+    def _context_manager(self, model_name: str) -> ContextManager:
+        """The ContextManager for the resolved model: per-model context limit
+        (config override wins; see context.model_limit_for)."""
+        from .context import model_limit_for
+
+        return ContextManager(
+            model_limit=model_limit_for(model_name, self._config.models.context_limit)
+        )
+
+    async def _maybe_compact(self, history, resolved: Model, on_event, session_id: str,
+                             cm: ContextManager | None = None):
+        """Compact old turns into a summary when history approaches the
+        model's context window (token-based) or the legacy char threshold.
 
         Returns (history, compacted?) — compacted True means history changed.
         """
-        if not self._compaction_threshold or len(history) < 3:
+        if len(history) < 3:
             return history, False
-        total = sum(len(encode_messages([m])) for m in history)
-        if total <= self._compaction_threshold:
+        over_tokens = cm is not None and cm.usage(history).needs_compaction
+        over_chars = (
+            self._compaction_threshold is not None
+            and sum(len(encode_messages([m])) for m in history) > self._compaction_threshold
+        )
+        if not (over_tokens or over_chars):
             return history, False
 
         from pydantic_ai.messages import ModelRequest, UserPromptPart
@@ -624,7 +651,7 @@ class Engine:
         return compacted, True
 
     async def _run_agent(self, agent, prompt, history, model_name, traced, cp_holder,
-                         persist=None, stream: bool = True):
+                         persist=None, stream: bool = True, usage_limits=None):
         """Drive one agent run; stream AG-UI deltas only when `stream` is set.
 
         History is snapshotted after every tool turn (self-review H7), so a
@@ -763,6 +790,7 @@ class Engine:
                 f'{findings}\nBack these claims by actually running the checks now '
                 '(use the tools), or correct your summary.',
                 message_history=history + list(result.new_messages()),
+                usage_limits=self._usage_limits(),
             )
             self._record_model_usage(session_id, resolved, retry.usage)
             self._db.replace_messages(
@@ -772,3 +800,4 @@ class Engine:
         except Exception:  # noqa: BLE001 — best effort; report unverified either way
             pass
         emit({'type': 'CLAIMS_UNVERIFIED', 'claims': unsupported})
+
