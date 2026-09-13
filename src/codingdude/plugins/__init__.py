@@ -26,6 +26,7 @@ from codingdude.mcp_config import (
 )
 from codingdude.memory import MemoryStore, build_memory_toolset
 from codingdude.planning import build_planning_toolset
+from codingdude.references import build_references_toolset
 from codingdude.repo_map import build_repo_map_toolset
 from codingdude.roadmap import RoadmapStore, build_roadmap_toolset
 from codingdude.sandbox import build_sandbox_toolset
@@ -140,5 +141,6 @@ async def build_all(ctx: PluginContext) -> list[AbstractToolset]:
     toolsets.append(build_skills_toolset(registry))
     toolsets.append(build_memory_toolset(MemoryStore(ctx.db), str(ctx.workdir)))
     toolsets.append(build_roadmap_toolset(RoadmapStore(ctx.db), str(ctx.workdir)))
+    toolsets.append(build_references_toolset(ctx.db, ctx.workdir))
 
     return toolsets

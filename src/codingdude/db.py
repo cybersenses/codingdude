@@ -91,6 +91,23 @@ CREATE TABLE IF NOT EXISTS tickets (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS reference_sections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workdir TEXT NOT NULL,
+    path TEXT NOT NULL,
+    heading TEXT NOT NULL,
+    content TEXT NOT NULL,
+    indexed_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ref_sections ON reference_sections (workdir, path);
+CREATE TABLE IF NOT EXISTS reference_meta (
+    workdir TEXT NOT NULL,
+    path TEXT NOT NULL,
+    version TEXT,
+    mtime TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    PRIMARY KEY (workdir, path)
+);
 CREATE TABLE IF NOT EXISTS design_decisions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     workdir TEXT NOT NULL,
