@@ -318,7 +318,7 @@ decisions are never consulted again.
 ---
 
 ## R9 — Resumable long-horizon work (crash-safe execution claims)
-**Status:** open · **Area:** engine / reliability / planning integration
+**Status:** tracer done — `ticket_execution` attempt lineage, stale-aware claims, per-step evidence, resume-state tools · **Area:** engine / reliability / planning integration
 
 ### Problem
 Wayfinder plans multi-session work, but execution state lives in one agent

@@ -20,6 +20,7 @@ from codingdude.ast_tools import build_ast_toolset
 from codingdude.config import Config, ThinkingSetting
 from codingdude.db import Database
 from codingdude.deadcode import build_deadcode_toolset
+from codingdude.execution import ExecutionStore, build_execution_toolset
 from codingdude.mcp_config import (
     load_merged_mcp_toolsets,
     merged_mcp_server_names,
@@ -144,5 +145,8 @@ async def build_all(ctx: PluginContext) -> list[AbstractToolset]:
     toolsets.append(build_roadmap_toolset(RoadmapStore(ctx.db), str(ctx.workdir)))
     toolsets.append(build_references_toolset(ctx.db, ctx.workdir))
     toolsets.append(build_artifacts_toolset(ctx.db, ctx.session_id))
+    toolsets.append(
+        build_execution_toolset(ExecutionStore(ctx.db, str(ctx.workdir)), ctx.session_id)
+    )
 
     return toolsets
