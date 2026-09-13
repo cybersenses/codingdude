@@ -571,6 +571,75 @@ function Terminal({ sessionId }) {
   )
 }
 
+function Artifacts({ sessionId }) {
+  const [items, setItems] = useState([])
+  const [drafts, setDrafts] = useState({})
+
+  useEffect(() => {
+    if (!sessionId) return
+    let stop = false
+    async function poll() {
+      try { setItems(await call(`/sessions/${sessionId}/artifacts`)) } catch { /* transient */ }
+      if (!stop) setTimeout(poll, 4000)
+    }
+    poll()
+    return () => { stop = true }
+  }, [sessionId])
+
+  async function respond(id, body) {
+    try {
+      await call(`/artifacts/${id}/respond`, { method: 'POST', body: JSON.stringify(body) })
+      setItems(await call(`/sessions/${sessionId}/artifacts`))
+    } catch { /* transient */ }
+  }
+
+  if (!sessionId) return <div className="text-neutral-600">no session</div>
+  if (items.length === 0) return <div className="text-neutral-600">no artifacts yet</div>
+  return (
+    <div className="space-y-2">
+      {items.map((a) => (
+        <div key={a.id} className="rounded border border-neutral-800 bg-neutral-900 p-2">
+          <div className="mb-1 flex items-center justify-between">
+            <span className="text-[11px] font-semibold text-neutral-200">{a.title}</span>
+            <span className="text-[9px] uppercase text-neutral-500">{a.kind} · {a.status}</span>
+          </div>
+          {a.kind === 'choice' ? (
+            <div className="flex flex-wrap gap-1">
+              {a.payload.options.map((opt) => (
+                <button
+                  key={opt}
+                  disabled={a.status === 'answered'}
+                  className={a.response?.pick === opt
+                    ? 'rounded bg-accent px-2 py-0.5 text-[10px] text-accent-fg'
+                    : 'rounded bg-neutral-800 px-2 py-0.5 text-[10px] text-neutral-300 hover:bg-neutral-700 disabled:opacity-40'}
+                  onClick={() => respond(a.id, { pick: opt })}
+                >{opt}</button>
+              ))}
+            </div>
+          ) : a.status === 'answered' && a.response?.content != null ? (
+            <pre className="whitespace-pre-wrap text-[10px] text-neutral-300">{a.response.content}</pre>
+          ) : (
+            <div>
+              {a.payload.markdown.includes('```mermaid') && (
+                <div className="mb-1 text-[9px] text-neutral-500">mermaid render-only (tracer)</div>
+              )}
+              <textarea
+                className="h-28 w-full rounded bg-neutral-950 p-1 font-mono text-[10px] text-neutral-300"
+                value={drafts[a.id] ?? a.payload.markdown}
+                onChange={(e) => setDrafts((d) => ({ ...d, [a.id]: e.target.value }))}
+              />
+              <button
+                className="mt-1 rounded bg-accent px-2 py-0.5 text-[10px] text-accent-fg"
+                onClick={() => respond(a.id, { content: drafts[a.id] ?? a.payload.markdown })}
+              >save</button>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function Planning({ workdir }) {
   const [data, setData] = useState(null)
   const [newTitle, setNewTitle] = useState('')
@@ -685,7 +754,7 @@ function Planning({ workdir }) {
 }
 
 function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width, workdir }) {
-  const tabs = ['Diff', 'Planning', 'Renders', 'Files', 'Terminal', 'Trace', 'Cost', 'Memory', 'MCP', 'Standards']
+  const tabs = ['Diff', 'Planning', 'Artifacts', 'Renders', 'Files', 'Terminal', 'Trace', 'Cost', 'Memory', 'MCP', 'Standards']
   const [tab, setTab] = useState('Diff')
   const [data, setData] = useState({})
 
@@ -703,6 +772,7 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width, workdir }
           const cps = await call(`/sessions/${sessionId}/checkpoints`)
           setData((d) => ({ ...d, trace: tr, checkpoints: cps }))
         }
+        if (tab === 'Artifacts') { const r = await call(`/sessions/${sessionId}/artifacts`); setData((d) => ({ ...d, artifacts: r })) }
         if (tab === 'Renders') {
           const r = await call(`/sessions/${sessionId}/renders`)
           setData((d) => ({ ...d, renders: r.renders, renderStart: r.session_start }))
@@ -922,6 +992,8 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width, workdir }
     body = <Terminal sessionId={sessionId} />
   } else if (tab === 'Planning') {
     body = <Planning workdir={workdir} />
+  } else if (tab === 'Artifacts') {
+    body = <Artifacts sessionId={sessionId} />
   } else if (tab === 'MCP' && data.mcp) {
     body = (
       <div className="space-y-1">

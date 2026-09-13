@@ -108,6 +108,17 @@ CREATE TABLE IF NOT EXISTS reference_meta (
     size INTEGER NOT NULL,
     PRIMARY KEY (workdir, path)
 );
+CREATE TABLE IF NOT EXISTS artifacts (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    response_json TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_artifacts ON artifacts (session_id, created_at);
 CREATE TABLE IF NOT EXISTS design_decisions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     workdir TEXT NOT NULL,

@@ -326,6 +326,33 @@ def create_app(
         channel.send_to_worker({'type': 'ASK_USER_RESPONSE', 'answers': body.answers})
         return {'sent': True}
 
+    class ArtifactResponseIn(BaseModel):
+        pick: str | None = None
+        content: str | None = None
+
+    @app.get('/sessions/{session_id}/artifacts')
+    def session_artifacts(session_id: str, _: None = Depends(authorize)) -> list[dict]:
+        """Living artifacts (choice cards, spec blocks), newest first (R6)."""
+        from .artifacts import ArtifactStore
+
+        return ArtifactStore(db, session_id).list()
+
+    @app.post('/artifacts/{artifact_id}/respond')
+    def artifact_respond(artifact_id: str, body: ArtifactResponseIn, _: None = Depends(authorize)) -> dict:
+        """Record the user's answer: a choice-card pick or an edited spec block."""
+        from .artifacts import ArtifactStore
+
+        response = (
+            {'pick': body.pick} if body.pick is not None else {'content': body.content}
+        )
+        try:
+            ArtifactStore(db, '').respond(artifact_id, response)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {'ok': True}
+
     @app.get('/sessions/{session_id}/plan')
     def session_plan(session_id: str, _: None = Depends(authorize)) -> dict:
         from .planning import PlanStore

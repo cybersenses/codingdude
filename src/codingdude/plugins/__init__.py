@@ -15,6 +15,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.toolsets import AbstractToolset
 
 from codingdude.approvals import ApprovalPolicy
+from codingdude.artifacts import build_artifacts_toolset
 from codingdude.ast_tools import build_ast_toolset
 from codingdude.config import Config, ThinkingSetting
 from codingdude.db import Database
@@ -142,5 +143,6 @@ async def build_all(ctx: PluginContext) -> list[AbstractToolset]:
     toolsets.append(build_memory_toolset(MemoryStore(ctx.db), str(ctx.workdir)))
     toolsets.append(build_roadmap_toolset(RoadmapStore(ctx.db), str(ctx.workdir)))
     toolsets.append(build_references_toolset(ctx.db, ctx.workdir))
+    toolsets.append(build_artifacts_toolset(ctx.db, ctx.session_id))
 
     return toolsets
