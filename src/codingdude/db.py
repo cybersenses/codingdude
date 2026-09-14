@@ -317,8 +317,24 @@ class Database:
         )
         self._conn.commit()
 
+    def _session_scoped_tables(self) -> list[str]:
+        """Every table keyed by session_id (M6: derived from the schema, so
+        delete_session can never lag new tables)."""
+        names = [
+            r[0] for r in self._conn.execute(
+                "SELECT name FROM sqlite_master"
+                " WHERE type='table' AND name != 'sessions'"
+            )
+        ]
+        scoped = []
+        for name in sorted(names):
+            cols = {r[1] for r in self._conn.execute(f'PRAGMA table_info({name})')}
+            if 'session_id' in cols:
+                scoped.append(name)
+        return scoped
+
     def delete_session(self, session_id: str) -> None:
-        for table in ('messages', 'approvals', 'usage', 'plans'):
+        for table in self._session_scoped_tables():
             self._conn.execute(
                 f'DELETE FROM {table} WHERE session_id = ?', (session_id,)
             )

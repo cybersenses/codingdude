@@ -29,7 +29,16 @@ def _base_instructions() -> str:
     return load_prompt('base_instructions')
 
 
-INSTRUCTIONS = _base_instructions()
+_INSTRUCTIONS_CACHE: str | None = None
+
+
+def _instructions() -> str:
+    """Base instructions, loaded on first use — never at import time (L13:
+    module-import must not touch the filesystem)."""
+    global _INSTRUCTIONS_CACHE
+    if _INSTRUCTIONS_CACHE is None:
+        _INSTRUCTIONS_CACHE = _base_instructions()
+    return _INSTRUCTIONS_CACHE
 
 
 def _zai_fallback(model_name: str, base_url: str | None) -> Model:
@@ -260,30 +269,8 @@ class Engine:
             return False
         return bool(result.stdout.strip())
 
-    async def run(
-        self,
-        *,
-        prompt: str,
-        workdir: Path,
-        session_id: str | None = None,
-        model: Model | str | None = None,
-        on_event: Callable[[object], None] | None = None,
-        approvals=None,
-        subagent_model: Model | None = None,
-        emit: Callable[[dict], None] | None = None,
-        trace: bool = True,
-        fix_loop: bool = False,
-        test_command: str = 'pytest -q',
-        max_test_iterations: int = 3,
-        image_path: Path | None = None,
-        vision_model: Model | None = None,
-    ) -> RunOutcome:
-        if session_id is None:
-            session_id = self._db.create_session(workdir, title=prompt[:80])
-            created_session = True
-        else:
-            created_session = False
-
+    def _make_tracer(self, session_id: str, workdir: Path, trace: bool, emit):
+        """The per-run event sink: trace JSONL + render capture + UI emit."""
         trace_file = self._config_home() / 'traces' / f'{session_id}.jsonl'
 
         def traced(event: dict) -> None:
@@ -310,6 +297,192 @@ class Engine:
             if emit:
                 emit(event)
 
+        return traced
+
+    def _resolve_run_model(
+        self, model: Model | str | None,
+        image_path: Path | None, vision_model: Model | None,
+    ) -> Model:
+        """The model this run executes on: explicit override > image-vision >
+        configured main (+failover)."""
+        if isinstance(model, Model):
+            resolved = model
+        elif isinstance(model, str):
+            resolved = self.build_model(main=model)
+        else:
+            resolved = self.build_model()
+        if image_path is not None and vision_model is not None:
+            resolved = vision_model
+        return resolved
+
+    def _build_instructions(
+        self, workdir: Path, prompt: str, registry, store, embedder,
+    ) -> str:
+        """System instructions: base + repo map + directive layers + skills
+        index (with auto-triggered bodies) + relevant Memory."""
+        instructions = _instructions()
+        from .repo_map import build_repo_map
+
+        repo_map_text = build_repo_map(workdir)
+        if repo_map_text:
+            instructions += (
+                '\n\n## Repository overview (auto-generated map)\n' + repo_map_text
+            )
+        from .directives import build_directive_layers
+
+        directive_layers = build_directive_layers(self._config_home(), workdir)
+        if directive_layers:
+            instructions += '\n\n' + directive_layers
+
+        skills_index = registry.index()
+        if skills_index:
+            lines = '\n'.join(
+                f"- {s['name']}: {s['description']}" for s in skills_index
+            )
+            instructions += (
+                '\n\n## Skills (procedures you can load)\n'
+                'Scan this index before every response. If any skill matches the '
+                'request — by name, description, or topic — call load_skill(name) '
+                'BEFORE acting and follow it. Loading a matching skill is mandatory, '
+                'not optional:\n'
+                + lines
+            )
+            triggered = registry.matching(prompt)
+            if triggered:
+                preloaded = '\n\n'.join(
+                    f"### Pre-loaded skill: {s['name']} (auto-triggered by this request)\n\n"
+                    + s['body']
+                    for s in triggered
+                )
+                instructions += (
+                    '\n\n## Skills auto-triggered by this request\n'
+                    'The matching skill bodies are already loaded here — follow them '
+                    'now. Call load_skill only for a companion file or a different '
+                    'skill from the index.\n\n' + preloaded
+                )
+        if embedder is not None:
+            relevant = [
+                content
+                for content, _score in store.retrieve_semantic(
+                    embedder, str(workdir), query=prompt
+                )
+            ]
+        else:
+            relevant = [
+                e['content'] for e in store.retrieve(str(workdir), query=prompt)
+            ]
+        if relevant:
+            lines = '\n'.join(f'- {c}' for c in relevant)
+            instructions += (
+                '\n\nMemory (durable facts from earlier sessions; respect them):\n'
+                + lines
+            )
+        return instructions
+
+    async def _run_fix_loop(
+        self, session_id: str, resolved: Model, instructions: str, toolsets,
+        history: list, result, workdir: Path, test_command: str, shell_bin: str,
+        max_test_iterations: int, emit,
+    ):
+        """Fix-until-green: run the tests, feed failures back, repeat."""
+        import asyncio
+
+        from pydantic_ai import Agent
+
+        from .tools import shell_argv
+
+        for _ in range(max_test_iterations):
+            proc = await asyncio.create_subprocess_exec(
+                *shell_argv(test_command, shell_bin),
+                cwd=workdir, stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE, env=self._scrubbed(),
+            )
+            try:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=600)
+            except TimeoutError:
+                proc.kill()
+                break
+            test_out = (stdout.decode(errors='replace') + stderr.decode(errors='replace')).strip()[:4000]
+            passed = proc.returncode == 0
+            if emit:
+                emit({'type': 'TEST_RUN', 'passed': passed, 'output': test_out})
+            if passed:
+                break
+            retry_agent: Agent = Agent(
+                model=resolved, instructions=instructions, toolsets=toolsets
+            )
+            history = history + list(result.new_messages()) if result else history
+            failure_text = (
+                'The test suite is still failing. Output:\n' + test_out + '\n'
+            )
+            result = await retry_agent.run(
+                failure_text
+                + 'Fix the failures. Do not declare success until the tests pass.',
+                message_history=history,
+            )
+            self._record_model_usage(session_id, resolved, result.usage)
+            self._db.replace_messages(
+                session_id,
+                [encode_messages([m]) for m in result.all_messages()],
+            )
+            self._check_budget(session_id)
+        return result
+
+    def _record_run_usage(
+        self, session_id: str, model_name: str, result, started, emit,
+    ) -> None:
+        """Bill the run (usage row + RUN_USAGE trace event with duration)."""
+        from datetime import UTC as _UTC
+        from datetime import datetime as _dt
+
+        from .telemetry import run_usage_event
+
+        usage = result.usage
+        run_cost = float(usage.cost) if usage.cost is not None else None
+        self._db.record_usage(
+            session_id,
+            model=model_name,
+            requests=usage.requests or 0,
+            input_tokens=usage.input_tokens or 0,
+            output_tokens=usage.output_tokens or 0,
+            cost_usd=run_cost,
+        )
+        emit(run_usage_event(
+            model_name=model_name,
+            requests=usage.requests or 0,
+            input_tokens=usage.input_tokens or 0,
+            output_tokens=usage.output_tokens or 0,
+            cost_usd=run_cost,
+            duration_s=(_dt.now(_UTC) - started).total_seconds(),
+            pricing=self._config.models.pricing,
+        ))
+
+    async def run(
+        self,
+        *,
+        prompt: str,
+        workdir: Path,
+        session_id: str | None = None,
+        model: Model | str | None = None,
+        on_event: Callable[[object], None] | None = None,
+        approvals=None,
+        subagent_model: Model | None = None,
+        emit: Callable[[dict], None] | None = None,
+        trace: bool = True,
+        fix_loop: bool = False,
+        test_command: str = 'pytest -q',
+        max_test_iterations: int = 3,
+        image_path: Path | None = None,
+        vision_model: Model | None = None,
+    ) -> RunOutcome:
+        if session_id is None:
+            session_id = self._db.create_session(workdir, title=prompt[:80])
+            created_session = True
+        else:
+            created_session = False
+
+        traced = self._make_tracer(session_id, workdir, trace, emit)
+
         def persist_snapshot(msgs):
             self._db.replace_messages(
                 session_id, [encode_messages([m]) for m in msgs]
@@ -321,14 +494,7 @@ class Engine:
         started = _dt.now(_UTC)
         try:
             self._check_budget(session_id)
-            if isinstance(model, Model):
-                resolved = model
-            elif isinstance(model, str):
-                resolved = self.build_model(main=model)
-            else:
-                resolved = self.build_model()
-            if image_path is not None and vision_model is not None:
-                resolved = vision_model
+            resolved = self._resolve_run_model(model, image_path, vision_model)
             model_name = getattr(resolved, 'model_name', str(resolved))
 
             history = sanitize_history(
@@ -411,64 +577,9 @@ class Engine:
 
             registry = SkillRegistry(self._config_home())
             store = MemoryStore(self._db)
-
-            instructions = INSTRUCTIONS
-            from .repo_map import build_repo_map
-
-            repo_map_text = build_repo_map(workdir)
-            if repo_map_text:
-                instructions += (
-                    '\n\n## Repository overview (auto-generated map)\n' + repo_map_text
-                )
-            from .directives import build_directive_layers
-
-            directive_layers = build_directive_layers(self._config_home(), workdir)
-            if directive_layers:
-                instructions += '\n\n' + directive_layers
-
-            skills_index = registry.index()
-            if skills_index:
-                lines = '\n'.join(
-                    f"- {s['name']}: {s['description']}" for s in skills_index
-                )
-                instructions += (
-                    '\n\n## Skills (procedures you can load)\n'
-                    'Scan this index before every response. If any skill matches the '
-                    'request — by name, description, or topic — call load_skill(name) '
-                    'BEFORE acting and follow it. Loading a matching skill is mandatory, '
-                    'not optional:\n'
-                    + lines
-                )
-                triggered = registry.matching(prompt)
-                if triggered:
-                    preloaded = '\n\n'.join(
-                        f"### Pre-loaded skill: {s['name']} (auto-triggered by this request)\n\n"
-                        + s['body']
-                        for s in triggered
-                    )
-                    instructions += (
-                        '\n\n## Skills auto-triggered by this request\n'
-                        'The matching skill bodies are already loaded here — follow them '
-                        'now. Call load_skill only for a companion file or a different '
-                        'skill from the index.\n\n' + preloaded
-                    )
-            if self.embedder is not None:
-                relevant = [
-                    content
-                    for content, _score in store.retrieve_semantic(
-                        self.embedder, str(workdir), query=prompt
-                    )
-                ]
-            else:
-                relevant = [
-                    e['content'] for e in store.retrieve(str(workdir), query=prompt)
-                ]
-            if relevant:
-                lines = '\n'.join(f'- {c}' for c in relevant)
-                instructions += (
-                    '\n\nMemory (durable facts from earlier sessions; respect them):\n'
-                    + lines
-                )
+            instructions = self._build_instructions(
+                workdir, prompt, registry, store, self.embedder
+            )
 
             from pydantic_ai.settings import ModelSettings
 
@@ -521,71 +632,18 @@ class Engine:
 
         # Fix-until-green loop: run the tests, feed failures back, repeat.
         if fix_loop and approvals is not None:
-            import asyncio
-
             from .config import load_project_config
-            from .tools import shell_argv
 
             shell_bin = load_project_config(workdir).get(
                 'shell', self._config.shell.default
             )
-            for _ in range(max_test_iterations):
-                proc = await asyncio.create_subprocess_exec(
-                    *shell_argv(test_command, shell_bin),
-                    cwd=workdir, stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE, env=self._scrubbed(),
-                )
-                try:
-                    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=600)
-                except TimeoutError:
-                    proc.kill()
-                    break
-                test_out = (stdout.decode(errors='replace') + stderr.decode(errors='replace')).strip()[:4000]
-                passed = proc.returncode == 0
-                if emit:
-                    emit({'type': 'TEST_RUN', 'passed': passed, 'output': test_out})
-                if passed:
-                    break
-                retry_agent: Agent = Agent(
-                    model=resolved, instructions=instructions, toolsets=toolsets
-                )
-                history = history + list(result.new_messages()) if result else history
-                failure_text = (
-                    'The test suite is still failing. Output:\n' + test_out + '\n'
-                )
-                result = await retry_agent.run(
-                    failure_text
-                    + 'Fix the failures. Do not declare success until the tests pass.',
-                    message_history=history,
-                )
-                self._record_model_usage(session_id, resolved, result.usage)
-                self._db.replace_messages(
-                    session_id,
-                    [encode_messages([m]) for m in result.all_messages()],
-                )
-                self._check_budget(session_id)
+            result = await self._run_fix_loop(
+                session_id, resolved, instructions, toolsets,
+                history, result, workdir, test_command, shell_bin,
+                max_test_iterations, emit,
+            )
 
-        usage = result.usage
-        run_cost = float(usage.cost) if usage.cost is not None else None
-        self._db.record_usage(
-            session_id,
-            model=model_name,
-            requests=usage.requests or 0,
-            input_tokens=usage.input_tokens or 0,
-            output_tokens=usage.output_tokens or 0,
-            cost_usd=run_cost,
-        )
-        from .telemetry import run_usage_event
-
-        traced(run_usage_event(
-            model_name=model_name,
-            requests=usage.requests or 0,
-            input_tokens=usage.input_tokens or 0,
-            output_tokens=usage.output_tokens or 0,
-            cost_usd=run_cost,
-            duration_s=(_dt.now(_UTC) - started).total_seconds(),
-            pricing=self._config.models.pricing,
-        ))
+        self._record_run_usage(session_id, model_name, result, started, traced)
         if self._extraction_model is not None:
             await self._extract_memory(session_id, workdir)
         if self._diff_nonempty(session_id):
@@ -881,7 +939,7 @@ class Engine:
         # One retry round: the model gets the findings plus the conversation so
         # far, and must back the claims with real commands or correct itself.
         retry_agent: Agent = Agent(
-            model=resolved, instructions=instructions or INSTRUCTIONS,
+            model=resolved, instructions=instructions or _instructions(),
             toolsets=toolsets,
         )
         try:

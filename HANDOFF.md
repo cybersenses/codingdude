@@ -1,10 +1,32 @@
 # Handoff note — to the next agent on duty
 
-Left with the **entire R1–R11 roadmap closed**, plus the R7 annotation layer
-(keep-for-evals + timestamped session notes) and the **zai-vision MCP server**
-shipped on top. Backlog is empty.
+**Pre-release closeout done**: every code-level finding in `cdissues.md` is
+closed. Left with the **entire R1–R11 roadmap closed**, plus the R7 annotation
+layer, the zai-vision MCP server, and the closeout wave (M6, M11, L1, L11, L13)
+shipped on top. Backlog is empty — the next work is using CodingDude on a real
+external project.
 
-## zai-vision MCP server just shipped (this commit)
+## Closeout wave just shipped (this commit)
+- **M6**: `delete_session` is schema-driven (`_session_scoped_tables()` via
+  `sqlite_master` + PRAGMA) — new session-scoped tables can never be orphaned.
+- **M11**: `rename_symbol` + worktree toolsets attached in `build_all`;
+  `worktree_merge` is approvals-gated (interactive deny → ModelRetry,
+  headless → GateRequired per ADR-0003).
+- **L1**: `Engine.run()` decomposed into `_make_tracer`, `_resolve_run_model`,
+  `_build_instructions`, `_run_fix_loop`, `_record_run_usage` (pure extraction).
+- **L11**: verified already fixed (history reload shows tool-call/tool-return).
+- **L13**: fixed the fake `Authorization: Bearer <empty>` header in
+  `deleteSkill`, consolidated the duplicated `notify` state (App owns it),
+  lazy `_instructions()` (no import-time FS read), `bench.py` restores
+  `CODEDUDE_HOME` in `finally`. MCP temp-file + `_diff_nonempty` guard were
+  already in place — verified, not changed.
+- Gates: **276 pytest passed** (+4), ruff clean, mypy clean (39 files),
+  npm build ✓.
+- **Still open, not code:** native `inspect_image` pixel-gate live-model check
+  (needs configured `models.vision`); user-side PAT rotation for the global
+  `github` MCP entry.
+
+## zai-vision MCP server (previous commit)
 - GLM coding-plan vision MCP (`@z_ai/mcp-server@latest`) wired into the MCP
   seed: `ensure_default_mcp` is now **additive** (adds missing known defaults —
   codegraph, zai-vision — to an existing mcp.json; never modifies/removes

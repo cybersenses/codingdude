@@ -140,3 +140,44 @@ def test_render_records_roundtrip_and_chronological_list(home, workdir):
     assert renders[0]['mtime'] == 2000
     assert renders[0]['captured_at']
     assert db.list_renders('no-such-session') == []
+
+
+def test_delete_session_cascades_all_session_scoped_tables(home, workdir):
+    """M6 regression: delete_session must clean every table keyed by
+    session_id — the list is derived from the schema, so new tables can't
+    be orphaned again."""
+    db = Database.connect(home)
+    sid = db.create_session(workdir, title='t')
+    db.append_messages(sid, '{}')
+    db.add_session_note(sid, 'note')
+    db.record_render(sid, 'shot.png', 10, 1)
+    db.record_pattern_approval(sid, 'git status')
+    db.record_usage(sid, model='m', input_tokens=1)
+    db._conn.execute(
+        "INSERT INTO artifacts (session_id, kind, title, payload_json, status, created_at)"
+        " VALUES (?, 'choice', 't', '{}', 'pending', 'x')",
+        (sid,),
+    )
+    db._conn.execute(
+        "INSERT INTO ticket_execution"
+        " (ticket_id, workdir, session_id, status, plan_json, steps_json,"
+        "  heartbeat_at, created_at)"
+        " VALUES (1, 'w', ?, 'claimed', '{}', '[]', 'x', 'x')",
+        (sid,),
+    )
+    db._conn.commit()
+
+    db.delete_session(sid)
+
+    orphaned = []
+    for table in (
+        'messages', 'approvals', 'usage', 'plans', 'session_notes',
+        'renders', 'artifacts', 'ticket_execution',
+    ):
+        n = db._conn.execute(
+            f'SELECT COUNT(*) FROM {table} WHERE session_id = ?', (sid,)
+        ).fetchone()[0]
+        if n:
+            orphaned.append(f'{table}={n}')
+    assert not orphaned, f'orphaned rows after delete_session: {orphaned}'
+    assert db.list_sessions(workdir) == []

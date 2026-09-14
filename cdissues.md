@@ -43,6 +43,37 @@ Fixed this session:
 
 Still open (tracked, not forgotten): **M11 remainder** (gate or attach `refactor`/`worktree` toolsets), **L1** (`Engine.run()` decomposition), **M6** (migration ladder), **M3/M4/M5** (hardening), frontend **L11/L13** polish items, and the harness-blocked **R1 vision half**.
 
+## Status addendum — closeout pass (HEAD at this addendum: pre-release closeout)
+
+All remaining code-level findings closed. Evidence from this session's gates: **276 pytest passed** (+4 new), ruff clean, mypy clean (39 files), `npm run build` ✓.
+
+- **M6 — CLOSED.** `delete_session` no longer carries a hand-maintained table list: `_session_scoped_tables()` (db.py) derives every `session_id`-keyed table from `sqlite_master` + `PRAGMA table_info`, so it can never lag the schema. Regression test `test_delete_session_cascades_all_session_scoped_tables` seeds messages/notes/renders/approvals/usage/artifacts/ticket_execution and asserts zero orphans.
+- **M11 remainder — CLOSED.** `rename_symbol` and the worktree lifecycle are attached in `build_all` (plugins/__init__.py). `worktree_merge` (main-tree mutation) routes through `approvals.decide` + `_resolve_gate`: interactive deny → ModelRetry, headless → `GateRequired` (ADR-0003). Verified by `test_merge_gated_by_approvals`, `test_merge_gated_headless_aborts`, `test_refactor_and_worktree_attached_in_build_all`.
+- **L1 — CLOSED.** `Engine.run()` decomposed into named phase methods: `_make_tracer`, `_resolve_run_model`, `_build_instructions`, `_run_fix_loop`, `_record_run_usage`. Pure extraction, zero behavior change; engine/telemetry/context/SSE-reattach suites pass unchanged.
+- **L11 — CLOSED (was already fixed).** `loadMessages` rebuilds the full timeline including `tool-call`/`tool-return` parts (App.jsx, comment cites L11). Verified in source this pass.
+- **L13 — CLOSED.** Sub-item status verified this pass: MCP temp file (sha256 stable name) fixed; `_diff_nonempty` already guards git absence (OSError → False); now fixed: `deleteSkill` no longer sends a fake `Authorization: Bearer <empty>` header (cookie auth), `Prompt`'s duplicate `notify` state removed — App owns it and passes `notify`/`toggleNotify` down, `engine.INSTRUCTIONS` import-time filesystem read replaced by lazy `_instructions()`, and `bench.py` restores `CODEDUDE_HOME` in a `finally` (no cross-task env leak).
+
+**Deliberately still open (not code):** native `inspect_image` pixel-gate live-model check (requires a configured `models.vision` + real image round-trip), and the user-side rotation of the plaintext PAT in the global `github` MCP entry.
+
+## Status addendum 2 — reconciled against HEAD (`7867a30`, 272 tests)
+
+Verified fixed in code this pass (each claim re-executed at HEAD, not just read):
+
+- **M3** — runtime check of the real `ApprovalPolicy.decide()` path: `~\`, `C:\`, `C:/`, `../../`, `/home/` variants all → `denied`; `ls`/`cat notes.md` → `approved`; `OUTSIDE_WORKDIR` has `re.IGNORECASE` (`approvals.py:57`). Closed.
+- **M4** — runtime probe driving the real `POST /sessions/{id}/runs` handler with `Popen` captured: argv holds no token; `env['CODEDUDE_WORKER_TOKEN']` carries it (`server.py:287`). Closed.
+- **M5** — runtime WebSocket probes: `allow_testclient=False` rejects the testclient identity even with the correct token (close 4401 pre-accept); `allow_testclient=True` accepts the handshake (`server.py:932`). Closed.
+- **H5 vision half (MCP)** — zai-vision MCP server live-verified end-to-end (spawn, handshake, real `extract_text_from_screenshot` round-trip) via `.scratch/smoke_zai_vision.py`. Note: server requires on-disk file paths; data-URIs rejected.
+- **R1 renders half** — renders persisted to DB + live SSE-reattach E2E shipped (`b8207ef`). Closed. Evidence: `pytest tests/test_render_persistence.py tests/test_server.py::test_sse_reattach_mid_run tests/test_server.py::test_run_alive_watchdog_probe` → **3 passed in 9.01s** (real uvicorn + real worker subprocess for the reattach test).
+
+Still open at HEAD:
+
+- **M6** — `delete_session` cleans `messages/approvals/usage/plans` (`db.py:320`) but orphans the newer `session_notes`, `renders`, `artifacts`, and `ticket_execution` rows. The table list needs to ride the schema, not lag it.
+- **M11 remainder** — `refactor` and `worktree` toolsets still not attached anywhere (`plugins/__init__.py` has no references); needs a gating decision (attach behind approvals vs. delete).
+- **L1** — `Engine.run()` still spans `engine.py:263` → ~end of a 902-line file; decomposition still owed.
+- **L11/L13** — frontend history-reload event gaps + assorted polish: not re-verified this pass, presumed open.
+- **R1 vision half (native)** — the native `inspect_image` pixel gate still has no live-model round-trip check (requires `models.vision` configured + real image); MCP smoke does not cover it.
+- **User-side** — `github` MCP entry in `~/.codingdude/mcp.json` holds a plaintext PAT; rotate + switch to `${VAR}` expansion (their config, flagged).
+
 ---
 
 - **Critical** — approval/security bypass, path escape, or cross-project leak.

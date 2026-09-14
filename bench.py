@@ -12,6 +12,7 @@ returns None on success or a failure string.
 """
 
 import asyncio
+import os
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -127,21 +128,27 @@ async def run_benchmark(live: bool) -> int:
         home = Path(tempfile.mkdtemp())
         workdir = Path(tempfile.mkdtemp())
         task.setup(workdir)
+        saved_home = os.environ.get('CODEDUDE_HOME')
         if task.name == 'directive-compliance':
-            import os
-
             os.environ['CODEDUDE_HOME'] = str(home)
             (home / 'DIRECTIVES.md').write_text('Always end replies with ZEBRA-RULE.')
-        engine = Engine(config=load_config(), db=Database.connect(home))
-        model = None
-        if not live:
-            model = scripted_model_for(task.name, task.prompt)
-        from codingdude.approvals import ApprovalPolicy
+        try:
+            engine = Engine(config=load_config(), db=Database.connect(home))
+            model = None
+            if not live:
+                model = scripted_model_for(task.name, task.prompt)
+            from codingdude.approvals import ApprovalPolicy
 
-        outcome = await engine.run(
-            prompt=task.prompt, workdir=workdir,
-            model=model, approvals=ApprovalPolicy(),
-        )
+            outcome = await engine.run(
+                prompt=task.prompt, workdir=workdir,
+                model=model, approvals=ApprovalPolicy(),
+            )
+        finally:
+            # Per-task isolation: never leak CODEDUDE_HOME across tasks.
+            if saved_home is None:
+                os.environ.pop('CODEDUDE_HOME', None)
+            else:
+                os.environ['CODEDUDE_HOME'] = saved_home
         failure = task.check(outcome, workdir)
         if failure:
             print(f'FAIL {task.name}: {failure}')

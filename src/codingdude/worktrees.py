@@ -49,7 +49,7 @@ def create_worktree(workdir: Path, name: str) -> Path:
     return worktree_path
 
 
-def build_worktree_toolset(workdir: Path) -> FunctionToolset:
+def build_worktree_toolset(workdir: Path, approvals=None) -> FunctionToolset:
     """`worktree_create` / `worktree_list` / `worktree_merge`: the isolation
     lifecycle. merge runs `git merge` in the MAIN checkout — gated like other
     mutations of the main tree."""
@@ -78,6 +78,14 @@ def build_worktree_toolset(workdir: Path) -> FunctionToolset:
         checkout (gated like other main-tree mutations)."""
         import asyncio
 
+        if approvals is not None:
+            from .approvals import DENIED, NEEDS_GATE
+            from .tools import _resolve_gate
+
+            command = f'git merge codingdude/{name}'
+            decision = approvals.decide(command)
+            if decision in (NEEDS_GATE, DENIED):
+                await _resolve_gate(approvals, command, always=decision == DENIED)
         proc = await asyncio.create_subprocess_exec(
             'git', 'merge', f'codingdude/{name}', '--no-edit',
             cwd=workdir, stdout=asyncio.subprocess.PIPE,

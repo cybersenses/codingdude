@@ -971,9 +971,9 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width, workdir }
   }
 
   async function deleteSkill(name) {
+    // Auth is the HttpOnly session cookie — no bearer header exists (L13).
     await fetch(`/api/skills/detail/${encodeURIComponent(name)}`, {
       method: 'DELETE',
-      headers: { Authorization: `Bearer ${localStorage.getItem('codingdude-token') || ''}` },
     }).then((r) => r.json())
     setSkillList((list) => list.filter((s) => s.name !== name))
   }
@@ -1369,20 +1369,11 @@ function Chat({ messages, streaming, onStop, onDecide, sessionId, suggestMode, o
   )
 }
 
-function Prompt({ onSend, disabled, suggestMode, setSuggestMode, fixLoop, setFixLoop, models, model, setModel, yolo, setYolo }) {
+function Prompt({ onSend, disabled, suggestMode, setSuggestMode, fixLoop, setFixLoop, models, model, setModel, yolo, setYolo, notify, toggleNotify }) {
   const [text, setText] = useState('')
   const [image, setImage] = useState(null) // {b64, name}
   const fileRef = useRef(null)
-  const [notify, setNotify] = useState(() => localStorage.getItem('cd-notify') === '1')
-
-  function toggleNotify() {
-    const next = !notify
-    setNotify(next)
-    localStorage.setItem('cd-notify', next ? '1' : '0')
-    if (next && 'Notification' in window && Notification.permission === 'default') {
-      Notification.requestPermission()
-    }
-  }
+  // notify state is owned by App (single source of truth, L13) and passed in.
 
   return (
     <form
@@ -1588,6 +1579,15 @@ export default function App() {
 
   // Notifications: tab title + sound + toast on run state changes.
   const [notify, setNotify] = useState(() => localStorage.getItem('cd-notify') === '1')
+
+  function toggleNotify() {
+    const next = !notify
+    setNotify(next)
+    localStorage.setItem('cd-notify', next ? '1' : '0')
+    if (next && 'Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission()
+    }
+  }
   useEffect(() => {
     if (!status || status === 'idle') { document.title = 'CodingDude'; return }
     const map = {
@@ -1980,6 +1980,8 @@ export default function App() {
             setModel={setModel}
             yolo={yolo}
             setYolo={setYolo}
+            notify={notify}
+            toggleNotify={toggleNotify}
           />
           <Chat messages={messages} streaming={streaming} onStop={stop} onDecide={decide} sessionId={activeSession} suggestMode={suggestMode} onEditRevert={onEditRevert} runId={runRef.current} />
         </main>

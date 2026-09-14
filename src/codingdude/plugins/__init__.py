@@ -29,6 +29,7 @@ from codingdude.mcp_config import (
 )
 from codingdude.memory import MemoryStore, build_memory_toolset
 from codingdude.planning import build_planning_toolset
+from codingdude.refactor import build_refactor_toolset
 from codingdude.references import build_references_toolset
 from codingdude.repo_map import build_repo_map_toolset
 from codingdude.roadmap import RoadmapStore, build_roadmap_toolset
@@ -48,6 +49,7 @@ from codingdude.tools import (
     build_web_toolset,
 )
 from codingdude.vision import build_vision_toolset
+from codingdude.worktrees import build_worktree_toolset
 
 
 @dataclass
@@ -117,6 +119,12 @@ async def build_all(ctx: PluginContext) -> list[AbstractToolset]:
     toolsets.append(build_knip_toolset(ctx.workdir))
     toolsets.append(build_ci_toolset(ctx.workdir))
     toolsets.append(build_audit_toolset(ctx.workdir))
+    # M11: these were implemented but never attached. rename_symbol is a
+    # scripted file edit (same capability class as the edit tools);
+    # worktree_merge is gated inside the toolset like other main-tree
+    # mutations.
+    toolsets.append(build_refactor_toolset(ctx.workdir))
+    toolsets.append(build_worktree_toolset(ctx.workdir, approvals=ctx.approvals))
 
     try:
         names = merged_mcp_server_names(ctx.home, ctx.workdir)
