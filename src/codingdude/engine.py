@@ -129,6 +129,7 @@ class Engine:
         # History payload size (chars) after which old turns are compacted.
         self._compaction_threshold = compaction_threshold
         # Cheap model that extracts missed facts into Memory post-session.
+        # Set through the public `extraction_model` property, never poked directly.
         self._extraction_model = extraction_model
         # Optional hard-stop on session spend. Survives --yolo by design.
         self._budget_cap_usd = budget_cap_usd
@@ -170,6 +171,25 @@ class Engine:
             from pydantic_ai.models import infer_model
 
             return infer_model(primary)
+
+    @property
+    def extraction_model(self) -> Model | None:
+        """The cheap model for memory extraction / review (public seam)."""
+        return self._extraction_model
+
+    @extraction_model.setter
+    def extraction_model(self, model: Model | None) -> None:
+        self._extraction_model = model
+
+    async def review(self, session_id: str) -> str:
+        """Public review entry point: findings, or the CLEAN verdict.
+
+        Runs on the extraction model when set (worker), else the
+        configured subagent model. Never raises for model trouble:
+        review_diff_findings swallows failures and returns "".
+        """
+        findings = await self.review_diff(session_id)
+        return findings or 'CLEAN — no findings'
 
     def _build_subagent_model(self) -> Model | None:
         """The cheap model Subagents run on; None if its provider isn't configured."""

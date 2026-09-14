@@ -472,3 +472,26 @@ def test_sse_reattach_mid_run(server, tmp_path):
                     break
     assert events, 'reattached stream produced no events'
     assert events[-1]['type'] == 'RUN_CANCELLED'
+
+
+def test_review_route_delegates_to_worker_subprocess(server, tmp_path):
+    """ADR-0002: POST /sessions/{id}/review runs the review in a worker
+    subprocess, never an Engine inside the server process."""
+    import httpx
+
+    app, base = server
+    home = tmp_path / 'home'
+    (home / 'config.toml').write_text(
+        '[models]\nsubagent = "codingdude-test:echo"\n', encoding='utf-8'
+    )
+    w = tmp_path / 'proj'
+    w.mkdir()
+    r = httpx.post(
+        f'{base}/sessions', json={'workdir': str(w)}, headers=auth(), timeout=10
+    )
+    session_id = r.json()['session_id']
+    r = httpx.post(
+        f'{base}/sessions/{session_id}/review', headers=auth(), timeout=120
+    )
+    assert r.status_code == 200, r.text
+    assert 'worker-echo-ok' in r.json()['findings']

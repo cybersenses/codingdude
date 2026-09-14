@@ -108,6 +108,28 @@ async def _resolve_model(name: str | None, base_url: str | None = None):
     return infer_model(name)
 
 
+async def review(args) -> int:
+    """--review mode: run a one-shot review in THIS process (short-lived
+    subprocess spawned by the server) and print findings JSON on stdout.
+
+    Honors ADR-0002: the long-running server process itself never
+    executes an agent run.
+    """
+    from codingdude.config import load_config
+    from codingdude.db import Database
+    from codingdude.engine import Engine
+
+    config = load_config()
+    engine = Engine(config=config, db=Database.connect(config_home()))
+    try:
+        engine.extraction_model = await _resolve_model(config.models.subagent)
+    except Exception:  # noqa: BLE001 — Engine falls back to its own resolution
+        pass
+    findings = await engine.review(args.review)
+    print(json.dumps({'findings': findings}))
+    return 0
+
+
 async def run(args) -> int:
     from codingdude.approvals import ApprovalPolicy
     from codingdude.config import load_config
@@ -123,7 +145,7 @@ async def run(args) -> int:
     )
     # Memory extraction runs on the cheap subagent model when configured.
     try:
-        engine._extraction_model = await _resolve_model(config.models.subagent)
+        engine.extraction_model = await _resolve_model(config.models.subagent)
     except Exception:  # noqa: BLE001 — extraction is best-effort
         pass
     model = await _resolve_model(args.model, config.models.fallback_base_url)
@@ -288,10 +310,16 @@ def config_home():
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog='codingdude-worker')
-    parser.add_argument('--server', required=True, help='ws:// URL of the server')
-    parser.add_argument('--session', required=True)
-    parser.add_argument('--workdir', required=True)
-    parser.add_argument('--prompt', required=True)
+    parser.add_argument(
+        '--review',
+        metavar='SESSION',
+        default=None,
+        help='review a session\'s working-tree diff, print findings JSON, exit',
+    )
+    parser.add_argument('--server', help='ws:// URL of the server')
+    parser.add_argument('--session')
+    parser.add_argument('--workdir')
+    parser.add_argument('--prompt')
     parser.add_argument('--model', default=None)
     parser.add_argument('--yolo', action='store_true')
     parser.add_argument('--fix-loop', action='store_true')
@@ -299,7 +327,7 @@ def main(argv=None) -> int:
     parser.add_argument('--budget', type=float, default=None)
     args = parser.parse_args(argv)
     try:
-        return asyncio.run(run(args))
+        return asyncio.run(review(args) if args.review else run(args))
     except Exception as exc:  # noqa: BLE001 — last-resort report
         logging.getLogger(__name__).exception('worker failed')
         print(f'worker error: {exc}', file=sys.stderr)

@@ -790,13 +790,21 @@ def create_app(
         workdir = db.session_workdir(session_id)
         if not workdir:
             raise HTTPException(status_code=404, detail='no such session')
-        from .config import load_config
-        from .engine import Engine
-
-        eng = Engine(config=load_config(), db=db)
-        eng._extraction_model = eng._build_subagent_model()
-        findings = await eng.review_diff(session_id)
-        return {'findings': findings or 'CLEAN — no findings'}
+        # ADR-0002: agent runs never execute in the server process — the
+        # review runs in a short-lived worker subprocess (--review mode)
+        # and reports its findings on stdout.
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, '-m', 'codingdude.worker', '--review', session_id,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=600)
+        if proc.returncode != 0:
+            raise HTTPException(
+                status_code=502,
+                detail=f'review worker failed: {err.decode(errors="replace")[:400]}',
+            )
+        return json.loads(out.decode())
 
     @app.get('/sessions/{session_id}/checkpoints')
     def list_checkpoints(session_id: str, _: None = Depends(authorize)) -> list[dict]:
