@@ -99,3 +99,29 @@ def test_context_columns_added_to_legacy_database(home, workdir):
     db2.update_session_context(session_id, 1000, 2000)
     info = db2.list_sessions(workdir)[0]
     assert (info.context_tokens, info.context_limit) == (1000, 2000)
+
+
+def test_keep_for_evals_mark_roundtrip(home, workdir):
+    db = Database.connect(home)
+    session_id = db.create_session(workdir)
+    sessions = db.list_sessions(workdir)
+    assert next(s for s in sessions if s.session_id == session_id).keep_for_evals is False
+    db.set_keep_for_evals(session_id, True)
+    assert db.list_sessions(workdir)[0].keep_for_evals is True
+    db.set_keep_for_evals(session_id, False)
+    assert db.list_sessions(workdir)[0].keep_for_evals is False
+
+
+def test_session_notes_add_and_chronological_list(home, workdir):
+    db = Database.connect(home)
+    session_id = db.create_session(workdir)
+    db.add_session_note(session_id, 'went off the rails here', run_id='r1', offset_s=12.5)
+    db.add_session_note(session_id, 'clever fix')
+    notes = db.list_session_notes(session_id)
+    assert [n['content'] for n in notes] == ['went off the rails here', 'clever fix']
+    assert notes[0]['run_id'] == 'r1'
+    assert notes[0]['offset_s'] == 12.5
+    assert notes[1]['run_id'] is None
+    assert notes[1]['offset_s'] is None
+    assert notes[0]['created_at']
+    assert db.list_session_notes('no-such-session') == []

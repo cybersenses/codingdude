@@ -353,3 +353,32 @@ def test_run_alive_watchdog_probe(server, tmp_path):
 
     unknown = httpx.get(f'{base}/runs/no-such-run/alive', headers=auth(), timeout=10)
     assert unknown.json() == {'alive': False}
+
+
+def test_session_notes_and_keep_endpoints(server, tmp_path):
+    app, base = server
+    session_id = create_session(base, tmp_path / 'proj')
+    h = auth()
+
+    r = httpx.post(
+        f'{base}/sessions/{session_id}/keep', json={'keep': True}, headers=h, timeout=10
+    )
+    assert r.status_code == 200
+    sessions = httpx.get(
+        f'{base}/sessions', params={'workdir': str(tmp_path / 'proj')},
+        headers=h, timeout=10,
+    ).json()
+    assert sessions[0]['keep_for_evals'] is True
+
+    r = httpx.post(
+        f'{base}/sessions/{session_id}/notes',
+        json={'content': 'off the rails', 'run_id': 'r1', 'offset_s': 4.5},
+        headers=h, timeout=10,
+    )
+    assert r.status_code == 200
+    notes = httpx.get(
+        f'{base}/sessions/{session_id}/notes', headers=h, timeout=10
+    ).json()
+    assert len(notes) == 1
+    assert notes[0]['content'] == 'off the rails'
+    assert notes[0]['offset_s'] == 4.5

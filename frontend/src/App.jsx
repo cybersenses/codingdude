@@ -598,6 +598,85 @@ function Terminal({ sessionId }) {
   )
 }
 
+function Notes({ sessionId, workdir }) {
+  const [notes, setNotes] = useState([])
+  const [keep, setKeep] = useState(null)
+  const [draft, setDraft] = useState('')
+  const [offset, setOffset] = useState('')
+
+  useEffect(() => {
+    if (!sessionId) return
+    let live = true
+    const load = async () => {
+      try {
+        const [n, sessions] = await Promise.all([
+          call(`/sessions/${sessionId}/notes`),
+          call(`/sessions?workdir=${encodeURIComponent(workdir || '')}`),
+        ])
+        if (!live) return
+        setNotes(n)
+        setKeep((sessions.find((x) => x.session_id === sessionId) || {}).keep_for_evals ?? false)
+      } catch { /* transient */ }
+    }
+    load()
+    return () => { live = false }
+  }, [sessionId])
+
+  if (!sessionId) return <div className="text-neutral-600">no session</div>
+  return (
+    <div className="space-y-2">
+      <label className="flex items-center gap-1.5 text-xs text-neutral-300">
+        <input
+          type="checkbox"
+          checked={!!keep}
+          onChange={async (e) => {
+            setKeep(e.target.checked)
+            try { await call(`/sessions/${sessionId}/keep`, { method: 'POST', body: JSON.stringify({ keep: e.target.checked }) }) } catch { /* transient */ }
+          }}
+        />
+        keep for evals
+      </label>
+      <div className="flex gap-1">
+        <input
+          className="w-full rounded bg-neutral-900 px-2 py-1 text-xs text-neutral-200"
+          placeholder="note at this point in the session…"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+        />
+        <input
+          className="w-16 rounded bg-neutral-900 px-2 py-1 text-xs text-neutral-400"
+          placeholder="s"
+          value={offset}
+          onChange={(e) => setOffset(e.target.value)}
+        />
+        <button
+          className="rounded bg-brand px-2 py-1 text-xs text-brand-fg"
+          onClick={async () => {
+            if (!draft.trim()) return
+            const body = { content: draft.trim() }
+            const off = parseFloat(offset)
+            if (!Number.isNaN(off)) { body.offset_s = off }
+            try {
+              await call(`/sessions/${sessionId}/notes`, { method: 'POST', body: JSON.stringify(body) })
+              setDraft(''); setOffset('')
+              setNotes(await call(`/sessions/${sessionId}/notes`))
+            } catch { /* transient */ }
+          }}
+        >add</button>
+      </div>
+      {notes.length === 0 && <div className="text-neutral-600">no notes yet</div>}
+      {notes.map((n) => (
+        <div key={n.id} className="rounded bg-neutral-900 p-1.5">
+          <div className="text-xs text-neutral-200">{n.content}</div>
+          <div className="text-[9px] text-neutral-500">
+            {n.offset_s != null ? `${n.offset_s}s · ` : ''}{(n.created_at || '').slice(11, 19)}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function Artifacts({ sessionId }) {
   const [items, setItems] = useState([])
   const [drafts, setDrafts] = useState({})
@@ -803,7 +882,7 @@ function Planning({ workdir }) {
 }
 
 function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width, workdir }) {
-  const tabs = ['Diff', 'Planning', 'Artifacts', 'Renders', 'Files', 'Terminal', 'Trace', 'Cost', 'Memory', 'MCP', 'Standards']
+  const tabs = ['Diff', 'Planning', 'Artifacts', 'Notes', 'Renders', 'Files', 'Terminal', 'Trace', 'Cost', 'Memory', 'MCP', 'Standards']
   const [tab, setTab] = useState('Diff')
   const [data, setData] = useState({})
 
@@ -1043,6 +1122,8 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width, workdir }
     body = <Planning workdir={workdir} />
   } else if (tab === 'Artifacts') {
     body = <Artifacts sessionId={sessionId} />
+  } else if (tab === 'Notes') {
+    body = <Notes sessionId={sessionId} workdir={workdir} />
   } else if (tab === 'MCP' && data.mcp) {
     body = (
       <div className="space-y-1">

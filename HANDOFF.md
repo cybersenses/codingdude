@@ -1,12 +1,25 @@
 # Handoff note — to the next agent on duty
 
-Left with the **entire R1–R11 roadmap closed**: every item has a shipped tracer
-and (R5–R10) a thickening pass. Backlog is empty — next session brainstorms the
-next wave.
+Left with the **entire R1–R11 roadmap closed**, plus the R7 annotation layer
+(keep-for-evals + timestamped session notes) shipped on top. Backlog is empty.
+
+## R7 annotation layer just shipped (this commit)
+- `session_notes` table (db.py): id, session_id, content, offset_s, trace_event_index, created_at.
+- `sessions.keep_for_evals` column (default 0). **Always recording** — no on/off flag;
+  keep-for-evals is a *selection* marker, `never_record` is the privacy escape hatch.
+- `evals.py`: `annotate_session` / `list_annotations`; `export_scenario` carries notes
+  as human annotation only (`annotations` field — not machine-checkable in V1).
+- `server.py`: `GET/POST /sessions/{id}/notes`, `POST /sessions/{id}/keep`.
+- Frontend Notes sidebar in App.jsx: 📌 keep-for-evals toggle, note input with
+  optional offset seconds, rendered with timestamp.
+- Spec: `docs/specs/R7-curation-notes.md`. Gates: 265 pytest, ruff, mypy
+  (39 files), npm build — all green.
+- Watch: `edit_file` mangled the App.jsx Notes rewrite twice; fixed via scripted
+  Python patch — prefer scripted patches for this file.
 
 ## State at handoff
-- HEAD (this commit): R1–R11 all done. 261 pytest, ruff, mypy (39 files),
-  npm build green. All pushed.
+- HEAD (this commit): R1–R11 all done + annotation layer. 265 pytest, ruff,
+  mypy (39 files), npm build green. All pushed.
 - **Deliberately deferred as information-thin (not debt):**
   R7 curated eval scenario *library* (content, not mechanism);
   R8 contract-first codegen (needs a codegen design).
@@ -109,3 +122,14 @@ Roadmap closed. Brainstorm the next feature wave with the user and open new
   reverted, `core.autocrlf=false` set (repo + global). A `python` shim
   (symlink to python3 in WindowsApps) fixes `python` inside WSL for the
   shell capture-hook test.
+
+## R7 curation shipped (ticket #9)
+- Sessions always record; new curation layer: 
+  (via ),  table (run_id, offset_s, content).
+- : , , .
+-  now carries ; endpoints , ; Notes tab in App.jsx
+  (keep toggle + add-note with optional second-offset).
+- Spec: docs/specs/R7-curation-notes.md.
+- Gates: 265 pytest passed, ruff clean, mypy clean (39 files), npm build ok.
+- Watch: edit_file mangles CRLF files again (had to script the App.jsx patch) —
+  prefer scripted patches for frontend edits.

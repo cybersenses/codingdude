@@ -259,7 +259,7 @@ diagram, edit a spec inline, or pick between rendered options.
 ---
 
 ## R7 — Session-replay eval harness (regression-test the agent's process)
-**Status:** done — real-session recording (`codingdude eval --record SESSION_ID`) + CI runner (`codingdude eval --scenarios DIR`, exit 1 on failure). Curated scenario *library* deliberately deferred (content, not mechanism). · **Area:** quality / self-improvement / evals
+**Status:** done — real-session recording (`codingdude eval --record SESSION_ID`) + CI runner (`codingdude eval --scenarios DIR`, exit 1 on failure). Curation shipped: `keep_for_evals` session marking, timestamped session notes (run + offset), notes ride on `export_scenario`, Notes tab in the session panel (docs/specs/R7-curation-notes.md). Curated scenario *library* deliberately deferred (content, not mechanism). · **Area:** quality / self-improvement / evals
 
 ### Problem
 `bench.py` exercises the engine with a scripted model. There is no way to record

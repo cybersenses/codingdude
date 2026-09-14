@@ -371,6 +371,30 @@ def create_app(
         plan = PlanStore(db).latest(session_id)
         return plan or {}
 
+    class NoteIn(BaseModel):
+        content: str
+        run_id: str | None = None
+        offset_s: float | None = None
+
+    class KeepIn(BaseModel):
+        keep: bool
+
+    @app.post('/sessions/{session_id}/keep')
+    def keep_for_evals(session_id: str, body: KeepIn, _: None = Depends(authorize)) -> dict:
+        db.set_keep_for_evals(session_id, body.keep)
+        return {'ok': True}
+
+    @app.post('/sessions/{session_id}/notes')
+    def add_note(session_id: str, body: NoteIn, _: None = Depends(authorize)) -> dict:
+        note_id = db.add_session_note(
+            session_id, body.content, run_id=body.run_id, offset_s=body.offset_s,
+        )
+        return {'id': note_id}
+
+    @app.get('/sessions/{session_id}/notes')
+    def session_notes(session_id: str, _: None = Depends(authorize)) -> list[dict]:
+        return db.list_session_notes(session_id)
+
     @app.get('/sessions/{session_id}/usage')
     def session_usage(session_id: str, _: None = Depends(authorize)) -> dict:
         return db.session_usage(session_id)

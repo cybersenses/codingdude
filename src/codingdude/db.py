@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     updated_at TEXT NOT NULL,
     title TEXT,
     context_tokens INTEGER,
-    context_limit INTEGER
+    context_limit INTEGER,
+    keep_for_evals INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -22,6 +23,14 @@ CREATE TABLE IF NOT EXISTS messages (
     seq INTEGER NOT NULL,
     payload TEXT NOT NULL,
     UNIQUE (session_id, seq)
+);
+CREATE TABLE IF NOT EXISTS session_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES sessions(session_id),
+    run_id TEXT,
+    offset_s REAL,
+    content TEXT NOT NULL,
+    created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS approvals (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -155,6 +164,7 @@ class SessionInfo:
     title: str | None
     context_tokens: int | None = None
     context_limit: int | None = None
+    keep_for_evals: bool = False
 
 
 class Database:
@@ -176,6 +186,7 @@ class Database:
         for column, decl in (
             ('context_tokens', 'INTEGER'),
             ('context_limit', 'INTEGER'),
+            ('keep_for_evals', 'INTEGER NOT NULL DEFAULT 0'),
         ):
             if column not in existing:
                 self._conn.execute(f'ALTER TABLE sessions ADD COLUMN {column} {decl}')
@@ -262,7 +273,12 @@ class Database:
             'SELECT * FROM sessions WHERE workdir = ? ORDER BY updated_at DESC',
             (str(workdir),),
         ).fetchall()
-        return [SessionInfo(**dict(r)) for r in rows]
+        infos = []
+        for r in rows:
+            d = dict(r)
+            d['keep_for_evals'] = bool(d.get('keep_for_evals', 0))
+            infos.append(SessionInfo(**d))
+        return infos
 
     def append_messages(self, session_id: str, payload: str) -> None:
         row = self._conn.execute(
@@ -316,6 +332,36 @@ class Database:
             (session_id,),
         ).fetchall()
         return [r['pattern'] for r in rows]
+
+    def set_keep_for_evals(self, session_id: str, keep: bool) -> None:
+        """Mark (or unmark) a session as worth keeping for eval curation."""
+        self._conn.execute(
+            'UPDATE sessions SET keep_for_evals = ? WHERE session_id = ?',
+            (int(keep), session_id),
+        )
+        self._conn.commit()
+
+    def add_session_note(
+        self, session_id: str, content: str,
+        run_id: str | None = None, offset_s: float | None = None,
+    ) -> int:
+        """Timestamped user annotation pinned to a point in the session."""
+        cur = self._conn.execute(
+            'INSERT INTO session_notes'
+            ' (session_id, run_id, offset_s, content, created_at)'
+            ' VALUES (?, ?, ?, ?, ?)',
+            (session_id, run_id, offset_s, content, _now()),
+        )
+        self._conn.commit()
+        return cur.lastrowid or 0
+
+    def list_session_notes(self, session_id: str) -> list[dict]:
+        rows = self._conn.execute(
+            'SELECT id, session_id, run_id, offset_s, content, created_at'
+            ' FROM session_notes WHERE session_id = ? ORDER BY id',
+            (session_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     def session_workdir(self, session_id: str) -> str | None:
         row = self._conn.execute(

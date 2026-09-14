@@ -163,3 +163,18 @@ async def test_committed_scenario_suite(home, workdir):
     names = {f.scenario for f in failures}
     assert names == {'broken-skill'}
     assert 'ZEBRA-RULE' in failures[0].message
+
+
+async def test_export_includes_session_notes(engine, db, workdir):
+    outcome = await engine.run(
+        prompt='Change the greeting to hello',
+        workdir=workdir,
+        model=scripted(say('hello there')),
+    )
+    db.add_session_note(outcome.session_id, 'went off rails here', offset_s=3.0)
+    scenario = export_scenario(db, outcome.session_id, name='greet')
+    assert scenario['notes'] == [
+        {'id': 1, 'session_id': outcome.session_id, 'run_id': None,
+         'offset_s': 3.0, 'content': 'went off rails here',
+         'created_at': scenario['notes'][0]['created_at']},
+    ]

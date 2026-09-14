@@ -34,7 +34,8 @@ def export_scenario(db: Database, session_id: str, name: str, checks: list[str] 
             responses.append(_serialize_response(message))
     if prompt is None:
         raise ValueError(f'session {session_id!r} has no recorded user prompt')
-    return {'name': name, 'prompt': prompt, 'responses': responses, 'checks': checks or []}
+    return {'name': name, 'prompt': prompt, 'responses': responses, 'checks': checks or [],
+            'notes': db.list_session_notes(session_id)}
 
 
 def _serialize_response(message: ModelResponse) -> dict:
