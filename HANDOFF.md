@@ -1,9 +1,24 @@
 # Handoff note — to the next agent on duty
 
 Left with the **entire R1–R11 roadmap closed**, plus the R7 annotation layer
-(keep-for-evals + timestamped session notes) shipped on top. Backlog is empty.
+(keep-for-evals + timestamped session notes) and the **zai-vision MCP server**
+shipped on top. Backlog is empty.
 
-## R7 annotation layer just shipped (this commit)
+## zai-vision MCP server just shipped (this commit)
+- GLM coding-plan vision MCP (`@z_ai/mcp-server@latest`) wired into the MCP
+  seed: `ensure_default_mcp` is now **additive** (adds missing known defaults —
+  codegraph, zai-vision — to an existing mcp.json; never modifies/removes
+  existing entries). Key referenced via `${ZAI_API_KEY:-}` env expansion,
+  never stored in the file; `apply_provider_keys` already populates it from
+  `providers.zai`. Missing key → server fails at connect → pre-flight drops
+  it with a warning (non-fatal).
+- Complementary to native `inspect_image` (pixel gates, `IMAGE_INSPECTED`
+  trace): MCP brings OCR, ui_diff_check, diagram understanding, video.
+- Spec: `docs/specs/zai-vision-mcp.md`. Gates: 272 pytest, ruff, mypy green.
+- User-side smoke check still owed: one real run to confirm the npx spawn
+  connects (needs node ≥22 — verified present, v22.23.2).
+
+## R7 annotation layer (previous commits)
 - `session_notes` table (db.py): id, session_id, content, offset_s, trace_event_index, created_at.
 - `sessions.keep_for_evals` column (default 0). **Always recording** — no on/off flag;
   keep-for-evals is a *selection* marker, `never_record` is the privacy escape hatch.

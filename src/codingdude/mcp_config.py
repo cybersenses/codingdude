@@ -38,39 +38,64 @@ def merged_mcp_config(home: Path, workdir: Path) -> dict:
     return merged
 
 
-def ensure_default_mcp(home: Path) -> None:
-    """Seed the global mcp.json with default servers on first use.
+def _default_mcp_servers() -> dict:
+    """Known default servers, resolved for this machine (absent binary -> absent entry).
 
-    Only when the file doesn't exist yet — an existing config is never
-    touched. The command is resolved to an absolute path at seed time so
-    Windows stdio spawning works (npm shims are .cmd files).
+    Windows can't CreateProcess a batch shim (.cmd/.bat) directly — go through cmd.
     """
-    path = home / 'mcp.json'
-    if path.exists():
-        return
+    servers: dict = {}
     codegraph = shutil.which('codegraph')
-    if not codegraph:
-        return
-    args = ['serve', '--mcp']
-    command = codegraph
-    if codegraph.lower().endswith(('.cmd', '.bat')):
-        # Windows can't CreateProcess a batch shim directly — go through cmd.
-        command, args = 'cmd', ['/c', codegraph, *args]
-    servers = {
-        'codegraph': {
+    if codegraph:
+        args = ['serve', '--mcp']
+        command = codegraph
+        if codegraph.lower().endswith(('.cmd', '.bat')):
+            command, args = 'cmd', ['/c', codegraph, *args]
+        servers['codegraph'] = {
             'type': 'stdio',
             'command': command,
             'args': args,
             # The granular graph tools are cheap for agents and complement
             # the single 'explore' tool the vendor enables by default.
             'env': {'CODEGRAPH_MCP_TOOLS': 'explore,search,callers,callees,impact'},
-        },
-    }
+        }
+    npx = shutil.which('npx')
+    if npx:
+        command, npx_args = npx, ['-y', '@z_ai/mcp-server@latest']
+        if npx.lower().endswith(('.cmd', '.bat')):
+            command, npx_args = 'cmd', ['/c', npx, *npx_args]
+        # The Z.AI vision server (GLM coding plan): key referenced via env
+        # expansion, never stored in the file. A missing key fails the server
+        # at connect; the MCP pre-flight drops it with a warning.
+        servers['zai-vision'] = {
+            'type': 'stdio',
+            'command': command,
+            'args': npx_args,
+            'env': {'Z_AI_API_KEY': '${ZAI_API_KEY:-}', 'Z_AI_MODE': 'ZAI'},
+        }
+    return servers
+
+
+def ensure_default_mcp(home: Path) -> None:
+    """Additively seed the global mcp.json with default servers.
+
+    A missing file is created with all available defaults. An existing file
+    gets any *missing* known-default server added; existing entries are never
+    modified or removed (user edits win).
+    """
+    path = home / 'mcp.json'
+    servers = _default_mcp_servers()
+    if not servers:
+        return
+    if path.exists():
+        config = _load_config_file(path)
+        new_servers = {name: conf for name, conf in servers.items() if name not in config['mcpServers']}
+        if not new_servers:
+            return
+        config['mcpServers'].update(new_servers)
+    else:
+        config = {'mcpServers': servers, 'disabled': []}
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps({'mcpServers': servers, 'disabled': []}, indent=2),
-        encoding='utf-8',
-    )
+    path.write_text(json.dumps(config, indent=2), encoding='utf-8')
 
 
 def list_mcp_servers(home: Path, workdir: Path) -> list[dict]:

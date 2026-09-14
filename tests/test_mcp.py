@@ -111,12 +111,67 @@ def test_ensure_default_mcp_seeds_once_and_preserves_user_config(home, monkeypat
     assert entry['args'][:2] == ['/c', 'C:/bin/codegraph.CMD']
     assert 'CODEGRAPH_MCP_TOOLS' in entry['env']
 
-    # Existing config: user edits win, seeding is a no-op.
+    # Existing config: user edits win for existing entries; missing known
+    # defaults are added additively (never modify or remove existing ones).
     (home / 'mcp.json').write_text(
         '{"mcpServers": {"codegraph": {"command": "custom"}}}', encoding='utf-8'
     )
     ensure_default_mcp(home)
-    assert merged_mcp_config(home, home)['mcpServers']['codegraph'] == {'command': 'custom'}
+    merged = merged_mcp_config(home, home)['mcpServers']
+    assert merged['codegraph'] == {'command': 'custom'}  # user edit preserved
+    assert 'zai-vision' in merged  # missing known default added
+
+
+def test_ensure_default_mcp_adds_zai_vision_with_env_expansion(home, monkeypatch):
+    """npx present -> zai-vision seeded; key referenced via ${VAR:-} expansion,
+    never stored in the file."""
+    from codingdude.mcp_config import ensure_default_mcp, merged_mcp_config
+
+    monkeypatch.setattr('codingdude.mcp_config.shutil.which', lambda name: 'C:/bin/codegraph.CMD')
+
+    def which(name: str):
+        if name == 'npx':
+            return 'C:/Program Files/nodejs/npx.CMD'
+        return 'C:/bin/codegraph.CMD'
+
+    monkeypatch.setattr('codingdude.mcp_config.shutil.which', which)
+    ensure_default_mcp(home)
+    entry = merged_mcp_config(home, home)['mcpServers']['zai-vision']
+    assert entry['command'] == 'cmd'
+    assert entry['args'][:2] == ['/c', 'C:/Program Files/nodejs/npx.CMD']
+    assert '@z_ai/mcp-server' in ' '.join(entry['args'])
+    assert entry['env']['Z_AI_API_KEY'] == '${ZAI_API_KEY:-}'  # expansion token, not a secret
+    assert entry['env']['Z_AI_MODE'] == 'ZAI'
+
+
+def test_ensure_default_mcp_skips_zai_vision_without_npx(home, monkeypatch):
+    """No npx on PATH -> zai-vision is not seeded (codegraph still is)."""
+    from codingdude.mcp_config import ensure_default_mcp, merged_mcp_config
+
+    def which(name: str):
+        return 'C:/bin/codegraph.CMD' if name == 'codegraph' else None
+
+    monkeypatch.setattr('codingdude.mcp_config.shutil.which', which)
+    ensure_default_mcp(home)
+    servers = merged_mcp_config(home, home)['mcpServers']
+    assert 'codegraph' in servers
+    assert 'zai-vision' not in servers
+
+
+def test_ensure_default_mcp_preserves_existing_zai_vision(home, monkeypatch):
+    """A user-modified zai-vision entry is never overwritten."""
+    from codingdude.mcp_config import ensure_default_mcp, merged_mcp_config
+
+    monkeypatch.setattr('codingdude.mcp_config.shutil.which', lambda name: 'C:/bin/codegraph.CMD')
+    home.mkdir(parents=True, exist_ok=True)
+    (home / 'mcp.json').write_text(
+        json.dumps({'mcpServers': {'zai-vision': {'command': 'my-npx'}}, 'disabled': []}),
+        encoding='utf-8',
+    )
+    ensure_default_mcp(home)
+    assert (
+        merged_mcp_config(home, home)['mcpServers']['zai-vision'] == {'command': 'my-npx'}
+    )
 
 
 def test_ensure_default_mcp_skips_when_binary_missing(home, monkeypatch):
