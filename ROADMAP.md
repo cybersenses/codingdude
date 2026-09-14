@@ -506,10 +506,10 @@ contract-first codegen; no DSL, no generated stubs.
 **Theme:** curated web research persisted into the reference knowledgebase.
 
 ### Shipped
-- :  ->  writing .
-- Validation: non-empty doc,  stamp, at least one source URL; refuses clobber unless .
+- `src/codingdude/research.py`: `build_research_toolset(workdir)` -> `save_research(topic, markdown, replace=False)` writing `reference/research/<slug>.md`.
+- Validation: non-empty doc, `As of:` stamp, at least one source URL; refuses clobber unless `replace=True`.
 - Process discipline in tool docstring: decompose into subtopics, <=5 reliable sources per subtopic, +5 escalation only on wild disagreement, soft ask_user validation gate, freshness via human-triggered re-research.
-- Registered in ; saved docs auto-index into ReferenceStore () — no new retrieval path.
+- Registered in `plugins.build_all`; saved docs auto-index into ReferenceStore (`search_references`) — no new retrieval path.
 
 ### Evidence
-- Commit ; 312 pytest passed (+7 in ), ruff clean, mypy clean.
+- Commit `2127571`; 312 pytest passed (+7 in `tests/test_research.py`), ruff clean, mypy clean.
