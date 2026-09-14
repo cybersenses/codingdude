@@ -163,6 +163,10 @@ async def build_all(ctx: PluginContext) -> list[AbstractToolset]:
     )
     toolsets.append(build_roadmap_toolset(RoadmapStore(ctx.db), str(ctx.workdir), session_id=ctx.session_id))
     toolsets.append(build_references_toolset(ctx.db, ctx.workdir))
+
+    from codingdude.research import build_research_toolset
+
+    toolsets.append(build_research_toolset(ctx.workdir))
     toolsets.append(build_artifacts_toolset(ctx.db, ctx.session_id))
     toolsets.append(
         build_execution_toolset(ExecutionStore(ctx.db, str(ctx.workdir)), ctx.session_id)
