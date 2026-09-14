@@ -318,7 +318,7 @@ decisions are never consulted again.
 ---
 
 ## R9 — Resumable long-horizon work (crash-safe execution claims)
-**Status:** thickened — `ExecutionStore.drift()` plan diffing (done-without-evidence, out-of-order steps) surfaced in `get_resume_state` · **Area:** engine / reliability / planning integration
+**Status:** done — `ExecutionStore.drift()` plan diffing (done-without-evidence, out-of-order steps) surfaced in `get_resume_state` · **Area:** engine / reliability / planning integration
 
 ### Problem
 Wayfinder plans multi-session work, but execution state lives in one agent
