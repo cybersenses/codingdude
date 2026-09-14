@@ -1,6 +1,9 @@
 """The engine: one entry point — start a Run (Session + prompt), get an outcome.
 
 Both frontends (web worker, headless CLI) drive this identical seam.
+`run` is a flat orchestrator over the three run seams in `run_pipeline`:
+PromptAssembler (instructions + Agent), HistoryManager (load/compact/
+persist + context), PostRunPipeline (usage, memory, claim verification).
 """
 
 import logging
@@ -9,36 +12,21 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from pydantic_ai import Agent
 from pydantic_ai.models import Model
 from pydantic_ai.models.fallback import FallbackModel
 
 from .checkpoints import CheckpointStore
 from .config import Config, parse_thinking
-from .context import ContextManager
 from .db import Database
-from .messages import decode_messages, encode_messages, sanitize_history
+from .run_pipeline import (
+    HistoryManager,
+    PostRunPipeline,
+    PromptAssembler,
+    RunServices,
+)
 from .tools import (
     GateRequired,
 )
-
-
-def _base_instructions() -> str:
-    from .prompts import load_prompt
-
-    return load_prompt('base_instructions')
-
-
-_INSTRUCTIONS_CACHE: str | None = None
-
-
-def _instructions() -> str:
-    """Base instructions, loaded on first use — never at import time (L13:
-    module-import must not touch the filesystem)."""
-    global _INSTRUCTIONS_CACHE
-    if _INSTRUCTIONS_CACHE is None:
-        _INSTRUCTIONS_CACHE = _base_instructions()
-    return _INSTRUCTIONS_CACHE
 
 
 def _zai_fallback(model_name: str, base_url: str | None) -> Model:
@@ -76,23 +64,6 @@ def _model_from_name(name: str, base_url: str | None) -> Model:
     from pydantic_ai.models import infer_model
 
     return infer_model(name)
-
-
-_THINKING_PROVIDERS = ('glm', 'deepseek')
-
-
-def _supports_thinking(model: Model) -> bool:
-    """True when the model (or any failover target) accepts the unified
-    `thinking` setting: ZAI GLM and DeepSeek (V4/flash) profiles."""
-    candidates: list[Model] = [model]
-    candidates.extend(getattr(model, 'models', ()) or ())  # FallbackModel
-    for m in candidates:
-        if type(m).__name__ == 'ZaiModel':
-            return True
-        name = str(getattr(m, 'model_name', '')).lower()
-        if any(p in name for p in _THINKING_PROVIDERS):
-            return True
-    return False
 
 
 logger = logging.getLogger(__name__)
@@ -141,6 +112,16 @@ class Engine:
             max_per_session=50,
             max_age_days=30,
         )
+        # The three run seams (arch review Candidate 2): shared services +
+        # prompt / history / post-run ownership.
+        self._services = RunServices(
+            config, db, self._config_home(),
+            extraction_model=lambda: self._extraction_model,
+            budget_cap_usd=budget_cap_usd,
+        )
+        self._prompts = PromptAssembler()
+        self._history = HistoryManager(self._services, compaction_threshold)
+        self._post = PostRunPipeline(self._services)
 
     def build_model(
         self, main: Model | str | None = None, fallback: Model | str | None = None
@@ -174,7 +155,6 @@ class Engine:
 
     @property
     def extraction_model(self) -> Model | None:
-        """The cheap model for memory extraction / review (public seam)."""
         return self._extraction_model
 
     @extraction_model.setter
@@ -225,51 +205,7 @@ class Engine:
         self._db.record_pattern_approval(session_id, pattern)
         return pattern
 
-    def _check_budget(self, session_id: str) -> None:
-        """Hard-stop the session once spend crosses the cap (off by default;
-        never bypassed by --yolo)."""
-        if self._budget_cap_usd is None:
-            return
-        from .exceptions import BudgetExceeded
-
-        totals = self._db.session_usage(session_id)
-        spent = totals.get('cost_usd') or 0.0
-        if spent >= self._budget_cap_usd:
-            raise BudgetExceeded(spent_usd=spent, cap_usd=self._budget_cap_usd)
-
-    def _record_model_usage(self, session_id: str, model, usage) -> None:
-        """Bill an auxiliary model call to the Session (self-review H6).
-
-        Compaction, memory extraction, claim verification and fix-loop
-        retries are real spend; leaving them out under-counted the cost
-        meter and let the Budget Cap be exceeded.
-        """
-        try:
-            cost = getattr(usage, 'cost', None)
-            self._db.record_usage(
-                session_id,
-                model=str(getattr(model, 'model_name', model)),
-                requests=getattr(usage, 'requests', 0) or 0,
-                input_tokens=getattr(usage, 'input_tokens', 0) or 0,
-                output_tokens=getattr(usage, 'output_tokens', 0) or 0,
-                cost_usd=float(cost) if cost is not None else None,
-            )
-        except Exception:  # noqa: BLE001 - accounting must never fail a run
-            pass
-
-    def _usage_limits(self):
-        """Per-run request cap (config `models.request_limit`, default 500).
-
-        Without an explicit limit pydantic-ai applies its library default of
-        50 model requests per run, which kills long agentic sessions with
-        'would exceed the request_limit of 50'.
-        """
-        from pydantic_ai.usage import UsageLimits
-
-        return UsageLimits(request_limit=self._config.models.request_limit)
-
-    @staticmethod
-    def _scrubbed() -> dict:
+    def _scrubbed(self) -> dict:
         from .tools import scrubbed_env
 
         return scrubbed_env()
@@ -335,74 +271,6 @@ class Engine:
             resolved = vision_model
         return resolved
 
-    def _build_instructions(
-        self, workdir: Path, prompt: str, registry, store, embedder,
-    ) -> str:
-        """System instructions: base + repo map + directive layers + skills
-        index (with auto-triggered bodies) + relevant Memory."""
-        instructions = _instructions()
-
-        from .guidance import contract_block, platform_block
-
-        instructions += platform_block(workdir) + contract_block()
-        from .repo_map import build_repo_map
-
-        repo_map_text = build_repo_map(workdir)
-        if repo_map_text:
-            instructions += (
-                '\n\n## Repository overview (auto-generated map)\n' + repo_map_text
-            )
-        from .directives import build_directive_layers
-
-        directive_layers = build_directive_layers(self._config_home(), workdir)
-        if directive_layers:
-            instructions += '\n\n' + directive_layers
-
-        skills_index = registry.index()
-        if skills_index:
-            lines = '\n'.join(
-                f"- {s['name']}: {s['description']}" for s in skills_index
-            )
-            instructions += (
-                '\n\n## Skills (procedures you can load)\n'
-                'Scan this index before every response. If any skill matches the '
-                'request — by name, description, or topic — call load_skill(name) '
-                'BEFORE acting and follow it. Loading a matching skill is mandatory, '
-                'not optional:\n'
-                + lines
-            )
-            triggered = registry.matching(prompt)
-            if triggered:
-                preloaded = '\n\n'.join(
-                    f"### Pre-loaded skill: {s['name']} (auto-triggered by this request)\n\n"
-                    + s['body']
-                    for s in triggered
-                )
-                instructions += (
-                    '\n\n## Skills auto-triggered by this request\n'
-                    'The matching skill bodies are already loaded here — follow them '
-                    'now. Call load_skill only for a companion file or a different '
-                    'skill from the index.\n\n' + preloaded
-                )
-        if embedder is not None:
-            relevant = [
-                content
-                for content, _score in store.retrieve_semantic(
-                    embedder, str(workdir), query=prompt
-                )
-            ]
-        else:
-            relevant = [
-                e['content'] for e in store.retrieve(str(workdir), query=prompt)
-            ]
-        if relevant:
-            lines = '\n'.join(f'- {c}' for c in relevant)
-            instructions += (
-                '\n\nMemory (durable facts from earlier sessions; respect them):\n'
-                + lines
-            )
-        return instructions
-
     async def _run_fix_loop(
         self, session_id: str, resolved: Model, instructions: str, toolsets,
         history: list, result, workdir: Path, test_command: str, shell_bin: str,
@@ -410,8 +278,6 @@ class Engine:
     ):
         """Fix-until-green: run the tests, feed failures back, repeat."""
         import asyncio
-
-        from pydantic_ai import Agent
 
         from .tools import shell_argv
 
@@ -432,9 +298,7 @@ class Engine:
                 emit({'type': 'TEST_RUN', 'passed': passed, 'output': test_out})
             if passed:
                 break
-            retry_agent: Agent = Agent(
-                model=resolved, instructions=instructions, toolsets=toolsets
-            )
+            retry_agent = self._prompts.agent(resolved, instructions, toolsets, retries=1)
             history = history + list(result.new_messages()) if result else history
             failure_text = (
                 'The test suite is still failing. Output:\n' + test_out + '\n'
@@ -444,42 +308,10 @@ class Engine:
                 + 'Fix the failures. Do not declare success until the tests pass.',
                 message_history=history,
             )
-            self._record_model_usage(session_id, resolved, result.usage)
-            self._db.replace_messages(
-                session_id,
-                [encode_messages([m]) for m in result.all_messages()],
-            )
-            self._check_budget(session_id)
+            self._services.record_model_usage(session_id, resolved, result.usage)
+            self._history.persist(session_id, result.all_messages())
+            self._services.check_budget(session_id)
         return result
-
-    def _record_run_usage(
-        self, session_id: str, model_name: str, result, started, emit,
-    ) -> None:
-        """Bill the run (usage row + RUN_USAGE trace event with duration)."""
-        from datetime import UTC as _UTC
-        from datetime import datetime as _dt
-
-        from .telemetry import run_usage_event
-
-        usage = result.usage
-        run_cost = float(usage.cost) if usage.cost is not None else None
-        self._db.record_usage(
-            session_id,
-            model=model_name,
-            requests=usage.requests or 0,
-            input_tokens=usage.input_tokens or 0,
-            output_tokens=usage.output_tokens or 0,
-            cost_usd=run_cost,
-        )
-        emit(run_usage_event(
-            model_name=model_name,
-            requests=usage.requests or 0,
-            input_tokens=usage.input_tokens or 0,
-            output_tokens=usage.output_tokens or 0,
-            cost_usd=run_cost,
-            duration_s=(_dt.now(_UTC) - started).total_seconds(),
-            pricing=self._config.models.pricing,
-        ))
 
     async def run(
         self,
@@ -511,32 +343,23 @@ class Engine:
 
         ensure_codegraph_index(workdir)
 
-        def persist_snapshot(msgs):
-            self._db.replace_messages(
-                session_id, [encode_messages([m]) for m in msgs]
-            )
-
         from datetime import UTC as _UTC
         from datetime import datetime as _dt
 
         started = _dt.now(_UTC)
         try:
-            self._check_budget(session_id)
+            self._services.check_budget(session_id)
             resolved = self._resolve_run_model(model, image_path, vision_model)
             model_name = getattr(resolved, 'model_name', str(resolved))
 
-            history = sanitize_history(
-                decode_messages(self._db.load_messages(session_id))
-            )
+            history = self._history.load(session_id)
             traced({'type': 'USER_PROMPT', 'text': prompt})
-            cm = self._context_manager(model_name)
-            history, compacted = await self._maybe_compact(
+            cm = self._history.context_manager(model_name)
+            history, compacted = await self._history.maybe_compact(
                 history, resolved, on_event, session_id, cm=cm
             )
             if compacted:
-                self._db.replace_messages(
-                    session_id, [encode_messages([m]) for m in history]
-                )
+                self._history.persist(session_id, history)
             ctx_stats = cm.usage(history)
             traced({
                 'type': 'CONTEXT_USAGE',
@@ -605,20 +428,13 @@ class Engine:
 
             registry = SkillRegistry(self._config_home())
             store = MemoryStore(self._db)
-            instructions = self._build_instructions(
-                workdir, prompt, registry, store, self.embedder
+            instructions = self._prompts.instructions(
+                self._services, workdir, prompt, registry, store, self.embedder
             )
 
-            from pydantic_ai.settings import ModelSettings
-
-            model_settings: ModelSettings = ModelSettings(timeout=300, max_tokens=65536)
-            if self._config.models.max_tokens:
-                model_settings['max_tokens'] = self._config.models.max_tokens
-            if thinking is not None and _supports_thinking(resolved):
-                model_settings['thinking'] = thinking
-            agent: Agent = Agent(
-                model=resolved, instructions=instructions, toolsets=toolsets,
-                model_settings=model_settings, retries=2,
+            agent = self._prompts.agent(
+                resolved, instructions, toolsets,
+                self._prompts.model_settings(self._services, resolved, thinking),
             )
             run_prompt: str | list = prompt
             if image_path is not None:
@@ -631,9 +447,9 @@ class Engine:
                 result = await self._run_agent(
                     agent, run_prompt, history, model_name, traced,
                     cp_holder=cp_holder,
-                    persist=persist_snapshot,
+                    persist=lambda msgs: self._history.persist(session_id, msgs),
                     stream=emit is not None,
-                    usage_limits=self._usage_limits(),
+                    usage_limits=self._services.usage_limits(),
                 )
             except GateRequired as gate:
                 # ADR-0003: unattended runs abort on gates. The Session keeps
@@ -651,12 +467,10 @@ class Engine:
                 self._db.delete_session(session_id)
             raise
 
-        self._db.replace_messages(
-            session_id, [encode_messages([m]) for m in result.all_messages()]
-        )
+        self._history.persist(session_id, result.all_messages())
         # Prefer the provider's own token count for the final request (it
         # includes instructions + history); fall back to the estimate.
-        self._persist_actual_context(session_id, result, cm)
+        self._history.persist_actual_context(session_id, result, cm)
 
         # Fix-until-green loop: run the tests, feed failures back, repeat.
         if fix_loop and approvals is not None:
@@ -671,168 +485,20 @@ class Engine:
                 max_test_iterations, emit,
             )
 
-        self._record_run_usage(session_id, model_name, result, started, traced)
-        if self._extraction_model is not None:
-            await self._extract_memory(session_id, workdir)
+        self._post.record_run_usage(session_id, model_name, result, started, traced)
+        await self._post.extract_memory(session_id, workdir)
         if self._diff_nonempty(session_id):
-            await self._verify_claims(
+            await self._post.verify_claims(
                 session_id, result, workdir, approvals, emit,
                 resolved=resolved, history=history,
                 toolsets=toolsets, instructions=instructions,
             )
-        self._check_budget(session_id)
+        self._services.check_budget(session_id)
         return RunOutcome(
             session_id=session_id,
             output=result.output,
             model_name=model_name,
         )
-
-    async def _extract_memory(self, session_id: str, workdir: Path) -> None:
-        """Post-session pass: bank durable facts the run didn't explicitly remember
-        and retire entries this session made obsolete (via `FORGET:` lines)."""
-        from pydantic_ai import Agent
-
-        from .memory import MemoryStore
-
-        store = MemoryStore(self._db)
-        known = store.all_entries()
-        known_lines = '\n'.join(f"- {e['content']}" for e in known[:50])
-        transcript = '\n'.join(self._db.load_messages(session_id))[:12000]
-        agent: Agent = Agent(model=self._extraction_model)
-        try:
-            result = await agent.run(
-                'From this conversation transcript, extract durable facts worth '
-                'remembering for future sessions (preferences, project facts, '
-                'decisions). One fact per line, no numbering. Do not restate a '
-                'fact already in the known entries below. If a known entry became '
-                'obsolete or was completed during this conversation, emit a line '
-                'exactly `FORGET: <distinctive substring of that entry>` so it is '
-                'deleted. Return only lines worth keeping — if none, return '
-                'nothing.\n\nKnown entries:\n'
-                + known_lines
-                + '\n\nTranscript:\n'
-                + transcript
-            )
-        except Exception:  # noqa: BLE001 — extraction must never fail a run
-            return
-        self._record_model_usage(session_id, self._extraction_model, result.usage)
-        for line in result.output.splitlines():
-            line = line.strip().lstrip('-•* ')
-            if not line:
-                continue
-            if line.upper().startswith('FORGET:'):
-                substring = line[len('FORGET:'):].strip()
-                if substring:
-                    store.delete_substring(substring)
-                continue
-            if store.duplicate_ids(line):
-                continue
-            store.add(line, scope='workdir', workdir=str(workdir))
-
-    def _context_manager(self, model_name: str) -> ContextManager:
-        """The ContextManager for the resolved model: per-model context limit
-        (config override wins; see context.model_limit_for)."""
-        from .context import model_limit_for
-
-        return ContextManager(
-            model_limit=model_limit_for(model_name, self._config.models.context_limit)
-        )
-
-    def _persist_actual_context(self, session_id: str, result, cm) -> None:
-        """Refresh the session's context snapshot with the run's final usage.
-
-        The provider-reported input tokens of the last request are the true
-        context size (instructions + full history); the estimate is the
-        fallback when usage isn't reported. Accounting must never fail a run.
-        """
-        try:
-            response = getattr(result, 'response', None)
-            usage = getattr(response, 'usage', None)
-            input_tokens = getattr(usage, 'input_tokens', None)
-            messages = result.all_messages()
-            estimated = cm.usage(messages).total_tokens
-            total = (
-                input_tokens
-                if isinstance(input_tokens, int) and input_tokens > 0
-                else estimated
-            )
-            self._db.update_session_context(
-                session_id, total, cm.model_limit
-            )
-        except Exception as exc:  # noqa: BLE001 - accounting must never fail a run
-            logger.warning('context snapshot not persisted: %s', exc)
-
-    async def _maybe_compact(self, history, resolved: Model, on_event, session_id: str,
-                             cm: ContextManager | None = None):
-        """Compact old turns into a summary when history approaches the
-        model's context window (token-based) or the legacy char threshold.
-
-        Returns (history, compacted?) — compacted True means history changed.
-        """
-        if len(history) < 3:
-            return history, False
-        over_tokens = cm is not None and cm.usage(history).needs_compaction
-        over_chars = (
-            self._compaction_threshold is not None
-            and sum(len(encode_messages([m])) for m in history) > self._compaction_threshold
-        )
-        if not (over_tokens or over_chars):
-            return history, False
-
-        from pydantic_ai.messages import ModelRequest, UserPromptPart
-
-        # Importance-based retention (R3): recent + high-importance messages
-        # stay verbatim; everything else is summarised.
-        keep_idx, summarise_idx = cm.plan_compaction(history) if cm is not None else (
-            [len(history) - 1], list(range(len(history) - 1))
-        )
-        if not summarise_idx:
-            # Everything scored as recent/high-importance (e.g. a history of
-            # short user prompts): retention would keep the overflow, so fall
-            # back to the last message verbatim.
-            old, keep = history[:-1], history[-1:]
-        else:
-            old = [history[i] for i in summarise_idx]
-            keep = [history[i] for i in keep_idx]
-        digest = '\n'.join(
-            f'- {p.content}'
-            for m in old
-            for p in m.parts
-            if hasattr(p, 'content') and p.content
-        )
-        summarizer: Agent = Agent(model=resolved)
-        summary_result = await summarizer.run(
-            'Summarize the key facts and decisions of this conversation '
-            f'for continuity, in at most 200 words:\n\n{digest[:8000]}'
-        )
-        summary = summary_result.output
-        self._record_model_usage(session_id, resolved, summary_result.usage)
-        # RAG: the summary becomes retrievable Memory, so facts that fell out
-        # of the window resurface in future runs' instructions (R3).
-        try:
-            from .memory import MemoryStore
-
-            MemoryStore(self._db).add(
-                f'Compacted conversation summary: {summary}',
-                scope='workdir',
-                workdir=self._db.session_workdir(session_id) or '',
-            )
-        except Exception as exc:  # noqa: BLE001 - retrieval must not fail compaction
-            logger.warning('compaction summary not stored as memory: %s', exc)
-        compacted = [
-            ModelRequest(
-                parts=[UserPromptPart(content=f'[Earlier conversation, compacted]\n{summary}')]
-            )
-        ] + keep
-        if on_event:
-            from .events import CompactionCheckpoint
-
-            on_event(
-                CompactionCheckpoint(
-                    kind='compaction', summarized_messages=len(old), summary=summary
-                )
-            )
-        return compacted, True
 
     async def _run_agent(self, agent, prompt, history, model_name, traced, cp_holder,
                          persist=None, stream: bool = True, usage_limits=None):
@@ -914,75 +580,3 @@ class Engine:
             result = run.result
         # NB: terminal RUN_FINISHED is emitted by the worker after persistence.
         return result
-
-    async def _verify_claims(self, session_id: str, result, workdir: Path, approvals, emit,
-                             resolved=None, history=None, toolsets=None, instructions=None) -> None:
-        """Anti-slop: cross-check the final summary's verification claims against
-        recorded tool results; re-execute explicitly claimed verifications once;
-        give the model one round to address unsupported claims."""
-
-        from pydantic_ai import Agent
-
-        from .prompts import load_prompt
-
-        if self._extraction_model is None:
-            return
-
-        final_text = result.output
-        payloads = decode_messages(self._db.load_messages(session_id))
-        tool_results = []
-        for m in payloads:
-            for part in m.parts:
-                name = getattr(part, 'tool_name', None)
-                if name in ('shell', 'run_coverage'):
-                    content = str(getattr(part, 'content', ''))[:300]
-                    tool_results.append(f'{name}: exit {content[:120]}')
-
-        auditor = Agent(model=self._extraction_model)
-        audit_prompt = (
-            load_prompt('claim_check')
-            + '\n\nSUMMARY:\n'
-            + final_text[:3000]
-            + '\n\nRECORDED COMMAND RESULTS:\n'
-            + ('\n'.join(tool_results)[-4000:] if tool_results else '(none recorded)')
-        )
-        try:
-            audit = await auditor.run(audit_prompt)
-        except Exception:  # noqa: BLE001 — verification must never fail the run
-            return
-        self._record_model_usage(session_id, self._extraction_model, audit.usage)
-        unsupported = [
-            line.strip().lstrip('-•* ')
-            for line in audit.output.splitlines()
-            if line.strip() and not line.strip().upper().startswith('CLEAN')
-        ]
-        if not unsupported:
-            if emit:
-                emit({'type': 'CLAIMS_VERIFIED'})
-            return
-
-        findings = 'The reviewer could not verify these claims:\n' + '\n'.join(
-            f'- {c}' for c in unsupported
-        )
-        # One retry round: the model gets the findings plus the conversation so
-        # far, and must back the claims with real commands or correct itself.
-        retry_agent: Agent = Agent(
-            model=resolved, instructions=instructions or _instructions(),
-            toolsets=toolsets,
-        )
-        try:
-            retry = await retry_agent.run(
-                f'{findings}\nBack these claims by actually running the checks now '
-                '(use the tools), or correct your summary.',
-                message_history=history + list(result.new_messages()),
-                usage_limits=self._usage_limits(),
-            )
-            self._record_model_usage(session_id, resolved, retry.usage)
-            self._db.replace_messages(
-                session_id, [encode_messages([m]) for m in retry.all_messages()]
-            )
-            emit({'type': 'CLAIMS_ADDRESSED', 'response': str(retry.output)[:1500]})
-        except Exception:  # noqa: BLE001 — best effort; report unverified either way
-            pass
-        emit({'type': 'CLAIMS_UNVERIFIED', 'claims': unsupported})
-
