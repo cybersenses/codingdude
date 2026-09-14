@@ -87,6 +87,7 @@ class ShellConfig:
 class ProviderKeys:
     deepseek: str | None = None
     zai: str | None = None
+    github: str | None = None
 
 
 @dataclass(frozen=True)
@@ -156,6 +157,7 @@ def load_config(home: Path | None = None) -> Config:
         providers=ProviderKeys(
             deepseek=providers.get('deepseek'),
             zai=providers.get('zai'),
+            github=providers.get('github'),
         ),
     )
     apply_provider_keys(config)
@@ -168,6 +170,8 @@ def apply_provider_keys(config: Config) -> None:
         os.environ.setdefault('DEEPSEEK_API_KEY', config.providers.deepseek)
     if config.providers.zai:
         os.environ.setdefault('ZAI_API_KEY', config.providers.zai)
+    if config.providers.github:
+        os.environ.setdefault('GITHUB_PAT', config.providers.github)
 
 
 def load_project_config(workdir: Path) -> dict:
