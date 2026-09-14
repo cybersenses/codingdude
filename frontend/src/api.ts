@@ -139,7 +139,7 @@ export const api = {
     call(`/projects/${id}`, { method: 'DELETE' }),
   listSessions: (workdir: string): Promise<SessionInfo[]> =>
     call<SessionInfo[]>(`/sessions?workdir=${encodeURIComponent(workdir)}`),
-  getMessages: (sessionId: string) => call(`/sessions/${sessionId}/messages`),
+  getMessages: (sessionId: string, limit = 200) => call(`/sessions/${sessionId}/messages?limit=${limit}`),
   listModels: (): Promise<ModelsInfo> => call<ModelsInfo>('/models'),
   startRun: (
     sessionId: string,

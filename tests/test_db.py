@@ -29,6 +29,17 @@ def test_session_create_list_and_message_roundtrip(home, workdir):
     assert [p.content for m in loaded for p in m.parts] == ['hello bank']
 
 
+def test_load_messages_limit_returns_most_recent_in_order(home, workdir):
+    db = Database.connect(home)
+    session_id = db.create_session(workdir)
+    for i in range(5):
+        db.append_messages(
+            session_id, encode_messages([ModelResponse(parts=[TextPart(content=f'msg {i}')])])
+        )
+    loaded = decode_messages(db.load_messages(session_id, limit=2))
+    assert [p.content for m in loaded for p in m.parts] == ['msg 3', 'msg 4']
+
+
 def test_usage_accumulates_per_session(home, workdir):
     db = Database.connect(home)
     session_id = db.create_session(workdir)

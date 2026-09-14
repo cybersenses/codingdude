@@ -417,7 +417,14 @@ class Database:
         ).fetchone()
         return row['workdir'] if row else None
 
-    def load_messages(self, session_id: str) -> list[str]:
+    def load_messages(self, session_id: str, limit: int | None = None) -> list[str]:
+        if limit is not None:
+            rows = self._conn.execute(
+                'SELECT payload FROM messages WHERE session_id = ? '
+                'ORDER BY seq DESC LIMIT ?',
+                (session_id, limit),
+            ).fetchall()
+            return [r['payload'] for r in reversed(rows)]
         rows = self._conn.execute(
             'SELECT payload FROM messages WHERE session_id = ? ORDER BY seq',
             (session_id,),

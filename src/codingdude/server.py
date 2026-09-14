@@ -211,7 +211,10 @@ def create_app(
         return [dataclasses.asdict(r) for r in rows]
 
     @app.get('/sessions/{session_id}/messages')
-    def session_messages(session_id: str, _: None = Depends(authorize)) -> list[dict]:
+    def session_messages(
+        session_id: str, limit: int = 200, _: None = Depends(authorize)
+    ) -> list[dict]:
+        limit = max(1, min(limit, 2000))
         import time as _time
 
         from pydantic_ai.messages import ModelMessagesTypeAdapter
@@ -221,7 +224,7 @@ def create_app(
 
         for attempt in range(5):
             try:
-                payloads = db.load_messages(session_id)
+                payloads = db.load_messages(session_id, limit=limit)
                 out = []
                 for payload in payloads:
                     out.extend(
