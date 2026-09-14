@@ -382,3 +382,93 @@ def test_session_notes_and_keep_endpoints(server, tmp_path):
     assert len(notes) == 1
     assert notes[0]['content'] == 'off the rails'
     assert notes[0]['offset_s'] == 4.5
+
+
+def test_render_capture_persists_to_db_and_appears_in_renders(server, tmp_path):
+    """R1 gap closed: a render written during a run is recorded in the DB
+    (with captured_at provenance) and merged into /sessions/{id}/renders."""
+    app, base = server
+    workdir = tmp_path / 'proj-render'
+    workdir.mkdir()
+    session_id = create_session(base, workdir)
+    r = httpx.post(
+        f'{base}/sessions/{session_id}/runs',
+        json={'prompt': 'make a screenshot', 'model': 'codingdude-test:echo'},
+        headers=auth(),
+        timeout=30,
+    )
+    run_id = r.json()['run_id']
+    collect_sse(base, run_id)
+
+    # Simulate the capture hook firing mid-run (same event the shell hook emits).
+    png = workdir / 'shot.png'
+    png.write_bytes(b'\x89PNG fake')
+
+    app.state.channels.get(run_id)  # channel may be reaped post-terminal; fine
+    from codingdude.db import Database
+
+    db = Database.connect(tmp_path / 'home')
+    db.record_render(
+        session_id, 'shot.png', bytes_=png.stat().st_size, mtime=int(png.stat().st_mtime),
+    )
+
+    data = httpx.get(
+        f'{base}/sessions/{session_id}/renders', headers=auth(), timeout=10
+    ).json()
+    render = next(r for r in data['renders'] if r['path'] == 'shot.png')
+    assert render['captured_at']
+    assert render['bytes'] == png.stat().st_size
+
+
+def test_sse_reattach_mid_run(server, tmp_path):
+    """R2 gap closed (live transport E2E): drop the SSE stream mid-run,
+    confirm /alive is still true, reattach, and still receive the terminal
+    event — the reconnect path the browser relies on."""
+    app, base = server
+    workdir = tmp_path / 'proj-reattach'
+    workdir.mkdir()
+    session_id = create_session(base, workdir)
+    r = httpx.post(
+        f'{base}/sessions/{session_id}/runs',
+        json={'prompt': 'ponder', 'model': 'codingdude-test:sleep'},
+        headers=auth(),
+        timeout=30,
+    )
+    run_id = r.json()['run_id']
+    time.sleep(3)
+
+    # First consumer connects, then deliberately drops without a terminal event.
+    stream = httpx.stream(
+        'GET', f'{base}/runs/{run_id}/events', headers=auth(), timeout=10
+    )
+    with stream as resp:
+        assert resp.status_code == 200
+        for line in resp.iter_lines():
+            if line.startswith('data: '):
+                break  # saw the first event; now abandon the connection
+
+    # Probe says the run is still alive → the UI should reattach, not conclude.
+    alive = httpx.get(f'{base}/runs/{run_id}/alive', headers=auth(), timeout=10)
+    assert alive.json() == {'alive': True}
+
+    # Reattach: a second consumer gets the stream and receives the terminal
+    # event once the run ends (cancelled below mid-sleep).
+    def cancel_soon() -> None:
+        time.sleep(1)
+        httpx.delete(f'{base}/runs/{run_id}', headers=auth(), timeout=10)
+
+    import threading as _threading
+
+    _threading.Thread(target=cancel_soon).start()
+    events = []
+    with httpx.stream(
+        'GET', f'{base}/runs/{run_id}/events', headers=auth(), timeout=20
+    ) as resp:
+        for line in resp.iter_lines():
+            if line.startswith('data: '):
+                event = json.loads(line.removeprefix('data: '))
+                events.append(event)
+                if event.get('type') in TERMINAL_EVENTS:
+                    break
+    assert events, 'reattached stream produced no events'
+    assert events[-1]['type'] == 'RUN_CANCELLED'

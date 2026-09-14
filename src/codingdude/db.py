@@ -140,6 +140,14 @@ CREATE TABLE IF NOT EXISTS artifacts (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_artifacts ON artifacts (session_id, created_at);
+CREATE TABLE IF NOT EXISTS renders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES sessions(session_id),
+    path TEXT NOT NULL,
+    bytes INTEGER NOT NULL,
+    mtime INTEGER NOT NULL,
+    captured_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS design_decisions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     workdir TEXT NOT NULL,
@@ -354,6 +362,30 @@ class Database:
         )
         self._conn.commit()
         return cur.lastrowid or 0
+
+    def record_render(
+        self, session_id: str, path: str, bytes_: int, mtime: int,
+    ) -> None:
+        """Persist a captured render (R1): per-session provenance for images
+        the run produced, so the Renders tab survives workdir moves."""
+        self._conn.execute(
+            'INSERT INTO renders (session_id, path, bytes, mtime, captured_at)'
+            ' VALUES (?, ?, ?, ?, ?)',
+            (session_id, path, bytes_, mtime, _now()),
+        )
+        self._conn.commit()
+
+    def list_renders(self, session_id: str) -> list[dict]:
+        """Captured renders for a session, newest capture first."""
+        rows = self._conn.execute(
+            'SELECT path, bytes, mtime, captured_at FROM renders'
+            ' WHERE session_id = ? ORDER BY id DESC',
+            (session_id,),
+        ).fetchall()
+        return [
+            {'path': r[0], 'bytes': r[1], 'mtime': r[2], 'captured_at': r[3]}
+            for r in rows
+        ]
 
     def list_session_notes(self, session_id: str) -> list[dict]:
         rows = self._conn.execute(

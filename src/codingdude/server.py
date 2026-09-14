@@ -517,9 +517,15 @@ def create_app(
                 },
             ))
         rendered.sort(key=lambda entry: entry[0], reverse=True)
+        # DB-persisted captures (R1) add provenance and survive workdir moves;
+        # rows whose file is gone are dropped (nothing to serve).
+        by_path = {entry['path']: dict(entry) for _mtime, entry in rendered}
+        for rec in db.list_renders(session_id):
+            if rec['path'] in by_path:
+                by_path[rec['path']]['captured_at'] = rec['captured_at']
         return {
             'session_start': session_start,
-            'renders': [entry for _mtime, entry in rendered][:300],
+            'renders': list(by_path.values())[:300],
         }
 
     @app.get('/sessions/{session_id}/render')

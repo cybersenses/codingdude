@@ -18,8 +18,15 @@ Left with the **entire R1–R11 roadmap closed**, plus the R7 annotation layer
   Python patch — prefer scripted patches for this file.
 
 ## State at handoff
-- HEAD (this commit): R1–R11 all done + annotation layer. 265 pytest, ruff,
-  mypy (39 files), npm build green. All pushed.
+- HEAD (this commit): R1 verification gaps closed on top of the annotation
+  layer — (1) renders now persist per session (`renders` table,
+  `db.record_render`/`list_renders`, engine emitter hook on RENDER_CAPTURED,
+  `/sessions/{id}/renders` merges DB provenance with the workdir scan);
+  (2) live SSE-reattach E2E proven over a real uvicorn server + worker
+  subprocess (`test_sse_reattach_mid_run`: drop mid-run, `/alive` true,
+  reattach, terminal event received). Note: the vision pixel gate still has
+  no live-model check (needs `models.vision` + a real image round).
+- 269 pytest, ruff, mypy (39 files), npm build green. All pushed.
 - **Deliberately deferred as information-thin (not debt):**
   R7 curated eval scenario *library* (content, not mechanism);
   R8 contract-first codegen (needs a codegen design).

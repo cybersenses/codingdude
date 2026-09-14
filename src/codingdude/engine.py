@@ -296,6 +296,17 @@ class Engine:
                 payload = json.dumps({'ts': _dt.now(_UTC).isoformat(), **event})
                 with open(trace_file, 'a', encoding='utf-8') as f:
                     f.write(payload + '\n')
+            if event.get('type') == 'RENDER_CAPTURED' and session_id:
+                # R1: capture hook auto-register — persist the render with
+                # session provenance; failures never fail the run.
+                try:
+                    rel = str(event.get('path', ''))
+                    image = (workdir / rel).stat()
+                    self._db.record_render(
+                        session_id, rel, bytes_=image.st_size, mtime=int(image.st_mtime),
+                    )
+                except OSError:
+                    pass
             if emit:
                 emit(event)
 

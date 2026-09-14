@@ -125,3 +125,18 @@ def test_session_notes_add_and_chronological_list(home, workdir):
     assert notes[1]['offset_s'] is None
     assert notes[0]['created_at']
     assert db.list_session_notes('no-such-session') == []
+
+
+def test_render_records_roundtrip_and_chronological_list(home, workdir):
+    """Renders persist per session (R1 gap): recorded on capture, listed
+    newest-first with provenance (captured_at), session-scoped."""
+    db = Database.connect(home)
+    session_id = db.create_session(workdir)
+    db.record_render(session_id, 'shots/first.png', bytes_=100, mtime=1000)
+    db.record_render(session_id, 'shots/second.png', bytes_=200, mtime=2000)
+    renders = db.list_renders(session_id)
+    assert [r['path'] for r in renders] == ['shots/second.png', 'shots/first.png']
+    assert renders[0]['bytes'] == 200
+    assert renders[0]['mtime'] == 2000
+    assert renders[0]['captured_at']
+    assert db.list_renders('no-such-session') == []
