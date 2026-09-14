@@ -644,23 +644,30 @@ def create_app(
 
     @app.get('/planning')
     def get_planning(workdir: str, _: None = Depends(authorize)) -> dict:
-        from .roadmap import RoadmapStore
+        from .roadmap import RoadmapStore, parse_roadmap_md
 
         store = RoadmapStore(db)
         resolved = _workdir_or_404(workdir)
+        md = Path(resolved) / 'ROADMAP.md'
+        # ROADMAP.md is canonical and always live - serve it directly when present.
+        roadmap = parse_roadmap_md(md) if md.is_file() else store.list_roadmap(resolved)
         return {
-            'roadmap': store.list_roadmap(resolved),
+            'roadmap': roadmap,
             'tickets': store.list_tickets(resolved),
             'decisions': store.list_decisions(resolved),
         }
 
     @app.post('/planning/roadmap')
     def add_roadmap_item(workdir: str, body: RoadmapIn, _: None = Depends(authorize)) -> dict:
-        from .roadmap import RoadmapStore
+        from .roadmap import RoadmapStore, upsert_roadmap_md
 
-        item_id = RoadmapStore(db).create_roadmap_item(
-            _workdir_or_404(workdir), body.title, body.body
-        )
+        resolved = _workdir_or_404(workdir)
+        md = Path(resolved) / 'ROADMAP.md'
+        if md.is_file():
+            upsert_roadmap_md(md, None, title=body.title, body=body.body,
+                              status=body.status)
+            return {'id': 'new'}
+        item_id = RoadmapStore(db).create_roadmap_item(resolved, body.title, body.body)
         return {'id': item_id}
 
     class RoadmapUpdate(BaseModel):
@@ -668,25 +675,42 @@ def create_app(
         body: str | None = None
 
     @app.put('/planning/roadmap/{item_id}')
-    def change_roadmap_item(item_id: int, workdir: str, body: RoadmapUpdate,
+    def change_roadmap_item(item_id: str, workdir: str, body: RoadmapUpdate,
                             _: None = Depends(authorize)) -> dict:
-        from .roadmap import ROADMAP_STATUSES, RoadmapStore
+        from .roadmap import ROADMAP_STATUSES, RoadmapStore, upsert_roadmap_md
 
         if body.status not in ROADMAP_STATUSES:
             raise HTTPException(status_code=422, detail='bad status')
+        resolved = _workdir_or_404(workdir)
+        md = Path(resolved) / 'ROADMAP.md'
+        if md.is_file() and item_id.startswith('R'):
+            try:
+                upsert_roadmap_md(md, item_id, status=body.status, body=body.body)
+            except ValueError as exc:
+                raise HTTPException(status_code=404, detail='no such roadmap item') from exc
+            return {'updated': item_id}
         fields: dict = {'status': body.status}
         if body.body is not None:
             fields['body'] = body.body
-        changed = RoadmapStore(db).update_roadmap_item(_workdir_or_404(workdir), item_id, **fields)
+        try:
+            numeric_id = int(item_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail='no such roadmap item') from exc
+        changed = RoadmapStore(db).update_roadmap_item(resolved, numeric_id, **fields)
         if not changed:
             raise HTTPException(status_code=404, detail='no such roadmap item')
         return {'updated': item_id}
 
     @app.delete('/planning/roadmap/{item_id}')
-    def remove_roadmap_item(item_id: int, workdir: str, _: None = Depends(authorize)) -> dict:
+    def remove_roadmap_item(item_id: str, workdir: str, _: None = Depends(authorize)) -> dict:
         from .roadmap import RoadmapStore
 
-        return {'deleted': RoadmapStore(db).delete_roadmap_item(_workdir_or_404(workdir), item_id)}
+        try:
+            numeric_id = int(item_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail='no such roadmap item') from exc
+        return {'deleted': RoadmapStore(db).delete_roadmap_item(
+            _workdir_or_404(workdir), numeric_id)}
 
     class TicketIn(BaseModel):
         title: str

@@ -8,8 +8,10 @@ current HEAD sha, so every closed ticket links to the commit that closed it.
 """
 
 import logging
+import re
 import subprocess
 from datetime import UTC, datetime
+from pathlib import Path
 
 from pydantic_ai.toolsets import FunctionToolset
 
@@ -23,6 +25,99 @@ TICKET_STATUSES = ('todo', 'in_progress', 'done')
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+# ---- ROADMAP.md bridge -----------------------------------------------------
+#
+# The markdown file is the canonical roadmap source; the DB-backed Planning UI
+# must serve it live and write back to it. `parse_roadmap_md` reads `## R<n> —
+# Title` sections with a `**Status:**` line; `upsert_roadmap_md` mutates one
+# section in place (status/body) or appends a new one.
+
+_MD_ITEM_RE = re.compile(r'^## (R\d+) — (.+)$', re.MULTILINE)
+_MD_STATUS_RE = re.compile(r'^\*\*Status:\*\*\s*(.*)$', re.MULTILINE)
+_MD_STATUS_MAP = {'in-progress': 'in_progress', 'in progress': 'in_progress'}
+
+
+def _norm_status(raw: str) -> str:
+    s = raw.strip().split('·')[0].strip().lower()
+    for bad, good in _MD_STATUS_MAP.items():
+        if s.startswith(bad):
+            return good
+    for known in ROADMAP_STATUSES:
+        if s.startswith(known):
+            return known
+    return 'open'
+
+
+def parse_roadmap_md(path: Path | str) -> list[dict]:
+    """Parse ROADMAP.md into [{id, title, status, body}] (body excludes title/status)."""
+    with open(path, encoding='utf-8', newline='') as f:
+        text = f.read()
+    matches = list(_MD_ITEM_RE.finditer(text))
+    items: list[dict] = []
+    for i, m in enumerate(matches):
+        start = m.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        section = text[start:end]
+        status = 'open'
+        body = section
+        sm = _MD_STATUS_RE.search(section)
+        if sm:
+            first_para = section.split('\n\n', 1)[0]
+            if _MD_STATUS_RE.search(first_para):
+                status = _norm_status(sm.group(1))
+                body = section[:sm.start()] + section[sm.end():]
+        items.append({
+            'id': m.group(1),
+            'title': m.group(2).strip(),
+            'status': status,
+            'body': body.strip(),
+        })
+    return items
+
+
+def upsert_roadmap_md(path: Path | str, item_id: str | None,
+                      title: str | None = None, body: str | None = None,
+                      status: str | None = None) -> None:
+    """Update one section's status (and optionally body), or append a new item."""
+    path = Path(path)
+    with open(path, encoding='utf-8', newline='') as f:
+        text = f.read()
+    matches = list(_MD_ITEM_RE.finditer(text))
+    if item_id is None:
+        next_n = 1 + max((int(m.group(1)[1:]) for m in matches), default=0)
+        new_id = f'R{next_n}'
+        section = (f'## {new_id} — {title or "Untitled"}\n'
+                   f'**Status:** {status or "open"}\n\n{body or ""}\n')
+        with open(path, 'w', encoding='utf-8', newline='') as f:
+            f.write(text.rstrip('\n') + '\n\n' + section)
+        return
+    for i, m in enumerate(matches):
+        if m.group(1) != item_id:
+            continue
+        start = m.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        section = text[start:end]
+        new_section = section
+        if body is not None:
+            sm = _MD_STATUS_RE.search(new_section)
+            if sm:
+                new_section = new_section[:sm.end()] + '\n\n' + body + new_section[sm.end():]
+            else:
+                new_section = f'**Status:** {status or "open"}\n\n' + body + new_section
+        if status is not None:
+            sm = _MD_STATUS_RE.search(new_section)
+            if sm:
+                new_section = (new_section[:sm.start()]
+                               + f'**Status:** {status}'
+                               + new_section[sm.end():])
+        with open(path, 'w', encoding='utf-8', newline='') as f:
+            f.write(text[:start] + new_section + text[end:])
+        return
+    raise ValueError(f'no such roadmap item in {path.name}: {item_id}')
+
+
 
 
 def _head_sha(workdir: str) -> str | None:
