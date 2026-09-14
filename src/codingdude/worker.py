@@ -130,7 +130,9 @@ async def run(args) -> int:
     vision_model = None
     if config.models.vision:
         try:
-            vision_model = await _resolve_model(config.models.vision)
+            vision_model = await _resolve_model(
+                config.models.vision, config.models.fallback_base_url
+            )
         except Exception:  # noqa: BLE001 — image input is best-effort
             vision_model = None
 
