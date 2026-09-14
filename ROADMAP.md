@@ -500,3 +500,16 @@ contract-first codegen; no DSL, no generated stubs.
 
 ### Evidence / notes
 - Decision #10 (round 5, approved). Spec-level only this session.
+
+## R15 — Research pipeline (status: DONE)
+
+**Theme:** curated web research persisted into the reference knowledgebase.
+
+### Shipped
+- :  ->  writing .
+- Validation: non-empty doc,  stamp, at least one source URL; refuses clobber unless .
+- Process discipline in tool docstring: decompose into subtopics, <=5 reliable sources per subtopic, +5 escalation only on wild disagreement, soft ask_user validation gate, freshness via human-triggered re-research.
+- Registered in ; saved docs auto-index into ReferenceStore () — no new retrieval path.
+
+### Evidence
+- Commit ; 312 pytest passed (+7 in ), ruff clean, mypy clean.
