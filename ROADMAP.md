@@ -420,3 +420,81 @@ there is **no built-in place or workflow** for per-project reference material:
   resolve multiple integration issues it would otherwise have guessed at.
 - Rides on the existing workdir-scoped Memory infrastructure (R3) — likely an
   additional store + tools, not a new retrieval engine.
+
+## R12 — Deterministic file-edit pipeline (edit_file reliability)
+
+### Problem
+`edit_file` has corrupted files in 3+ recorded incidents (duplicated lines,
+silent revert, a rewritten Notes component). Gates caught each, but every
+incident cost a scripted-patch workaround. Root cause diagnosed in `tools.py:edit_file`:
+
+1. `read_text(errors='replace')` — non-UTF-8 bytes become U+FFFD, and the
+   write **persists the damage**.
+2. Universal-newline round-trip converts LF files to CRLF on Windows Python —
+   mixed line endings make the file look subtly corrupted.
+3. No atomicity and no staleness check — concurrent writers resolve to
+   last-writer-wins, observed as "silent revert".
+
+### Desired behaviour
+- Bytes-safe read: strict decode, non-UTF-8 → readable `ModelRetry`, never
+  written back damaged.
+- Newline-preserving round-trip (`newline=''` read/write).
+- Atomic write: temp file + rename.
+- Post-write verification: re-read, assert expected content, rollback on
+  mismatch.
+- Staleness guard: refuse (retryable) if the file changed on disk since the
+  agent last read/edited it.
+
+### Acceptance
+- Tests reproduce the three observed corruption modes at the FunctionToolset
+  seam; `write_file` shares the same write primitive.
+
+### Evidence / notes
+- Decision #8. Spec: `docs/specs/R12-edit-pipeline.md`.
+
+
+---
+
+## R13 — Isolated delegated agents (status: specced, not started)
+
+**Theme (b): long-horizon / multi-agent orchestration.** `delegate` today runs
+unisolated in the main workdir and returns one opaque blob.
+
+### Scope
+- Delegated sub-agents run in a **worktree sandbox by default** (R5 tier-1);
+  container tier when the parent flags the task risky; merge only via
+  `sandbox_promote` (approval-gated).
+- **Nested-run visibility**: `DELEGATION_STARTED` / `DELEGATION_PROGRESS` /
+  `DELEGATION_COMPLETED` trace events; UI shows delegation as a nested run with live output.
+- **Inherited approvals**: delegation tool calls resolve through the parent
+  run's approval policy — no separate grant path.
+- **Budget ceiling**: config-driven `max_requests` / `max_cost_usd` per
+  delegation; abort with readable `ModelRetry`; cost attributed to the parent
+  session via R10 telemetry.
+
+### Explicitly out of scope
+- Wayfinder / cross-session handoff plumbing in code — the R9 state layer
+  already exists; it stays a skill concern.
+
+### Evidence / notes
+- Decision #9 (round 4, approved). Spec-level only this session.
+
+## R14 — Contract-first discipline + mid-run index refresh (status: specced, not started)
+
+**Theme (c): deeper code understanding.** Thin slice of the deferred R8
+contract-first codegen; no DSL, no generated stubs.
+
+### Scope
+1. **Contract convention**: specs may carry a  section — typed
+   signatures + test names the implementation must satisfy.
+2. **Archlint rule**: every exported symbol named in a spec's Contract section
+   must exist in code and be referenced by at least one test; violation = soft
+   finding (fix or explicit waiver, matching R8's model).
+3. **Mid-run refresh**: codegraph index + archlint re-run best-effort after
+   each fix-loop iteration so long sessions don't lint stale code.
+
+### Deferred until R12 lands and proves out
+- Generated interface stubs, contract DSL, automatic conformance checking.
+
+### Evidence / notes
+- Decision #10 (round 5, approved). Spec-level only this session.
