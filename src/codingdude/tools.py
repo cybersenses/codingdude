@@ -2,8 +2,9 @@
 
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import NamedTuple
 
 from pydantic_ai import ModelRetry
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
@@ -53,6 +54,55 @@ def scrubbed_env() -> dict:
         if k in ENV_ALLOWLIST
         or not any(marker in k.upper() for marker in SECRET_MARKERS)
     }
+
+class Captured(NamedTuple):
+    """Result of a captured subprocess run (run_captured)."""
+    code: int
+    stdout: str
+    stderr: str
+
+    @property
+    def combined(self) -> str:
+        return (self.stdout + self.stderr).strip()
+
+
+async def run_captured(
+    argv: Sequence[str],
+    *,
+    cwd: Path,
+    timeout: int,
+    env: dict | None = None,
+    shell: bool = False,
+) -> Captured | None:
+    """Run a command, capture output, kill on timeout.
+
+    Returns None when the process was killed after  seconds —
+    callers format their own timeout message. One place so timeout
+    handling (kill, not orphan) and decode can't drift across call sites.
+    """
+    import asyncio
+
+    if env is None:
+        env = scrubbed_env()
+    if shell:
+        proc = await asyncio.create_subprocess_shell(
+            ' '.join(argv), cwd=cwd, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE, env=env)
+    else:
+        proc = await asyncio.create_subprocess_exec(
+            *argv, cwd=cwd, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE, env=env)
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout)
+    except TimeoutError:
+        proc.kill()
+        return None
+    return Captured(
+        code=proc.returncode if proc.returncode is not None else -1,
+        stdout=stdout.decode(errors='replace'),
+        stderr=stderr.decode(errors='replace'),
+    )
+
 
 EditEmitter = Callable[[dict], None]
 
@@ -339,28 +389,17 @@ def build_shell_toolset(
         decision = policy.decide(_mask_workdir(command))
         if decision in (NEEDS_GATE, DENIED):
             await _resolve_gate(policy, command, always=decision == DENIED)
-        import asyncio
-
         argv = shell_argv(command, shell_bin)
         started = time.time()
-        proc = await asyncio.create_subprocess_exec(
-            *argv,
-            cwd=workdir,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=scrubbed_env(),
-        )
-        try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except TimeoutError:
-            proc.kill()
+        cap = await run_captured(argv, cwd=workdir, timeout=timeout)
+        if cap is None:
             return 'exit code: -1 (timed out)'
         if on_render is not None:
             _register_new_renders(workdir, started, on_render)
-        output = (stdout.decode(errors='replace') + stderr.decode(errors='replace')).strip()
+        output = cap.combined
         if len(output) > 8000:
             output = output[:4000] + '\n...\n' + output[-4000:]
-        return f'exit code: {proc.returncode}\n{output}'
+        return f'exit code: {cap.code}\n{output}'
 
     return FunctionToolset([shell])
 
@@ -444,23 +483,10 @@ def build_git_toolset(workdir: Path, policy) -> FunctionToolset:
     push/PR always-gated (never pattern-unlockable)."""
 
     async def _run(argv: list[str], timeout: int = 60, use_shell: bool = False) -> str:
-        import asyncio
-
-        if use_shell:
-            proc = await asyncio.create_subprocess_shell(
-                ' '.join(argv), cwd=workdir, stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE, env=scrubbed_env(),
-            )
-        else:
-            proc = await asyncio.create_subprocess_exec(
-                *argv, cwd=workdir, stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE, env=scrubbed_env(),
-            )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        out = (stdout.decode(errors='replace') + stderr.decode(errors='replace')).strip()
-        code = proc.returncode if proc.returncode is not None else -1
-        summary = f'exit {code}\n{out}' if out else f'exit {code}'
-        return summary
+        cap = await run_captured(argv, cwd=workdir, timeout=timeout, shell=use_shell)
+        if cap is None:
+            return f'exit -1\n timed out after {timeout}s'
+        return f'exit {cap.code}\n{cap.combined}' if cap.combined else f'exit {cap.code}'
 
     async def git_status() -> str:
         return await _run(['git', 'status', '--porcelain', '-b'])
@@ -549,22 +575,13 @@ def build_coverage_toolset(workdir: Path, policy) -> FunctionToolset:
         decision = policy.decide(command)
         if decision in (NEEDS_GATE, DENIED):
             await _resolve_gate(policy, command, always=decision == DENIED)
-        import asyncio
-
-        proc = await asyncio.create_subprocess_exec(
-            *argv,
-            cwd=workdir, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE, env=scrubbed_env(),
-        )
-        try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=600)
-        except TimeoutError:
-            proc.kill()
+        cap = await run_captured(argv, cwd=workdir, timeout=600)
+        if cap is None:
             return 'exit code: -1 (coverage run timed out after 600s)'
-        out = (stdout.decode(errors='replace') + stderr.decode(errors='replace')).strip()
+        out = cap.combined
         if len(out) > 6000:
             out = out[:3000] + '\n...\n' + out[-3000:]
-        return f'exit code: {proc.returncode}\n{out}'
+        return f'exit code: {cap.code}\n{out}'
 
     return FunctionToolset([run_coverage])
 
@@ -577,20 +594,13 @@ def build_knip_toolset(workdir: Path) -> FunctionToolset:
     async def find_unused_exports() -> str:
         if not (workdir / 'package.json').exists():
             return 'no package.json — knip only applies to JS/TS projects'
-        import asyncio
-
-        proc = await asyncio.create_subprocess_shell(
-            'npx --no-install knip --reporter compact',
-            cwd=workdir, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE, env=scrubbed_env(),
-        )
-        try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
-        except TimeoutError:
-            proc.kill()
+        cap = await run_captured(
+            ['npx --no-install knip --reporter compact'],
+            cwd=workdir, timeout=300, shell=True)
+        if cap is None:
             return 'knip timed out after 300s'
-        out = (stdout.decode(errors='replace') + stderr.decode(errors='replace')).strip()
-        code = proc.returncode if proc.returncode is not None else -1
+        out = cap.combined
+        code = cap.code
         if code != 0 and 'knip' not in out and len(out) < 200:
             return (
                 'knip is not installed in this project. Add it as a devDependency '
@@ -608,27 +618,16 @@ def build_ci_toolset(workdir: Path) -> FunctionToolset:
     always-gated tier; never auto-approved here."""
 
     async def _gh(argv: list[str], timeout: int = 120) -> str:
-        import asyncio
-
         try:
-            proc = await asyncio.create_subprocess_exec(
-                'gh', *argv, cwd=workdir, stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE, env=scrubbed_env(),
-            )
+            cap = await run_captured(['gh', *argv], cwd=workdir, timeout=timeout)
         except FileNotFoundError:
             return (
                 'gh is not installed - these CI tools need the GitHub CLI '
                 '(https://cli.github.com).'
             )
-        try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except TimeoutError:
-            proc.kill()
+        if cap is None:
             return 'gh timed out'
-        out = (stdout.decode(errors='replace') + stderr.decode(errors='replace')).strip()
-        code = proc.returncode if proc.returncode is not None else -1
-        summary = f'exit {code}\n{out}' if out else f'exit {code}'
-        return summary
+        return f'exit {cap.code}\n{cap.combined}' if cap.combined else f'exit {cap.code}'
 
     async def ci_status(branch: str = '') -> str:
         """Latest CI run statuses for the current repo (via gh)."""
@@ -654,21 +653,13 @@ def build_audit_toolset(workdir: Path) -> FunctionToolset:
     tools are surfaced so the agent can suggest installation."""
 
     async def _run(cmd: list[str], timeout: int = 300) -> str:
-        import asyncio
-
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd, cwd=workdir, stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE, env=scrubbed_env(),
-            )
+            cap = await run_captured(cmd, cwd=workdir, timeout=timeout)
         except FileNotFoundError:
             return f'{cmd[0]} is not installed'
-        try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except TimeoutError:
-            proc.kill()
+        if cap is None:
             return 'audit timed out'
-        return (stdout.decode(errors='replace') + stderr.decode(errors='replace')).strip()
+        return cap.combined
 
     async def dependency_audit() -> str:
         sections = []

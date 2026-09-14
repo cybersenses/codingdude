@@ -5,7 +5,6 @@ execution-level dead weight that test coverage cannot see. Confidence and
 formatting are per-language; results are merged into one report.
 """
 
-import asyncio
 from pathlib import Path
 
 from pydantic_ai.toolsets import FunctionToolset
@@ -43,12 +42,12 @@ async def _vulture_python(workdir: Path, path: str, min_confidence: int) -> str:
     files = [str(f) for f in _iter_source_files(workdir, {'.py'}, path)]
     if not files:
         return ''
-    proc = await asyncio.create_subprocess_exec(
-        sys_executable(), '-m', 'vulture', *files, '--min-confidence', str(min_confidence),
-        cwd=workdir, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=120)
-    return stdout.decode(errors='replace').strip()
+    from .tools import run_captured
+
+    cap = await run_captured(
+        [sys_executable(), '-m', 'vulture', *files, '--min-confidence', str(min_confidence)],
+        cwd=workdir, timeout=120)
+    return cap.stdout.strip() if cap else ''
 
 
 def _tree_sitter_definitions_and_refs(source: bytes, lang_module) -> tuple[set[str], set[str], dict[str, list[tuple]]]:

@@ -793,18 +793,17 @@ def create_app(
         # ADR-0002: agent runs never execute in the server process — the
         # review runs in a short-lived worker subprocess (--review mode)
         # and reports its findings on stdout.
-        proc = await asyncio.create_subprocess_exec(
-            sys.executable, '-m', 'codingdude.worker', '--review', session_id,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        out, err = await asyncio.wait_for(proc.communicate(), timeout=600)
-        if proc.returncode != 0:
+        from .tools import run_captured
+
+        cap = await run_captured(
+            [sys.executable, '-m', 'codingdude.worker', '--review', session_id],
+            cwd=Path('.'), timeout=600)
+        if cap is None or cap.code != 0:
             raise HTTPException(
                 status_code=502,
-                detail=f'review worker failed: {err.decode(errors="replace")[:400]}',
+                detail=f'review worker failed: {(cap.stderr if cap else "timed out")[:400]}',
             )
-        return json.loads(out.decode())
+        return json.loads(cap.stdout)
 
     @app.get('/sessions/{session_id}/checkpoints')
     def list_checkpoints(session_id: str, _: None = Depends(authorize)) -> list[dict]:
@@ -1052,25 +1051,16 @@ def create_app(
     @app.post('/sessions/{session_id}/exec')
     async def session_exec(session_id: str, body: ExecIn, _: None = Depends(authorize)) -> dict:
         """Run a shell command in the Workdir and return the output (Terminal panel)."""
-        import asyncio
-
-        from .tools import scrubbed_env
+        from .tools import run_captured, shell_argv
 
         workdir = db.session_workdir(session_id)
         if not workdir:
             raise HTTPException(status_code=404, detail='no such session')
-        proc = await asyncio.create_subprocess_exec(
-            'bash', '-c', body.command, cwd=workdir,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            env=scrubbed_env(),
-        )
-        try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
-        except TimeoutError:
-            proc.kill()
+        cap = await run_captured(
+            shell_argv(body.command), cwd=Path(workdir), timeout=120)
+        if cap is None:
             return {'exit': -1, 'output': 'timed out'}
-        output = (stdout.decode(errors='replace') + stderr.decode(errors='replace')).strip()
-        return {'exit': proc.returncode, 'output': output[:8000]}
+        return {'exit': cap.code, 'output': cap.combined[:8000]}
 
     @app.get('/health')
     def health() -> dict:

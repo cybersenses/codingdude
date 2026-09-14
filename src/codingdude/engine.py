@@ -277,23 +277,17 @@ class Engine:
         max_test_iterations: int, emit,
     ):
         """Fix-until-green: run the tests, feed failures back, repeat."""
-        import asyncio
-
-        from .tools import shell_argv
+        from .tools import run_captured, shell_argv
 
         for _ in range(max_test_iterations):
-            proc = await asyncio.create_subprocess_exec(
-                *shell_argv(test_command, shell_bin),
-                cwd=workdir, stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE, env=self._scrubbed(),
+            cap = await run_captured(
+                shell_argv(test_command, shell_bin),
+                cwd=workdir, timeout=600, env=self._scrubbed(),
             )
-            try:
-                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=600)
-            except TimeoutError:
-                proc.kill()
+            if cap is None:
                 break
-            test_out = (stdout.decode(errors='replace') + stderr.decode(errors='replace')).strip()[:4000]
-            passed = proc.returncode == 0
+            test_out = cap.combined[:4000]
+            passed = cap.code == 0
             if emit:
                 emit({'type': 'TEST_RUN', 'passed': passed, 'output': test_out})
             if passed:

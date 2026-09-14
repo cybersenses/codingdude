@@ -6,7 +6,6 @@ Promotion into the real workdir is gated through the normal approval flow —
 never a bypass (see docs/specs/R5-tracer-sandbox.md).
 """
 
-import asyncio
 import os
 import shutil
 import socket
@@ -15,7 +14,7 @@ from pathlib import Path
 
 from pydantic_ai.toolsets import FunctionToolset
 
-from .tools import _resolve_gate, scrubbed_env
+from .tools import _resolve_gate, run_captured, scrubbed_env
 from .worktrees import BRANCH_PREFIX, WORKTREE_DIRNAME, WorktreeError, create_worktree
 
 EXEC_TIMEOUT = 300
@@ -116,17 +115,10 @@ CONTAINER_MOUNT = '/workspace'
 
 
 async def _run(argv: list[str], cwd: Path, timeout: int) -> str:
-    proc = await asyncio.create_subprocess_exec(
-        *argv, cwd=cwd, stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE, env=scrubbed_env())
-    try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout)
-    except TimeoutError:
-        proc.kill()
+    cap = await run_captured(argv, cwd=cwd, timeout=timeout)
+    if cap is None:
         return f'exit -1\n command timed out after {timeout}s'
-    out = (stdout.decode(errors='replace') + stderr.decode(errors='replace')).strip()
-    code = proc.returncode if proc.returncode is not None else -1
-    return f'exit {code}\n{out}' if out else f'exit {code}'
+    return f'exit {cap.code}\n{cap.combined}' if cap.combined else f'exit {cap.code}'
 
 
 def build_sandbox_toolset(workdir: Path, policy) -> FunctionToolset:
@@ -207,18 +199,11 @@ def build_sandbox_toolset(workdir: Path, policy) -> FunctionToolset:
         env = scrubbed_env()
         path_key = next((k for k in env if k.lower() == 'path'), 'PATH')
         env[path_key] = f'{env_bin}{os.pathsep}{env.get(path_key, "")}'
-        proc = await asyncio.create_subprocess_shell(
-            command, cwd=sandbox, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE, env=env)
-        try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), EXEC_TIMEOUT)
-        except TimeoutError:
-            proc.kill()
+        cap = await run_captured([command], cwd=sandbox, timeout=EXEC_TIMEOUT,
+                                 env=env, shell=True)
+        if cap is None:
             return f'exit -1\n command timed out after {EXEC_TIMEOUT}s'
-        out = (stdout.decode(errors='replace')
-               + stderr.decode(errors='replace')).strip()
-        code = proc.returncode if proc.returncode is not None else -1
-        summary = f'exit {code}\n{out}' if out else f'exit {code}'
+        summary = f'exit {cap.code}\n{cap.combined}' if cap.combined else f'exit {cap.code}'
         return f'{summary} {_tier_line()}'
 
     async def sandbox_teardown(name: str) -> str:
