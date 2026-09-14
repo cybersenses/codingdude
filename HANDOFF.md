@@ -1,5 +1,24 @@
 # Handoff note — to the next agent on duty
 
+**User-feedback round 1 shipped** (`17e8cb9`, spec:
+`docs/specs/user-feedback-notes-round1.md`, tickets #11–#14): all 12 notes from
+the WifiMon sessions converted into CodingDude improvements —
+- **Project notes** (per-project, agent-readable): `project_notes` table,
+  `ProjectNoteStore`, agent tools `read_project_notes`/`add_project_note`/
+  `resolve_note`, `/notes` REST endpoints, Notes-panel project section with
+  resolve (✓) / delete (✕). Workdir-scoped — no cross-project bleed.
+- **Guidance blocks**: `guidance.py` appends verified platform facts (OS,
+  Python, workdir path form) + a behavioral contract (evaluate-don't-fix,
+  ask-then-wait, plan-first, offer dependency install, be terse) to the system
+  instructions. Instruction-level by user decision — no mechanical gate.
+- **Codegraph auto-bootstrap**: `codegraph_boot.ensure_codegraph_index` runs
+  `codegraph init` at run start when `.codegraph` is missing (best-effort,
+  never blocks a run).
+- **HTML artifacts**: `emit_html` tool/kind, rendered inline in the Artifacts
+  tab via sandboxed iframe, plus a one-line explainer of what artifacts are.
+- Gates: **286 pytest passed** (+9), ruff clean, mypy clean (42 files),
+  npm build ✓.
+
 **Pre-release closeout done**: every code-level finding in `cdissues.md` is
 closed. Left with the **entire R1–R11 roadmap closed**, plus the R7 annotation
 layer, the zai-vision MCP server, and the closeout wave (M6, M11, L1, L11, L13)
