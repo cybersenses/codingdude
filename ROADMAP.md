@@ -423,6 +423,8 @@ there is **no built-in place or workflow** for per-project reference material:
 
 ## R12 — Deterministic file-edit pipeline (edit_file reliability)
 
+**Status: DONE** (commit `8f7a62d`; ticket #15 closed; 293 pytest, ruff/mypy clean).
+
 ### Problem
 `edit_file` has corrupted files in 3+ recorded incidents (duplicated lines,
 silent revert, a rewritten Notes component). Gates caught each, but every
