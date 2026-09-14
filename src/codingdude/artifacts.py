@@ -40,6 +40,10 @@ class ArtifactStore:
     def emit_spec_block(self, name: str, markdown: str) -> str:
         return self._emit('spec', name, {'markdown': markdown})
 
+    def emit_html(self, name: str, html: str) -> str:
+        """Publish an HTML artifact the UI renders inline (sandboxed iframe)."""
+        return self._emit('html', name, {'html': html})
+
     def _emit(self, kind: str, title: str, payload: dict) -> str:
         artifact_id = secrets.token_urlsafe(8)
         self._db._conn.execute(
@@ -143,6 +147,11 @@ def build_artifacts_toolset(db, session_id: str) -> FunctionToolset:
             'to read the user\'s edits.'
         )
 
+    def emit_html(name: str, html: str) -> str:
+        """Publish an HTML page the user sees rendered inline in the Artifacts tab."""
+        artifact_id = store.emit_html(name, html)
+        return f'html artifact emitted (id={artifact_id}); it renders inline in the UI.'
+
     def get_artifact_feedback(artifact_id: str) -> str:
         """Read the user's answer for an artifact (pick or edited content)."""
         feedback = store.feedback(artifact_id)
@@ -150,4 +159,4 @@ def build_artifacts_toolset(db, session_id: str) -> FunctionToolset:
             return 'pending — user has not answered yet'
         return json.dumps(feedback)
 
-    return FunctionToolset([emit_choice_card, emit_spec_block, get_artifact_feedback])
+    return FunctionToolset([emit_choice_card, emit_spec_block, emit_html, get_artifact_feedback])

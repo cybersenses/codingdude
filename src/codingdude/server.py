@@ -379,6 +379,46 @@ def create_app(
         run_id: str | None = None
         offset_s: float | None = None
 
+    class ProjectNoteIn(BaseModel):
+        workdir: str
+        content: str
+
+    @app.post('/notes')
+    def add_project_note(body: ProjectNoteIn, _: None = Depends(authorize)) -> dict:
+        from .projectnotes import ProjectNoteStore
+
+        note_id = ProjectNoteStore(db).add(
+            str(Path(body.workdir).resolve()), body.content
+        )
+        return {'id': note_id}
+
+    @app.get('/notes')
+    def list_project_notes(
+        workdir: str, include_resolved: bool = False,
+        _: None = Depends(authorize),
+    ) -> list[dict]:
+        from .projectnotes import ProjectNoteStore
+
+        return ProjectNoteStore(db).list(
+            str(Path(workdir).resolve()), include_resolved=include_resolved
+        )
+
+    @app.post('/notes/{note_id}/resolve')
+    def resolve_project_note(note_id: int, _: None = Depends(authorize)) -> dict:
+        from .projectnotes import ProjectNoteStore
+
+        if not ProjectNoteStore(db).resolve(note_id):
+            raise HTTPException(status_code=404, detail='no such note')
+        return {'resolved': True}
+
+    @app.delete('/notes/{note_id}')
+    def delete_project_note(note_id: int, _: None = Depends(authorize)) -> dict:
+        from .projectnotes import ProjectNoteStore
+
+        if not ProjectNoteStore(db).delete(note_id):
+            raise HTTPException(status_code=404, detail='no such note')
+        return {'deleted': True}
+
     class KeepIn(BaseModel):
         keep: bool
 

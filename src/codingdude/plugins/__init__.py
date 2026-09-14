@@ -152,6 +152,12 @@ async def build_all(ctx: PluginContext) -> list[AbstractToolset]:
     registry = SkillRegistry(ctx.home)
     toolsets.append(build_skills_toolset(registry))
     toolsets.append(build_memory_toolset(MemoryStore(ctx.db), str(ctx.workdir)))
+
+    from codingdude.projectnotes import ProjectNoteStore, build_project_notes_toolset
+
+    toolsets.append(
+        build_project_notes_toolset(ProjectNoteStore(ctx.db), str(ctx.workdir))
+    )
     toolsets.append(build_roadmap_toolset(RoadmapStore(ctx.db), str(ctx.workdir)))
     toolsets.append(build_references_toolset(ctx.db, ctx.workdir))
     toolsets.append(build_artifacts_toolset(ctx.db, ctx.session_id))

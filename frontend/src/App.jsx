@@ -603,6 +603,8 @@ function Notes({ sessionId, workdir }) {
   const [keep, setKeep] = useState(null)
   const [draft, setDraft] = useState('')
   const [offset, setOffset] = useState('')
+  const [pnotes, setPnotes] = useState([])
+  const [pdraft, setPdraft] = useState('')
 
   useEffect(() => {
     if (!sessionId) return
@@ -621,6 +623,12 @@ function Notes({ sessionId, workdir }) {
     load()
     return () => { live = false }
   }, [sessionId])
+
+  const loadProjectNotes = async () => {
+    if (!workdir) return
+    try { setPnotes(await call(`/notes?workdir=${encodeURIComponent(workdir)}`)) } catch { /* transient */ }
+  }
+  useEffect(() => { loadProjectNotes() }, [workdir])
 
   if (!sessionId) return <div className="text-neutral-600">no session</div>
   return (
@@ -673,6 +681,51 @@ function Notes({ sessionId, workdir }) {
           </div>
         </div>
       ))}
+
+      <div className="mt-3 border-t border-neutral-800 pt-2">
+        <div className="mb-1 text-[10px] font-semibold uppercase text-neutral-400">project notes</div>
+        <div className="text-[9px] text-neutral-500">guidance for every session in this project — the agent reads these</div>
+        <div className="mt-1 flex gap-1">
+          <input
+            className="w-full rounded bg-neutral-900 px-2 py-1 text-xs text-neutral-200"
+            placeholder="standing guidance for this project…"
+            value={pdraft}
+            onChange={(e) => setPdraft(e.target.value)}
+          />
+          <button
+            className="rounded bg-brand px-2 py-1 text-xs text-brand-fg"
+            onClick={async () => {
+              if (!pdraft.trim() || !workdir) return
+              try {
+                await call('/notes', { method: 'POST', body: JSON.stringify({ workdir, content: pdraft.trim() }) })
+                setPdraft('')
+                loadProjectNotes()
+              } catch { /* transient */ }
+            }}
+          >add</button>
+        </div>
+        {pnotes.length === 0 && <div className="text-neutral-600">no project notes</div>}
+        {pnotes.map((n) => (
+          <div key={n.id} className="mt-1 flex items-start justify-between gap-1 rounded bg-neutral-900 p-1.5">
+            <div>
+              <div className="text-xs text-neutral-200">{n.content}</div>
+              <div className="text-[9px] text-neutral-500">{(n.created_at || '').slice(11, 19)}</div>
+            </div>
+            <div className="flex shrink-0 gap-1">
+              <button
+                title="mark dealt with"
+                className="rounded bg-neutral-800 px-1.5 text-[10px] text-neutral-300 hover:bg-neutral-700"
+                onClick={async () => { try { await call(`/notes/${n.id}/resolve`, { method: 'POST' }); loadProjectNotes() } catch { /* transient */ } }}
+              >✓</button>
+              <button
+                title="delete"
+                className="rounded bg-neutral-800 px-1.5 text-[10px] text-neutral-300 hover:bg-neutral-700"
+                onClick={async () => { try { await call(`/notes/${n.id}`, { method: 'DELETE' }); loadProjectNotes() } catch { /* transient */ } }}
+              >✕</button>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
@@ -718,13 +771,24 @@ function Artifacts({ sessionId }) {
   if (items.length === 0) return <div className="text-neutral-600">no artifacts yet</div>
   return (
     <div className="space-y-2">
+      <p className="text-[10px] text-neutral-500">
+        Artifacts are interactive things the agent hands you mid-run — choice cards to pick
+        from, spec blocks you can edit, and HTML pages it renders for you right here.
+      </p>
       {items.map((a) => (
         <div key={a.id} className="rounded border border-neutral-800 bg-neutral-900 p-2">
           <div className="mb-1 flex items-center justify-between">
             <span className="text-[11px] font-semibold text-neutral-200">{a.title}</span>
             <span className="text-[9px] uppercase text-neutral-500">{a.kind} · {a.status}</span>
           </div>
-          {a.kind === 'choice' ? (
+          {a.kind === 'html' ? (
+            <iframe
+              title={a.id}
+              sandbox=""
+              className="h-64 w-full rounded bg-white"
+              srcDoc={a.payload.html}
+            />
+          ) : a.kind === 'choice' ? (
             <div className="flex flex-wrap gap-1">
               {a.payload.options.map((opt) => (
                 <button

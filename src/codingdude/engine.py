@@ -321,6 +321,10 @@ class Engine:
         """System instructions: base + repo map + directive layers + skills
         index (with auto-triggered bodies) + relevant Memory."""
         instructions = _instructions()
+
+        from .guidance import contract_block, platform_block
+
+        instructions += platform_block(workdir) + contract_block()
         from .repo_map import build_repo_map
 
         repo_map_text = build_repo_map(workdir)
@@ -482,6 +486,10 @@ class Engine:
             created_session = False
 
         traced = self._make_tracer(session_id, workdir, trace, emit)
+
+        from .codegraph_boot import ensure_codegraph_index
+
+        ensure_codegraph_index(workdir)
 
         def persist_snapshot(msgs):
             self._db.replace_messages(
