@@ -35,7 +35,7 @@ def _now() -> str:
 # section in place (status/body) or appends a new one.
 
 _MD_ITEM_RE = re.compile(r'^## (R\d+) — (.+)$', re.MULTILINE)
-_MD_STATUS_RE = re.compile(r'^\*\*Status:\*\*\s*(.*)$', re.MULTILINE)
+_MD_STATUS_RE = re.compile(r'^\*\*Status:?\*{0,2}\s*(.*)$', re.MULTILINE)
 _MD_STATUS_MAP = {'in-progress': 'in_progress', 'in progress': 'in_progress'}
 
 
@@ -64,7 +64,7 @@ def parse_roadmap_md(path: Path | str) -> list[dict]:
         body = section
         sm = _MD_STATUS_RE.search(section)
         if sm:
-            first_para = section.split('\n\n', 1)[0]
+            first_para = re.split(r'\n[ \t\r]*\n', section.lstrip('\r\n'), maxsplit=1)[0]
             if _MD_STATUS_RE.search(first_para):
                 status = _norm_status(sm.group(1))
                 body = section[:sm.start()] + section[sm.end():]

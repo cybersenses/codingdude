@@ -50,6 +50,32 @@ def test_parse_roadmap_md_sections(tmp_path: Path) -> None:
     assert items[2]['status'] == 'open'
 
 
+def test_parse_roadmap_md_status_bold_with_value(tmp_path: Path) -> None:
+    """Tolerates `**Status: DONE** ...` (bold wraps the value, not just the label)."""
+    text = (
+        '## R12 — Thing\n'
+        '**Status: DONE** (commit `abc1234`).\n\n'
+        'Body.\n'
+    )
+    items = parse_roadmap_md(_write(tmp_path, text))
+    assert items[0]['status'] == 'done'
+
+
+def test_upsert_roadmap_md_replaces_bold_value_status(tmp_path: Path) -> None:
+    path = _write(tmp_path, SAMPLE.replace(
+        '**Status:** open', '**Status: OPEN** (some note)'))
+    upsert_roadmap_md(path, 'R99', status='done')
+    items = parse_roadmap_md(path)
+    assert items[2]['status'] == 'done'
+
+
+def test_parse_roadmap_md_crlf_blank_line(tmp_path: Path) -> None:
+    """CRLF/LF mix must not hide the status line from the first paragraph."""
+    text = '## R12 — Thing\r\n\r\n**Status:** done (commit `abc`).\r\n\r\nBody.\r\n'
+    items = parse_roadmap_md(_write(tmp_path, text))
+    assert items[0]['status'] == 'done'
+
+
 def test_parse_roadmap_md_missing_status_defaults_open(tmp_path: Path) -> None:
     text = '## R7 — No status line\n\nBody only.\n'
     items = parse_roadmap_md(_write(tmp_path, text))

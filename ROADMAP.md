@@ -423,7 +423,7 @@ there is **no built-in place or workflow** for per-project reference material:
 
 ## R12 — Deterministic file-edit pipeline (edit_file reliability)
 
-**Status: DONE** (commit `8f7a62d`; ticket #15 closed; 293 pytest, ruff/mypy clean).
+**Status:** done (commit `8f7a62d`; ticket #15 closed; 293 pytest, ruff/mypy clean).
 
 ### Problem
 `edit_file` has corrupted files in 3+ recorded incidents (duplicated lines,
@@ -501,7 +501,9 @@ contract-first codegen; no DSL, no generated stubs.
 ### Evidence / notes
 - Decision #10 (round 5, approved). Spec-level only this session.
 
-## R15 — Research pipeline (status: DONE)
+## R15 — Research pipeline
+
+**Status:** done (ticket #17 closed by `50d406d`).
 
 **Theme:** curated web research persisted into the reference knowledgebase.
 
