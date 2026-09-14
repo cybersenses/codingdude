@@ -13,6 +13,7 @@ Ordering of steps inside `Engine.run` is unchanged; these are pure
 ownership moves, not behavior changes.
 """
 
+import asyncio
 import logging
 from collections.abc import Callable
 from pathlib import Path
@@ -21,6 +22,11 @@ from pydantic_ai import Agent
 from pydantic_ai.models import Model
 
 logger = logging.getLogger(__name__)
+
+# Post-run LLM passes (memory extraction, claim audit) are best-effort and
+# must never wedge the run's tail: bound them.
+# ponytail: flat 120s; per-model tuning only if legit audits start timing out.
+_POST_RUN_LLM_TIMEOUT_S = 120
 
 
 class RunServices:
@@ -378,12 +384,15 @@ class PostRunPipeline:
             pricing=self._services.config.models.pricing,
         ))
 
-    async def extract_memory(self, session_id: str, workdir: Path) -> None:
+    async def extract_memory(self, session_id: str, workdir: Path,
+                             emit=None) -> None:
         """Post-session pass: bank durable facts the run didn't explicitly remember
         and retire entries this session made obsolete (via `FORGET:` lines)."""
         extraction_model = self._services.extraction_model
         if extraction_model is None:
             return
+        if emit:
+            emit({'type': 'MEMORY_EXTRACTING'})
         from .memory import MemoryStore
 
         store = MemoryStore(self._services.db)
@@ -392,7 +401,7 @@ class PostRunPipeline:
         transcript = '\n'.join(self._services.db.load_messages(session_id))[:12000]
         agent: Agent = Agent(model=extraction_model)
         try:
-            result = await agent.run(
+            result = await asyncio.wait_for(agent.run(
                 'From this conversation transcript, extract durable facts worth '
                 'remembering for future sessions (preferences, project facts, '
                 'decisions). One fact per line, no numbering. Do not restate a '
@@ -404,9 +413,11 @@ class PostRunPipeline:
                 + known_lines
                 + '\n\nTranscript:\n'
                 + transcript
-            )
+            ), timeout=_POST_RUN_LLM_TIMEOUT_S)
         except Exception:  # noqa: BLE001 — extraction must never fail a run
             return
+        if emit:
+            emit({'type': 'MEMORY_EXTRACTED'})
         self._services.record_model_usage(session_id, extraction_model, result.usage)
         for line in result.output.splitlines():
             line = line.strip().lstrip('-•* ')
@@ -435,6 +446,8 @@ class PostRunPipeline:
         extraction_model = self._services.extraction_model
         if extraction_model is None:
             return
+        if emit:
+            emit({'type': 'CLAIMS_CHECKING'})
 
         final_text = result.output
         payloads = decode_messages(self._services.db.load_messages(session_id))
@@ -455,7 +468,9 @@ class PostRunPipeline:
             + ('\n'.join(tool_results)[-4000:] if tool_results else '(none recorded)')
         )
         try:
-            audit = await auditor.run(audit_prompt)
+            audit = await asyncio.wait_for(
+                auditor.run(audit_prompt), timeout=_POST_RUN_LLM_TIMEOUT_S
+            )
         except Exception:  # noqa: BLE001 — verification must never fail the run
             return
         self._services.record_model_usage(session_id, extraction_model, audit.usage)

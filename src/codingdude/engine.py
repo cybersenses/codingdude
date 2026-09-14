@@ -480,7 +480,7 @@ class Engine:
             )
 
         self._post.record_run_usage(session_id, model_name, result, started, traced)
-        await self._post.extract_memory(session_id, workdir)
+        await self._post.extract_memory(session_id, workdir, emit=traced)
         if self._diff_nonempty(session_id):
             await self._post.verify_claims(
                 session_id, result, workdir, approvals, emit,

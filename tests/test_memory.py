@@ -168,3 +168,31 @@ async def test_retrieval_drops_zero_hit_noise(db, workdir):
 
     hits = [e['content'] for e in store.retrieve(str(workdir), query='ruff tooling')]
     assert hits == ['the project uses uv and ruff']
+
+
+async def test_post_run_phase_events_are_emitted(home, db, workdir):
+    """Regression: the post-run tail (memory extraction / claim check) must
+    emit trace events so the UI never shows a silent multi-minute RUN_USAGE
+    stall."""
+    from codingdude.config import load_config
+    from codingdude.engine import Engine
+
+    def extractor(messages, info):
+        return ModelResponse(parts=[TextPart(content='a fact')])
+
+    events: list[dict] = []
+    engine = Engine(
+        config=load_config(), db=db, extraction_model=scripted(extractor)
+    )
+    await engine.run(
+        prompt='note something',
+        workdir=workdir,
+        model=call_then_answer(
+            'remember', {'content': 'explicit fact'}, lambda r: 'ok'
+        ),
+        emit=events.append,
+    )
+    types = [e['type'] for e in events]
+    assert 'MEMORY_EXTRACTING' in types
+    assert types.index('MEMORY_EXTRACTING') > types.index('RUN_USAGE')
+    assert 'MEMORY_EXTRACTED' in types
