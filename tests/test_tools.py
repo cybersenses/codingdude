@@ -154,3 +154,98 @@ async def test_shell_capture_hook_registers_new_renders(home, workdir):
     assert 'exit code: 0' in out
     assert 'shot.png' in captured
     assert 'ignored.txt' not in captured
+
+
+# --- R12: deterministic file-edit pipeline -------------------------------
+
+def _tool(workdir, name, **kwargs):
+    from codingdude.tools import build_toolset
+
+    return build_toolset(workdir, **kwargs).tools[name].function
+
+
+def test_edit_refuses_non_utf8(tmp_path):
+    """Non-UTF-8 bytes must never be silently corrupted (R12 #1)."""
+    target = tmp_path / 'blob.py'
+    target.write_bytes(b'hello \xff\xfe world')
+    edit = _tool(tmp_path, 'edit_file')
+    import pytest
+    from pydantic_ai import ModelRetry
+
+    with pytest.raises(ModelRetry, match='UTF-8'):
+        edit('blob.py', 'hello', 'goodbye')
+    assert target.read_bytes() == b'hello \xff\xfe world'  # untouched
+
+
+def test_edit_preserves_line_endings(tmp_path):
+    """LF stays LF, CRLF stays CRLF; \n-style old_text matches CRLF files (R12 #2)."""
+    lf = tmp_path / 'lf.py'
+    lf.write_bytes(b'a = 1\nb = 2\n')
+    _tool(tmp_path, 'edit_file')('lf.py', 'b = 2', 'b = 3')
+    assert b'\r' not in lf.read_bytes()
+
+    crlf = tmp_path / 'crlf.py'
+    crlf.write_bytes(b'a = 1\r\nb = 2\r\n')
+    _tool(tmp_path, 'edit_file')('crlf.py', 'b = 2', 'b = 3')  # \n old_text
+    assert crlf.read_bytes() == b'a = 1\r\nb = 3\r\n'
+
+
+def test_read_file_reports_bytes_verbatim(tmp_path):
+    """read_file must not normalize newlines (observation == bytes on disk)."""
+    crlf = tmp_path / 'crlf.py'
+    crlf.write_bytes(b'a = 1\r\nb = 2\r\n')
+    out = _tool(tmp_path, 'read_file')('crlf.py')
+    assert '\r\n' in out
+
+
+def test_edit_refuses_stale_file(tmp_path):
+    """An external change since last observation must abort the edit (R12 #3)."""
+    import pytest
+    from pydantic_ai import ModelRetry
+
+    f = tmp_path / 'x.py'
+    f.write_bytes(b'a = 1\n')
+    from codingdude.tools import build_toolset
+
+    ts = build_toolset(tmp_path)
+    ts.tools['read_file'].function('x.py')  # observe
+    f.write_bytes(b'a = 999\n')  # external writer
+    with pytest.raises(ModelRetry, match='changed since'):
+        ts.tools['edit_file'].function('x.py', 'a = 1', 'a = 2')
+    assert f.read_bytes() == b'a = 999\n'  # external change intact
+
+
+def test_edit_verifies_and_rolls_back(tmp_path, monkeypatch):
+    """If the written file diverges from intent, original bytes are restored."""
+    import pytest
+    from pydantic_ai import ModelRetry
+
+    from codingdude import tools
+
+    f = tmp_path / 'x.py'
+    f.write_bytes(b'a = 1\n')
+    monkeypatch.setattr(tools, '_atomic_write', lambda t, text: t.write_text('GARBAGE'))
+    with pytest.raises(ModelRetry, match='verification failed'):
+        _tool(tmp_path, 'edit_file')('x.py', 'a = 1', 'a = 2')
+    assert f.read_bytes() == b'a = 1\n'  # rolled back
+
+
+def test_write_file_atomic_and_lf_preserved(tmp_path):
+    """write_file creates parents, is atomic, and preserves given endings."""
+    w = _tool(tmp_path, 'write_file')
+    assert w('deep/dir/new.py', 'x = 1\ny = 2\n') == 'wrote deep/dir/new.py'
+    data = (tmp_path / 'deep' / 'dir' / 'new.py').read_bytes()
+    assert data == b'x = 1\ny = 2\n'
+    assert not list(tmp_path.rglob('*.codingdude-tmp'))  # no temp litter
+
+
+def test_stale_guard_cleared_by_reread(tmp_path):
+    """Re-reading the externally changed file re-arms the guard and edits proceed."""
+    f = tmp_path / 'x.py'
+    f.write_bytes(b'a = 1\n')
+    edit = _tool(tmp_path, 'edit_file')
+    read = _tool(tmp_path, 'read_file')
+    read('x.py')
+    f.write_bytes(b'a = 999\n')
+    read('x.py')  # observe the change
+    assert edit('x.py', 'a = 999', 'a = 1000') == 'edited x.py'

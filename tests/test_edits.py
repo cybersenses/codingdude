@@ -55,12 +55,12 @@ async def test_edit_file_replaces_unique_match(engine, workdir):
         on_event=collector,
     )
     assert outcome.output == 'done'
-    assert (workdir / 'src' / 'app.py').read_text() == 'def greet():\n    return "hello"\n'
+    assert (workdir / 'src' / 'app.py').read_text().replace('\r\n', '\n') == 'def greet():\n    return "hello"\n'
     edits = [e for e in collector.events if e['kind'] == 'edit']
     assert len(edits) == 1
     assert edits[0]['path'] == 'src/app.py'
-    assert edits[0]['before'] == 'def greet():\n    return "hi"\n'
-    assert edits[0]['after'] == 'def greet():\n    return "hello"\n'
+    assert edits[0]['before'].replace('\r\n', '\n') == 'def greet():\n    return "hi"\n'
+    assert edits[0]['after'].replace('\r\n', '\n') == 'def greet():\n    return "hello"\n'
 
 
 async def test_edit_file_no_match_retries_and_file_untouched(engine, workdir):

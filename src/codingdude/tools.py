@@ -57,6 +57,28 @@ def scrubbed_env() -> dict:
 EditEmitter = Callable[[dict], None]
 
 
+def _read_verbatim(target: Path) -> str:
+    """UTF-8 strict read that preserves the file's line endings verbatim (R12 #2)."""
+    with open(target, encoding='utf-8', errors='strict', newline='') as f:
+        return f.read()
+
+
+def _atomic_write(target: Path, text: str) -> None:
+    """Atomic text write: temp file in the same directory + os.replace (R12 #3)."""
+    import os
+
+    tmp = target.with_name(target.name + '.codingdude-tmp')
+    try:
+        with open(tmp, 'w', encoding='utf-8', newline='') as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, target)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
 def build_toolset(
     workdir: Path,
     on_edit: EditEmitter | None = None,
@@ -82,6 +104,24 @@ def build_toolset(
             ) from None
         return target
 
+    # R12 staleness registry: last-observed (mtime_ns, size) per relative path.
+    observed: dict[str, tuple[int, int]] = {}
+
+    def observe(rel: str, target: Path) -> None:
+        st = target.stat()
+        observed[rel] = (st.st_mtime_ns, st.st_size)
+
+    def check_stale(rel: str, target: Path) -> None:
+        rec = observed.get(rel)
+        if rec is None:
+            return
+        st = target.stat()
+        if (st.st_mtime_ns, st.st_size) != rec:
+            raise ModelRetry(
+                f'{rel} changed since it was last read — re-read it before '
+                'editing (concurrent change; refusing to overwrite blind).'
+            )
+
     def list_dir(path: str = '.') -> str:
         target = resolve(path)
         if not target.exists():
@@ -97,7 +137,14 @@ def build_toolset(
         target = resolve(path)
         if not target.is_file():
             raise ModelRetry(f'{path!r} is not a file (list_dir first to explore).')
-        return target.read_text(encoding='utf-8', errors='replace')[:MAX_READ_BYTES]
+        try:
+            with open(target, encoding='utf-8', errors='strict', newline='') as f:
+                text = f.read()
+        except UnicodeDecodeError:
+            with open(target, encoding='utf-8', errors='replace', newline='') as f:
+                text = f.read()
+        observe(path, target)
+        return text[:MAX_READ_BYTES]
 
     def grep(pattern: str, path: str = '.') -> str:
         target = resolve(path)
@@ -157,8 +204,25 @@ def build_toolset(
         if capture:
             capture(resolve(path))
         target = resolve(path)
-        before = target.read_text(encoding='utf-8', errors='replace')
-        count = before.count(old_text)
+        check_stale(path, target)
+        try:
+            before = _read_verbatim(target)
+        except UnicodeDecodeError:
+            raise ModelRetry(
+                f'{path} is not valid UTF-8; refusing to edit it to avoid '
+                'silent corruption. Convert or repair the encoding first.'
+            ) from None
+        # Byte-faithful matching: try old_text as given, then with \n-only
+        # endings (the model can't be expected to reproduce CRLF).
+        if old_text in before:
+            match = old_text
+        else:
+            normalised = old_text.replace('\r\n', '\n')
+            if before.count(normalised) == 1:
+                match = normalised
+            else:
+                match = old_text
+        count = before.count(match)
         if count == 0:
             raise ModelRetry(
                 f'old_text not found in {path}. Re-read the file and copy the '
@@ -169,8 +233,20 @@ def build_toolset(
                 f'old_text appears more than once in {path} ({count} times). '
                 'Include more surrounding context so the match is unique.'
             )
-        after = before.replace(old_text, new_text, 1)
-        target.write_text(after, encoding='utf-8')
+        after = before.replace(match, new_text, 1)
+        _atomic_write(target, after)
+        # Verify + rollback (R12 #3): the file on disk must equal what we
+        # meant to write, or the original bytes go back.
+        written = _read_verbatim(target)
+        if written != after:
+            # Restore original bytes directly — not via _atomic_write, so a
+            # broken write primitive can't take the rollback down with it.
+            target.write_bytes(before.encode('utf-8'))
+            raise ModelRetry(
+                f'write verification failed for {path}; original content '
+                'restored. Do not retry unchanged — inspect the file first.'
+            )
+        observe(path, target)
         emit_edit(path, before, after)
         return f'edited {path}'
 
@@ -180,13 +256,19 @@ def build_toolset(
         if capture:
             capture(resolve(path))
         target = resolve(path)
-        existed = target.read_text(encoding='utf-8', errors='replace') if target.exists() else ''
+        try:
+            existed = _read_verbatim(target) if target.exists() else ''
+        except UnicodeDecodeError:
+            raise ModelRetry(
+                f'{path} is not valid UTF-8; refusing to overwrite it.'
+            ) from None
         if existed.strip():
             raise ModelRetry(
                 f'{path} already exists and is not empty — use edit_file to change it.'
             )
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding='utf-8')
+        _atomic_write(target, content)
+        observe(path, target)
         emit_edit(path, existed, content)
         return f'wrote {path}'
 

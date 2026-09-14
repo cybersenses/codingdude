@@ -70,8 +70,9 @@ external project.
   optional offset seconds, rendered with timestamp.
 - Spec: `docs/specs/R7-curation-notes.md`. Gates: 265 pytest, ruff, mypy
   (39 files), npm build — all green.
-- Watch: `edit_file` mangled the App.jsx Notes rewrite twice; fixed via scripted
-  Python patch — prefer scripted patches for this file.
+- Watch: `edit_file` mangled the App.jsx Notes rewrite twice — **CLOSED by R12**
+  (deterministic edit pipeline, commit pending): strict UTF-8, newline-faithful
+  I/O, atomic write + verify/rollback, staleness guard.
 
 ## State at handoff
 - HEAD (this commit): R1 verification gaps closed on top of the annotation
@@ -194,5 +195,5 @@ Roadmap closed. Brainstorm the next feature wave with the user and open new
   (keep toggle + add-note with optional second-offset).
 - Spec: docs/specs/R7-curation-notes.md.
 - Gates: 265 pytest passed, ruff clean, mypy clean (39 files), npm build ok.
-- Watch: edit_file mangles CRLF files again (had to script the App.jsx patch) —
-  prefer scripted patches for frontend edits.
+- Watch: edit_file mangles CRLF files — **CLOSED by R12** (root causes fixed:
+  lossy read, newline translation, no atomicity/staleness guard).
