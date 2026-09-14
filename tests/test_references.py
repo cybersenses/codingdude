@@ -46,6 +46,22 @@ def test_reindex_and_search_find_sections(db, workdir):
     assert hits and 'Running an agent' in hits[0]
 
 
+def test_search_ranks_multi_term_coverage_over_volume(db, workdir):
+    """A doc matching all query terms must outrank a long doc repeating one term."""
+    (workdir / 'reference' / 'big.md').write_text(
+        '# Big\n' + ('agents iterate streaming loops. ' * 400), encoding='utf-8'
+    )
+    (workdir / 'reference' / 'target.md').write_text(
+        '# Repo map compaction\nRepo map plus compaction wins. agents and streaming noted.\n',
+        encoding='utf-8',
+    )
+    store = ReferenceStore(db, workdir)
+    store.reindex()
+    hits = store.search('repo map compaction agents streaming')
+    assert hits, 'expected matches'
+    assert hits[0].startswith('reference/target.md'), hits[0]
+
+
 def test_search_scoped_to_workdir(db, workdir, tmp_path):
     other = tmp_path / 'other'
     (other / 'reference').mkdir(parents=True)

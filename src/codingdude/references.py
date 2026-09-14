@@ -90,15 +90,18 @@ class ReferenceStore:
             (self._workdir,),
         ).fetchall()
 
-        def score(row) -> int:
+        def score(row) -> tuple[int, int]:
             hay = (row['heading'] + ' ' + row['content']).lower()
-            return sum(hay.count(t) for t in terms)
+            counts = [hay.count(t) for t in terms]
+            # coverage first (how many query terms hit), frequency as tiebreak —
+            # else one long doc repeating a single term drowns exact matches
+            return (sum(c > 0 for c in counts), sum(counts))
 
         ranked = sorted(rows, key=score, reverse=True)
         return [
             f"{r['path']} § {r['heading']} — {r['content'][:160].strip()}"
             for r in ranked[:top_n]
-            if score(r) > 0
+            if score(r)[0] > 0
         ]
 
     def read(self, path: str, heading: str | None = None) -> str:
