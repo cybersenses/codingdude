@@ -76,3 +76,25 @@ async def test_ask_user_engine_integration(home, workdir):
         model=scripted(model_fn), approvals=policy,
     )
     assert 'yes' in outcome.output
+
+
+async def test_ask_user_records_qa_artifact(home, workdir):
+    """ask_user auto-captures the Q&A into the session's artifact history."""
+    from codingdude.tools import build_ask_user_toolset
+
+    captured = []
+
+    def recorder(questions, answers):
+        captured.append((questions, answers))
+
+    policy = ApprovalPolicy()
+
+    async def asker(questions):
+        return [{'question': q['question'], 'answer': 'yes'} for q in questions]
+
+    policy.ask_user = asker
+    toolset = build_ask_user_toolset(policy, recorder=recorder)
+    await _fn(toolset)(json.dumps([
+        {'question': 'Deploy now?', 'options': ['yes', 'no'], 'multi': False},
+    ]))
+    assert captured and captured[0][1][0]['answer'] == 'yes'

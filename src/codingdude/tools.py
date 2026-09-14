@@ -703,8 +703,13 @@ def build_audit_toolset(workdir: Path) -> FunctionToolset:
     return FunctionToolset([dependency_audit])
 
 
-def build_ask_user_toolset(policy):
-    """The `ask_user` tool: interactive questions (radios / checkboxes / text)."""
+def build_ask_user_toolset(policy, recorder=None):
+    """The `ask_user` tool: interactive questions (radios / checkboxes / text).
+
+    `recorder(questions, answers)`, when given, is called after each answer so
+    the exchange lands in the session's artifact history. Recorder failures are
+    swallowed -- capture must never break the run.
+    """
     import json as _json
 
     async def ask_user(questions: str) -> str:
@@ -727,6 +732,11 @@ def build_ask_user_toolset(policy):
         except _json.JSONDecodeError as exc:
             raise ModelRetry(f'questions must be valid JSON: {exc}') from None
         answers = await asker(payload)
+        if recorder is not None:
+            try:
+                recorder(payload, answers)
+            except Exception:  # noqa: BLE001 -- history capture is best-effort
+                pass
         return 'User answers (JSON):\n' + _json.dumps(answers, ensure_ascii=False, indent=2)
 
     return FunctionToolset([ask_user])

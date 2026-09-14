@@ -261,7 +261,9 @@ class RoadmapStore:
         return cur.rowcount > 0
 
 
-def build_roadmap_toolset(store: RoadmapStore, workdir: str) -> FunctionToolset:
+def build_roadmap_toolset(
+    store: RoadmapStore, workdir: str, session_id: str | None = None
+) -> FunctionToolset:
     """Agent tools for planning data. Kept read/update-biased: the roadmap is
     the user's product intent, so the agent updates status/body but the UI
     remains the place where items are born (create_* stays server-side)."""
@@ -322,6 +324,12 @@ def build_roadmap_toolset(store: RoadmapStore, workdir: str) -> FunctionToolset:
     async def record_decision(title: str, body: str = '') -> str:
         """Record a design decision (ADR-style): what was decided, context, and consequences in body."""
         did = store.create_decision(workdir, title, body)
+        if session_id is not None:
+            from .artifacts import ArtifactStore
+            try:
+                ArtifactStore(store.db, session_id).record_decision(title, body)
+            except Exception:  # noqa: BLE001 -- history capture is best-effort
+                pass
         return f'design decision #{did} recorded: {title}'
 
     return FunctionToolset([

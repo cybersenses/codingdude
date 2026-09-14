@@ -16,7 +16,7 @@ from pydantic_ai.toolsets import AbstractToolset
 
 from codingdude.approvals import ApprovalPolicy
 from codingdude.archlint import ArchLint, build_archlint_toolset
-from codingdude.artifacts import build_artifacts_toolset
+from codingdude.artifacts import ArtifactStore, build_artifacts_toolset
 from codingdude.ast_tools import build_ast_toolset
 from codingdude.config import Config, ThinkingSetting
 from codingdude.db import Database
@@ -98,7 +98,10 @@ async def build_all(ctx: PluginContext) -> list[AbstractToolset]:
             build_git_toolset(ctx.workdir, ctx.approvals),
             build_coverage_toolset(ctx.workdir, ctx.approvals),
             build_sandbox_toolset(ctx.workdir, ctx.approvals),
-            build_ask_user_toolset(ctx.approvals),
+            build_ask_user_toolset(
+                ctx.approvals,
+                recorder=lambda qs, ans: ArtifactStore(ctx.db, ctx.session_id).record_qa(qs, ans),
+            ),
         ])
 
     thinking_setting = ctx.thinking
@@ -158,7 +161,7 @@ async def build_all(ctx: PluginContext) -> list[AbstractToolset]:
     toolsets.append(
         build_project_notes_toolset(ProjectNoteStore(ctx.db), str(ctx.workdir))
     )
-    toolsets.append(build_roadmap_toolset(RoadmapStore(ctx.db), str(ctx.workdir)))
+    toolsets.append(build_roadmap_toolset(RoadmapStore(ctx.db), str(ctx.workdir), session_id=ctx.session_id))
     toolsets.append(build_references_toolset(ctx.db, ctx.workdir))
     toolsets.append(build_artifacts_toolset(ctx.db, ctx.session_id))
     toolsets.append(

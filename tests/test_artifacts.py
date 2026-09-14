@@ -148,3 +148,52 @@ def test_artifact_endpoints(tmp_path, monkeypatch):
         # store.watch(); the generator is covered by test_watch_*, and a
         # TestClient stream read blocks on the infinite tail, so we don't
         # exercise it end-to-end here.
+
+
+# ---- artifact history: auto-captured Q&A and decisions ----
+
+def test_record_qa_round_trip(store):
+    artifact_id = store.record_qa(
+        [{'question': 'Which database?', 'options': ['postgres', 'sqlite']}],
+        {'0': 'postgres'},
+    )
+    listed = store.list()
+    assert listed[0]['kind'] == 'qa'
+    assert listed[0]['status'] == 'answered'
+    assert listed[0]['payload']['questions'][0]['question'] == 'Which database?'
+    assert listed[0]['payload']['answers'] == {'0': 'postgres'}
+    assert store.feedback(artifact_id) == {'0': 'postgres'}
+
+
+def test_record_decision_round_trip(store):
+    artifact_id = store.record_decision('Use SQLite', 'single-user, no server')
+    listed = store.list()
+    assert listed[0]['kind'] == 'decision'
+    assert listed[0]['status'] == 'answered'
+    assert listed[0]['title'] == 'Use SQLite'
+    assert listed[0]['payload'] == {'title': 'Use SQLite', 'body': 'single-user, no server'}
+    assert store.feedback(artifact_id) is not None
+
+
+def test_roadmap_decision_mirrors_artifact(db):
+    from codingdude.roadmap import RoadmapStore, build_roadmap_toolset
+    session = db.create_session(Path.cwd(), title='mirror')
+    store = RoadmapStore(db)
+    toolset = build_roadmap_toolset(store, str(Path.cwd()), session_id=session)
+    import asyncio
+    result = asyncio.run(toolset.tools['record_decision'].function('ADR: pick X', 'why not Y'))
+    assert 'recorded' in result
+    artifacts = ArtifactStore(db, session).list()
+    assert len(artifacts) == 1
+    assert artifacts[0]['kind'] == 'decision'
+    assert artifacts[0]['title'] == 'ADR: pick X'
+
+
+def test_roadmap_decision_no_session_no_artifact(db):
+    import asyncio
+
+    from codingdude.roadmap import RoadmapStore, build_roadmap_toolset
+    store = RoadmapStore(db)
+    toolset = build_roadmap_toolset(store, str(Path.cwd()))
+    asyncio.run(toolset.tools['record_decision'].function('ADR: pick X'))
+    assert db._conn.execute('SELECT COUNT(*) FROM artifacts').fetchone()[0] == 0

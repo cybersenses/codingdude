@@ -788,6 +788,25 @@ function Artifacts({ sessionId }) {
               className="h-64 w-full rounded bg-white"
               srcDoc={a.payload.html}
             />
+          ) : a.kind === 'qa' ? (
+            <div className="space-y-1">
+              {a.payload.questions.map((q, i) => (
+                <div key={i} className="text-[10px] text-neutral-300">
+                  {(() => {
+                    const ans = a.response?.[String(i)] ?? a.response?.[i] ?? a.response
+                    return (
+                      <>
+                        <span className="text-neutral-500">Q: </span>{q.question}
+                        <span className="text-neutral-500"> · A: </span>
+                        <span className="text-accent">{ans?.answer ?? JSON.stringify(ans)}</span>
+                      </>
+                    )
+                  })()}
+                </div>
+              ))}
+            </div>
+          ) : a.kind === 'decision' ? (
+            <pre className="whitespace-pre-wrap text-[10px] text-neutral-300">{a.payload.body || a.payload.title}</pre>
           ) : a.kind === 'choice' ? (
             <div className="flex flex-wrap gap-1">
               {a.payload.options.map((opt) => (

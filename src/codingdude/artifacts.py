@@ -44,7 +44,32 @@ class ArtifactStore:
         """Publish an HTML artifact the UI renders inline (sandboxed iframe)."""
         return self._emit('html', name, {'html': html})
 
-    def _emit(self, kind: str, title: str, payload: dict) -> str:
+    def record_qa(self, questions: list, answers) -> str:
+        """Auto-capture an answered ask_user round as decision history."""
+        return self._emit(
+            'qa',
+            'Question answered',
+            {'questions': questions, 'answers': answers},
+            status='answered',
+            response=answers,
+        )
+
+    def record_decision(self, title: str, body: str = '') -> str:
+        """Auto-capture a recorded design decision as decision history."""
+        return self._emit(
+            'decision', title, {'title': title, 'body': body}, status='answered',
+            response={'title': title, 'body': body},
+        )
+
+
+    def _emit(
+        self,
+        kind: str,
+        title: str,
+        payload: dict,
+        status: str = 'pending',
+        response: dict | None = None,
+    ) -> str:
         artifact_id = secrets.token_urlsafe(8)
         self._db._conn.execute(
             'INSERT INTO artifacts'
@@ -52,7 +77,8 @@ class ArtifactStore:
             ' VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
             (
                 artifact_id, self._session_id, kind, title,
-                json.dumps(payload), 'pending', None, _now(),
+                json.dumps(payload), status,
+                json.dumps(response) if response is not None else None, _now(),
             ),
         )
         self._db._conn.commit()
