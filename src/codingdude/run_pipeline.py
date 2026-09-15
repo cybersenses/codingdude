@@ -489,22 +489,32 @@ class PostRunPipeline:
         )
         # One retry round: the model gets the findings plus the conversation so
         # far, and must back the claims with real commands or correct itself.
+        # Bounded like the other post-run LLM passes (#23): unbounded, this
+        # round was the 8000s post-run stall tail.
+        if emit:
+            emit({'type': 'CLAIMS_RETRY', 'claims': unsupported})
         retry_agent: Agent = Agent(
             model=resolved, instructions=instructions or load_prompt('base_instructions'),
             toolsets=toolsets,
         )
         try:
-            retry = await retry_agent.run(
-                f'{findings}\nBack these claims by actually running the checks now '
-                '(use the tools), or correct your summary.',
-                message_history=history + list(result.new_messages()),
-                usage_limits=self._services.usage_limits(),
+            retry = await asyncio.wait_for(
+                retry_agent.run(
+                    f'{findings}\nBack these claims by actually running the checks now '
+                    '(use the tools), or correct your summary.',
+                    message_history=history + list(result.new_messages()),
+                    usage_limits=self._services.usage_limits(),
+                ),
+                timeout=_POST_RUN_LLM_TIMEOUT_S,
             )
             self._services.record_model_usage(session_id, resolved, retry.usage)
             self._services.db.replace_messages(
                 session_id, [encode_messages([m]) for m in retry.all_messages()]
             )
             emit({'type': 'CLAIMS_ADDRESSED', 'response': str(retry.output)[:1500]})
-        except Exception:  # noqa: BLE001 — best effort; report unverified either way
-            pass
+        except Exception as exc:  # noqa: BLE001 — best effort; report unverified either way
+            logger.warning(
+                'claims-retry round failed for session %s (%s: %s); claims remain '
+                'unverified', session_id, type(exc).__name__, exc,
+            )
         emit({'type': 'CLAIMS_UNVERIFIED', 'claims': unsupported})

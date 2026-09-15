@@ -6,6 +6,7 @@ PromptAssembler (instructions + Agent), HistoryManager (load/compact/
 persist + context), PostRunPipeline (usage, memory, claim verification).
 """
 
+import asyncio
 import logging
 import os
 from collections.abc import Callable
@@ -489,15 +490,21 @@ class Engine:
             )
 
         self._post.record_run_usage(session_id, model_name, result, started, traced)
-        await self._post.extract_memory(session_id, workdir, emit=traced)
+        # #24: extraction and the claims audit are independent — run them
+        # concurrently so the post-run tail costs max(), not sum().
         if self._diff_nonempty(session_id):
-            await self._post.verify_claims(
+            claims = self._post.verify_claims(
                 session_id, result, workdir, approvals, traced,
                 resolved=resolved, history=history,
                 toolsets=toolsets, instructions=instructions,
             )
+            await asyncio.gather(
+                self._post.extract_memory(session_id, workdir, emit=traced),
+                claims,
+            )
         else:
             traced({'type': 'CLAIMS_SKIPPED', 'reason': 'empty_diff'})
+            await self._post.extract_memory(session_id, workdir, emit=traced)
         self._services.check_budget(session_id)
         return RunOutcome(
             session_id=session_id,
