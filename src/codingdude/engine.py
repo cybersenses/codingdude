@@ -483,10 +483,12 @@ class Engine:
         await self._post.extract_memory(session_id, workdir, emit=traced)
         if self._diff_nonempty(session_id):
             await self._post.verify_claims(
-                session_id, result, workdir, approvals, emit,
+                session_id, result, workdir, approvals, traced,
                 resolved=resolved, history=history,
                 toolsets=toolsets, instructions=instructions,
             )
+        else:
+            traced({'type': 'CLAIMS_SKIPPED', 'reason': 'empty_diff'})
         self._services.check_budget(session_id)
         return RunOutcome(
             session_id=session_id,
