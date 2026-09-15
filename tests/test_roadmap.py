@@ -94,10 +94,34 @@ async def test_roadmap_toolset_flow(store, tmp_path):
 
     msg = await tools['update_roadmap_item'].function(rid, 'in_progress')
     assert 'in_progress' in msg
-    assert await tools['update_roadmap_item'].function(999, 'done') == 'roadmap item #999 not found'
+    assert await tools['update_roadmap_item'].function(999, 'done') == 'roadmap item R999 not found'
 
     with pytest.raises(ValueError):
         await tools['update_roadmap_item'].function(rid, 'bogus')
+
+
+@pytest.mark.asyncio
+async def test_roadmap_toolset_prefers_roadmap_md(store, tmp_path):
+    """ROADMAP.md is canonical: the agent tools read and update it, not the DB."""
+    wd = tmp_path / 'md'
+    wd.mkdir()
+    (wd / 'ROADMAP.md').write_text(
+        '# Roadmap\n\n## R1 — Thing\n**Status:** open\n\nBody one.\n', encoding='utf-8'
+    )
+    tools = build_roadmap_toolset(store, str(wd)).tools
+
+    overview = await tools['list_planning'].function()
+    assert '[open] #R1 Thing' in overview
+
+    msg = await tools['update_roadmap_item'].function('R1', 'done')
+    assert 'R1 → done' in msg
+    text = (wd / 'ROADMAP.md').read_text(encoding='utf-8')
+    assert '**Status:** done' in text and 'Thing' in text
+
+    # Accepts bare numeric ids too, and reports unknown items.
+    assert 'R1 → in_progress' in await tools['update_roadmap_item'].function(1, 'in_progress')
+    assert await tools['update_roadmap_item'].function('R9', 'done') == \
+        'roadmap item R9 not found in ROADMAP.md'
 
     await tools['record_decision'].function('ADR-1', 'store planning in SQLite')
     assert 'ADR-1' in await tools['list_planning'].function()

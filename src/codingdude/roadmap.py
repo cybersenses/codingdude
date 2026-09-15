@@ -270,7 +270,9 @@ def build_roadmap_toolset(
 
     async def list_planning() -> str:
         """Read the project's planning data: roadmap items, open tickets, and recent design decisions."""
-        road = store.list_roadmap(workdir)
+        md = Path(workdir) / 'ROADMAP.md'
+        # ROADMAP.md is the canonical roadmap source; DB is the fallback.
+        road = parse_roadmap_md(md) if md.is_file() else store.list_roadmap(workdir)
         tickets = store.list_tickets(workdir)
         decisions = store.list_decisions(workdir)
         if not (road or tickets or decisions):
@@ -289,16 +291,25 @@ def build_roadmap_toolset(
         lines += [f"- #{d['id']} {d['title']}" for d in decisions[:10]] or ['- (empty)']
         return '\n'.join(lines)
 
-    async def update_roadmap_item(item_id: int, status: str, body: str | None = None) -> str:
+    async def update_roadmap_item(item_id: str | int, status: str, body: str | None = None) -> str:
         """Update a roadmap item's status ('open'|'in_progress'|'done') and optionally its body."""
         if status not in ROADMAP_STATUSES:
             raise ValueError(f'status must be one of {ROADMAP_STATUSES}')
+        rid = str(item_id)
+        rid = rid if rid.startswith('R') else f'R{rid}'
+        md = Path(workdir) / 'ROADMAP.md'
+        if md.is_file():
+            try:
+                upsert_roadmap_md(md, rid, body=body, status=status)
+            except ValueError:
+                return f'roadmap item {rid} not found in ROADMAP.md'
+            return f'roadmap item {rid} → {status}'
         fields: dict = {'status': status}
         if body is not None:
             fields['body'] = body
-        if not store.update_roadmap_item(workdir, item_id, **fields):
-            return f'roadmap item #{item_id} not found'
-        return f'roadmap item #{item_id} → {status}'
+        if not store.update_roadmap_item(workdir, int(rid[1:]), **fields):
+            return f'roadmap item {rid} not found'
+        return f'roadmap item {rid} → {status}'
 
     async def create_ticket(title: str, body: str = '', blocked_by: str | None = None) -> str:
         """Create a ticket (tracer bullet) for this project, optionally blocked by another ticket's id."""
