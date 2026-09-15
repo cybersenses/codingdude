@@ -519,3 +519,31 @@ contract-first codegen; no DSL, no generated stubs.
 
 ### Evidence
 - Commit `2127571`; 312 pytest passed (+7 in `tests/test_research.py`), ruff clean, mypy clean.
+
+## R16 — Delegation task briefs (subagent context shipping)
+
+**Status:** done (ticket #21, commit `ff39a2b`).
+
+### Problem
+Delegated subagents received only the raw `task` string — no verified symbols, no
+contract excerpts, no budget — so they re-explored the codebase from scratch and
+drifted out of scope.
+
+### Shipped
+- `DelegationBrief` (verified symbols + contract excerpt + request budget) compiled
+  into the subagent system prompt by `build_brief` / `brief_prompt`.
+- `delegation_id` links DELEGATION_STARTED/COMPLETED trace events to the parent run.
+
+## R17 — Write-capable delegation via sandbox exec
+
+**Status:** done (ticket #22, commit `ff39a2b`).
+
+### Problem
+Delegation was read-only; any change required the parent to do the editing, which
+defeated the point of delegating implementation work.
+
+### Shipped
+- `delegate(task, write=True)` grants the subagent exactly one extra tool:
+  `exec_in_sandbox`. Writes stay in the sandbox tier.
+- The subagent changes cross back to the parent as a git diff — the main tree is
+  never touched directly, and no-sandbox environments error without mutating anything.
