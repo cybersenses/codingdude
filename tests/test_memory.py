@@ -38,6 +38,7 @@ async def test_remember_and_forget_tools(engine, db, workdir):
         ),
     )
     assert outcome.output == 'banked'
+    await engine.drain_post_run()
     entries = MemoryStore(db).all_entries()
     assert any('uv over pip' in e['content'] for e in entries)
 
@@ -49,6 +50,7 @@ async def test_remember_and_forget_tools(engine, db, workdir):
         ),
     )
     assert outcome.output == 'dropped'
+    await engine.drain_post_run()
     entries = MemoryStore(db).all_entries()
     assert not any('uv over pip' in e['content'] for e in entries)
 
@@ -109,6 +111,7 @@ async def test_post_session_extraction_banks_missed_facts(home, db, workdir):
             'remember', {'content': 'explicit fact'}, lambda r: 'ok'
         ),
     )
+    await engine.drain_post_run()
     entries = [e['content'] for e in MemoryStore(db).all_entries()]
     assert 'explicit fact' in entries
     assert any('snake_case' in c for c in entries)
@@ -152,6 +155,7 @@ async def test_extraction_forgets_obsolete_entries(home, db, workdir):
 
     engine = Engine(config=load_config(), db=db, extraction_model=scripted(extractor))
     await engine.run(prompt='x', workdir=workdir, model=scripted(echo))
+    await engine.drain_post_run()  # extraction (incl. FORGET) runs in the tail
 
     entries = [e['content'] for e in MemoryStore(db).all_entries()]
     assert entries == ['cdissues.md was written and the review closed']
@@ -192,6 +196,7 @@ async def test_post_run_phase_events_are_emitted(home, db, workdir):
         ),
         emit=events.append,
     )
+    await engine.drain_post_run()
     types = [e['type'] for e in events]
     assert 'MEMORY_EXTRACTING' in types
     assert types.index('MEMORY_EXTRACTING') > types.index('RUN_USAGE')

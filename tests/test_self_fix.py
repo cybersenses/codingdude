@@ -91,6 +91,7 @@ async def test_h6_aux_model_usage_is_recorded(engine, workdir):
 
     engine._extraction_model = scripted(say('- the project uses uv'))
     outcome = await engine.run(prompt='hello', workdir=workdir, model=scripted(say('done')))
+    await engine.drain_post_run()  # extraction usage is recorded in the background tail
     assert engine._db.session_usage(outcome.session_id)['requests'] >= 2
 
 

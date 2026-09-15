@@ -415,6 +415,9 @@ class PostRunPipeline:
                 + transcript
             ), timeout=_POST_RUN_LLM_TIMEOUT_S)
         except Exception:  # noqa: BLE001 — extraction must never fail a run
+            logging.getLogger(__name__).warning(
+                'memory extraction failed for session %s', session_id, exc_info=True
+            )
             return
         if emit:
             emit({'type': 'MEMORY_EXTRACTED'})

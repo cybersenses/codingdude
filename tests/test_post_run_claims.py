@@ -4,8 +4,11 @@ Covers #23 (unbounded claims-retry agent round was the 8000s stall tail)
 and #24 (extraction + claims audit run concurrently).
 """
 
+import asyncio
+
 from helpers import scripted
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.models.function import FunctionModel
 
 from codingdude.config import load_config
 from codingdude.engine import Engine
@@ -63,6 +66,7 @@ async def test_claims_retry_is_evented_and_addressed(tmp_path, db, home):
         emit=events.append,
     )
     assert outcome.status == 'complete'
+    await engine.drain_post_run()
     types = [e['type'] for e in events]
     assert 'CLAIMS_CHECKING' in types
     assert 'CLAIMS_RETRY' in types
@@ -88,6 +92,7 @@ async def test_claims_retry_failure_is_logged_not_silent(tmp_path, db, home, cap
             emit=events.append,
         )
     assert outcome.status == 'complete'
+    await engine.drain_post_run()
     types = [e['type'] for e in events]
     assert 'CLAIMS_RETRY' in types
     assert 'CLAIMS_ADDRESSED' not in types
@@ -111,7 +116,79 @@ async def test_extraction_and_claims_run_concurrently(tmp_path, db, home):
         emit=events.append,
     )
     assert outcome.status == 'complete'
+    await engine.drain_post_run()
     types = [e['type'] for e in events]
     for expected in ('MEMORY_EXTRACTING', 'MEMORY_EXTRACTED',
                      'CLAIMS_CHECKING', 'CLAIMS_RETRY', 'CLAIMS_ADDRESSED'):
         assert expected in types
+
+
+async def test_run_returns_before_extraction_finishes(tmp_path, db, home):
+    """The post-run tail must not hold the run hostage: engine.run returns
+    while a slow extraction is still in flight, and the extraction still
+    lands (events emitted) afterwards."""
+    proj = tmp_path / 'proj'
+    proj.mkdir()
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_extract(messages, info):
+        started.set()
+        await release.wait()
+        return ModelResponse(parts=[TextPart(content='nothing worth remembering')])
+
+    engine = Engine(config=load_config(), db=db, extraction_model=FunctionModel(slow_extract))
+    events: list[dict] = []
+    outcome = await engine.run(
+        prompt='do the thing',
+        workdir=proj,
+        model=run_model('ok'),
+        emit=events.append,
+    )
+    assert outcome.status == 'complete'
+    for _ in range(500):  # let the scheduled background tail take its first slice
+        if started.is_set():
+            break
+        await asyncio.sleep(0.01)
+    assert started.is_set()  # extraction began...
+    # ...but the run did NOT wait for it.
+    assert 'MEMORY_EXTRACTED' not in [e['type'] for e in events]
+    release.set()
+    await engine.drain_post_run()
+    assert 'MEMORY_EXTRACTED' in [e['type'] for e in events]
+
+
+async def test_next_run_waits_for_pending_extraction(tmp_path, db, home):
+    """A follow-up turn must not start before the previous turn's memory
+    extraction has landed (the extraction result feeds memory recall)."""
+    proj = tmp_path / 'proj'
+    proj.mkdir()
+    order: list[str] = []
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_extract(messages, info):
+        started.set()
+        await release.wait()
+        order.append('extracted')
+        return ModelResponse(parts=[TextPart(content='nothing worth remembering')])
+
+    def turn_model(messages, info):
+        order.append('turn')
+        return ModelResponse(parts=[TextPart(content='ok')])
+
+    engine = Engine(config=load_config(), db=db, extraction_model=FunctionModel(slow_extract))
+    first = await engine.run(prompt='one', workdir=proj, model=scripted(turn_model))
+    assert first.status == 'complete'
+    for _ in range(500):
+        if started.is_set():
+            break
+        await asyncio.sleep(0.01)
+    assert started.is_set()
+
+    order.clear()  # only the relative order of run 2 matters
+    release.set()
+    second = await engine.run(prompt='two', workdir=proj, model=scripted(turn_model))
+    assert second.status == 'complete'
+    assert order == ['extracted', 'turn']
+    await engine.drain_post_run()

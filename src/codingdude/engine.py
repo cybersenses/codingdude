@@ -29,6 +29,10 @@ from .tools import (
     GateRequired,
 )
 
+# Generous cap for waiting out background post-run passes before the next
+# turn: each pass is already bounded by _POST_RUN_LLM_TIMEOUT_S (run_pipeline).
+_POST_RUN_DRAIN_TIMEOUT_S = 300.0
+
 
 def _zai_fallback(model_name: str, base_url: str | None) -> Model:
     """Build the ZAI fallback model, optionally pointed at a custom endpoint."""
@@ -123,6 +127,9 @@ class Engine:
         self._prompts = PromptAssembler()
         self._history = HistoryManager(self._services, compaction_threshold)
         self._post = PostRunPipeline(self._services)
+        # Background post-run tails, keyed by session (drained before the
+        # next turn so extraction lands before it can matter).
+        self._pending_post_run: dict[str, asyncio.Task] = {}
 
     def build_model(
         self, main: Model | str | None = None, fallback: Model | str | None = None
@@ -340,6 +347,9 @@ class Engine:
             created_session = True
         else:
             created_session = False
+        # Wait out the previous turn's background post-run passes so memory
+        # extraction lands before this prompt is assembled.
+        await self._drain_pending_post_run()
 
         traced = self._make_tracer(session_id, workdir, trace, emit)
 
@@ -490,27 +500,64 @@ class Engine:
             )
 
         self._post.record_run_usage(session_id, model_name, result, started, traced)
-        # #24: extraction and the claims audit are independent — run them
-        # concurrently so the post-run tail costs max(), not sum().
-        if self._diff_nonempty(session_id):
-            claims = self._post.verify_claims(
-                session_id, result, workdir, approvals, traced,
-                resolved=resolved, history=history,
-                toolsets=toolsets, instructions=instructions,
-            )
-            await asyncio.gather(
-                self._post.extract_memory(session_id, workdir, emit=traced),
-                claims,
-            )
-        else:
-            traced({'type': 'CLAIMS_SKIPPED', 'reason': 'empty_diff'})
-            await self._post.extract_memory(session_id, workdir, emit=traced)
         self._services.check_budget(session_id)
+        # Post-run passes (extraction ∥ claims audit) run in the background:
+        # RUN_FINISHED must not wait ~90s on them (user friction). The next
+        # turn drains them before its prompt is assembled, so extraction
+        # still lands before it can matter (see _drain_pending_post_run).
+        self._pending_post_run[session_id] = asyncio.create_task(
+            self._post_run_tail(session_id, result, workdir, approvals, traced,
+                                resolved, history, toolsets, instructions)
+        )
         return RunOutcome(
             session_id=session_id,
             output=result.output,
             model_name=model_name,
         )
+
+    async def _post_run_tail(self, session_id: str, result, workdir, approvals,
+                             traced, resolved, history, toolsets, instructions) -> None:
+        """Extraction + claims audit, concurrent, best-effort — never fails a run."""
+        try:
+            # #24: extraction and the claims audit are independent — run them
+            # concurrently so the tail costs max(), not sum().
+            if self._diff_nonempty(session_id):
+                await asyncio.gather(
+                    self._post.extract_memory(session_id, workdir, emit=traced),
+                    self._post.verify_claims(
+                        session_id, result, workdir, approvals, traced,
+                        resolved=resolved, history=history,
+                        toolsets=toolsets, instructions=instructions,
+                    ),
+                )
+            else:
+                traced({'type': 'CLAIMS_SKIPPED', 'reason': 'empty_diff'})
+                await self._post.extract_memory(session_id, workdir, emit=traced)
+        except Exception:  # noqa: BLE001 — background tail must never crash the engine
+            logging.getLogger(__name__).warning(
+                'post-run passes failed for session %s', session_id, exc_info=True
+            )
+        finally:
+            self._pending_post_run.pop(session_id, None)
+
+    async def drain_post_run(self, timeout: float = _POST_RUN_DRAIN_TIMEOUT_S) -> None:
+        """Await all pending post-run tails (used before the next turn and on
+        shutdown/tests so extraction always lands)."""
+        tasks = [t for t in self._pending_post_run.values() if not t.done()]
+        if not tasks:
+            return
+        try:
+            await asyncio.wait_for(asyncio.wait(tasks), timeout=timeout)
+        except TimeoutError:
+            logging.getLogger(__name__).warning(
+                'post-run passes still pending after %ss; continuing', timeout
+            )
+
+    async def _drain_pending_post_run(self) -> None:
+        """Called at the start of every run: wait out the previous turn's
+        post-run passes so memory extraction lands before this prompt is
+        assembled. Bounded — a stuck tail delays but never blocks."""
+        await self.drain_post_run()
 
     async def _run_agent(self, agent, prompt, history, model_name, traced, cp_holder,
                          persist=None, stream: bool = True, usage_limits=None):

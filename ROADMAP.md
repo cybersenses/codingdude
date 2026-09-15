@@ -485,7 +485,7 @@ unisolated in the main workdir and returns one opaque blob.
 
 ## R14 — Contract-first discipline + mid-run index refresh
 
-**Status:** done (ticket #20)
+**Status:** done
 
 **Theme (c): deeper code understanding.** Thin slice of the deferred R8
 contract-first codegen; no DSL, no generated stubs.
@@ -507,7 +507,7 @@ contract-first codegen; no DSL, no generated stubs.
 
 ## R15 — Research pipeline
 
-**Status:** done (ticket #17 closed by `50d406d`).
+**Status:** done
 
 **Theme:** curated web research persisted into the reference knowledgebase.
 
@@ -536,7 +536,7 @@ drifted out of scope.
 
 ## R17 — Write-capable delegation via sandbox exec
 
-**Status:** done (ticket #22, commit `ff39a2b`).
+**Status:** done
 
 ### Problem
 Delegation was read-only; any change required the parent to do the editing, which
@@ -547,3 +547,19 @@ defeated the point of delegating implementation work.
   `exec_in_sandbox`. Writes stay in the sandbox tier.
 - The subagent changes cross back to the parent as a git diff — the main tree is
   never touched directly, and no-sandbox environments error without mutating anything.
+
+## R18 — Non-blocking post-run tail
+
+**Status:** done
+
+### Problem
+Memory extraction (one bounded LLM call, ~24–90s) blocked , so
+the user stared at a spinning UI for up to ~90s after every run — pure friction.
+
+### Shipped
+-  returns immediately after usage accounting; extraction ∥ claims
+  audit run as a background tail () — same events, same 120s caps.
+- The next turn drains pending tails (, 300s bound)
+  before its prompt is assembled, so extraction always lands before it matters.
+-  public for shutdown/tests; silent extraction catch now
+  logs with context.
