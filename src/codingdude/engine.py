@@ -353,9 +353,14 @@ class Engine:
 
         traced = self._make_tracer(session_id, workdir, trace, emit)
 
-        from .codegraph_boot import ensure_codegraph_index
+        from .codegraph_boot import boot_codegraph, boot_hint
 
-        ensure_codegraph_index(workdir)
+        boot_status = boot_codegraph(workdir)
+        boot_event: dict = {'type': 'CODEGRAPH_BOOT', 'status': boot_status['status']}
+        if boot_status['reason']:
+            boot_event['reason'] = boot_status['reason']
+        # Emitted after USER_PROMPT below: the trace contract keeps
+        # USER_PROMPT as the first event of a run (test_evals relies on it).
 
         from datetime import UTC as _UTC
         from datetime import datetime as _dt
@@ -368,6 +373,7 @@ class Engine:
 
             history = self._history.load(session_id)
             traced({'type': 'USER_PROMPT', 'text': prompt})
+            traced(boot_event)
             cm = self._history.context_manager(model_name)
             history, compacted = await self._history.maybe_compact(
                 history, resolved, on_event, session_id, cm=cm
@@ -445,6 +451,9 @@ class Engine:
             instructions = self._prompts.instructions(
                 self._services, workdir, prompt, registry, store, self.embedder
             )
+            hint = boot_hint(boot_status)
+            if hint:
+                instructions += '\n\n' + hint
 
             agent = self._prompts.agent(
                 resolved, instructions, toolsets,

@@ -27,20 +27,62 @@ def _run_codegraph_init(
     runner=subprocess.run,
     cli_path: str | None = None,
     timeout: int = 300,
-) -> str | None:
-    """Run `codegraph init` for the workdir; None on any failure (best-effort)."""
+) -> tuple[bool, str]:
+    """Run `codegraph init` for the workdir; (False, reason) on any failure."""
     cli = cli_path or find_codegraph_cli()
     if not cli:
-        return None
+        return False, 'codegraph CLI not found'
     try:
         proc = runner(['cmd', '/c', cli, 'init', str(workdir)], cwd=workdir,
                       timeout=timeout)
-    except Exception:  # best-effort: never block a run on bootstrap failure
-        return None
+    except (subprocess.TimeoutExpired, TimeoutError):
+        return False, f'codegraph init timed out after {timeout}s'
+    except Exception as exc:  # best-effort: never block a run on bootstrap failure
+        return False, f'{type(exc).__name__}: {exc}'
     output = getattr(proc, 'stdout', None) or ''
-    if getattr(proc, 'returncode', 0) != 0:
+    rc = getattr(proc, 'returncode', 0)
+    if rc != 0:
+        return False, f'codegraph init exit {rc}'
+    return True, str(output)
+
+
+def _has_healthy_index(workdir: Path) -> bool:
+    """An index exists *and* is non-empty (partial/corrupt dirs re-init)."""
+    index_dir = workdir / '.codegraph'
+    return index_dir.exists() and any(index_dir.iterdir())
+
+
+def boot_codegraph(
+    workdir: Path,
+    runner=subprocess.run,
+    cli_path: str | None = None,
+    timeout: int = 300,
+) -> dict:
+    """Bootstrap the workdir's codegraph index with a visible outcome.
+
+    Returns {'status': 'ok'|'skipped'|'failed', 'reason': str|None} so the
+    engine can emit a CODEGRAPH_BOOT event and, on failure, hint the model
+    instead of leaving it to blind-retry broken tools (#33).
+    """
+    if _has_healthy_index(workdir):
+        return {'status': 'skipped', 'reason': None}
+    ok, detail = _run_codegraph_init(workdir, runner, cli_path, timeout)
+    if ok:
+        return {'status': 'ok', 'reason': None}
+    return {'status': 'failed', 'reason': detail}
+
+
+def boot_hint(status: dict) -> str | None:
+    """One-line system-prompt hint when boot failed, so the model doesn't
+    retry codegraph tools that will keep failing. None when usable."""
+    if status.get('status') != 'failed':
         return None
-    return str(output)
+    reason = status.get('reason') or 'unknown reason'
+    return (
+        f'Note: codegraph is unavailable in this project ({reason}). '
+        'Do NOT call codegraph tools or retry indexing — navigate with '
+        'read/grep instead.'
+    )
 
 
 def ensure_codegraph_index(
@@ -52,11 +94,12 @@ def ensure_codegraph_index(
     """Run `codegraph init` when the workdir has no `.codegraph` index.
 
     Returns the CLI output, None when skipped or on any failure.
-    `runner` is injectable for tests.
+    `runner` is injectable for tests. Prefer `boot_codegraph` (status dict).
     """
-    if (workdir / '.codegraph').exists():
+    if _has_healthy_index(workdir):
         return None
-    return _run_codegraph_init(workdir, runner, cli_path, timeout)
+    ok, detail = _run_codegraph_init(workdir, runner, cli_path, timeout)
+    return detail if ok else None
 
 
 def refresh_codegraph_index(
@@ -68,4 +111,5 @@ def refresh_codegraph_index(
     """Re-run `codegraph init` even when an index exists (R14 mid-run
     refresh): long sessions must not navigate stale code. Best-effort —
     None on any failure, never raises."""
-    return _run_codegraph_init(workdir, runner, cli_path, timeout)
+    ok, detail = _run_codegraph_init(workdir, runner, cli_path, timeout)
+    return detail if ok else None
