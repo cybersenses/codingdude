@@ -193,8 +193,13 @@ class PromptAssembler:
         return model_settings
 
     def agent(self, resolved: Model, instructions: str, toolsets, settings=None,
-              retries: int = 2) -> Agent:
-        """The run's Agent: model + instructions + toolsets + settings."""
+              retries: int = 3) -> Agent:
+        """The run's Agent: model + instructions + toolsets + settings.
+
+        R25: default 3 tool retries — errors are fed back to the model
+        (see codingdude.tool_errors) and only stop the run on the 3rd
+        consecutive failure of the same tool.
+        """
         return Agent(
             model=resolved, instructions=instructions, toolsets=toolsets,
             model_settings=settings, retries=retries,

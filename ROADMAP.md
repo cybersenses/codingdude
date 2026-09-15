@@ -608,7 +608,7 @@ Process guidance is missing: tickets and roadmap items are different artifacts
 Shell commands that finish quickly sometimes block until timeout on Windows. Root cause confirmed: `run_captured` (tools.py:97) awaits `proc.communicate()`, which waits for pipe EOF, not process exit. A grandchild inheriting stdout/stderr keeps the pipe open after the parent exits, so the tool blocks to timeout, returns "timed out", and loses real output. Reproduced deterministically: `.scratch/repro_shell_hang.py` (parent exits 0.1s, run_captured(timeout=5) waits full 5s → None). Also explains earlier git push "hangs" and possibly the 261s mid-session stall.
 
 ## R22 — AST-powered agent understanding (structural edits + semantic diffs)
-**Status:** open
+**Status:** done
 
 Leverage the existing tree-sitter/codegraph AST infrastructure (already used for navigation, dead-code, arch-lint) in two spots with observed payoff:
 
@@ -628,3 +628,8 @@ Assessment: viable, low-medium effort per item, reuses existing parsers.
 **Status:** done
 
 `_atomic_write` (tools.py) uses a deterministic `<name>.codingdude-tmp` path; two concurrent writers to the same target collide and the second open() fails with WinError 32. Repro: .scratch/repro_tmp_collision.py (399/400 collisions). Fix: unique tmp name + retry on PermissionError for os.replace.
+
+## R25 — Tool runtime errors feed back to the agent (3 strikes)
+**Status:** done
+
+Unexpected exceptions inside tools (OSError/WinError 32, NameError, ...) used to propagate out of the toolset and kill the run immediately. codingdude/tool_errors.py adds a ToolErrorFeedback wrapper toolset: unexpected tool exceptions become ModelRetry messages the model can act on (tool name + cause + hint). Control-flow exceptions (gates, approvals, deferrals, cancellation, ToolFailed) pass through untouched. Retry budget raised from 2 to 3 (PromptAssembler.agent default), so the agent gets 3 tries to self-correct before the run aborts. Wired for the main agent (engine.run) and delegation sub-agents. Tests: tests/test_tool_errors.py.

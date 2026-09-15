@@ -448,6 +448,11 @@ class Engine:
                 emitter=traced,
             )
             toolsets = await build_all(plugin_ctx)
+            # R25: tool runtime errors feed back to the model as retries
+            # instead of killing the run (3 strikes in PromptAssembler.agent).
+            from .tool_errors import error_feedback_toolset
+
+            toolsets = [error_feedback_toolset(toolsets)]
 
             from .memory import MemoryStore
             from .skills import SkillRegistry

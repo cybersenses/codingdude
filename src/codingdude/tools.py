@@ -671,6 +671,10 @@ def build_delegation_toolset(
             from pydantic_ai.toolsets import FunctionToolset as _FTS
 
             toolsets.append(_FTS([exec_in_sandbox]))
+        # R25: sub-agents get the same error-feedback seam as the main agent.
+        from codingdude.tool_errors import error_feedback_toolset
+
+        toolsets = [error_feedback_toolset(toolsets)]
         sub_agent: Agent = Agent(
             model=subagent_model,
             instructions=load_prompt('delegation'),
