@@ -1,5 +1,7 @@
 """Engine seam: the scripted model drives real read-only tools on a temp Workdir."""
 
+from pathlib import Path
+
 from helpers import scripted
 from pydantic_ai.messages import (
     ModelMessage,
@@ -237,6 +239,65 @@ def test_write_file_atomic_and_lf_preserved(tmp_path):
     data = (tmp_path / 'deep' / 'dir' / 'new.py').read_bytes()
     assert data == b'x = 1\ny = 2\n'
     assert not list(tmp_path.rglob('*.codingdude-tmp'))  # no temp litter
+
+
+def test_atomic_write_concurrent_no_collision(tmp_path):
+    """Two processes writing the same target must never collide on the tmp
+    path (WinError 32) — regression for the deterministic `.codingdude-tmp`
+    name (R24 #38)."""
+    import multiprocessing as mp
+
+    import test_tools as self_mod
+
+    target = tmp_path / 'shared.py'
+    target.write_text('seed\n')
+    q: mp.Queue = mp.Queue()
+    procs = [mp.Process(target=self_mod._atomic_write_worker, args=(str(target), s, q))
+             for s in range(2)]
+    for p in procs:
+        p.start()
+    errs = q.get() + q.get()
+    for p in procs:
+        p.join()
+    assert errs == []
+    assert not list(tmp_path.glob('*.codingdude-tmp*'))  # no temp litter
+
+
+def _atomic_write_worker(target_str: str, seed: int, q) -> None:  # spawned on Windows
+    from codingdude.tools import _atomic_write
+
+    errs = []
+    for i in range(50):
+        try:
+            _atomic_write(Path(target_str), f'w{seed} round {i}\n')
+        except OSError as exc:
+            errs.append(f'{type(exc).__name__}: {exc}')
+    q.put(errs)
+
+
+def test_atomic_write_retries_locked_target(tmp_path, monkeypatch):
+    """Transient PermissionError on os.replace (AV/editor lock) is retried,
+    not fatal (R24 #38)."""
+    import os as _os
+
+    import codingdude.tools as tools_mod
+
+    target = tmp_path / 'x.py'
+    target.write_text('old\n')
+    calls = {'n': 0}
+    real_replace = _os.replace
+
+    def flaky(src, dst):
+        calls['n'] += 1
+        if calls['n'] < 3:
+            raise PermissionError(32, 'The process cannot access the file')
+        real_replace(src, dst)
+
+    monkeypatch.setattr(_os, 'replace', flaky)
+    tools_mod._atomic_write(target, 'new\n')
+    assert calls['n'] == 3
+    assert target.read_text() == 'new\n'
+    assert not list(tmp_path.glob('*.codingdude-tmp*'))  # no temp litter
 
 
 def test_stale_guard_cleared_by_reread(tmp_path):

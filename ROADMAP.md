@@ -618,3 +618,13 @@ Leverage the existing tree-sitter/codegraph AST infrastructure (already used for
 Explicitly out of scope: ASTs as a replacement for LLM intent understanding; building type/dataflow analysis (mypy/pyright already gate this).
 
 Assessment: viable, low-medium effort per item, reuses existing parsers.
+
+## R23 — CI stability on GitHub Windows runners
+**Status:** open
+
+14 test failures in CI (run 34984478320) that pass locally on the dev machine: test_sandbox (6), test_interactive_approvals (2), test_mcp, test_render_persistence, test_server, test_shell (2), test_tools. Likely Windows-runner environment differences (temp paths, spawn behavior, git config). Goal: CI green so GitHub notifications only fire on real regressions.
+
+## R24 — R22 — File-tools hardening: unique atomic-write temp names
+**Status:** open
+
+`_atomic_write` (tools.py) uses a deterministic `<name>.codingdude-tmp` path; two concurrent writers to the same target collide and the second open() fails with WinError 32. Repro: .scratch/repro_tmp_collision.py (399/400 collisions). Fix: unique tmp name + retry on PermissionError for os.replace.

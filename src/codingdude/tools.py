@@ -115,16 +115,34 @@ def _read_verbatim(target: Path) -> str:
 
 
 def _atomic_write(target: Path, text: str) -> None:
-    """Atomic text write: temp file in the same directory + os.replace (R12 #3)."""
+    """Atomic text write: temp file in the same directory + os.replace (R12 #3).
+
+R24 (#38): the temp name carries a uuid so concurrent writers to the same
+target never collide on it (WinError 32 on Windows), and os.replace is
+retried briefly to absorb transient locks on the target (AV, open editors).
+Raises PermissionError naming the locked path if it stays locked.
+"""
     import os
 
-    tmp = target.with_name(target.name + '.codingdude-tmp')
+    tmp = target.with_name(f'{target.name}.{uuid.uuid4().hex}.codingdude-tmp')
     try:
         with open(tmp, 'w', encoding='utf-8', newline='') as f:
             f.write(text)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp, target)
+        last_exc: PermissionError | None = None
+        for attempt in range(3):
+            try:
+                os.replace(tmp, target)
+                last_exc = None
+                break
+            except PermissionError as exc:
+                last_exc = exc
+                time.sleep(0.05 * (attempt + 1))
+        if last_exc is not None:
+            raise PermissionError(
+                f'{target} is locked by another process; write not applied.'
+            ) from last_exc
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
