@@ -1,5 +1,6 @@
 """Coding tools: list, read, grep, glob, plus surgical edits — all confined to the Workdir."""
 
+import ast
 import re
 import time
 import uuid
@@ -11,6 +12,7 @@ from pydantic_ai import ModelRetry
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 
 from .approvals import DENIED, NEEDS_GATE
+from .astdiff import describe_ast_change
 from .config import ThinkingSetting
 from .directives import project_directives_guard
 from .errors import GateRequired
@@ -316,8 +318,129 @@ def build_toolset(
                 'restored. Do not retry unchanged — inspect the file first.'
             )
         observe(path, target)
+        summary = describe_ast_change(before, after)
         emit_edit(path, before, after)
-        return f'edited {path}'
+        return f'edited {path}' + (f'\n{summary}' if summary else '')
+
+    def _parse_module(target: Path, text: str):
+        try:
+            return ast.parse(text)
+        except SyntaxError:
+            raise ModelRetry(
+                f'{target.name} does not parse as Python; edit_symbol needs a '
+                'valid-syntax file (use edit_file instead).'
+            ) from None
+
+    def edit_symbol(path: str, symbol: str, new_body: str) -> str:
+        """Replace a top-level function/class or method body by symbol name.
+
+        `symbol` is a qualified name: 'my_func', 'MyClass', or 'MyClass.method'.
+        `new_body` is the complete replacement definition (dedented if needed).
+        Preferred over edit_file for whole-symbol rewrites — it cannot miss or
+        duplicate matches.
+        """
+        import textwrap
+
+        _guard_project_context(path)
+        if capture:
+            capture(resolve(path))
+        target = resolve(path)
+        check_stale(path, target)
+        if target.suffix != '.py':
+            raise ModelRetry(
+                f'edit_symbol only supports Python files; {path!r} is not one. '
+                'Use edit_file for other file types.'
+            )
+        try:
+            before = _read_verbatim(target)
+        except UnicodeDecodeError:
+            raise ModelRetry(
+                f'{path} is not valid UTF-8; refusing to edit it to avoid '
+                'silent corruption.'
+            ) from None
+        tree = _parse_module(target, before)
+
+        # Collect qualified names: top-level defs/classes and their direct
+        # methods, with byte-accurate line spans (decorators included).
+        spans: dict[str, list[int]] = {}  # qualified name -> [start_line, end_line]
+        for node in tree.body:
+            if not isinstance(
+                node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+            ):
+                continue
+            start = min(
+                [d.lineno or node.lineno for d in node.decorator_list]
+                + [node.lineno]
+            )
+            spans[node.name] = [start, node.end_lineno or node.lineno]
+            if isinstance(node, ast.ClassDef):
+                for child in node.body:
+                    if isinstance(
+                        child, (ast.FunctionDef, ast.AsyncFunctionDef)
+                    ):
+                        spans[f'{node.name}.{child.name}'] = [
+                            min(
+                                [
+                                    d.lineno
+                                    for d in child.decorator_list
+                                ]
+                                + [child.lineno]
+                            ),
+                            child.end_lineno or child.lineno,
+                        ]
+
+        candidates = {
+            name: span
+            for name, span in spans.items()
+            if name.rsplit('.', 1)[-1] == symbol
+        }
+        if len(candidates) > 1:
+            # A bare name colliding with a method (or several) is ambiguous;
+            # only an exact qualified match is unambiguous.
+            raise ModelRetry(
+                f'symbol {symbol!r} is ambiguous in {path} — matches: '
+                f'{", ".join(sorted(candidates))}. Use the qualified name.'
+            )
+        if symbol in spans:
+            start, end = spans[symbol]
+        elif candidates:
+            start, end = next(iter(candidates.values()))
+        else:
+            known = ', '.join(sorted(spans)) or '(none)'
+            raise ModelRetry(
+                f'symbol {symbol!r} not found in {path}. Top-level '
+                f'definable symbols: {known}.'
+            )
+
+        body = textwrap.dedent(new_body).rstrip('\n')
+        lines = before.splitlines(keepends=True)
+        eol = '\r\n' if lines and lines[0].endswith('\r\n') else '\n'
+        # Re-indent to the replaced symbol's original indentation, so a
+        # dedented method body stays inside its class.
+        indent_match = re.match(r'[ \t]*', lines[start - 1])
+        indent = indent_match.group(0) if indent_match else ''
+        if indent:
+            body = '\n'.join(
+                indent + ln if ln.strip() else ln
+                for ln in body.split('\n')
+            )
+        replacement = body + eol
+        after = ''.join(lines[: start - 1]) + replacement + ''.join(lines[end:])
+        _atomic_write(target, after)
+        written = _read_verbatim(target)
+        if written != after:
+            target.write_bytes(before.encode('utf-8'))
+            raise ModelRetry(
+                f'write verification failed for {path}; original content '
+                'restored. Do not retry unchanged — inspect the file first.'
+            )
+        observe(path, target)
+        summary = describe_ast_change(before, after)
+        emit_edit(path, before, after)
+        result = f'edited {path}: replaced {symbol}'
+        if summary:
+            result += f'\n{summary}'
+        return result
 
     def write_file(path: str, content: str) -> str:
         """Create a new file (with parent dirs). Existing non-empty files must use edit_file."""
@@ -343,7 +466,7 @@ def build_toolset(
 
     tools: list[Callable] = [list_dir, read_file, grep, glob]
     if not read_only:
-        tools += [edit_file, write_file]
+        tools += [edit_file, write_file, edit_symbol]
     return FunctionToolset(tools)
 
 
