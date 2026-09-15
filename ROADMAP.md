@@ -563,3 +563,35 @@ the user stared at a spinning UI for up to ~90s after every run — pure frictio
   before its prompt is assembled, so extraction always lands before it matters.
 -  public for shutdown/tests; silent extraction catch now
   logs with context.
+
+## R19 — Project bootstrap defaults
+
+**Status:** open
+
+### Problem
+New projects (observed on BreweySoft) start bare: no reference folder, no
+codegraph index until first-run auto-bootstrap, no ROADMAP.md scaffolding.
+The agent has to be told what "ready" looks like.
+
+### Proposed
+ensure_project_scaffold(workdir) run at project creation / first session:
+reference/ (+ reference/research/), .codegraph init (reuse
+ensure_codegraph_index), ROADMAP.md stub with the standing-rules header,
+optional CONTEXT.md stub. Idempotent; never clobbers existing files.
+
+## R20 — Roadmap-vs-ticket guidance (agent logs tickets when asked to log roadmap items)
+
+**Status:** done
+
+### Problem
+When the user says "log this on the roadmap", the agent logs a ticket instead.
+Process guidance is missing: tickets and roadmap items are different artifacts
+(ticket = unit of work; roadmap item = R<n> section in ROADMAP.md, canonical).
+
+### Proposed
+1. Strengthen the standing rule in the agent's system prompt / project notes:
+   every roadmap-worthy request creates BOTH an R<n> section (ROADMAP.md,
+   via upsert_roadmap_md) AND a tracer ticket, linked by R-id.
+2. Add a `log_roadmap_item(title, body)` convenience tool that does both in
+   one call, so the agent cannot get it wrong.
+3. Planning tab already reads ROADMAP.md (md-as-source-of-truth) — no UI work.

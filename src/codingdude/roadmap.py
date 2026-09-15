@@ -184,13 +184,15 @@ class RoadmapStore:
         return [dict(r) for r in rows]
 
     def create_ticket(
-        self, workdir: str, title: str, body: str = '', blocked_by: str | None = None
+        self, workdir: str, title: str, body: str = '', blocked_by: str | None = None,
+        roadmap_id: str | None = None,
     ) -> int:
         now = _now()
         cur = self.db._conn.execute(
-            'INSERT INTO tickets (workdir, title, status, body, blocked_by, created_at, updated_at)'
-            " VALUES (?, ?, 'todo', ?, ?, ?, ?)",
-            (workdir, title, body, blocked_by, now, now),
+            'INSERT INTO tickets (workdir, title, status, body, blocked_by, roadmap_id,'
+            ' created_at, updated_at)'
+            " VALUES (?, ?, 'todo', ?, ?, ?, ?, ?)",
+            (workdir, title, body, blocked_by, roadmap_id, now, now),
         )
         self.db._conn.commit()
         assert cur.lastrowid is not None
@@ -311,10 +313,35 @@ def build_roadmap_toolset(
             return f'roadmap item {rid} not found'
         return f'roadmap item {rid} → {status}'
 
-    async def create_ticket(title: str, body: str = '', blocked_by: str | None = None) -> str:
-        """Create a ticket (tracer bullet) for this project, optionally blocked by another ticket's id."""
-        tid = store.create_ticket(workdir, title, body, blocked_by)
-        return f'ticket #{tid} created: {title}'
+    async def create_roadmap_item(title: str, body: str = '') -> str:
+        """Create a roadmap item (R<n>) in ROADMAP.md - the planning umbrella every ticket lives under. Do this BEFORE creating tickets for the work."""
+        md = Path(workdir) / 'ROADMAP.md'
+        if md.is_file():
+            upsert_roadmap_md(md, None, title=title, body=body)
+            rid = parse_roadmap_md(md)[-1]['id']
+            return f'roadmap item {rid} created: {title}'
+        did = store.create_roadmap_item(workdir, title, body)
+        return f'roadmap item #{did} created: {title}'
+
+    async def create_ticket(
+        title: str, body: str = '', blocked_by: str | None = None,
+        roadmap_id: str = '',
+    ) -> str:
+        """Create a ticket (tracer bullet) under a roadmap item. roadmap_id is required (R-id, e.g. 'R3' or '3'); a ticket may not exist without a roadmap item - even stabilization work."""
+        if not roadmap_id:
+            return ('refused: tickets require a roadmap item. Call create_roadmap_item '
+                    'first (every umbrella needs one, even "Stabilization"), then retry '
+                    'with its R-id.')
+        rid = roadmap_id if roadmap_id.startswith('R') else f'R{roadmap_id}'
+        md = Path(workdir) / 'ROADMAP.md'
+        if md.is_file():
+            known = {r['id'] for r in parse_roadmap_md(md)}
+        else:
+            known = {f"R{r['id']}" for r in store.list_roadmap(workdir)}
+        if rid not in known:
+            return f'refused: roadmap item {rid} not found - create it first (create_roadmap_item).'
+        tid = store.create_ticket(workdir, title, body, blocked_by, roadmap_id=rid)
+        return f'ticket #{tid} created under {rid}: {title}'
 
     async def update_ticket(ticket_id: int, status: str, body: str | None = None) -> str:
         """Update a ticket's status ('todo'|'in_progress'|'done'). Marking 'done' records the current HEAD commit as closing it."""
@@ -345,6 +372,7 @@ def build_roadmap_toolset(
 
     return FunctionToolset([
         list_planning,
+        create_roadmap_item,
         update_roadmap_item,
         create_ticket,
         update_ticket,

@@ -104,6 +104,7 @@ CREATE TABLE IF NOT EXISTS tickets (
     status TEXT NOT NULL DEFAULT 'todo' CHECK (status IN ('todo', 'in_progress', 'done')),
     body TEXT NOT NULL DEFAULT '',
     blocked_by TEXT,
+    roadmap_id TEXT,
     commit_sha TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -206,6 +207,11 @@ class Database:
         ):
             if column not in existing:
                 self._conn.execute(f'ALTER TABLE sessions ADD COLUMN {column} {decl}')
+        ticket_cols = {
+            r['name'] for r in self._conn.execute('PRAGMA table_info(tickets)')
+        }
+        if ticket_cols and 'roadmap_id' not in ticket_cols:
+            self._conn.execute('ALTER TABLE tickets ADD COLUMN roadmap_id TEXT')
         self._conn.commit()
 
     def update_session_context(

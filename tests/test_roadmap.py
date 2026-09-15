@@ -127,6 +127,59 @@ async def test_roadmap_toolset_prefers_roadmap_md(store, tmp_path):
     assert 'ADR-1' in await tools['list_planning'].function()
 
 
+@pytest.mark.asyncio
+async def test_toolset_create_roadmap_item(store, tmp_path):
+    """R20: the agent must be able to create roadmap items (the missing tool)."""
+    wd = tmp_path / 'create'
+    wd.mkdir()
+    (wd / 'ROADMAP.md').write_text(
+        '# Roadmap\n\n## R1 — First\n**Status:** open\n\nBody.\n', encoding='utf-8'
+    )
+    tools = build_roadmap_toolset(store, str(wd)).tools
+    assert 'create_roadmap_item' in tools
+
+    msg = await tools['create_roadmap_item'].function('Second thing', 'why it matters')
+    assert 'R2' in msg
+    text = (wd / 'ROADMAP.md').read_text(encoding='utf-8')
+    assert '## R2 — Second thing' in text and '**Status:** open' in text
+    assert 'why it matters' in text
+
+
+@pytest.mark.asyncio
+async def test_toolset_create_ticket_requires_roadmap_item(store, tmp_path):
+    """R20 rule: no ticket without a roadmap item, even for stabilization."""
+    wd = tmp_path / 'link'
+    wd.mkdir()
+    (wd / 'ROADMAP.md').write_text(
+        '# Roadmap\n\n## R1 — Thing\n**Status:** open\n\nBody.\n', encoding='utf-8'
+    )
+    tools = build_roadmap_toolset(store, str(wd)).tools
+
+    # Missing roadmap_id → guidance, not a ticket.
+    msg = await tools['create_ticket'].function('do stuff')
+    assert 'roadmap' in msg.lower()
+    assert store.list_tickets(str(wd)) == []
+
+    # Unknown roadmap id → guidance, not a ticket.
+    msg = await tools['create_ticket'].function('do stuff', roadmap_id='R9')
+    assert 'not found' in msg
+    assert store.list_tickets(str(wd)) == []
+
+    # Valid link (bare numeric accepted, normalized) → ticket created.
+    msg = await tools['create_ticket'].function('tracer', roadmap_id='1')
+    tid = int(msg.split('#')[1].split()[0])
+    assert store.list_tickets(str(wd))[0]['id'] == tid
+    assert store.list_tickets(str(wd))[0]['roadmap_id'] == 'R1'
+
+
+def test_ticket_store_accepts_roadmap_id(store, tmp_path):
+    """Store-level create_ticket takes an optional roadmap_id (UI / server path)."""
+    wd = str(tmp_path / 'store')
+    tid = store.create_ticket(wd, 't', roadmap_id='R3')
+    row = store.list_tickets(wd)[0]
+    assert row['id'] == tid and row['roadmap_id'] == 'R3'
+
+
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv('CODEDUDE_HOME', str(tmp_path / 'home'))
