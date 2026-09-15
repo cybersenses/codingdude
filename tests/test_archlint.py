@@ -273,3 +273,78 @@ def test_adr_contradiction_is_waivable(workdir, db):
     lint.waive(f['fingerprint'], 'module intentionally removed')
     waived = [f for f in lint.check(workdir) if f['rule'] == 'adr-contradiction']
     assert waived and waived[0].get('waived') is True
+
+
+# ---- R14: spec Contract sections are enforced ----
+
+def write_spec(workdir, name, body):
+    d = workdir / 'docs' / 'specs'
+    d.mkdir(parents=True, exist_ok=True)
+    (d / name).write_text(textwrap.dedent(body), encoding='utf-8')
+
+
+def test_spec_contract_missing_symbol_flagged(workdir):
+    write_spec(workdir, 'X-feature.md', """
+        # X
+        ## Contract
+        - `never_defined_anywhere`
+    """)
+    findings = ArchLint().check(workdir)
+    rule = [f for f in findings if f['rule'] == 'spec-contract-missing']
+    assert len(rule) == 1
+    assert 'never_defined_anywhere' in rule[0]['message']
+
+
+def test_spec_contract_tested_symbol_clean(workdir):
+    write(workdir, 'pkg/feature.py', """
+        def shipped_thing():
+            '''Does the thing.'''
+            return 1
+    """)
+    (workdir / 'tests').mkdir()
+    (workdir / 'tests' / 'test_feature.py').write_text(
+        'from pkg.feature import shipped_thing' + chr(10)
+        + 'def test_it():' + chr(10)
+        + '    assert shipped_thing() == 1' + chr(10),
+        encoding='utf-8')
+    write_spec(workdir, 'X-feature.md', """
+        ## Contract
+        - `shipped_thing`
+    """)
+    assert [f for f in ArchLint().check(workdir)
+            if f['rule'].startswith('spec-contract')] == []
+
+
+def test_spec_contract_untested_symbol_flagged(workdir):
+    write(workdir, 'pkg/feature.py', """
+        def untested_thing():
+            '''Exists but never tested.'''
+            return 2
+    """)
+    write_spec(workdir, 'X-feature.md', """
+        ## Contract
+        - `untested_thing`
+    """)
+    findings = ArchLint().check(workdir)
+    rule = [f for f in findings if f['rule'] == 'spec-contract-untested']
+    assert len(rule) == 1
+
+
+def test_spec_contract_ignores_multiword_and_paths(workdir):
+    write_spec(workdir, 'X-feature.md', """
+        ## Contract
+        - see `docs/other.md` and `some-option` for context
+    """)
+    assert [f for f in ArchLint().check(workdir)
+            if f['rule'].startswith('spec-contract')] == []
+
+
+def test_spec_contracts_helper_direct(workdir):
+    """The rule entry point itself is exercised directly (R14 contract)."""
+    bt = chr(96)
+    write_spec(workdir, 'X.md', f"""
+        ## Contract
+        - {bt}nope_missing{bt}
+    """)
+    findings = ArchLint()._spec_contracts(workdir)
+    assert [f['rule'] for f in findings] == ['spec-contract-missing']

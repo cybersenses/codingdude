@@ -457,7 +457,9 @@ incident cost a scripted-patch workaround. Root cause diagnosed in `tools.py:edi
 
 ---
 
-## R13 — Isolated delegated agents (status: specced, not started)
+## R13 — Isolated delegated agents
+
+**Status:** done (ticket #19)
 
 **Theme (b): long-horizon / multi-agent orchestration.** `delegate` today runs
 unisolated in the main workdir and returns one opaque blob.
@@ -481,7 +483,9 @@ unisolated in the main workdir and returns one opaque blob.
 ### Evidence / notes
 - Decision #9 (round 4, approved). Spec-level only this session.
 
-## R14 — Contract-first discipline + mid-run index refresh (status: specced, not started)
+## R14 — Contract-first discipline + mid-run index refresh
+
+**Status:** done (ticket #20)
 
 **Theme (c): deeper code understanding.** Thin slice of the deferred R8
 contract-first codegen; no DSL, no generated stubs.

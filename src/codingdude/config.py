@@ -79,6 +79,15 @@ def parse_thinking(value: str | None) -> ThinkingSetting | None:
 
 
 @dataclass(frozen=True)
+class DelegationConfig:
+    """Budget ceiling for one `delegate` call (R13): the subagent is aborted
+    with a readable tool result instead of burning the session budget."""
+
+    max_requests: int = 40
+    max_cost_usd: float | None = None
+
+
+@dataclass(frozen=True)
 class ShellConfig:
     default: str = 'bash'
 
@@ -95,6 +104,7 @@ class Config:
     models: ModelLineup
     shell: ShellConfig
     providers: ProviderKeys = field(default_factory=ProviderKeys)
+    delegation: DelegationConfig = field(default_factory=DelegationConfig)
 
     @classmethod
     def defaults(cls) -> Config:
@@ -140,6 +150,13 @@ def load_config(home: Path | None = None) -> Config:
     models = raw.get('models', {})
     shell = raw.get('shell', {})
     providers = raw.get('providers', {})
+    delegation_raw = raw.get('delegation', {})
+    delegation = DelegationConfig(
+        max_requests=delegation_raw.get(
+            'max_requests', defaults.delegation.max_requests),
+        max_cost_usd=delegation_raw.get(
+            'max_cost_usd', defaults.delegation.max_cost_usd),
+    )
     config = Config(
         models=ModelLineup(
             main=models.get('main', defaults.models.main),
@@ -159,6 +176,7 @@ def load_config(home: Path | None = None) -> Config:
             zai=providers.get('zai'),
             github=providers.get('github'),
         ),
+        delegation=delegation,
     )
     apply_provider_keys(config)
     return config

@@ -6,7 +6,7 @@ question the user answered and every recorded design decision is auto-captured
 as an artifact. The agent does nothing extra; capture is automatic and
 best-effort (a capture failure never breaks the run).
 
-## Contract
+## Interface
 - `ArtifactStore.record_qa(questions: list, answers) -> str` — kind `qa`,
   status `answered`, payload `{"questions": [...], "answers": {...}}`.
 - `ArtifactStore.record_decision(title: str, body: str) -> str` — kind

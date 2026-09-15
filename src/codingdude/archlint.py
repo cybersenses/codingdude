@@ -46,6 +46,7 @@ class ArchLint:
         findings += self._duplicate_bodies(workdir)
         findings += self._missing_contract(workdir)
         findings += self._adr_contradiction(workdir)
+        findings += self._spec_contracts(workdir)
         waivers = self._waivers(workdir)
         for f in findings:
             if f['fingerprint'] in waivers:
@@ -144,6 +145,77 @@ class ArchLint:
                 ),
                 'locations': locations,
             })
+        return findings
+
+    def _spec_contracts(self, workdir: Path) -> list[dict]:
+        """R14 contract-first discipline: a `## Contract` section in a spec
+        (docs/specs/*.md) names exported symbols (single-word backticked
+        names). Each must exist as a top-level function/class and be
+        referenced by at least one test. Soft findings, waivable like any
+        other rule."""
+        specs_dir = workdir / 'docs' / 'specs'
+        if not specs_dir.is_dir():
+            return []
+        names: dict[str, str] = {}  # symbol -> spec file
+        for spec in sorted(specs_dir.glob('*.md')):
+            try:
+                text = spec.read_text(encoding='utf-8')
+            except OSError:
+                continue
+            m = re.search(r'^##\s+Contract\s*$', text, re.MULTILINE)
+            if not m:
+                continue
+            section = text[m.end():]
+            nxt = re.search(r'^##\s+', section, re.MULTILINE)
+            if nxt:
+                section = section[:nxt.start()]
+            for ticked in re.findall(r'`([^`]+)`', section):
+                # dotted paths (pkg.mod.Name) resolve to the symbol itself
+                parts = ticked.split('.')
+                if all(re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', p) for p in parts):
+                    names.setdefault(parts[-1], spec.name)
+        if not names:
+            return []
+        defined = {
+            node.name
+            for _, tree in _trees(workdir)
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                 ast.ClassDef))
+        }
+        tests_dir = workdir / 'tests'
+        tested_names: set[str] = set()
+        if tests_dir.is_dir():
+            for tf in tests_dir.rglob('*.py'):
+                try:
+                    ttext = tf.read_text(encoding='utf-8', errors='ignore')
+                except OSError:
+                    continue
+                tested_names.update(n for n in names if n in ttext)
+        findings: list[dict] = []
+        for name, spec_file in sorted(names.items()):
+            if name not in defined:
+                findings.append({
+                    'rule': 'spec-contract-missing',
+                    'fingerprint': _fp('spec-contract-missing', name),
+                    'message': (
+                        f"spec {spec_file} Contract names '{name}' but no "
+                        f'top-level function/class with that name exists - '
+                        f'implement it or waive explicitly'
+                    ),
+                    'locations': [f'{spec_file}: {name}'],
+                })
+            elif name not in tested_names:
+                findings.append({
+                    'rule': 'spec-contract-untested',
+                    'fingerprint': _fp('spec-contract-untested', name),
+                    'message': (
+                        f"spec {spec_file} Contract names '{name}' but no "
+                        f'test under tests/ references it - add a test or '
+                        f'waive explicitly'
+                    ),
+                    'locations': [f'{spec_file}: {name}'],
+                })
         return findings
 
     # ---- waivers ----

@@ -108,3 +108,16 @@ async def test_refactor_and_worktree_attached_in_build_all(tmp_path, monkeypatch
     toolsets = await build_all(ctx)
     names = {t.name for ts in toolsets for t in getattr(ts, 'tools', {}).values()}
     assert {'rename_symbol', 'worktree_create', 'worktree_merge', 'worktree_list'} <= names
+
+
+def test_remove_worktree_cleans_branch_and_dir(repo):
+    from codingdude.worktrees import create_worktree, remove_worktree
+
+    create_worktree(repo, 'rm-me')
+    assert (repo / '.codingdude-worktrees' / 'rm-me').exists()
+    remove_worktree(repo, 'rm-me')
+    assert not (repo / '.codingdude-worktrees' / 'rm-me').exists()
+    import subprocess
+    branches = subprocess.run(['git', 'branch', '--list', 'codingdude/rm-me'],
+                              cwd=repo, capture_output=True, text=True)
+    assert branches.stdout.strip() == ''

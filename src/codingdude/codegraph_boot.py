@@ -22,6 +22,27 @@ def find_codegraph_cli() -> str | None:
     return str(_FALLBACK_CMD) if _FALLBACK_CMD.exists() else None
 
 
+def _run_codegraph_init(
+    workdir: Path,
+    runner=subprocess.run,
+    cli_path: str | None = None,
+    timeout: int = 300,
+) -> str | None:
+    """Run `codegraph init` for the workdir; None on any failure (best-effort)."""
+    cli = cli_path or find_codegraph_cli()
+    if not cli:
+        return None
+    try:
+        proc = runner(['cmd', '/c', cli, 'init', str(workdir)], cwd=workdir,
+                      timeout=timeout)
+    except Exception:  # best-effort: never block a run on bootstrap failure
+        return None
+    output = getattr(proc, 'stdout', None) or ''
+    if getattr(proc, 'returncode', 0) != 0:
+        return None
+    return str(output)
+
+
 def ensure_codegraph_index(
     workdir: Path,
     runner=subprocess.run,
@@ -35,15 +56,16 @@ def ensure_codegraph_index(
     """
     if (workdir / '.codegraph').exists():
         return None
-    cli = cli_path or find_codegraph_cli()
-    if not cli:
-        return None
-    try:
-        proc = runner(['cmd', '/c', cli, 'init', str(workdir)], cwd=workdir,
-                      timeout=timeout)
-    except Exception:  # best-effort: never block a run on bootstrap failure
-        return None
-    output = getattr(proc, 'stdout', None) or ''
-    if getattr(proc, 'returncode', 0) != 0:
-        return None
-    return str(output)
+    return _run_codegraph_init(workdir, runner, cli_path, timeout)
+
+
+def refresh_codegraph_index(
+    workdir: Path,
+    runner=subprocess.run,
+    cli_path: str | None = None,
+    timeout: int = 120,
+) -> str | None:
+    """Re-run `codegraph init` even when an index exists (R14 mid-run
+    refresh): long sessions must not navigate stale code. Best-effort —
+    None on any failure, never raises."""
+    return _run_codegraph_init(workdir, runner, cli_path, timeout)

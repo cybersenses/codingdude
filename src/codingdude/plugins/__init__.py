@@ -108,6 +108,8 @@ async def build_all(ctx: PluginContext) -> list[AbstractToolset]:
     if ctx.subagent_model is not None:
         toolsets.append(build_delegation_toolset(
             ctx.workdir, ctx.subagent_model, thinking=thinking_setting,
+            delegation_config=ctx.config.delegation,
+            emitter=ctx.emitter, db=ctx.db, session_id=ctx.session_id,
         ))
 
     toolsets.append(build_web_toolset())

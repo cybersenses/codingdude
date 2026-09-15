@@ -49,6 +49,16 @@ def create_worktree(workdir: Path, name: str) -> Path:
     return worktree_path
 
 
+def remove_worktree(workdir: Path, name: str) -> None:
+    """Force-remove `.codingdude-worktrees/<name>` and its branch. Delegation
+    teardown (R13): safe on absent paths, never raises."""
+    path = workdir / WORKTREE_DIRNAME / name
+    if path.exists():
+        _git(workdir, 'worktree', 'remove', '--force', str(path), check=False)
+        _git(workdir, 'worktree', 'prune', check=False)
+    _git(workdir, 'branch', '-D', f'{BRANCH_PREFIX}{name}', check=False)
+
+
 def build_worktree_toolset(workdir: Path, approvals=None) -> FunctionToolset:
     """`worktree_create` / `worktree_list` / `worktree_merge`: the isolation
     lifecycle. merge runs `git merge` in the MAIN checkout — gated like other

@@ -297,6 +297,15 @@ class Engine:
             failure_text = (
                 'The test suite is still failing. Output:\n' + test_out + '\n'
             )
+            import asyncio as _asyncio
+
+            from .codegraph_boot import refresh_codegraph_index
+
+            if emit:
+                emit({'type': 'INDEX_REFRESHING'})
+            refreshed = await _asyncio.to_thread(refresh_codegraph_index, workdir)
+            if emit:
+                emit({'type': 'INDEX_REFRESHED', 'ok': refreshed is not None})
             result = await retry_agent.run(
                 failure_text
                 + 'Fix the failures. Do not declare success until the tests pass.',

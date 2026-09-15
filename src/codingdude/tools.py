@@ -2,6 +2,7 @@
 
 import re
 import time
+import uuid
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import NamedTuple
@@ -431,34 +432,116 @@ def _register_new_renders(workdir: Path, started: float, on_render: Callable[[st
 
 
 def build_delegation_toolset(
-    workdir: Path, subagent_model, thinking: ThinkingSetting | None = None
+    workdir: Path,
+    subagent_model,
+    thinking: ThinkingSetting | None = None,
+    *,
+    delegation_config=None,
+    emitter=None,
+    db=None,
+    session_id: str = '',
 ) -> FunctionToolset:
     """The `delegate` tool: spawn a read-only Subagent on the cheap model.
 
     Subagents never see edit/write/shell/delegation tools, so Delegation
-    can't route around Approval tiers.
+    can't route around Approval tiers. R13: the subagent's tools are rooted
+    at a fresh git worktree (torn down afterwards), the run is bracketed by
+    DELEGATION_STARTED/COMPLETED trace events, bounded by the configured
+    request budget, and billed to the parent session.
     """
+    from .config import DelegationConfig
+
+    cfg = delegation_config or DelegationConfig()
+
+    def _emit(event: dict) -> None:
+        if emitter is not None:
+            emitter(event)
+
+    def _bill(usage) -> None:
+        # Delegations are real spend: attribute to the parent Session (H6).
+        if db is None or not session_id:
+            return
+        try:
+            cost = getattr(usage, 'cost', None)
+            db.record_usage(
+                session_id,
+                model=str(getattr(subagent_model, 'model_name', subagent_model)),
+                requests=getattr(usage, 'requests', 0) or 0,
+                input_tokens=getattr(usage, 'input_tokens', 0) or 0,
+                output_tokens=getattr(usage, 'output_tokens', 0) or 0,
+                cost_usd=float(cost) if cost is not None else None,
+            )
+        except Exception:  # noqa: BLE001 - accounting must never fail a run
+            pass
 
     async def delegate(task: str) -> str:
         from pydantic_ai import Agent
+        from pydantic_ai.exceptions import UsageLimitExceeded
         from pydantic_ai.settings import ModelSettings
         from pydantic_ai.usage import UsageLimits
 
         from .prompts import load_prompt
+        from .worktrees import (
+            WORKTREE_DIRNAME,
+            WorktreeError,
+            create_worktree,
+            remove_worktree,
+        )
 
+        sandbox_name = 'delegation-' + uuid.uuid4().hex[:8]
+        agent_workdir = workdir
+        isolated = False
+        try:
+            create_worktree(workdir, sandbox_name)
+            agent_workdir = workdir / WORKTREE_DIRNAME / sandbox_name
+            isolated = True
+        except WorktreeError:
+            isolated = False  # no git history / name clash: unisolated, said so
+        _emit({'type': 'DELEGATION_STARTED', 'task': task[:200],
+               'isolated': isolated})
         settings: ModelSettings = ModelSettings(timeout=300)
         if thinking is not None:
             settings['thinking'] = thinking
         sub_agent: Agent = Agent(
             model=subagent_model,
             instructions=load_prompt('delegation'),
-            toolsets=[build_toolset(workdir, read_only=True)],
+            toolsets=[build_toolset(agent_workdir, read_only=True)],
             model_settings=settings,
         )
-        result = await sub_agent.run(
-            task, usage_limits=UsageLimits(request_limit=200)
-        )
-        return str(result.output)
+        try:
+            result = await sub_agent.run(
+                task, usage_limits=UsageLimits(request_limit=cfg.max_requests)
+            )
+        except UsageLimitExceeded:
+            return (
+                'delegation aborted: exceeded the delegation budget of '
+                f'{cfg.max_requests} model requests. Narrow the task and '
+                'delegate again with a tighter question.'
+            )
+        finally:
+            if isolated:
+                remove_worktree(workdir, sandbox_name)
+        usage = result.usage
+        _bill(usage)
+        cost = getattr(usage, 'cost', None)
+        _emit({
+            'type': 'DELEGATION_COMPLETED',
+            'isolated': isolated,
+            'requests': usage.requests or 0,
+            'input_tokens': usage.input_tokens or 0,
+            'output_tokens': usage.output_tokens or 0,
+            'cost_usd': float(cost) if cost is not None else None,
+        })
+        output = str(result.output)
+        if cfg.max_cost_usd is not None and cost is not None \
+                and float(cost) > cfg.max_cost_usd:
+            output += (
+                '\n(note: delegation cost ' + format(float(cost), '.4f')
+                + ' USD exceeded the configured cap of '
+                + str(cfg.max_cost_usd) + ' USD - consider raising '
+                '[delegation].max_cost_usd or splitting the task)'
+            )
+        return output
 
     return FunctionToolset([delegate])
 
