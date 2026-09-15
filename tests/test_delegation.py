@@ -214,3 +214,32 @@ async def test_delegation_cost_attributed_to_parent(workdir, tmp_path):
     await delegate.function(task='x')
     rows = db.session_usage(session_id)
     assert (rows.get('requests') or 0) >= 1
+
+
+# ---- R16: delegation task briefs ----
+
+
+async def test_subagent_receives_brief_and_events_share_delegation_id(workdir):
+    (workdir / 'notes.py').write_text('def loginUser(): ...\n')
+    seen: list[str] = []
+
+    def spy(messages, info):
+        for m in messages:
+            for p in m.parts:
+                content = getattr(p, 'content', None)
+                if content:
+                    seen.append(str(content))
+        return ModelResponse(parts=[TextPart(content='ok')])
+
+    events = []
+    toolset = build_delegation_toolset(
+        workdir, scripted(spy), emitter=events.append, session_id='s1',
+    )
+    [delegate] = [t for t in toolset.tools.values()]
+    await delegate.function(task='inspect loginUser')
+    started, completed = events[0], events[-1]
+    assert started['delegation_id'] == completed['delegation_id']
+    assert started['brief_symbols'] == 1
+    joined = '\n'.join(seen)
+    assert 'Relevant symbols: loginUser' in joined
+

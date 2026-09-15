@@ -440,6 +440,7 @@ def build_delegation_toolset(
     emitter=None,
     db=None,
     session_id: str = '',
+    approvals=None,
 ) -> FunctionToolset:
     """The `delegate` tool: spawn a read-only Subagent on the cheap model.
 
@@ -474,13 +475,17 @@ def build_delegation_toolset(
         except Exception:  # noqa: BLE001 - accounting must never fail a run
             pass
 
-    async def delegate(task: str) -> str:
+    async def delegate(task: str, write: bool = False) -> str:
+        import uuid as _uuid
+
         from pydantic_ai import Agent
         from pydantic_ai.exceptions import UsageLimitExceeded
         from pydantic_ai.settings import ModelSettings
         from pydantic_ai.usage import UsageLimits
 
+        from .delegation import brief_prompt, build_brief
         from .prompts import load_prompt
+        from .sandbox import _make_venv, exec_in_sandbox_dir
         from .worktrees import (
             WORKTREE_DIRNAME,
             WorktreeError,
@@ -488,6 +493,10 @@ def build_delegation_toolset(
             remove_worktree,
         )
 
+        if write and approvals is None:
+            return ('error: write delegations require an approval policy '
+                    '(none configured for this session)')
+        delegation_id = 'dlg-' + _uuid.uuid4().hex[:8]
         sandbox_name = 'delegation-' + uuid.uuid4().hex[:8]
         agent_workdir = workdir
         isolated = False
@@ -495,29 +504,58 @@ def build_delegation_toolset(
             create_worktree(workdir, sandbox_name)
             agent_workdir = workdir / WORKTREE_DIRNAME / sandbox_name
             isolated = True
+            if write:
+                _make_venv(agent_workdir)  # best-effort: exec falls back to PATH
         except WorktreeError:
             isolated = False  # no git history / name clash: unisolated, said so
+        brief = build_brief(task, agent_workdir, cfg.max_requests)
         _emit({'type': 'DELEGATION_STARTED', 'task': task[:200],
-               'isolated': isolated})
+               'isolated': isolated, 'delegation_id': delegation_id,
+               'write': write,
+               'brief_symbols': len(brief.symbols),
+               'has_contract': brief.contract is not None})
         settings: ModelSettings = ModelSettings(timeout=300)
         if thinking is not None:
             settings['thinking'] = thinking
+
+        async def exec_in_sandbox(command: str) -> str:
+            '''Run one shell command inside this delegation's isolated
+            sandbox worktree (its own branch; the main tree is untouched).
+            Changes you make here come back to the parent as a diff.'''
+            return await exec_in_sandbox_dir(
+                workdir, sandbox_name, command, approvals)
+
+        toolsets: list = [build_toolset(agent_workdir, read_only=True)]
+        if write:
+            from pydantic_ai.toolsets import FunctionToolset as _FTS
+
+            toolsets.append(_FTS([exec_in_sandbox]))
         sub_agent: Agent = Agent(
             model=subagent_model,
             instructions=load_prompt('delegation'),
-            toolsets=[build_toolset(agent_workdir, read_only=True)],
+            toolsets=toolsets,
             model_settings=settings,
         )
+        sandbox_diff: str | None = None
         try:
-            result = await sub_agent.run(
-                task, usage_limits=UsageLimits(request_limit=cfg.max_requests)
-            )
-        except UsageLimitExceeded:
-            return (
-                'delegation aborted: exceeded the delegation budget of '
-                f'{cfg.max_requests} model requests. Narrow the task and '
-                'delegate again with a tighter question.'
-            )
+            try:
+                result = await sub_agent.run(
+                    brief_prompt(brief),
+                    usage_limits=UsageLimits(request_limit=cfg.max_requests),
+                )
+            except UsageLimitExceeded:
+                return (
+                    'delegation aborted: exceeded the delegation budget of '
+                    f'{cfg.max_requests} model requests. Narrow the task and '
+                    'delegate again with a tighter question.'
+                )
+            if write and isolated:
+                # intent-to-add so newly created files appear in the diff
+                await run_captured(['git', 'add', '-N', '-A'],
+                                   cwd=agent_workdir, timeout=60)
+                cap = await run_captured(['git', 'diff'], cwd=agent_workdir,
+                                         timeout=60)
+                sandbox_diff = cap.combined.strip() if cap else ''
         finally:
             if isolated:
                 remove_worktree(workdir, sandbox_name)
@@ -527,12 +565,20 @@ def build_delegation_toolset(
         _emit({
             'type': 'DELEGATION_COMPLETED',
             'isolated': isolated,
+            'delegation_id': delegation_id,
+            'write': write,
             'requests': usage.requests or 0,
             'input_tokens': usage.input_tokens or 0,
             'output_tokens': usage.output_tokens or 0,
             'cost_usd': float(cost) if cost is not None else None,
         })
         output = str(result.output)
+        if write and isolated:
+            diff = sandbox_diff or ''
+            output += (
+                '\n\nSandbox diff (proposed, not applied):\n' + diff
+                if diff else
+                '\n\n(sandbox tree clean - no changes to integrate)')
         if cfg.max_cost_usd is not None and cost is not None \
                 and float(cost) > cfg.max_cost_usd:
             output += (

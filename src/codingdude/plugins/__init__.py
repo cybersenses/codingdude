@@ -110,6 +110,7 @@ async def build_all(ctx: PluginContext) -> list[AbstractToolset]:
             ctx.workdir, ctx.subagent_model, thinking=thinking_setting,
             delegation_config=ctx.config.delegation,
             emitter=ctx.emitter, db=ctx.db, session_id=ctx.session_id,
+            approvals=ctx.approvals,
         ))
 
     toolsets.append(build_web_toolset())

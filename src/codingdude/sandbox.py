@@ -121,6 +121,47 @@ async def _run(argv: list[str], cwd: Path, timeout: int) -> str:
     return f'exit {cap.code}\n{cap.combined}' if cap.combined else f'exit {cap.code}'
 
 
+async def container_running(container: str) -> bool:
+    proc = subprocess.run(
+        [docker_cli() or 'docker', 'inspect', '-f',
+         '{{.State.Running}}', container],
+        capture_output=True, text=True, env=scrubbed_env())
+    return proc.returncode == 0 and 'true' in proc.stdout
+
+
+async def exec_in_sandbox_dir(
+    workdir: Path, name: str, command: str, policy=None,
+) -> str:
+    """Run a command inside sandbox `name` (R17 shared core: the sandbox_exec
+    tool and write-capable delegations use this one implementation)."""
+    sandbox = workdir / WORKTREE_DIRNAME / name
+    if not sandbox.exists():
+        return f'error: no sandbox named {name} - create it first'
+    from .approvals import DENIED, NEEDS_GATE
+    from .tools import _resolve_gate
+
+    if policy is not None:
+        decision = policy.decide(command)
+        if decision in (NEEDS_GATE, DENIED):
+            await _resolve_gate(policy, command, always=decision == DENIED)
+    container = CONTAINER_PREFIX + name
+    if await container_running(container):
+        summary = await _run([
+            docker_cli() or 'docker', 'exec', '-w', CONTAINER_MOUNT,
+            container, 'sh', '-c', command], sandbox, EXEC_TIMEOUT)
+        return f'{summary} {_tier_line("container", CONTAINER_IMAGE)}'
+    env_bin = _venv_bin(sandbox)
+    env = scrubbed_env()
+    path_key = next((k for k in env if k.lower() == 'path'), 'PATH')
+    env[path_key] = f'{env_bin}{os.pathsep}{env.get(path_key, "")}'
+    cap = await run_captured([command], cwd=sandbox, timeout=EXEC_TIMEOUT,
+                             env=env, shell=True)
+    if cap is None:
+        return f'exit -1\n command timed out after {EXEC_TIMEOUT}s'
+    summary = f'exit {cap.code}\n{cap.combined}' if cap.combined else f'exit {cap.code}'
+    return f'{summary} {_tier_line()}'
+
+
 def build_sandbox_toolset(workdir: Path, policy) -> FunctionToolset:
     """sandbox_create / sandbox_exec / sandbox_teardown / sandbox_promote:
     the tier-1 prototype lifecycle on top of git worktrees."""
@@ -129,11 +170,7 @@ def build_sandbox_toolset(workdir: Path, policy) -> FunctionToolset:
         return workdir / WORKTREE_DIRNAME / name
 
     async def _container_running(container: str) -> bool:
-        proc = subprocess.run(
-            [docker_cli() or 'docker', 'inspect', '-f',
-             '{{.State.Running}}', container],
-            capture_output=True, text=True, env=scrubbed_env())
-        return proc.returncode == 0 and 'true' in proc.stdout
+        return await container_running(container)
 
     async def sandbox_create(name: str, tier: str = '') -> str:
         if tier not in ('', 'worktree', 'container'):
@@ -181,30 +218,7 @@ def build_sandbox_toolset(workdir: Path, policy) -> FunctionToolset:
                 f'preview=http://localhost:{port} venv={detail} {_tier_line()}')
 
     async def sandbox_exec(name: str, command: str) -> str:
-        sandbox = sandbox_path(name)
-        if not sandbox.exists():
-            return f'error: no sandbox named {name} — create it first'
-        from .approvals import DENIED, NEEDS_GATE
-
-        decision = policy.decide(command)
-        if decision in (NEEDS_GATE, DENIED):
-            await _resolve_gate(policy, command, always=decision == DENIED)
-        container = CONTAINER_PREFIX + name
-        if await _container_running(container):
-            summary = await _run([
-                docker_cli() or 'docker', 'exec', '-w', CONTAINER_MOUNT,
-                container, 'sh', '-c', command], sandbox, EXEC_TIMEOUT)
-            return f'{summary} {_tier_line("container", CONTAINER_IMAGE)}'
-        env_bin = _venv_bin(sandbox)
-        env = scrubbed_env()
-        path_key = next((k for k in env if k.lower() == 'path'), 'PATH')
-        env[path_key] = f'{env_bin}{os.pathsep}{env.get(path_key, "")}'
-        cap = await run_captured([command], cwd=sandbox, timeout=EXEC_TIMEOUT,
-                                 env=env, shell=True)
-        if cap is None:
-            return f'exit -1\n command timed out after {EXEC_TIMEOUT}s'
-        summary = f'exit {cap.code}\n{cap.combined}' if cap.combined else f'exit {cap.code}'
-        return f'{summary} {_tier_line()}'
+        return await exec_in_sandbox_dir(workdir, name, command, policy)
 
     async def sandbox_teardown(name: str) -> str:
         sandbox = sandbox_path(name)
