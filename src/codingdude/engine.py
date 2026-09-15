@@ -354,11 +354,17 @@ class Engine:
         traced = self._make_tracer(session_id, workdir, trace, emit)
 
         from .codegraph_boot import boot_codegraph, boot_hint
+        from .scaffold import ensure_project_scaffold
 
+        scaffold = ensure_project_scaffold(workdir)
         boot_status = boot_codegraph(workdir)
         boot_event: dict = {'type': 'CODEGRAPH_BOOT', 'status': boot_status['status']}
         if boot_status['reason']:
             boot_event['reason'] = boot_status['reason']
+        if scaffold['created']:
+            boot_event['scaffold_created'] = scaffold['created']
+        if scaffold['errors']:
+            logger.warning('project scaffold incomplete: %s', scaffold['errors'])
         # Emitted after USER_PROMPT below: the trace contract keeps
         # USER_PROMPT as the first event of a run (test_evals relies on it).
 

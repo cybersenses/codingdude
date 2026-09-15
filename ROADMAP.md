@@ -566,7 +566,7 @@ the user stared at a spinning UI for up to ~90s after every run — pure frictio
 
 ## R19 — Project bootstrap defaults
 
-**Status:** open
+**Status:** done
 
 ### Problem
 New projects (observed on BreweySoft) start bare: no reference folder, no
@@ -578,6 +578,12 @@ ensure_project_scaffold(workdir) run at project creation / first session:
 reference/ (+ reference/research/), .codegraph init (reuse
 ensure_codegraph_index), ROADMAP.md stub with the standing-rules header,
 optional CONTEXT.md stub. Idempotent; never clobbers existing files.
+
+### Shipped
+- Codegraph boot with visible outcome: `boot_codegraph` (#33, b1172bd).
+- `ensure_project_scaffold` (#31): idempotent creation of reference/,
+  ROADMAP.md, CONTEXT.md; wired into engine.run beside boot_codegraph;
+  scaffold results ride the CODEGRAPH_BOOT trace event.
 
 ## R20 — Roadmap-vs-ticket guidance (agent logs tickets when asked to log roadmap items)
 
@@ -595,3 +601,20 @@ Process guidance is missing: tickets and roadmap items are different artifacts
 2. Add a `log_roadmap_item(title, body)` convenience tool that does both in
    one call, so the agent cannot get it wrong.
 3. Planning tab already reads ROADMAP.md (md-as-source-of-truth) — no UI work.
+
+## R21 — Shell tool: pipe-inheritance hang in run_captured
+**Status:** open
+
+Shell commands that finish quickly sometimes block until timeout on Windows. Root cause confirmed: `run_captured` (tools.py:97) awaits `proc.communicate()`, which waits for pipe EOF, not process exit. A grandchild inheriting stdout/stderr keeps the pipe open after the parent exits, so the tool blocks to timeout, returns "timed out", and loses real output. Reproduced deterministically: `.scratch/repro_shell_hang.py` (parent exits 0.1s, run_captured(timeout=5) waits full 5s → None). Also explains earlier git push "hangs" and possibly the 261s mid-session stall.
+
+## R22 — AST-powered agent understanding (structural edits + semantic diffs)
+**Status:** open
+
+Leverage the existing tree-sitter/codegraph AST infrastructure (already used for navigation, dead-code, arch-lint) in two spots with observed payoff:
+
+1. **Symbol-based edit application** — edit tool that takes (symbol, new body) instead of line offsets; eliminates stale-edit "file changed since read" refusals.
+2. **AST-aware diff/claims feedback** — parse before/after, report semantic changes (symbols touched, signature changes) to strengthen claims verification and post-edit feedback.
+
+Explicitly out of scope: ASTs as a replacement for LLM intent understanding; building type/dataflow analysis (mypy/pyright already gate this).
+
+Assessment: viable, low-medium effort per item, reuses existing parsers.
