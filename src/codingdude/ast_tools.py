@@ -51,14 +51,26 @@ def _walk(node):
 
 
 def build_ast_toolset(workdir: Path) -> FunctionToolset:
-    """AST-accurate navigation for Python; registry-driven for nav-only languages."""
+    """AST-accurate navigation: Python via its own path, all other registered
+    languages via the langs registry; graceful degradation elsewhere."""
+
+    _IDENT_TYPES = frozenset(
+        {
+            'identifier',
+            'property_identifier',
+            'type_identifier',
+            'field_identifier',
+            'class_name',
+            'id_name',
+        }
+    )
 
     def _check_python(path: str) -> None:
         target = (workdir / path).resolve()
         if target.is_file() and target.suffix != '.py':
             raise ModelRetry(
-                f'{path} is not a Python file. AST tools currently support Python '
-                'only; use grep for other languages.'
+                f'{path} is not a Python file. AST tools support Python and '
+                'registered languages; use grep for other file types.'
             )
 
     def _nav_spec_for(target: Path):
@@ -85,18 +97,66 @@ def build_ast_toolset(workdir: Path) -> FunctionToolset:
                 continue
             yield f
 
+    def _registered_files(path: str = '.'):
+        """Files with registered (non-Python, non-navigation) suffixes."""
+        from codingdude.langs import spec_for
+
+        root = workdir.resolve()
+        target = _resolve_contained(workdir, path)
+        if target.is_file():
+            yield target
+            return
+        for f in sorted(target.rglob('*')):
+            if not f.is_file():
+                continue
+            spec = spec_for(f.suffix.lower())
+            if (
+                spec is None
+                or spec.navigation_only
+                or f.suffix.lower() == '.py'
+            ):
+                continue
+            if any(part in SKIP_DIRS for part in f.relative_to(root).parts):
+                continue
+            yield f
+
+    def _parse_generic(source: bytes, spec):
+        from tree_sitter import Parser
+
+        return Parser(spec.grammar).parse(source)
+
     def find_definition(symbol: str, path: str = '.') -> str:
-        """Locate where a function/class is defined (file:line). Python only."""
+        """Locate where a function/class is defined (file:line)."""
+        from codingdude.langs import spec_for
+        from codingdude.tsedit import _collect, nav_symbols
+
         target = _resolve_contained(workdir, path)
         nav_spec = _nav_spec_for(target)
         if nav_spec is not None:
-            from codingdude.tsedit import nav_symbols
-
             rel = target.relative_to(workdir)
             for name, line in nav_symbols(target.read_bytes(), nav_spec):
                 if name == symbol or name.lstrip('.#') == symbol:
                     return f'definition: {rel}:{line}: {symbol}'
             return f'(no definition of {symbol!r} found)'
+
+        results: list[str] = []
+        for f in _registered_files(path):
+            spec = spec_for(f.suffix.lower())
+            if spec is None or spec.navigation_only:
+                continue
+            source = f.read_bytes()
+            rel = f.relative_to(workdir)
+            for name, info in _collect(source, spec).items():
+                if name == symbol or name.rsplit('.', 1)[-1] == symbol:
+                    line = source[: info.start_byte].count(b'\n') + 1
+                    results.append(f'definition: {rel}:{line}: {name}')
+                    if len(results) >= MAX_RESULTS:
+                        break
+            if len(results) >= MAX_RESULTS:
+                break
+        if results:
+            return '\n'.join(results)
+
         _check_python(path)
         results = []
         for f in _python_files(workdir, path):
@@ -115,9 +175,38 @@ def build_ast_toolset(workdir: Path) -> FunctionToolset:
         return '\n'.join(results) or f'(no definition of {symbol!r} found)'
 
     def find_references(symbol: str, path: str = '.') -> str:
-        """Find usages of a symbol (imports, calls, names) across files. Python only."""
-        results = []
+        """Find usages of a symbol (imports, calls, names) across files."""
         from codingdude.langs import spec_for
+        from codingdude.tsedit import _is_symbol, _node_name
+
+        results: list[str] = []
+        for f in _registered_files(path):
+            spec = spec_for(f.suffix.lower())
+            if spec is None or spec.navigation_only:
+                continue
+            source = f.read_bytes()
+            rel = f.relative_to(workdir)
+            tree = _parse_generic(source, spec)
+            for node in _walk(tree.root_node):
+                if node.type not in _IDENT_TYPES:
+                    continue
+                if node.text != symbol.encode():
+                    continue
+                parent = node.parent
+                if (
+                    parent is not None
+                    and _is_symbol(parent, spec)
+                    and _node_name(parent, spec)
+                    == node.text.decode('utf-8', 'replace')
+                ):
+                    continue  # the definition itself, not a reference
+                line = node.start_point[0] + 1
+                results.append(f'reference: {rel}:{line}')
+                if len(results) >= MAX_RESULTS:
+                    break
+            if len(results) >= MAX_RESULTS:
+                break
+
         from codingdude.tsedit import nav_symbols
 
         for f in _nav_files(path):
@@ -126,12 +215,12 @@ def build_ast_toolset(workdir: Path) -> FunctionToolset:
                 continue
             for name, line in nav_symbols(f.read_bytes(), spec):
                 if name == symbol or name.lstrip('.#') == symbol:
-                    rel = f.relative_to(workdir)
-                    results.append(f'reference: {rel}:{line}')
+                    results.append(f'reference: {f.relative_to(workdir)}:{line}')
                     if len(results) >= MAX_RESULTS:
                         break
             if len(results) >= MAX_RESULTS:
                 break
+
         for f in _python_files(workdir, path):
             tree = _parse(f.read_bytes())
             for node in _walk(tree.root_node):

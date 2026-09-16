@@ -78,13 +78,13 @@ async def test_find_references_across_files_excludes_definition_and_docstring(en
 
 
 async def test_unsupported_language_degrades_gracefully(engine, workdir):
-    (workdir / 'notes.rs').write_text('fn main() { println!("greet"); }')
+    (workdir / 'notes.xyz').write_text('main = 42')
     outcome = await engine.run(
-        prompt='find greet in the rust file',
+        prompt='find main in the notes file',
         workdir=workdir,
         model=call_tool_then_answer(
             'find_definition',
-            {'symbol': 'main', 'path': 'notes.rs'},
+            {'symbol': 'main', 'path': 'notes.xyz'},
             lambda text: (
                 'graceful' if 'python' in text.lower() or 'unsupported' in text.lower() else text[:200]
             ),
