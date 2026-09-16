@@ -88,7 +88,7 @@ def test_edit_symbol_ambiguous_name_retries(tmp_path):
 def test_edit_symbol_non_python_refuses(tmp_path):
     f = tmp_path / 'notes.txt'
     f.write_text('just text')
-    with pytest.raises(ModelRetry, match='Python'):
+    with pytest.raises(ModelRetry, match='edit_file'):
         _tool(tmp_path, 'edit_symbol')('notes.txt', 'x', 'y')
     assert f.read_text() == 'just text'
 

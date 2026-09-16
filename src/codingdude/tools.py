@@ -12,6 +12,8 @@ from typing import NamedTuple
 from pydantic_ai import ModelRetry
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 
+from codingdude.langs import LanguageSpec, spec_for
+
 from .approvals import DENIED, NEEDS_GATE
 from .astdiff import describe_ast_change
 from .config import ThinkingSetting
@@ -178,6 +180,55 @@ Raises PermissionError naming the locked path if it stays locked.
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
+
+
+def _ts_symbol_replacement(
+    before: str, path: str, symbol: str, new_body: str, spec: LanguageSpec
+) -> tuple[str, str]:
+    """Resolve and rewrite a symbol via tree-sitter; return (new_text, summary)."""
+    import textwrap
+
+    from codingdude.tsedit import describe_ts_change, ts_symbol_spans
+
+    src = before.encode('utf-8')
+    spans = ts_symbol_spans(src, spec)
+    candidates = {
+        name: span
+        for name, span in spans.items()
+        if name.rsplit('.', 1)[-1] == symbol
+    }
+    if len(candidates) > 1:
+        raise ModelRetry(
+            f'symbol {symbol!r} is ambiguous in {path} — matches: '
+            f'{", ".join(sorted(candidates))}. Use the qualified name.'
+        )
+    if symbol in spans:
+        start, end = spans[symbol]
+    elif candidates:
+        start, end = next(iter(candidates.values()))
+    else:
+        known = ', '.join(sorted(spans)) or '(none)'
+        raise ModelRetry(
+            f'symbol {symbol!r} not found in {path}. Top-level definable '
+            f'symbols: {known}.'
+        )
+
+    body = textwrap.dedent(new_body).rstrip('\n')
+    lines = before.splitlines(keepends=True)
+    eol = '\r\n' if lines and lines[0].endswith('\r\n') else '\n'
+    # Re-indent to the replaced symbol's original indentation; text before
+    # the span on its first line (e.g. 'export ') is preserved verbatim.
+    line_start = src.rfind(b'\n', 0, start) + 1
+    indent_match = re.match(rb'[ \t]*', src[line_start:start])
+    indent = indent_match.group(0).decode('utf-8') if indent_match else ''
+    if indent:
+        body = '\n'.join(
+            indent + ln if ln.strip() else ln for ln in body.split('\n')
+        )
+    replacement = body.encode('utf-8').replace(b'\n', eol.encode())
+    after_bytes = src[:start] + replacement + src[end:]
+    summary = describe_ts_change(src, after_bytes, spec)
+    return after_bytes.decode('utf-8'), summary
 
 
 def build_toolset(
@@ -376,11 +427,6 @@ def build_toolset(
             capture(resolve(path))
         target = resolve(path)
         check_stale(path, target)
-        if target.suffix != '.py':
-            raise ModelRetry(
-                f'edit_symbol only supports Python files; {path!r} is not one. '
-                'Use edit_file for other file types.'
-            )
         try:
             before = _read_verbatim(target)
         except UnicodeDecodeError:
@@ -388,8 +434,32 @@ def build_toolset(
                 f'{path} is not valid UTF-8; refusing to edit it to avoid '
                 'silent corruption.'
             ) from None
-        tree = _parse_module(target, before)
-
+        if target.suffix == '.py':
+            tree = _parse_module(target, before)
+        else:
+            spec = spec_for(target.suffix)
+            if spec is None:
+                raise ModelRetry(
+                    f'edit_symbol does not support {target.suffix} files '
+                    '(no grammar registered); use edit_file instead.'
+                )
+            after, summary = _ts_symbol_replacement(
+                before, path, symbol, new_body, spec
+            )
+            _atomic_write(target, after)
+            written = _read_verbatim(target)
+            if written != after:
+                target.write_bytes(before.encode('utf-8'))
+                raise ModelRetry(
+                    f'write verification failed for {path}; original content '
+                    'restored. Do not retry unchanged — inspect the file first.'
+                )
+            observe(path, target)
+            emit_edit(path, before, after)
+            result = f'edited {path}: replaced {symbol}'
+            if summary:
+                result += f'\n{summary}'
+            return result
         # Collect qualified names: top-level defs/classes and their direct
         # methods, with byte-accurate line spans (decorators included).
         spans: dict[str, list[int]] = {}  # qualified name -> [start_line, end_line]
