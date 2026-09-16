@@ -63,6 +63,85 @@ def _python_spec() -> LanguageSpec:
     )
 
 
+def _c_spec() -> LanguageSpec:
+    import tree_sitter_c as tsc
+
+    return LanguageSpec(
+        grammar=Language(tsc.language()),
+        function_nodes=frozenset({'function_definition'}),
+        class_nodes=frozenset(
+            {'struct_specifier', 'union_specifier', 'enum_specifier'}
+        ),
+    )
+
+
+_CPP_CLASSES = frozenset({'class_specifier', 'struct_specifier'})
+
+
+def _cpp_spec() -> LanguageSpec:
+    import tree_sitter_cpp as tscpp
+
+    return LanguageSpec(
+        grammar=Language(tscpp.language()),
+        function_nodes=frozenset({'function_definition'}),
+        class_nodes=_CPP_CLASSES,
+    )
+
+
+def _csharp_spec() -> LanguageSpec:
+    import tree_sitter_c_sharp as tscs
+
+    return LanguageSpec(
+        grammar=Language(tscs.language()),
+        function_nodes=frozenset(
+            {'method_declaration', 'constructor_declaration'}
+        ),
+        class_nodes=frozenset(
+            {
+                'class_declaration',
+                'interface_declaration',
+                'struct_declaration',
+                'record_declaration',
+            }
+        ),
+    )
+
+
+def _rust_spec() -> LanguageSpec:
+    import tree_sitter_rust as tsr
+
+    return LanguageSpec(
+        grammar=Language(tsr.language()),
+        function_nodes=frozenset({'function_item'}),
+        # impl_item acts as a class container so methods resolve as Type.method.
+        class_nodes=frozenset(
+            {'struct_item', 'enum_item', 'impl_item', 'trait_item'}
+        ),
+    )
+
+
+def _go_spec() -> LanguageSpec:
+    import tree_sitter_go as tsg
+
+    return LanguageSpec(
+        grammar=Language(tsg.language()),
+        function_nodes=frozenset({'function_declaration', 'method_declaration'}),
+        class_nodes=frozenset(),
+    )
+
+
+def _kotlin_spec() -> LanguageSpec:
+    import tree_sitter_kotlin as tsk
+
+    return LanguageSpec(
+        grammar=Language(tsk.language()),
+        function_nodes=frozenset({'function_declaration'}),
+        class_nodes=frozenset(
+            {'class_declaration', 'object_declaration'}
+        ),
+    )
+
+
 @cache
 def spec_for(suffix: str) -> LanguageSpec | None:
     """The LanguageSpec for a file suffix, or None if unregistered."""
@@ -74,6 +153,18 @@ def spec_for(suffix: str) -> LanguageSpec | None:
             return _js_spec(suffix)
         if suffix == '.py':
             return _python_spec()
+        if suffix in ('.c', '.h'):
+            return _c_spec()
+        if suffix in ('.cpp', '.cc', '.cxx', '.hpp', '.hh'):
+            return _cpp_spec()
+        if suffix == '.cs':
+            return _csharp_spec()
+        if suffix == '.rs':
+            return _rust_spec()
+        if suffix == '.go':
+            return _go_spec()
+        if suffix in ('.kt', '.kts'):
+            return _kotlin_spec()
     except ImportError:
         return None
     return None

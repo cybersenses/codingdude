@@ -33,10 +33,35 @@ def _unwrap(node):
     return node
 
 
+_BODY_TYPES = frozenset(
+    {
+        'statement_block',
+        'class_body',
+        'function_body',
+        'block',
+        'compound_statement',
+        'field_declaration_list',
+        'declaration_list',
+    }
+)
+
+
+def _body_container(node):
+    """The node holding a class/impl's members, across grammar conventions."""
+    for field in ('body', 'declaration_list'):
+        child = node.child_by_field_name(field)
+        if child is not None:
+            return child
+    for child in node.named_children:
+        if child.type in _BODY_TYPES:
+            return child
+    return None
+
+
 def _signature_text(node, source: bytes) -> str:
     """Header text before the body block, e.g. 'function f(a: number): number'."""
     for child in node.named_children:
-        if child.type in ('statement_block', 'class_body', 'function_body'):
+        if child.type in _BODY_TYPES:
             header = source[node.start_byte : child.start_byte]
             return header.decode('utf-8', 'replace').strip()
     return source[node.start_byte : node.end_byte].decode(
@@ -50,7 +75,22 @@ def _is_symbol(node, spec: LanguageSpec) -> bool:
 
 def _node_name(node, spec: LanguageSpec) -> str | None:
     field = node.child_by_field_name(spec.name_field)
-    return field.text.decode('utf-8', 'replace') if field else None
+    if field is not None:
+        return field.text.decode('utf-8', 'replace')
+    # C/C++ function_definition: the name sits at the end of a declarator
+    # chain (declarator -> function_declarator/pointer_declarator -> name).
+    # Must run before the 'type' fallback — C/C++ use 'type' for the return
+    # type, not the symbol name.
+    declarator = node.child_by_field_name('declarator')
+    while declarator is not None:
+        if declarator.type in ('identifier', 'field_identifier'):
+            return declarator.text.decode('utf-8', 'replace')
+        declarator = declarator.child_by_field_name('declarator')
+    # Rust impl_item: the type lives in the 'type' field.
+    type_field = node.child_by_field_name('type')
+    if type_field is not None:
+        return type_field.text.decode('utf-8', 'replace')
+    return None
 
 
 def _collect(source: bytes, spec: LanguageSpec) -> dict[str, SymbolInfo]:
@@ -71,7 +111,7 @@ def _collect(source: bytes, spec: LanguageSpec) -> dict[str, SymbolInfo]:
             _signature_text(node, source),
         )
         if node.type in spec.class_nodes:
-            body = node.child_by_field_name('body')
+            body = _body_container(node)
             if body is None:
                 continue
             for member in body.named_children:
