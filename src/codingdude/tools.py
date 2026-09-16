@@ -401,7 +401,9 @@ def build_toolset(
                 'restored. Do not retry unchanged — inspect the file first.'
             )
         observe(path, target)
-        summary = describe_ast_change(before, after)
+        summary = (
+            describe_ast_change(before, after) if target.suffix == '.py' else ''
+        )
         emit_edit(path, before, after)
         return f'edited {path}' + (f'\n{summary}' if summary else '')
 
@@ -550,7 +552,14 @@ def build_toolset(
         return result
 
     def write_file(path: str, content: str) -> str:
-        """Create a new file (with parent dirs). Existing non-empty files must use edit_file."""
+        """Create a new file (with parent dirs). Existing non-empty files must use edit_file.
+
+        CRITICAL for heredocs and multi-line strings: never retype large
+        static chunks (SQL, HTML templates, scripts) from memory — mangling
+        their whitespace breaks them. Compose files with generated code and
+        text content; when replacing heredoc-heavy code in an existing file,
+        include the entire heredoc (delimiters included) in the match.
+        """
         _guard_project_context(path)
         if capture:
             capture(resolve(path))
