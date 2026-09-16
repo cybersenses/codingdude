@@ -635,7 +635,7 @@ Assessment: viable, low-medium effort per item, reuses existing parsers.
 Unexpected exceptions inside tools (OSError/WinError 32, NameError, ...) used to propagate out of the toolset and kill the run immediately. codingdude/tool_errors.py adds a ToolErrorFeedback wrapper toolset: unexpected tool exceptions become ModelRetry messages the model can act on (tool name + cause + hint). Control-flow exceptions (gates, approvals, deferrals, cancellation, ToolFailed) pass through untouched. Retry budget raised from 2 to 3 (PromptAssembler.agent default), so the agent gets 3 tries to self-correct before the run aborts. Wired for the main agent (engine.run) and delegation sub-agents. Tests: tests/test_tool_errors.py.
 
 ## R26 — R26 — Multi-language tooling support (parked assessment)
-**Status:** in_progress
+**Status:** done
 
 Minimum language support: C#, C++, C, JavaScript, TypeScript, HTML, CSS, Rust, Go, Kotlin.
 
