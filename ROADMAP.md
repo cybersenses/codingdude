@@ -633,3 +633,32 @@ Assessment: viable, low-medium effort per item, reuses existing parsers.
 **Status:** done
 
 Unexpected exceptions inside tools (OSError/WinError 32, NameError, ...) used to propagate out of the toolset and kill the run immediately. codingdude/tool_errors.py adds a ToolErrorFeedback wrapper toolset: unexpected tool exceptions become ModelRetry messages the model can act on (tool name + cause + hint). Control-flow exceptions (gates, approvals, deferrals, cancellation, ToolFailed) pass through untouched. Retry budget raised from 2 to 3 (PromptAssembler.agent default), so the agent gets 3 tries to self-correct before the run aborts. Wired for the main agent (engine.run) and delegation sub-agents. Tests: tests/test_tool_errors.py.
+
+## R26 — R26 — Multi-language tooling support (parked assessment)
+**Status:** in_progress
+
+Minimum language support: C#, C++, C, JavaScript, TypeScript, HTML, CSS, Rust, Go, Kotlin.
+
+Tier 3 (full: edit_symbol + AST diff + navigation) via tree-sitter registry `langs.py`:
+- Already shipped grammars: JavaScript, TypeScript (jslang.language_for)
+- To add: tree-sitter-c, -cpp, -c-sharp, -rust, -go, -kotlin
+- edit_symbol / describe_ast_change / find_definition / find_references dispatch via registry; Python keeps stdlib-ast path
+- Tracer: TypeScript first (grammar exists)
+
+Tier 2 (HTML/CSS): navigation only — symbol semantics differ (tags/selectors); no structural edit_symbol.
+
+Approved plan (2025): registry → TS tracer → grammar batch → HTML/CSS tier-2. Risks: Kotlin grammar maturity, brace-language indentation, CRLF re-verification per language.
+
+**Question answered:** file-level tools (read/edit/grep/glob/run) are language-agnostic today; symbol-level intelligence is Python-only.
+
+Per-tool status:
+- Python-only (stdlib ast): edit_symbol, describe_ast_change, find_definition, find_references, arch_lint
+- Multi-language (tree-sitter): codegraph (search/callers/callees/impact), find_dead_code (vulture + JS/TS tree-sitter)
+- Language-agnostic: file tools, run_command, gates (configured), sandbox/worktrees/delegation
+
+Gaps to close only if broad language support becomes a requirement:
+1. Extend edit_symbol/AST diffs to tree-sitter grammars (per-language symbol queries; brace/indent semantics differ) — the natural path, parser already shipped.
+2. Verification gates: pytest/ruff/mypy contract is Python-specific; other languages need their own gate config.
+3. Dead-code/lint coverage thin outside Python + JS/TS.
+
+Decision: do NOT build speculatively. Revisit when a non-Python project becomes real usage.

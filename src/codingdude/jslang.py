@@ -3,28 +3,25 @@
 `.ts` and `.tsx` get the TypeScript grammar (so TS-only syntax — interfaces,
 type annotations, generics — parses correctly); everything else gets the
 JavaScript grammar. Missing TypeScript grammar degrades to JavaScript rather
-than crashing.
+than crashing. Delegates to the langs registry (R26).
 """
 
-from functools import cache
-
-import tree_sitter_javascript as tsjs
 from tree_sitter import Language
+
+from .langs import spec_for
 
 __all__ = ['language_for']
 
 
-@cache
 def language_for(suffix: str) -> Language:
-    """The tree-sitter Language for a file suffix ('.ts'/'.tsx' -> TypeScript)."""
-    suffix = (suffix or '').lower()
-    if suffix in ('.ts', '.tsx'):
-        try:
-            import tree_sitter_typescript as tsts
+    """The tree-sitter Language for a file suffix ('.ts'/'.tsx' -> TypeScript).
 
-            return Language(
-                tsts.language_tsx() if suffix == '.tsx' else tsts.language_typescript()
-            )
-        except Exception:  # noqa: BLE001 - fall back to the JS grammar
-            pass
-    return Language(tsjs.language())
+    Falls back to the JavaScript grammar when TypeScript is unavailable or the
+    suffix is unregistered."""
+    spec = spec_for(suffix)
+    if spec is not None:
+        return spec.grammar
+    js = spec_for('.js')
+    if js is None:  # pragma: no cover - JS grammar is a hard dependency
+        raise RuntimeError('JavaScript grammar unavailable')
+    return js.grammar
