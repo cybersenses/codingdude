@@ -51,7 +51,7 @@ def _walk(node):
 
 
 def build_ast_toolset(workdir: Path) -> FunctionToolset:
-    """AST-accurate navigation for Python; graceful degradation for other languages."""
+    """AST-accurate navigation for Python; registry-driven for nav-only languages."""
 
     def _check_python(path: str) -> None:
         target = (workdir / path).resolve()
@@ -61,8 +61,42 @@ def build_ast_toolset(workdir: Path) -> FunctionToolset:
                 'only; use grep for other languages.'
             )
 
+    def _nav_spec_for(target: Path):
+        """Registry spec for navigation-only suffixes, else None."""
+        from codingdude.langs import spec_for
+
+        suffix = target.suffix.lower() if target.is_file() else ''
+        spec = spec_for(suffix) if suffix else None
+        return spec if spec is not None and spec.navigation_only else None
+
+    def _nav_files(path: str = '.'):
+        """All navigation-only files under path, sorted."""
+        from codingdude.langs import NAV_SUFFIXES
+
+        root = workdir.resolve()
+        target = _resolve_contained(workdir, path)
+        if target.is_file():
+            yield target
+            return
+        for f in sorted(target.rglob('*')):
+            if f.suffix.lower() not in NAV_SUFFIXES:
+                continue
+            if any(part in SKIP_DIRS for part in f.relative_to(root).parts):
+                continue
+            yield f
+
     def find_definition(symbol: str, path: str = '.') -> str:
         """Locate where a function/class is defined (file:line). Python only."""
+        target = _resolve_contained(workdir, path)
+        nav_spec = _nav_spec_for(target)
+        if nav_spec is not None:
+            from codingdude.tsedit import nav_symbols
+
+            rel = target.relative_to(workdir)
+            for name, line in nav_symbols(target.read_bytes(), nav_spec):
+                if name == symbol or name.lstrip('.#') == symbol:
+                    return f'definition: {rel}:{line}: {symbol}'
+            return f'(no definition of {symbol!r} found)'
         _check_python(path)
         results = []
         for f in _python_files(workdir, path):
@@ -82,8 +116,22 @@ def build_ast_toolset(workdir: Path) -> FunctionToolset:
 
     def find_references(symbol: str, path: str = '.') -> str:
         """Find usages of a symbol (imports, calls, names) across files. Python only."""
-        _check_python(path)
         results = []
+        from codingdude.langs import spec_for
+        from codingdude.tsedit import nav_symbols
+
+        for f in _nav_files(path):
+            spec = spec_for(f.suffix.lower())
+            if spec is None or not spec.navigation_only:
+                continue
+            for name, line in nav_symbols(f.read_bytes(), spec):
+                if name == symbol or name.lstrip('.#') == symbol:
+                    rel = f.relative_to(workdir)
+                    results.append(f'reference: {rel}:{line}')
+                    if len(results) >= MAX_RESULTS:
+                        break
+            if len(results) >= MAX_RESULTS:
+                break
         for f in _python_files(workdir, path):
             tree = _parse(f.read_bytes())
             for node in _walk(tree.root_node):

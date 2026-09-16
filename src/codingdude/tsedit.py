@@ -137,6 +137,52 @@ def ts_symbol_spans(
     }
 
 
+def nav_symbols(
+    source: bytes, spec: LanguageSpec
+) -> list[tuple[str, int]]:
+    """Navigable symbols for navigation-only languages: (name, 1-based line)."""
+    from tree_sitter import Parser
+
+    tree = Parser(spec.grammar).parse(source)
+    found: list[tuple[str, int]] = []
+    stack = [tree.root_node]
+    while stack:
+        node = stack.pop()
+        if node.type in spec.symbol_nodes and _is_nav_symbol(node):
+            raw = node.text
+            text = (
+                raw.decode('utf-8', 'replace').strip()
+                if raw is not None
+                else ''
+            )
+            if text:
+                found.append((text, node.start_point[0] + 1))
+        stack.extend(reversed(node.children))
+    return found
+
+
+def _is_nav_symbol(node) -> bool:
+    """HTML ids/classes only: attribute_value under an id/class attribute."""
+    if node.type != 'attribute_value':
+        return True
+    parent = node.parent
+    while parent is not None:
+        if parent.type == 'attribute':
+            name_node = parent.child_by_field_name('name') or (
+                parent.named_children[0]
+                if parent.named_children
+                else None
+            )
+            if name_node is None:
+                return False
+            return name_node.text.decode('utf-8', 'replace').lower() in (
+                'id',
+                'class',
+            )
+        parent = parent.parent
+    return False
+
+
 def describe_ts_change(
     before: bytes, after: bytes, spec: LanguageSpec
 ) -> str:

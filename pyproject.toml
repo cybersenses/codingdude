@@ -20,6 +20,8 @@ dependencies = [
     "tree-sitter-rust>=0.24.0",
     "tree-sitter-go>=0.25.0",
     "tree-sitter-kotlin>=1.1.0",
+    "tree-sitter-html>=0.23.0",
+    "tree-sitter-css>=0.25.0",
     "vulture>=2.16",
     "websockets>=16.1.1",
 ]

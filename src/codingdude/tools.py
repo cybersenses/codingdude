@@ -443,6 +443,11 @@ def build_toolset(
                     f'edit_symbol does not support {target.suffix} files '
                     '(no grammar registered); use edit_file instead.'
                 )
+            if spec.navigation_only:
+                raise ModelRetry(
+                    f'{target.suffix} files are navigation-only; use '
+                    'edit_file for edits.'
+                )
             after, summary = _ts_symbol_replacement(
                 before, path, symbol, new_body, spec
             )

@@ -14,7 +14,7 @@ from functools import cache
 
 from tree_sitter import Language
 
-__all__ = ['LanguageSpec', 'language_for', 'spec_for']
+__all__ = ['NAV_SUFFIXES', 'LanguageSpec', 'language_for', 'spec_for']
 
 
 @dataclass(frozen=True)
@@ -25,6 +25,10 @@ class LanguageSpec:
     function_nodes: frozenset[str] = field(default_factory=frozenset)
     class_nodes: frozenset[str] = field(default_factory=frozenset)
     name_field: str = 'name'
+    # Navigation-only languages (HTML/CSS): no structural editing via
+    # edit_symbol, but ids/classes/selectors are navigable symbols.
+    navigation_only: bool = False
+    symbol_nodes: frozenset[str] = field(default_factory=frozenset)
 
 
 _JS_NODES = frozenset({'function_declaration', 'function_definition', 'method_definition'})
@@ -142,6 +146,27 @@ def _kotlin_spec() -> LanguageSpec:
     )
 
 
+def _html_spec() -> LanguageSpec:
+    import tree_sitter_html as tsh
+
+    return LanguageSpec(
+        grammar=Language(tsh.language()),
+        navigation_only=True,
+        # id/class attribute values are the navigable symbols.
+        symbol_nodes=frozenset({'attribute_value'}),
+    )
+
+
+def _css_spec() -> LanguageSpec:
+    import tree_sitter_css as tsc
+
+    return LanguageSpec(
+        grammar=Language(tsc.language()),
+        navigation_only=True,
+        symbol_nodes=frozenset({'class_name', 'id_name'}),
+    )
+
+
 @cache
 def spec_for(suffix: str) -> LanguageSpec | None:
     """The LanguageSpec for a file suffix, or None if unregistered."""
@@ -165,9 +190,17 @@ def spec_for(suffix: str) -> LanguageSpec | None:
             return _go_spec()
         if suffix in ('.kt', '.kts'):
             return _kotlin_spec()
+        if suffix in ('.html', '.htm'):
+            return _html_spec()
+        if suffix == '.css':
+            return _css_spec()
     except ImportError:
         return None
     return None
+
+
+# Suffixes with navigation-only registry support (HTML/CSS tier 2).
+NAV_SUFFIXES = frozenset({'.html', '.htm', '.css'})
 
 
 def language_for(suffix: str) -> Language:
