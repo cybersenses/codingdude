@@ -853,12 +853,16 @@ function Artifacts({ sessionId }) {
 
 function Planning({ workdir }) {
   const [data, setData] = useState(null)
+  const [err, setErr] = useState('')
   const [newTitle, setNewTitle] = useState('')
   const [kind, setKind] = useState('ticket')
 
   async function refresh() {
     if (!workdir) return
-    try { setData(await api.getPlanning(workdir)) } catch { /* transient */ }
+    try {
+      setData(await api.getPlanning(workdir))
+      setErr('')
+    } catch (e) { setErr(String(e.message)) }
   }
   useEffect(() => { refresh() }, [workdir])
 
@@ -871,13 +875,24 @@ function Planning({ workdir }) {
     if (!title) return
     const fn = kind === 'ticket' ? api.addTicket
       : kind === 'roadmap' ? api.addRoadmapItem : api.addDecision
-    await fn(workdir, title, '').catch(() => {})
-    setNewTitle('')
+    try {
+      await fn(workdir, title, '')
+      setNewTitle('')
+      setErr('')
+    } catch (e) { setErr(String(e.message)) }
     refresh()
   }
 
   if (!workdir) {
     return <div className="rounded border border-line bg-surface p-4 text-xs text-ink-muted">Select a project first.</div>
+  }
+  if (err && !data) {
+    return (
+      <div className="rounded border border-danger/50 bg-danger/10 p-3 text-xs text-danger">
+        planning data unavailable: {err}{' '}
+        <button className="ml-1 underline hover:opacity-80" onClick={refresh}>retry</button>
+      </div>
+    )
   }
   if (!data) {
     return <div className="text-ink-muted">loading…</div>
@@ -885,7 +900,12 @@ function Planning({ workdir }) {
   const statusColor = (s) => s === 'done' ? 'text-success'
     : s === 'in_progress' ? 'text-warning' : 'text-ink-muted'
   return (
-    <div className="space-y-3">
+      <div className="space-y-3">
+      {err && (
+        <div className="rounded border border-warning/50 bg-warning/10 px-2 py-1 text-[10px] text-warning">
+          refresh failed: {err}
+        </div>
+      )}
       <div className="flex gap-1">
         <select
           className="rounded border border-neutral-700 bg-neutral-900 px-1 py-0.5 text-[10px] text-ink"
