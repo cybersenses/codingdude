@@ -603,9 +603,9 @@ Process guidance is missing: tickets and roadmap items are different artifacts
 3. Planning tab already reads ROADMAP.md (md-as-source-of-truth) — no UI work.
 
 ## R21 — Shell tool: pipe-inheritance hang in run_captured
-**Status:** open
+**Status:** done
 
-Shell commands that finish quickly sometimes block until timeout on Windows. Root cause confirmed: `run_captured` (tools.py:97) awaits `proc.communicate()`, which waits for pipe EOF, not process exit. A grandchild inheriting stdout/stderr keeps the pipe open after the parent exits, so the tool blocks to timeout, returns "timed out", and loses real output. Reproduced deterministically: `.scratch/repro_shell_hang.py` (parent exits 0.1s, run_captured(timeout=5) waits full 5s → None). Also explains earlier git push "hangs" and possibly the 261s mid-session stall.
+Fixed (ticket #34): run_captured polls proc.returncode instead of communicate()/proc.wait() (both wait for pipe EOF on Windows; a grandchild inheriting stdout/stderr kept finished commands blocked to timeout, killed and output lost). Kill only if still running at deadline, then drain pipes with 1s-per-readline grace. Regression: tests/test_run_captured.py::test_run_captured_returns_when_parent_exits_despite_grandchild. Side effect: git push no longer hangs. on Windows. Root cause confirmed: `run_captured` (tools.py:97) awaits `proc.communicate()`, which waits for pipe EOF, not process exit. A grandchild inheriting stdout/stderr keeps the pipe open after the parent exits, so the tool blocks to timeout, returns "timed out", and loses real output. Reproduced deterministically: `.scratch/repro_shell_hang.py` (parent exits 0.1s, run_captured(timeout=5) waits full 5s → None). Also explains earlier git push "hangs" and possibly the 261s mid-session stall.
 
 ## R22 — AST-powered agent understanding (structural edits + semantic diffs)
 **Status:** done

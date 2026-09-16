@@ -1,6 +1,7 @@
 """Coding tools: list, read, grep, glob, plus surgical edits — all confined to the Workdir."""
 
 import ast
+import asyncio
 import re
 import time
 import uuid
@@ -83,8 +84,6 @@ async def run_captured(
     callers format their own timeout message. One place so timeout
     handling (kill, not orphan) and decode can't drift across call sites.
     """
-    import asyncio
-
     if env is None:
         env = scrubbed_env()
     if shell:
@@ -95,16 +94,47 @@ async def run_captured(
         proc = await asyncio.create_subprocess_exec(
             *argv, cwd=cwd, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE, env=env)
-    try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout)
-    except TimeoutError:
+    # R21: wait on the *process*, not communicate()/proc.wait(). Both wait
+    # for pipe EOF on Windows — a grandchild that inherited stdout/stderr
+    # keeps the pipes open after the parent exits, so a finished command
+    # would block to the full timeout, get killed, and lose its output.
+    # Poll returncode instead: it is set the moment the process exits.
+    deadline = time.monotonic() + timeout
+    while proc.returncode is None and time.monotonic() < deadline:
+        await asyncio.sleep(0.05)
+    if proc.returncode is None:
         proc.kill()
+        while proc.returncode is None:
+            await asyncio.sleep(0.05)
         return None
+
+    # Drain the pipes with a per-read grace window: stop as soon as the
+    # parent has exited and a read times out (leftover pipe writers like
+    # grandchildren would otherwise hold EOF forever).
+    assert proc.stdout is not None and proc.stderr is not None  # PIPEs above
+    stdout = await _drain(proc.stdout)
+    stderr = await _drain(proc.stderr)
+
     return Captured(
         code=proc.returncode if proc.returncode is not None else -1,
         stdout=stdout.decode(errors='replace'),
         stderr=stderr.decode(errors='replace'),
     )
+
+
+async def _drain(reader: asyncio.StreamReader) -> bytes:
+    """Collect output until EOF, or until a read stalls after the process
+    ended (grandchild-held pipe). Callers must have awaited proc.wait()."""
+    chunks: list[bytes] = []
+    while True:
+        try:
+            line = await asyncio.wait_for(reader.readline(), timeout=1.0)
+        except TimeoutError:
+            break
+        if not line:  # EOF
+            break
+        chunks.append(line)
+    return b''.join(chunks)
 
 
 EditEmitter = Callable[[dict], None]
