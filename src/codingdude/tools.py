@@ -12,6 +12,7 @@ from typing import NamedTuple
 from pydantic_ai import ModelRetry
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 
+from codingdude.editmatch import find_similar_lines, replace_most_similar_chunk
 from codingdude.langs import LanguageSpec, spec_for
 
 from .approvals import DENIED, NEEDS_GATE
@@ -364,28 +365,29 @@ def build_toolset(
                 f'{path} is not valid UTF-8; refusing to edit it to avoid '
                 'silent corruption. Convert or repair the encoding first.'
             ) from None
-        # Byte-faithful matching: try old_text as given, then with \n-only
-        # endings (the model can't be expected to reproduce CRLF).
+        # Byte-faithful fast path: old_text as given (the model copied it
+        # verbatim). Anything else goes through the layered matcher, which
+        # handles CRLF mismatch, indent drift, and '...' elision.
         if old_text in before:
-            match = old_text
+            if before.count(old_text) > 1:
+                raise ModelRetry(
+                    f'old_text appears more than once in {path} '
+                    f'({before.count(old_text)} times). Include more '
+                    'surrounding context so the match is unique.'
+                )
+            after = before.replace(old_text, new_text, 1)
         else:
-            normalised = old_text.replace('\r\n', '\n')
-            if before.count(normalised) == 1:
-                match = normalised
-            else:
-                match = old_text
-        count = before.count(match)
-        if count == 0:
-            raise ModelRetry(
-                f'old_text not found in {path}. Re-read the file and copy the '
-                'exact text to replace, including whitespace.'
-            )
-        if count > 1:
-            raise ModelRetry(
-                f'old_text appears more than once in {path} ({count} times). '
-                'Include more surrounding context so the match is unique.'
-            )
-        after = before.replace(match, new_text, 1)
+            replaced = replace_most_similar_chunk(before, old_text, new_text)
+            if replaced is None:
+                hint = find_similar_lines(old_text, before)
+                msg = (
+                    f'old_text not found in {path}. Re-read the file and copy '
+                    'the exact text to replace, including whitespace.'
+                )
+                if hint:
+                    msg += f'\nDid you mean to match these lines?\n\n{hint}\n'
+                raise ModelRetry(msg)
+            after = replaced
         _atomic_write(target, after)
         # Verify + rollback (R12 #3): the file on disk must equal what we
         # meant to write, or the original bytes go back.
