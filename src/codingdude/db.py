@@ -157,6 +157,17 @@ CREATE TABLE IF NOT EXISTS renders (
     mtime INTEGER NOT NULL,
     captured_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS processes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES sessions(session_id),
+    pid INTEGER NOT NULL,
+    command TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'running',
+    exit_code INTEGER,
+    background INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_processes ON processes (session_id, id);
 CREATE TABLE IF NOT EXISTS design_decisions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     workdir TEXT NOT NULL,
@@ -416,6 +427,49 @@ class Database:
             {'path': r[0], 'bytes': r[1], 'mtime': r[2], 'captured_at': r[3]}
             for r in rows
         ]
+
+    def record_process(
+        self, session_id: str, *, pid: int, command: str, started_at: str,
+        status: str, exit_code: int | None = None, background: bool = False,
+    ) -> int | None:
+        """Persist a shell-process lifecycle record (R28 Phase 1).
+
+        Best-effort by callers — never fails a run. Returns the row id so
+        the finish transition can UPDATE instead of duplicating the row.
+        """
+        cur = self._conn.execute(
+            'INSERT INTO processes (session_id, pid, command, started_at,'
+            ' status, exit_code, background) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            (session_id, pid, command, started_at, status, exit_code,
+             int(background)),
+        )
+        self._conn.commit()
+        return cur.lastrowid
+
+    def update_process(
+        self, row_id: int, *, status: str,
+        exit_code: int | None = None, background: bool = False,
+    ) -> None:
+        self._conn.execute(
+            'UPDATE processes SET status = ?, exit_code = ?, background = ?'
+            ' WHERE id = ?',
+            (status, exit_code, int(background), row_id),
+        )
+        self._conn.commit()
+
+    def list_processes(self, session_id: str) -> list[dict]:
+        """Recorded shell processes for a session, newest first."""
+        rows = self._conn.execute(
+            'SELECT pid, command, started_at, status, exit_code, background'
+            ' FROM processes WHERE session_id = ? ORDER BY id DESC',
+            (session_id,),
+        ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d['background'] = bool(d['background'])
+            out.append(d)
+        return out
 
     def list_session_notes(self, session_id: str) -> list[dict]:
         rows = self._conn.execute(

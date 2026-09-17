@@ -333,6 +333,11 @@ def create_app(
         pick: str | None = None
         content: str | None = None
 
+    @app.get('/sessions/{session_id}/processes')
+    def session_processes(session_id: str, _: None = Depends(authorize)) -> list[dict]:
+        """Shell processes this session spawned, newest first (R28 Phase 1)."""
+        return db.list_processes(session_id)
+
     @app.get('/sessions/{session_id}/artifacts')
     def session_artifacts(session_id: str, _: None = Depends(authorize)) -> list[dict]:
         """Living artifacts (choice cards, spec blocks), newest first (R6)."""

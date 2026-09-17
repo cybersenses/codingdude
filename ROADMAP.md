@@ -662,3 +662,26 @@ Gaps to close only if broad language support becomes a requirement:
 3. Dead-code/lint coverage thin outside Python + JS/TS.
 
 Decision: do NOT build speculatively. Revisit when a non-Python project becomes real usage.
+
+## R27 — R27 — Edit-tool match hardening (aider-style SEARCH/REPLACE matching)
+**Status:** done
+
+Port aider's layered matching (exact, whitespace-flexible, blank-line tolerance, `...` elision — skip fuzzy) into edit_file via new editmatch.py, plus did-you-mean feedback on no-match. Keep all existing safety: uniqueness rule, _atomic_write, write-verify+rollback, staleness, CRLF byte-faithful handling, AST summary.
+
+## R28 — Process registry: tracked shell processes with HITL visibility
+**Status:** open
+
+**Problem (from myai usage):** agent spawns background/detached processes; when the parent shell exits the agent loses track, and HITL has no visibility of running shell processes.
+
+**Decision:** spawned processes survive as **registered orphans** — tracked, killable, cleanable later. True **interactive stdin** is required (agent can write to live processes). Build phased:
+
+- **Phase 1** — visibility-only ProcessRegistry: shell tool records command/pid/started/status; trace events + `/processes` endpoint so HITL sees every process. No behavior change. Uses the R21 exit-fast signal to flag spawned-background children.
+- **Phase 2** — agent tools over the registry: `kill_process`, `poll_output` (and stdin write); approvals apply to writes.
+- **Phase 3** — persistent interactive shell sessions (PTY), streaming output to frontend via SSE.
+
+**Windows note:** Job Objects are the correct tracking primitive (PIDs recycle; killing parents doesn't kill children). R21 pipe-EOF logic lives at this layer.
+
+## R29 — Frontend reconnect resilience: resume live run after crash/reopen
+**Status:** open
+
+**Problem (from myai usage):** frontend crashed mid-run; on reopen, chat did not reconnect or catch up to the run's progress. SSE mid-run reattach exists server-side (E2E-tested) but the frontend doesn't exercise it on boot. Scope: on load, check `/runs/{id}/alive` and reattach to the live stream; render missed events; surface reconnect state in UI.

@@ -14,6 +14,7 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 
 from codingdude.editmatch import find_similar_lines, replace_most_similar_chunk
 from codingdude.langs import LanguageSpec, spec_for
+from codingdude.processes import ProcessRegistry
 
 from .approvals import DENIED, NEEDS_GATE
 from .astdiff import describe_ast_change
@@ -80,12 +81,16 @@ async def run_captured(
     timeout: int,
     env: dict | None = None,
     shell: bool = False,
+    registry: 'ProcessRegistry | None' = None,
 ) -> Captured | None:
     """Run a command, capture output, kill on timeout.
 
     Returns None when the process was killed after  seconds —
     callers format their own timeout message. One place so timeout
     handling (kill, not orphan) and decode can't drift across call sites.
+
+    `registry` (R28 Phase 1) records the command's lifecycle: spawn, exit,
+    and whether it left background writers on the pipes.
     """
     if env is None:
         env = scrubbed_env()
@@ -97,6 +102,8 @@ async def run_captured(
         proc = await asyncio.create_subprocess_exec(
             *argv, cwd=cwd, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE, env=env)
+    if registry is not None:
+        registry.register(proc.pid, ' '.join(argv))
     # R21: wait on the *process*, not communicate()/proc.wait(). Both wait
     # for pipe EOF on Windows — a grandchild that inherited stdout/stderr
     # keeps the pipes open after the parent exits, so a finished command
@@ -109,14 +116,24 @@ async def run_captured(
         proc.kill()
         while proc.returncode is None:
             await asyncio.sleep(0.05)
+        if registry is not None:
+            registry.finish(proc.pid, status='killed', exit_code=proc.returncode)
         return None
 
     # Drain the pipes with a per-read grace window: stop as soon as the
     # parent has exited and a read times out (leftover pipe writers like
-    # grandchildren would otherwise hold EOF forever).
+    # grandchildren would otherwise hold EOF forever). A stall means the
+    # command spawned something that outlives it — registered as a
+    # background orphan (R28 Phase 1), never killed here.
     assert proc.stdout is not None and proc.stderr is not None  # PIPEs above
-    stdout = await _drain(proc.stdout)
-    stderr = await _drain(proc.stderr)
+    stdout, stdout_stalled = await _drain(proc.stdout)
+    stderr, stderr_stalled = await _drain(proc.stderr)
+    background = stdout_stalled or stderr_stalled
+    if registry is not None:
+        registry.finish(
+            proc.pid, status='exited', exit_code=proc.returncode,
+            background=background,
+        )
 
     return Captured(
         code=proc.returncode if proc.returncode is not None else -1,
@@ -125,19 +142,25 @@ async def run_captured(
     )
 
 
-async def _drain(reader: asyncio.StreamReader) -> bytes:
+async def _drain(reader: asyncio.StreamReader) -> tuple[bytes, bool]:
     """Collect output until EOF, or until a read stalls after the process
-    ended (grandchild-held pipe). Callers must have awaited proc.wait()."""
+    ended (grandchild-held pipe). Callers must have awaited proc.wait().
+
+    Returns (output, stalled): stalled=True means writers other than the
+    finished process still held the pipe — a background spawner.
+    """
     chunks: list[bytes] = []
+    stalled = False
     while True:
         try:
             line = await asyncio.wait_for(reader.readline(), timeout=1.0)
         except TimeoutError:
+            stalled = True
             break
         if not line:  # EOF
             break
         chunks.append(line)
-    return b''.join(chunks)
+    return b''.join(chunks), stalled
 
 
 EditEmitter = Callable[[dict], None]
@@ -616,12 +639,16 @@ async def _resolve_gate(policy, command: str, always: bool = False) -> None:
 def build_shell_toolset(
     workdir: Path, policy, shell_bin: str = 'bash',
     on_render: Callable[[str], None] | None = None,
+    registry: ProcessRegistry | None = None,
 ) -> FunctionToolset:
     """The shell tool, gated by the ApprovalPolicy.
 
     `on_render(relative_path)` is called for image files a command creates
     (capture hook, R1): screenshots auto-register as renders instead of
     staying orphan scratch files.
+
+    `registry` (R28 Phase 1) records every spawned command so HITL can see
+    the agent's processes; visibility only — no behavior change.
     """
 
     def _mask_workdir(command: str) -> str:
@@ -649,7 +676,8 @@ def build_shell_toolset(
             await _resolve_gate(policy, command, always=decision == DENIED)
         argv = shell_argv(command, shell_bin)
         started = time.time()
-        cap = await run_captured(argv, cwd=workdir, timeout=timeout)
+        cap = await run_captured(argv, cwd=workdir, timeout=timeout,
+                                 registry=registry)
         if cap is None:
             return 'exit code: -1 (timed out)'
         if on_render is not None:

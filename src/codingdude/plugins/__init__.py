@@ -91,9 +91,15 @@ async def build_all(ctx: PluginContext) -> list[AbstractToolset]:
             ctx.emitter({'type': 'RENDER_CAPTURED', 'path': rel_path})
 
     if ctx.approvals is not None:
+        from codingdude.processes import ProcessRegistry
+
+        process_registry = ProcessRegistry(
+            on_event=ctx.emitter, db=ctx.db, session_id=ctx.session_id,
+        )
         toolsets.extend([
             build_shell_toolset(
-                ctx.workdir, ctx.approvals, shell_bin=ctx.shell_bin, on_render=on_render,
+                ctx.workdir, ctx.approvals, shell_bin=ctx.shell_bin,
+                on_render=on_render, registry=process_registry,
             ),
             build_git_toolset(ctx.workdir, ctx.approvals),
             build_coverage_toolset(ctx.workdir, ctx.approvals),
