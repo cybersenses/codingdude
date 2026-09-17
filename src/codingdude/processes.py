@@ -11,9 +11,41 @@ adds kill/poll tools over this same registry.
 """
 from __future__ import annotations
 
+import os
+import signal
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
+
+
+def _pid_alive(pid: int) -> bool:
+    """True if an OS process with `pid` currently exists and runs.
+
+    POSIX: signal 0 probe. Windows: os.kill(pid, 0) would TERMINATE the
+    process (TerminateProcess), so poll via OpenProcess/WaitForSingleObject
+    instead — a terminated-but-still-referenced process reports dead.
+    """
+    if os.name != 'nt':
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        except OSError:
+            return False
+        return True
+    import ctypes
+    SYNCHRONIZE = 0x00100000
+    WAIT_TIMEOUT = 0x00000102
+    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    handle = kernel32.OpenProcess(SYNCHRONIZE, False, pid)
+    if not handle:
+        return False
+    try:
+        return kernel32.WaitForSingleObject(handle, 0) == WAIT_TIMEOUT
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 class ProcessRegistry:
@@ -72,6 +104,41 @@ class ProcessRegistry:
             'background': background,
         })
         self._persist(record, update=True)
+
+    def poll(self, pid: int) -> dict | None:
+        """Registry record for `pid` with live liveness status, or None."""
+        record = next(
+            (r for r in reversed(self._records) if r['pid'] == pid), None
+        )
+        if record is None:
+            return None
+        if record['status'] == 'running':
+            record['status'] = (
+                'running' if _pid_alive(pid) else 'exited (no capture)')
+        return dict(record)
+
+    def kill(self, pid: int) -> str:
+        """Terminate a registered process. Ownership: only PIDs this
+        session registered may be killed."""
+        record = next(
+            (r for r in reversed(self._records) if r['pid'] == pid), None
+        )
+        if record is None:
+            return (
+                f'pid {pid} was not registered by this session — refusing '
+                'to kill processes the agent does not own.'
+            )
+        try:
+            # Windows: no SIGKILL; os.kill with any signal terminates the
+            # process (TerminateProcess). POSIX: SIGKILL is correct.
+            os.kill(pid, getattr(signal, 'SIGKILL', signal.SIGTERM))
+        except ProcessLookupError:
+            pass
+        except OSError as exc:
+            return f'failed to kill pid {pid}: {exc}'
+        if record['status'] == 'running':
+            self.finish(pid, status='killed')
+        return f'killed pid {pid} ({record["command"]})'
 
     def snapshot(self) -> list[dict]:
         """Recorded processes, newest first."""

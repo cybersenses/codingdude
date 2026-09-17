@@ -687,7 +687,50 @@ def build_shell_toolset(
             output = output[:4000] + '\n...\n' + output[-4000:]
         return f'exit code: {cap.code}\n{output}'
 
-    return FunctionToolset([shell])
+    def process_list() -> str:
+        """Processes this session spawned, newest first."""
+        rows = registry.snapshot() if registry is not None else []
+        if not rows:
+            return 'no processes registered'
+        lines = [
+            f"pid {r['pid']}  {r['status']}"
+            + (' (background)' if r.get('background') else '')
+            + f"  {r['command']}"
+            for r in rows
+        ]
+        return '\n'.join(lines)
+
+    def process_poll(pid: str) -> str:
+        """Check whether a registered process is still running."""
+        if registry is None:
+            return 'process registry unavailable'
+        record = registry.poll(_pid(pid))
+        if record is None:
+            return (
+                f'pid {pid} was not registered by this session; '
+                'use process_list to see known processes.'
+            )
+        return (
+            f"pid {record['pid']}  {record['status']}"
+            + (' (background)' if record.get('background') else '')
+            + f"  {record['command']}"
+        )
+
+    def process_kill(pid: str) -> str:
+        """Kill a process this session spawned (registered pids only)."""
+        if registry is None:
+            return 'process registry unavailable'
+        return registry.kill(_pid(pid))
+
+    return FunctionToolset([shell, process_list, process_poll, process_kill])
+
+
+def _pid(raw: str) -> int:
+    """Parse a pid tool argument; 0 marks invalid (never a live pid)."""
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return 0
 
 
 IMAGE_SUFFIXES = {'.png', '.jpg', '.jpeg', '.webp', '.gif'}
