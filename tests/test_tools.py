@@ -1,7 +1,10 @@
 """Engine seam: the scripted model drives real read-only tools on a temp Workdir."""
 
+import os
+import sys
 from pathlib import Path
 
+import pytest
 from helpers import scripted
 from pydantic_ai.messages import (
     ModelMessage,
@@ -152,7 +155,8 @@ async def test_shell_capture_hook_registers_new_renders(home, workdir):
         "import pathlib; p = pathlib.Path('shot.png'); p.write_bytes(b'x'); "
         "pathlib.Path('ignored.txt').write_text('x')"
     )
-    out = await shell(f'python -c "{script}"')
+    py = sys.executable.replace('\\', '/')
+    out = await shell(f'"{py}" -c "{script}"')
     assert 'exit code: 0' in out
     assert 'shot.png' in captured
     assert 'ignored.txt' not in captured
@@ -310,3 +314,17 @@ def test_stale_guard_cleared_by_reread(tmp_path):
     f.write_bytes(b'a = 999\n')
     read('x.py')  # observe the change
     assert edit('x.py', 'a = 999', 'a = 1000') == 'edited x.py'
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows bash resolution')
+def test_shell_argv_windows_resolves_git_bash_not_wsl_stub():
+    """Bare `bash` on Windows can resolve to the WSL stub (no distro ->
+    UTF-16 'no installed distributions' garbage). We must ship git's own
+    bash.exe, or at worst a non-System32 bash."""
+    from codingdude.tools import shell_argv
+
+    argv = shell_argv('echo hi')
+    assert argv[1] == '-c' and argv[2] == 'echo hi'
+    exe = argv[0].lower()
+    assert 'system32' not in exe, f'WSL stub selected: {argv[0]}'
+    assert exe.endswith('bash.exe') or exe.endswith('bash'), argv[0]

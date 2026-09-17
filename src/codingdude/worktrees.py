@@ -7,6 +7,7 @@ Layout: `<repo>/.codingdude-worktrees/<name>/` with branch
 """
 
 import subprocess
+import time
 from pathlib import Path
 
 from pydantic_ai.toolsets import FunctionToolset
@@ -31,7 +32,9 @@ class WorktreeError(Exception):
 def create_worktree(workdir: Path, name: str) -> Path:
     """Create `.codingdude-worktrees/<name>` worktree on branch
     `codingdude/<name>`. Fails cleanly when the repo has no commits (nothing
-    to isolate yet) or the worktree already exists."""
+    to isolate yet), the worktree already exists, or git refuses (its stderr
+    is carried in the message). One retry absorbs transient Windows file
+    locks (e.g. antivirus scanning the freshly created `.git` file)."""
     worktree_root = workdir / WORKTREE_DIRNAME
     worktree_path = worktree_root / name
     branch = f'{BRANCH_PREFIX}{name}'
@@ -45,8 +48,18 @@ def create_worktree(workdir: Path, name: str) -> Path:
         raise WorktreeError(
             'the repository has no commits yet — make an initial commit first'
         )
-    _git(workdir, 'worktree', 'add', '-b', branch, str(worktree_path))
-    return worktree_path
+    last_error = ''
+    for attempt in range(2):
+        result = subprocess.run(
+            ['git', 'worktree', 'add', '-b', branch, str(worktree_path)],
+            cwd=workdir, capture_output=True, text=True,
+        )
+        if result.returncode == 0:
+            return worktree_path
+        last_error = (result.stderr or result.stdout).strip()
+        if attempt == 0:
+            time.sleep(0.5)
+    raise WorktreeError(f'git worktree add failed: {last_error}')
 
 
 def remove_worktree(workdir: Path, name: str) -> None:

@@ -121,3 +121,18 @@ def test_remove_worktree_cleans_branch_and_dir(repo):
     branches = subprocess.run(['git', 'branch', '--list', 'codingdude/rm-me'],
                               cwd=repo, capture_output=True, text=True)
     assert branches.stdout.strip() == ''
+
+
+def test_create_worktree_git_failure_is_clean(repo):
+    """git refusing (branch exists, dir gone) must raise WorktreeError with
+    git's stderr - never a raw CalledProcessError (CI: exit 255 crash)."""
+    import shutil
+    import subprocess
+
+    from codingdude.worktrees import WorktreeError, create_worktree
+
+    create_worktree(repo, 'clash')
+    shutil.rmtree(repo / '.codingdude-worktrees' / 'clash')
+    subprocess.run(['git', 'worktree', 'prune'], cwd=repo, capture_output=True)
+    with pytest.raises(WorktreeError, match='git worktree add failed'):
+        create_worktree(repo, 'clash')

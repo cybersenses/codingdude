@@ -682,6 +682,6 @@ Port aider's layered matching (exact, whitespace-flexible, blank-line tolerance,
 **Windows note:** Job Objects are the correct tracking primitive (PIDs recycle; killing parents doesn't kill children). R21 pipe-EOF logic lives at this layer.
 
 ## R29 — Frontend reconnect resilience: resume live run after crash/reopen
-**Status:** open
+**Status:** done
 
 **Problem (from myai usage):** frontend crashed mid-run; on reopen, chat did not reconnect or catch up to the run's progress. SSE mid-run reattach exists server-side (E2E-tested) but the frontend doesn't exercise it on boot. Scope: on load, check `/runs/{id}/alive` and reattach to the live stream; render missed events; surface reconnect state in UI.

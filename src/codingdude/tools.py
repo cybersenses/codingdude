@@ -2,7 +2,9 @@
 
 import ast
 import asyncio
+import os
 import re
+import shutil
 import time
 import uuid
 from collections.abc import Callable, Sequence
@@ -29,14 +31,38 @@ SKIP_DIRS = {'.git', '.venv', 'node_modules', '__pycache__', '.mypy_cache', '.py
 SECRET_MARKERS = ('KEY', 'TOKEN', 'SECRET', 'PASSWORD', 'CREDENTIAL')
 
 
+def _git_bash_exe() -> str | None:
+    """Windows: locate Git Bash. Bare `bash` may resolve to the WSL stub
+    (which fails with 'no installed distributions' when WSL has no distro),
+    so prefer the bash shipped next to git itself."""
+    git_exe = shutil.which('git')
+    if git_exe:
+        for base in (Path(git_exe).parent, Path(git_exe).parent.parent):
+            cand = base / 'bin' / 'bash.exe'
+            if cand.exists():
+                return str(cand)
+    for cand in (Path(r'C:\Program Files\Git\bin\bash.exe'),):
+        if cand.exists():
+            return str(cand)
+    found = shutil.which('bash')
+    if found and 'system32' not in found.lower():  # skip the WSL stub
+        return found
+    return None
+
+
 def shell_argv(command: str, shell_bin: str = 'bash') -> list[str]:
     """Argv to run `command` under the configured shell (bash or powershell).
 
     One place, so the shell tool / coverage / fix-loop can't drift onto a
-    hardcoded `bash` on Windows (self-review M10).
+    hardcoded `bash` on Windows (self-review M10). On Windows `bash` means
+    Git Bash, resolved explicitly so the WSL stub never wins.
     """
     if shell_bin == 'powershell':
         return ['powershell', '-NoProfile', '-Command', command]
+    if os.name == 'nt':
+        bash = _git_bash_exe()
+        if bash is not None:
+            return [bash, '-c', command]
     return ['bash', '-c', command]
 
 

@@ -96,10 +96,18 @@ async def test_h6_aux_model_usage_is_recorded(engine, workdir):
 
 
 def test_m10_shell_argv_selects_the_configured_shell():
-    """One helper drives bash vs powershell (no hardcoded bash) (M10)."""
+    """One helper drives bash vs powershell (no hardcoded bash) (M10).
+    On Windows bash means Git Bash, resolved so the WSL stub never wins."""
+    import os
+
     from codingdude.tools import shell_argv
 
-    assert shell_argv('ls -la', 'bash') == ['bash', '-c', 'ls -la']
+    argv = shell_argv('ls -la', 'bash')
+    if os.name == 'nt':
+        assert argv[0].lower().endswith('bash.exe') and 'system32' not in argv[0].lower()
+    else:
+        assert argv == ['bash', '-c', 'ls -la']
+    assert argv[1:] == ['-c', 'ls -la']
     assert shell_argv('Get-ChildItem', 'powershell') == [
         'powershell', '-NoProfile', '-Command', 'Get-ChildItem'
     ]

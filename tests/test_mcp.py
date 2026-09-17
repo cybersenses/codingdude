@@ -192,15 +192,23 @@ def test_verify_drops_broken_server_keeps_healthy(home, tmp_path, monkeypatch):
         verify_mcp_toolsets,
     )
 
-    # codegraph (healthy) + a guaranteed-broken binary.
+    # A portable healthy stdio server (the `mcp` package ships with
+    # pydantic-ai) + a guaranteed-broken binary. No machine-specific paths.
+    healthy_script = (
+        "try:\n"
+        "    from mcp.server.mcpserver import MCPServer as Server\n"
+        "except ImportError:\n"
+        "    from mcp.server.fastmcp import FastMCP as Server\n"
+        "Server('tiny').run()"
+    )
     home.mkdir(parents=True, exist_ok=True)
     (home / 'mcp.json').write_text(
         json.dumps({
             'mcpServers': {
-                'codegraph': {
+                'healthy': {
                     'type': 'stdio',
-                    'command': 'cmd',
-                    'args': ['/c', r'C:\Users\norma\AppData\Local\codegraph\current\bin\codegraph.CMD', 'serve', '--mcp'],
+                    'command': sys.executable,
+                    'args': ['-c', healthy_script],
                 },
                 'broken': {
                     'type': 'stdio',
@@ -215,4 +223,4 @@ def test_verify_drops_broken_server_keeps_healthy(home, tmp_path, monkeypatch):
     names = merged_mcp_server_names(home, tmp_path)
     toolsets = load_merged_mcp_toolsets(home, tmp_path)
     healthy = asyncio.run(verify_mcp_toolsets(names, toolsets, attempts=1))
-    assert len(healthy) == 1  # broken dropped, codegraph kept
+    assert len(healthy) == 1  # broken dropped, healthy kept

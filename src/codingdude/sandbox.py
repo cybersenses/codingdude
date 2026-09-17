@@ -15,7 +15,13 @@ from pathlib import Path
 from pydantic_ai.toolsets import FunctionToolset
 
 from .tools import _resolve_gate, run_captured, scrubbed_env
-from .worktrees import BRANCH_PREFIX, WORKTREE_DIRNAME, WorktreeError, create_worktree
+from .worktrees import (
+    BRANCH_PREFIX,
+    WORKTREE_DIRNAME,
+    WorktreeError,
+    create_worktree,
+    remove_worktree,
+)
 
 EXEC_TIMEOUT = 300
 
@@ -209,9 +215,8 @@ def build_sandbox_toolset(workdir: Path, policy) -> FunctionToolset:
         ok, detail = _make_venv(sandbox)
         if not ok:
             # Fail fast: a sandbox without a venv is not a sandbox; remove the
-            # half-built worktree so the name stays reusable.
-            _git(workdir, 'worktree', 'remove', '--force', str(sandbox))
-            _git(workdir, 'worktree', 'prune')
+            # half-built worktree (branch included) so the name stays reusable.
+            remove_worktree(workdir, name)
             return f'error: venv creation failed: {detail}'
         port = free_port()
         return (f'sandbox ready: {sandbox} (branch {BRANCH_PREFIX}{name}) '
