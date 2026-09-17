@@ -6,6 +6,7 @@ Phase 3 PTY sessions (#57).
 """
 import asyncio
 import sys
+import time
 
 from codingdude.processes import ProcessRegistry
 from codingdude.tools import build_shell_toolset
@@ -89,6 +90,38 @@ def _tmp_path():
     import tempfile
     from pathlib import Path
     return Path(tempfile.mkdtemp())
+
+
+def test_shell_toolset_exposes_session_write_read_tools():
+    reg = ProcessRegistry()
+    toolset = build_shell_toolset(_tmp_path(), policy=_AllowAll(),
+                                  registry=reg)
+    names = set(toolset.tools)
+    assert {'process_write', 'process_read'} <= names
+
+
+def test_process_write_read_tool_roundtrip():
+    async def go():
+        reg = ProcessRegistry()
+        toolset = build_shell_toolset(_tmp_path(), policy=_AllowAll(),
+                                      registry=reg)
+        write = _tool(toolset, 'process_write')
+        read = _tool(toolset, 'process_read')
+        session = reg.start_session(
+            [sys.executable, '-u', '-c',
+             "import sys\nfor line in sys.stdin:\n"
+             "    print('got:' + line.strip(), flush=True)\n"],
+            cwd=_tmp_path())
+        out = write(str(session.pid), 'ping\n')
+        assert 'wrote' in out.lower()
+        seen = ''
+        deadline = time.time() + 5
+        while 'got:ping' not in seen and time.time() < deadline:
+            seen += read(str(session.pid))
+            time.sleep(0.05)
+        assert 'got:ping' in seen
+        session.terminate()
+    asyncio.run(go())
 
 
 class _AllowAll:

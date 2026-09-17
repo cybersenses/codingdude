@@ -722,7 +722,32 @@ def build_shell_toolset(
             return 'process registry unavailable'
         return registry.kill(_pid(pid))
 
-    return FunctionToolset([shell, process_list, process_poll, process_kill])
+    def process_write(pid: str, text: str) -> str:
+        """Write text to the stdin of an interactive shell session."""
+        if registry is None:
+            return 'process registry unavailable'
+        return registry.write(_pid(pid), text)
+
+    def process_read(pid: str) -> str:
+        """Read output produced by an interactive session since last read."""
+        if registry is None:
+            return 'process registry unavailable'
+        session = registry.sessions.get(_pid(pid))
+        if session is None:
+            return (
+                f'pid {pid} is not an interactive session of this agent; '
+                'use process_list to see known processes.'
+            )
+        out = session.read_new()
+        record = registry.poll(_pid(pid))
+        status = record['status'] if record else 'unknown'
+        return f'[{status}]\n{out}' if out or status != 'running' else (
+            out or '[no new output]')
+
+    return FunctionToolset([
+        shell, process_list, process_poll, process_kill,
+        process_write, process_read,
+    ])
 
 
 def _pid(raw: str) -> int:
