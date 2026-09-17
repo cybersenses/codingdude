@@ -669,7 +669,7 @@ Decision: do NOT build speculatively. Revisit when a non-Python project becomes 
 Port aider's layered matching (exact, whitespace-flexible, blank-line tolerance, `...` elision — skip fuzzy) into edit_file via new editmatch.py, plus did-you-mean feedback on no-match. Keep all existing safety: uniqueness rule, _atomic_write, write-verify+rollback, staleness, CRLF byte-faithful handling, AST summary.
 
 ## R28 — Process registry: tracked shell processes with HITL visibility
-**Status:** open
+**Status:** done
 
 **Problem (from myai usage):** agent spawns background/detached processes; when the parent shell exits the agent loses track, and HITL has no visibility of running shell processes.
 

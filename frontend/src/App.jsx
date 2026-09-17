@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import CodeEditor from './CodeEditor.jsx'
 import { api, authLocal, call, checkAuth, login } from './api'
+import { runToReattach } from './reattach'
 
 // R6: render-only mermaid diagrams inside spec blocks. Renders each
 // ```mermaid fence to SVG; on failure the raw fence stays visible.
@@ -1775,20 +1776,35 @@ export default function App() {
     loadMessages(activeSession).catch((e) => setError(String(e.message)))
   }, [activeSession, loggedIn])
 
-  const [runningSessions, setRunningSessions] = useState(() => new Set())
+  const [runningSessions, setRunningSessions] = useState(() => new Map()) // session_id -> run_id
+  const attachedRunRef = useRef(null)
   useEffect(() => {
     if (!loggedIn) return
     let stop = false
     async function poll() {
       try {
         const active = await api.activeRuns()
-        if (!stop) setRunningSessions(new Set(active.map((r) => r.session_id)))
+        if (!stop) setRunningSessions(new Map(active.map((r) => [r.session_id, r.run_id])))
       } catch { /* transient */ }
       if (!stop) setTimeout(poll, 5000)
     }
     poll()
     return () => { stop = true }
   }, [loggedIn])
+
+  // R29 (#58): on boot/refresh, a run that is still live in the selected
+  // session must reattach — reload the persisted exchange, then stream the
+  // tail from the run's (buffered) SSE channel.
+  useEffect(() => {
+    const runId = runToReattach(runningSessions, activeSession, attachedRunRef.current)
+    if (!runId) return
+    setStreaming(true)
+    lastEventRef.current = Date.now()
+    setStatus('running')
+    runRef.current = runId
+    loadMessages(activeSession).catch(() => {})
+    attach(runId)
+  }, [activeSession, runningSessions])
 
   async function loadMessages(sessionId) {
     let raw
@@ -2063,7 +2079,7 @@ export default function App() {
           setWorkdir={setWorkdir}
           sessions={sessions}
           activeSession={activeSession}
-          runningSessions={runningSessions}
+          runningSessions={new Set(runningSessions.keys())}
           onSelect={(id) => {
             setActiveSession(id)  // history loads via the activeSession effect
           }}
