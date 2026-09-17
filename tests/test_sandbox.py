@@ -42,6 +42,13 @@ def policy(**kw):
     return ApprovalPolicy(allowed_binaries=set(), **kw)
 
 
+async def create_ok(toolset, name, **kw):
+    """Create a sandbox and fail with the tool's own error text if it errs."""
+    result = await toolset.tools['sandbox_create'].function(name=name, **kw)
+    assert 'error:' not in result, result
+    return result
+
+
 async def test_create_reports_tier_preview_and_layout(repo):
     toolset = build_sandbox_toolset(repo, policy())
     result = await toolset.tools['sandbox_create'].function(
@@ -55,14 +62,14 @@ async def test_create_reports_tier_preview_and_layout(repo):
 
 async def test_create_existing_fails_cleanly(repo):
     toolset = build_sandbox_toolset(repo, policy())
-    await toolset.tools['sandbox_create'].function(name='dup')
+    await create_ok(toolset, 'dup')
     result = await toolset.tools['sandbox_create'].function(name='dup')
     assert 'error:' in result
 
 
 async def test_exec_runs_inside_sandbox_only(repo):
     toolset = build_sandbox_toolset(repo, policy(yolo=True))
-    await toolset.tools['sandbox_create'].function(name='iso')
+    await create_ok(toolset, 'iso')
     result = await toolset.tools['sandbox_exec'].function(
         name='iso', command='python -c "open(\'made.txt\', \'w\').write(\'x\')"')
     assert 'exit 0' in result
@@ -79,7 +86,7 @@ async def test_exec_unknown_sandbox_is_readable(repo):
 
 async def test_teardown_is_byte_identical(repo):
     toolset = build_sandbox_toolset(repo, policy())
-    await toolset.tools['sandbox_create'].function(name='temp')
+    await create_ok(toolset, 'temp')
     def status():
         out = subprocess.run(['git', 'status', '--porcelain'], cwd=repo,
                              capture_output=True, text=True).stdout
