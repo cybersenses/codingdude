@@ -41,14 +41,21 @@ def docker_cli() -> str | None:
 
 
 def docker_usable() -> bool:
-    """CLI present AND daemon answering — a broken daemon must not be chosen."""
+    """CLI present AND daemon answering AND able to run LINUX containers —
+    a broken daemon, or a Windows-containers daemon (windows-latest CI)
+    that cannot run our linux images, must not be chosen."""
     cli = docker_cli()
     if cli is None:
         return False
     proc = subprocess.run(
         [cli, 'version', '--format', '{{.Server.Version}}'],
         capture_output=True, text=True, env=scrubbed_env(), timeout=30)
-    return proc.returncode == 0
+    if proc.returncode != 0:
+        return False
+    os_type = subprocess.run(
+        [cli, 'info', '--format', '{{.OSType}}'],
+        capture_output=True, text=True, env=scrubbed_env(), timeout=30)
+    return os_type.stdout.strip() == 'linux'
 
 
 def container_image_ready(image: str) -> bool:
