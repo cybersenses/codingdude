@@ -1,199 +1,47 @@
-# Handoff note — to the next agent on duty
+# Handoff note � to the next agent on duty
 
-**User-feedback round 1 shipped** (`17e8cb9`, spec:
-`docs/specs/user-feedback-notes-round1.md`, tickets #11–#14): all 12 notes from
-the WifiMon sessions converted into CodingDude improvements —
-- **Project notes** (per-project, agent-readable): `project_notes` table,
-  `ProjectNoteStore`, agent tools `read_project_notes`/`add_project_note`/
-  `resolve_note`, `/notes` REST endpoints, Notes-panel project section with
-  resolve (✓) / delete (✕). Workdir-scoped — no cross-project bleed.
-- **Guidance blocks**: `guidance.py` appends verified platform facts (OS,
-  Python, workdir path form) + a behavioral contract (evaluate-don't-fix,
-  ask-then-wait, plan-first, offer dependency install, be terse) to the system
-  instructions. Instruction-level by user decision — no mechanical gate.
-- **Codegraph auto-bootstrap**: `codegraph_boot.ensure_codegraph_index` runs
-  `codegraph init` at run start when `.codegraph` is missing (best-effort,
-  never blocks a run).
-- **HTML artifacts**: `emit_html` tool/kind, rendered inline in the Artifacts
-  tab via sandboxed iframe, plus a one-line explainer of what artifacts are.
-- Gates: **286 pytest passed** (+9), ruff clean, mypy clean (42 files),
-  npm build ✓.
+*Updated after commit 46957c3 (pushed). Main == origin/main, tree clean.*
 
-**Pre-release closeout done**: every code-level finding in `cdissues.md` is
-closed. Left with the **entire R1–R11 roadmap closed**, plus the R7 annotation
-layer, the zai-vision MCP server, and the closeout wave (M6, M11, L1, L11, L13)
-shipped on top. Backlog is empty — the next work is using CodingDude on a real
-external project.
+## Current state
+- **All roadmap items R1�R29 and all tickets closed.** Backlog empty.
+- Gates at last run: **475 passed / 1 skipped**, ruff clean, mypy clean (52 files), vitest 4/4, frontend build ok.
 
-## Closeout wave just shipped (this commit)
-- **M6**: `delete_session` is schema-driven (`_session_scoped_tables()` via
-  `sqlite_master` + PRAGMA) — new session-scoped tables can never be orphaned.
-- **M11**: `rename_symbol` + worktree toolsets attached in `build_all`;
-  `worktree_merge` is approvals-gated (interactive deny → ModelRetry,
-  headless → GateRequired per ADR-0003).
-- **L1**: `Engine.run()` decomposed into `_make_tracer`, `_resolve_run_model`,
-  `_build_instructions`, `_run_fix_loop`, `_record_run_usage` (pure extraction).
-- **L11**: verified already fixed (history reload shows tool-call/tool-return).
-- **L13**: fixed the fake `Authorization: Bearer <empty>` header in
-  `deleteSkill`, consolidated the duplicated `notify` state (App owns it),
-  lazy `_instructions()` (no import-time FS read), `bench.py` restores
-  `CODEDUDE_HOME` in `finally`. MCP temp-file + `_diff_nonempty` guard were
-  already in place — verified, not changed.
-- Gates: **276 pytest passed** (+4), ruff clean, mypy clean (39 files),
-  npm build ✓.
-- **Still open, not code:** native `inspect_image` pixel-gate live-model check
-  (needs configured `models.vision`); user-side PAT rotation for the global
-  `github` MCP entry.
+## Just shipped (46957c3) � post-run hang + reattach storm fix
+Symptom: after RUN_FINISHED the UI never settled until the user hit stop; a
+shell process (codegraph node) lingered.
+- **Server** (worker.py): _finish_run() now drains the post-run tail
+  (engine.drain_post_run(), bounded 150s) **before** emitting the terminal
+  event. Previously the tail was cancelled ~2s after RUN_FINISHED at worker
+  teardown -> MEMORY_EXTRACTED never emitted, and a tail mid-LLM-call could
+  hang asyncio.run cancellation -> worker (and its MCP children) stayed alive.
+- **Frontend** (App.jsx): attachedRunRef is now written in attach() and
+  cleared on every exit path (terminal, SSE give-up, worker-gone, stop()).
+  The ref was never assigned before, so the boot-reattach effect re-fired on
+  every 5s activeRuns poll, stacking duplicate EventSources that competed
+  for the channel single-consumer queue.
 
-## zai-vision MCP server (previous commit)
-- GLM coding-plan vision MCP (`@z_ai/mcp-server@latest`) wired into the MCP
-  seed: `ensure_default_mcp` is now **additive** (adds missing known defaults —
-  codegraph, zai-vision — to an existing mcp.json; never modifies/removes
-  existing entries). Key referenced via `${ZAI_API_KEY:-}` env expansion,
-  never stored in the file; `apply_provider_keys` already populates it from
-  `providers.zai`. Missing key → server fails at connect → pre-flight drops
-  it with a warning (non-fatal).
-- Complementary to native `inspect_image` (pixel gates, `IMAGE_INSPECTED`
-  trace): MCP brings OCR, ui_diff_check, diagram understanding, video.
-- Spec: `docs/specs/zai-vision-mcp.md`. Gates: 272 pytest, ruff, mypy green.
-- User-side smoke check still owed: one real run to confirm the npx spawn
-  connects (needs node ≥22 — verified present, v22.23.2).
+## Verify next live run (user watching)
+- Trace should show MEMORY_EXTRACTED **before** RUN_FINISHED.
+- UI settles to finished; no lingering processes after run end.
 
-## R7 annotation layer (previous commits)
-- `session_notes` table (db.py): id, session_id, content, offset_s, trace_event_index, created_at.
-- `sessions.keep_for_evals` column (default 0). **Always recording** — no on/off flag;
-  keep-for-evals is a *selection* marker, `never_record` is the privacy escape hatch.
-- `evals.py`: `annotate_session` / `list_annotations`; `export_scenario` carries notes
-  as human annotation only (`annotations` field — not machine-checkable in V1).
-- `server.py`: `GET/POST /sessions/{id}/notes`, `POST /sessions/{id}/keep`.
-- Frontend Notes sidebar in App.jsx: 📌 keep-for-evals toggle, note input with
-  optional offset seconds, rendered with timestamp.
-- Spec: `docs/specs/R7-curation-notes.md`. Gates: 265 pytest, ruff, mypy
-  (39 files), npm build — all green.
-- Watch: `edit_file` mangled the App.jsx Notes rewrite twice — **CLOSED by R12**
-  (deterministic edit pipeline, commit pending): strict UTF-8, newline-faithful
-  I/O, atomic write + verify/rollback, staleness guard.
+## Known accepted gaps (do not fix by surprise)
+- RunChannel SSE queue is single-consumer; competing consumers steal events
+  (no broadcast). Multi-consumer broadcast is a possible follow-up if it bites.
+- No live end-to-end verification of the vision pixel gate (needs configured
+  models.vision).
 
-## State at handoff
-- HEAD (this commit): R1 verification gaps closed on top of the annotation
-  layer — (1) renders now persist per session (`renders` table,
-  `db.record_render`/`list_renders`, engine emitter hook on RENDER_CAPTURED,
-  `/sessions/{id}/renders` merges DB provenance with the workdir scan);
-  (2) live SSE-reattach E2E proven over a real uvicorn server + worker
-  subprocess (`test_sse_reattach_mid_run`: drop mid-run, `/alive` true,
-  reattach, terminal event received). Note: the vision pixel gate still has
-  no live-model check (needs `models.vision` + a real image round).
-- 269 pytest, ruff, mypy (39 files), npm build green. All pushed.
-- **Deliberately deferred as information-thin (not debt):**
-  R7 curated eval scenario *library* (content, not mechanism);
-  R8 contract-first codegen (needs a codegen design).
-- **Standing deliberately-open verification gaps (do not "fix" by surprise):**
-  no live end-to-end check of SSE reattach or the vision pixel gate with a
-  real model (unit-tested with TestModel only); renders live in the workdir,
-  not the DB; user has not reported memory/compaction issues since the
-  `request_limit` change.
-- Environment notes: WSL git has no credential helper — push via
-  `timeout 90 git.exe -C "G:\\pydantic" push`. Use `docker.exe` from WSL
-  (no plain `docker` on Ubuntu PATH). Gates via
-  `/mnt/c/Users/norma/.local/bin/uv.exe run`.
+## Environment notes
+- Windows 11, project at G:/pydantic, venv ./.venv/Scripts/.
+- Gates: ./.venv/Scripts/python.exe -m pytest -q; ruff check src tests;
+  python -m mypy src; frontend: cd frontend && npx vitest run && npm run build.
+- WSL git now uses Windows GCM for credentials � push works from agent shell
+  (git push origin main, ~seconds). Docker CLI: use docker.exe from WSL.
+- tools.py and other files are CRLF � preserve; the edit tool keeps
+  normalizing some files to LF, restore CRLF pre-commit when diff explodes.
 
-## Recently shipped (thickening wave, `9d922da` + this commit)
-- R6: artifacts SSE push (`ArtifactStore.watch`, EventSource + poll
-  fallback); mermaid fences in spec blocks render to SVG client-side.
-- R7: `codingdude eval --record SESSION_ID` + `--scenarios DIR` CI runner.
-- R8: `missing-contract` rule, stale-waiver retirement, new
-  `adr-contradiction` rule (decision references a module that no longer
-  exists → flagged for revisit/retirement; waiverable).
-- R9: `ExecutionStore.drift()` (done-without-evidence, out-of-order steps)
-  surfaced in `get_resume_state`.
-- R10: `session_usage` → `by_model` + `by_request` breakdowns; Cost tab
-  renders both.
-- R5: container tier (tier param on `sandbox_create`, docker CLI subprocess).
-
-## Next action
-Roadmap closed. Brainstorm the next feature wave with the user and open new
-`## R<n>` roadmap items.
-
-## What was just shipped
-- **R2 (hang):** real culprit was `es.onerror` in `frontend/src/App.jsx` — it
-  used to close the SSE and silently pretend the run finished. Now:
-  reattach-with-backoff while `/runs/{id}/alive` says the worker lives, honest
-  error after 5 failed attempts, clean finish + message reload when the worker
-  is already gone. Plus a client watchdog: `quietSeconds >= 30` shows
-  "still working… (no output for Ns)" in the footer.
-- **R1 (vision):** `src/codingdude/vision.py` — `inspect_image(path, question)`
-  tool, wired via `PluginContext.vision_model` (only when `models.vision` is
-  configured). Shell capture hook in `build_shell_toolset(on_render=...)` emits
-  `RENDER_CAPTURED` for fresh image files after each command. Renders tab now
-  pairs `*-dark/*-light` and `*-before/*-after` side-by-side.
-
-## Deliberately NOT done (don't "fix" by surprise)
-- **No end-to-end visual verification was run**: the vision toolset is unit-
-  tested with `TestModel`, but nobody has yet watched the UI reattach during a
-  real dropped connection, or watched the agent close a real pixel gate via
-  `inspect_image`. Both are worth a live sanity pass with a real vision model.
-- Rendering pairing is name-convention based (`-dark`, `-before`, …); if skills
-  produce different naming, extend the `PAIRS` regex in the Renders tab.
-- `models.vision` unset → no `inspect_image` tool at all (by design); the agent
-  silently can't judge pixels in that config. Consider a trace hint if that
-  bites.
-- Open thread from memory: the user never confirmed memory/compaction behaved
-  after the request_limit change — follow up if they report it again.
-- R1's "renders persisted with the session" is still satisfied indirectly (the
-  workdir scan); nothing is copied into the DB. If renders must survive the
-  workdir moving/deleting, that's new work.
-
-## House rules reminders
-- Every user message means "continue the work" — bounce with
-  `python -m codingdude.restart` only as delivery, not as the task.
-- Workdir-scoped planning data lives via the planning agent tools; keep
-  ROADMAP.md statuses in sync when you close items.
-
-## R5–R10 thickeners shipped (all in one slice)
-- **R6 SSE push**: `ArtifactStore.watch()` tails the artifacts table
-  (snapshot → emitted/answered deltas); `GET /sessions/{id}/artifacts/events`
-  streams it as SSE; the Artifacts panel consumes EventSource live with
-  automatic fallback to the old 4s poll on stream error.
-- **R7 recording + CI**: `codingdude eval --record SESSION_ID --name N --out
-  FILE [--check ...]` exports a real session's persisted messages into a
-  scenario; `codingdude eval --scenarios DIR --workdir WD` replays a suite and
-  exits 1 with readable FAIL lines (CI-ready).
-- **R8 contract-first + ADR hygiene**: archlint gains `missing-contract`
-  (public top-level functions/classes under src/ need docstring contracts,
-  waivable like any finding) and stale-waiver reporting (a waiver whose finding
-  no longer fires is surfaced for retirement).
-- **R9 plan diffing**: `ExecutionStore.drift(ticket_id)` flags steps claimed
-  done without evidence and out-of-order completion; surfaced in
-  `get_resume_state` as a reconcile-before-finishing warning.
-- **R10 per-model telemetry**: `session_usage` returns `by_model` rows
-  (requests/tokens/cost per model); Cost tab renders the breakdown.
-- Gates: 258 pytest passed, ruff clean, mypy clean (39 files), npm build ok.
-
-## R5 tier 2 shipped (container tier)
-- Docker verified working after WSL default-distro fix (`wsl --set-default
-  Ubuntu`); from the agent's shell the CLI resolves as `docker.exe` (enable
-  Docker Desktop WSL integration for plain `docker` inside Ubuntu — optional).
-- `sandbox_create(name, tier=''|'worktree'|'container')`: default prefers
-  container when `docker_usable()` (CLI + daemon check); explicit
-  `container` errors when Docker is unusable — never a silent fallback.
-  Container `python:3.12-alpine`, name `codingdude-sb-<name>`, worktree
-  mounted at `/workspace`, preview port mapped to container 8000; stale
-  container pre-removed so names are reusable. Exec routes via
-  `docker exec`; teardown removes the container, then tier-1 teardown.
-- Gates: 248 pytest passed, ruff clean, mypy clean (39 files). Ticket #8 closed.
-- Environment notes: agent shell is WSL bash; gates run via `uv.exe run`.
-  WSL `git` normalization briefly swept CRLF→LF across the repo — commit
-  reverted, `core.autocrlf=false` set (repo + global). A `python` shim
-  (symlink to python3 in WindowsApps) fixes `python` inside WSL for the
-  shell capture-hook test.
-
-## R7 curation shipped (ticket #9)
-- Sessions always record; new curation layer: 
-  (via ),  table (run_id, offset_s, content).
-- : , , .
--  now carries ; endpoints , ; Notes tab in App.jsx
-  (keep toggle + add-note with optional second-offset).
-- Spec: docs/specs/R7-curation-notes.md.
-- Gates: 265 pytest passed, ruff clean, mypy clean (39 files), npm build ok.
-- Watch: edit_file mangles CRLF files — **CLOSED by R12** (root causes fixed:
-  lossy read, newline translation, no atomicity/staleness guard).
+## Process reminders
+- TDD red-first at pre-agreed seams; full gates before any done claim.
+- Every user message means continue-the-work; user says proceed/afk -> keep
+  going without re-asking. Bounce = delivery mechanism, not a new task.
+- Keep ROADMAP.md statuses in sync when closing items; ticket tool closes
+  record the closing commit.
