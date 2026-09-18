@@ -1909,6 +1909,7 @@ export default function App() {
     // conclude the run ended once the server says the worker is gone.
     const es = new EventSource(api.eventStreamUrl(run_id))
     esRef.current = es
+    attachedRunRef.current = run_id
     es.onmessage = (e) => {
       lastEventRef.current = Date.now()
       let ev
@@ -1956,6 +1957,7 @@ export default function App() {
               setStatus(ev.type === 'RUN_ERROR' ? `error: ${ev.message || ''}` : 'finished')
               if (ev.type === 'RUN_ERROR') setError(ev.message || 'run error')
               es.close()
+              attachedRunRef.current = null
               setStreaming(false)
               loadMessages(activeSession)
             }
@@ -1968,6 +1970,7 @@ export default function App() {
       if (attempt >= 5) {
         // Server unreachable repeatedly: say so instead of pretending the
         // run finished cleanly.
+        attachedRunRef.current = null
         setStreaming(false)
         setStatus('error')
         setError('lost connection to the run — the agent may still be working; reopen the session to reload its output')
@@ -1987,6 +1990,7 @@ export default function App() {
             } else {
               // Worker already gone (run finished while we were detached):
               // reload the persisted exchange and finish cleanly.
+              attachedRunRef.current = null
               setStreaming(false)
               setStatus('finished')
               setMessages((msgs) => {
@@ -2012,6 +2016,7 @@ export default function App() {
   function stop() {
     if (runRef.current) api.cancelRun(runRef.current).catch(() => {})
     esRef.current?.close()
+    attachedRunRef.current = null
     setStreaming(false)
     setStatus('stopped')
   }

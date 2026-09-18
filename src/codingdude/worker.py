@@ -20,6 +20,43 @@ import websockets
 
 from .events import TERMINAL_EVENTS
 
+# Bounded drain before the terminal event: each tail pass is already capped by
+# run_pipeline._POST_RUN_LLM_TIMEOUT_S and they run concurrently, so ~one pass
+# plus slack. Keeps shutdown deterministic — nothing pending to cancel.
+_DRAIN_BEFORE_TERMINAL_S = 150.0
+
+
+async def _finish_run(engine, args, on_event, outcome=None, exc=None) -> None:
+    """Emit the terminal event, draining any pending post-run tail first.
+
+    For the last turn of a worker's life there is no next-turn drain, and a
+    tail still pending at teardown hangs shutdown in asyncio.run's task
+    cancellation — the worker (and its MCP children) lingers after
+    RUN_FINISHED. Draining first guarantees a clean exit.
+    """
+    await engine.drain_post_run(timeout=_DRAIN_BEFORE_TERMINAL_S)
+    if exc is not None:
+        from .exceptions import BudgetExceeded
+
+        terminal = {
+            'type': 'RUN_ERROR',
+            'code': 'budget' if isinstance(exc, BudgetExceeded) else 'error',
+            'message': str(exc),
+        }
+    elif outcome.status == 'gate_aborted':
+        terminal = {
+            'type': 'RUN_ERROR',
+            'code': 'gate',
+            'message': outcome.output,
+        }
+    else:
+        # Only after persistence: the UI reading messages must see
+        # the full exchange when RUN_FINISHED lands.
+        terminal = {'type': 'RUN_FINISHED'}
+    trace_terminal(args.session, terminal)
+    # Single writer: queued, so ordering with other events is preserved.
+    on_event(terminal)
+
 
 async def _resolve_model(name: str | None, base_url: str | None = None):
     if not name:
@@ -228,27 +265,10 @@ async def run(args) -> int:
                     approvals=policy,
                     emit=on_event,
                 )
-                if outcome.status == 'gate_aborted':
-                    terminal = {
-                        'type': 'RUN_ERROR',
-                        'code': 'gate',
-                        'message': outcome.output,
-                    }
-                else:
-                    # Only after persistence: the UI reading messages must see
-                    # the full exchange when RUN_FINISHED lands.
-                    terminal = {'type': 'RUN_FINISHED'}
             except Exception as exc:  # noqa: BLE001 — reported to the UI, not crashed
-                from .exceptions import BudgetExceeded
-
-                terminal = {
-                    'type': 'RUN_ERROR',
-                    'code': 'budget' if isinstance(exc, BudgetExceeded) else 'error',
-                    'message': str(exc),
-                }
-            trace_terminal(args.session, terminal)
-            # Single writer: queued, so ordering with other events is preserved.
-            on_event(terminal)
+                await _finish_run(engine, args, on_event, exc=exc)
+                return
+            await _finish_run(engine, args, on_event, outcome=outcome)
 
         sender_task = asyncio.create_task(sender())
         reader_task = asyncio.create_task(reader())

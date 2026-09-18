@@ -47,3 +47,44 @@ def test_engine_run_kwargs_resolves_image_path(tmp_path):
     img.write_bytes(b'x')
     kwargs = worker.engine_run_kwargs(_args(image=str(img)), model=None)
     assert kwargs['image_path'] == img.resolve()
+
+
+# --- _finish_run: drain the post-run tail BEFORE the terminal event (#39) ---
+
+def test_finish_run_drains_before_terminal(monkeypatch, tmp_path):
+    import asyncio
+    from types import SimpleNamespace
+
+    from codingdude import worker
+
+    monkeypatch.setattr(worker, 'trace_terminal', lambda *a: None)
+    order, events = [], []
+
+    class FakeEngine:
+        async def drain_post_run(self, timeout=None):
+            order.append(('drain', timeout))
+
+    asyncio.run(worker._finish_run(
+        FakeEngine(), _args(), events.append,
+        outcome=SimpleNamespace(status='ok', output='done')))
+    assert order == [('drain', worker._DRAIN_BEFORE_TERMINAL_S)]
+    assert events[-1]['type'] == 'RUN_FINISHED'
+
+
+def test_finish_run_drains_before_error_terminal(monkeypatch):
+    import asyncio
+
+    from codingdude import worker
+
+    monkeypatch.setattr(worker, 'trace_terminal', lambda *a: None)
+    order, events = [], []
+
+    class FakeEngine:
+        async def drain_post_run(self, timeout=None):
+            order.append('drain')
+
+    asyncio.run(worker._finish_run(
+        FakeEngine(), _args(), events.append, exc=RuntimeError('boom')))
+    assert order == ['drain']
+    assert events[-1]['type'] == 'RUN_ERROR'
+    assert 'boom' in events[-1]['message']
