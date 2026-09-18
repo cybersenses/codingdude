@@ -36,8 +36,8 @@ _EXIT_WATCHDOG_S = 20.0
 _exit_watchdog = None
 
 
-def arm_exit_watchdog() -> None:
-    """Arm (or re-arm) the teardown watchdog.
+def arm_exit_watchdog(timeout: float = _EXIT_WATCHDOG_S) -> None:
+    """Arm (or re-arm) the hard-exit watchdog.
 
     Called right before worker.run() returns: everything is drained and the
     websocket is closed, so the only thing left is interpreter shutdown. If
@@ -46,7 +46,7 @@ def arm_exit_watchdog() -> None:
     global _exit_watchdog
     if _exit_watchdog is not None:
         _exit_watchdog.cancel()
-    _exit_watchdog = threading.Timer(_EXIT_WATCHDOG_S, os._exit, args=(0,))
+    _exit_watchdog = threading.Timer(timeout, os._exit, args=(0,))
     _exit_watchdog.daemon = True
     _exit_watchdog.start()
 
@@ -312,6 +312,12 @@ async def run(args) -> int:
         # Sender exits when it forwards the terminal event. The UI is
         # settled by then; drain the pending tail before teardown (R30).
         await sender_task
+        # The watchdog must cover the drain too: a drain that never returns
+        # (blocked event loop, un-cancellable shielded cleanup) would never
+        # reach the arm_exit_watchdog() call below and the worker would hang
+        # forever — observed live as a 1647s stall after MEMORY_EXTRACTED.
+        # Long timer during the drain, re-armed short for teardown.
+        arm_exit_watchdog(_DRAIN_BEFORE_TERMINAL_S + _EXIT_WATCHDOG_S)
         await drain_after_terminal(engine)
         for t in (reader_task, runner_task):
             t.cancel()
