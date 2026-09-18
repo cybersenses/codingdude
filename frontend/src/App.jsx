@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import CodeEditor from './CodeEditor.jsx'
 import { api, authLocal, call, checkAuth, login } from './api'
 import { runToReattach } from './reattach'
+import { describeProcess, mergeProcesses } from './processes'
 
 // R6: render-only mermaid diagrams inside spec blocks. Renders each
 // ```mermaid fence to SVG; on failure the raw fence stays visible.
@@ -1593,6 +1594,7 @@ export default function App() {
   const [messages, setMessages] = useState([])
   const [streaming, setStreaming] = useState(false)
   const [quietSeconds, setQuietSeconds] = useState(0) // seconds since last run event (watchdog)
+  const [processes, setProcesses] = useState([]) // R31 #63: every spawned process, tracked until exit
   const [error, setError] = useState('')
   const [refreshKey, setRefreshKey] = useState(0)
   const [diffBadge, setDiffBadge] = useState(false)
@@ -1890,6 +1892,28 @@ export default function App() {
       })
   }
 
+  // R31 #63: track every process the session spawned (server DB is the
+  // source of truth) until it exits — visible even when a run wedges.
+  useEffect(() => {
+    if (!activeSession) {
+      setProcesses([])
+      return
+    }
+    let alive = true
+    const load = () =>
+      call(`/sessions/${activeSession}/processes`)
+        .then((rows) => {
+          if (alive) setProcesses((prev) => mergeProcesses(prev, rows || []))
+        })
+        .catch(() => {}) // transient; next poll retries
+    load()
+    const t = setInterval(load, 3000)
+    return () => {
+      alive = false
+      clearInterval(t)
+    }
+  }, [activeSession])
+
   // Watchdog (R2): a live run that emits nothing for a while must not look
   // dead — surface "still working…" with the quiet duration.
   useEffect(() => {
@@ -2140,6 +2164,14 @@ export default function App() {
         {streaming && quietSeconds >= 30 && (
           <span className="ml-2 animate-pulse text-neutral-400">
             still working… (no output for {quietSeconds}s)
+          </span>
+        )}
+        {processes.length > 0 && (
+          <span
+            className="ml-2 cursor-help text-neutral-500"
+            title={processes.map(describeProcess).join('\n')}
+          >
+            ⚙ {processes.filter((p) => p.status === 'running').length} live / {processes.length} spawned
           </span>
         )}
       </footer>

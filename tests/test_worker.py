@@ -102,3 +102,47 @@ def test_drain_after_terminal_uses_bounded_timeout():
 
     asyncio.run(worker.drain_after_terminal(FakeEngine()))
     assert calls == [worker._DRAIN_BEFORE_TERMINAL_S]
+
+
+def test_arm_exit_watchdog_forces_exit_after_grace(monkeypatch):
+    """#62: after the drain the worker arms a watchdog that hard-exits the
+    process if interpreter teardown wedges (Windows Proactor close). The
+    watchdog must fire os._exit, not raise, and use a daemon timer so it
+    can never itself block shutdown."""
+    from codingdude import worker
+
+    fired = []
+    created = []
+
+    class FakeTimer:
+        def __init__(self, interval, fn, daemon=None, args=None):
+            created.append((interval, daemon))
+            self.fn = fn
+            self.args = args or ()
+
+        def start(self):
+            pass
+
+        def cancel(self):
+            pass
+
+    monkeypatch.setattr(worker.threading, 'Timer', FakeTimer)
+    monkeypatch.setattr(worker.os, '_exit', lambda code: fired.append(code))
+    worker.arm_exit_watchdog()
+    assert created and created[0][0] == worker._EXIT_WATCHDOG_S
+    assert worker._exit_watchdog.daemon is True
+    worker._exit_watchdog.fn(*worker._exit_watchdog.args)  # wedged-teardown path
+    assert fired == [0]
+
+
+def test_arm_exit_watchdog_cancels_previous():
+    """Re-arming replaces the previous timer (idempotent across calls)."""
+    from codingdude import worker
+
+    worker.arm_exit_watchdog()
+    t1 = worker._exit_watchdog
+    worker.arm_exit_watchdog()
+    assert worker._exit_watchdog is not t1
+    assert t1 is not None
+    worker._exit_watchdog.cancel()
+    worker._exit_watchdog = None

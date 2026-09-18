@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import sys
+import threading
 
 import websockets
 
@@ -25,6 +26,29 @@ from .events import TERMINAL_EVENTS
 # plus slack. Keeps shutdown deterministic — nothing pending to cancel. Runs
 # AFTER RUN_FINISHED so extraction latency is invisible to the user (R30).
 _DRAIN_BEFORE_TERMINAL_S = 150.0
+
+# #62: hard-exit watchdog. Worker state is fully persisted before the drain
+# ends, so interpreter teardown is not critical — but a wedged asyncio.run
+# (Windows IocpProactor.close waiting on pending ops) hangs the process and
+# the UI with it. A daemon timer force-exits if graceful shutdown doesn't
+# complete in time. R31.
+_EXIT_WATCHDOG_S = 20.0
+_exit_watchdog = None
+
+
+def arm_exit_watchdog() -> None:
+    """Arm (or re-arm) the teardown watchdog.
+
+    Called right before worker.run() returns: everything is drained and the
+    websocket is closed, so the only thing left is interpreter shutdown. If
+    that wedges, the timer fires os._exit(0) and the run settles.
+    """
+    global _exit_watchdog
+    if _exit_watchdog is not None:
+        _exit_watchdog.cancel()
+    _exit_watchdog = threading.Timer(_EXIT_WATCHDOG_S, os._exit, args=(0,))
+    _exit_watchdog.daemon = True
+    _exit_watchdog.start()
 
 
 async def _finish_run(engine, args, on_event, outcome=None, exc=None) -> None:
@@ -291,6 +315,10 @@ async def run(args) -> int:
         await drain_after_terminal(engine)
         for t in (reader_task, runner_task):
             t.cancel()
+
+    # Everything is persisted and the ws is closed; only interpreter teardown
+    # remains. Arm the watchdog so a wedged Proactor close can't hang the UI.
+    arm_exit_watchdog()
 
     return 0
 
