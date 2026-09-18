@@ -402,8 +402,10 @@ class PostRunPipeline:
 
         store = MemoryStore(self._services.db)
         known = store.all_entries()
-        known_lines = '\n'.join(f"- {e['content']}" for e in known[:50])
-        transcript = '\n'.join(self._services.db.load_messages(session_id))[:12000]
+        known_lines = '\n'.join(f"- {e['content']}" for e in known[:25])
+        # Input is trimmed (R30): the single extraction call is latency-bound,
+        # and 6k chars of transcript covers the run's tail, where the facts are.
+        transcript = '\n'.join(self._services.db.load_messages(session_id))[:6000]
         agent: Agent = Agent(model=extraction_model)
         try:
             result = await asyncio.wait_for(agent.run(

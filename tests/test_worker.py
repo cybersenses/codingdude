@@ -49,42 +49,56 @@ def test_engine_run_kwargs_resolves_image_path(tmp_path):
     assert kwargs['image_path'] == img.resolve()
 
 
-# --- _finish_run: drain the post-run tail BEFORE the terminal event (#39) ---
+# --- _finish_run: terminal event FIRST (R30); the tail drains after the
+# --- sender exits, in run(), so the UI never waits on extraction.
 
-def test_finish_run_drains_before_terminal(monkeypatch, tmp_path):
+def test_finish_run_emits_terminal_without_draining(monkeypatch, tmp_path):
     import asyncio
     from types import SimpleNamespace
 
     from codingdude import worker
 
     monkeypatch.setattr(worker, 'trace_terminal', lambda *a: None)
-    order, events = [], []
+    events = []
 
-    class FakeEngine:
-        async def drain_post_run(self, timeout=None):
-            order.append(('drain', timeout))
+    class FakeEngine:  # no drain_post_run at all: calling it would raise
+        pass
 
     asyncio.run(worker._finish_run(
         FakeEngine(), _args(), events.append,
         outcome=SimpleNamespace(status='ok', output='done')))
-    assert order == [('drain', worker._DRAIN_BEFORE_TERMINAL_S)]
     assert events[-1]['type'] == 'RUN_FINISHED'
 
 
-def test_finish_run_drains_before_error_terminal(monkeypatch):
+def test_finish_run_emits_error_terminal_without_draining(monkeypatch):
     import asyncio
 
     from codingdude import worker
 
     monkeypatch.setattr(worker, 'trace_terminal', lambda *a: None)
-    order, events = [], []
+    events = []
 
     class FakeEngine:
-        async def drain_post_run(self, timeout=None):
-            order.append('drain')
+        pass
 
     asyncio.run(worker._finish_run(
         FakeEngine(), _args(), events.append, exc=RuntimeError('boom')))
-    assert order == ['drain']
     assert events[-1]['type'] == 'RUN_ERROR'
     assert 'boom' in events[-1]['message']
+
+
+def test_drain_after_terminal_uses_bounded_timeout():
+    """run() drains the pending tail after the sender exits (post-terminal),
+    bounded by _DRAIN_BEFORE_TERMINAL_S, before the process tears down."""
+    import asyncio
+
+    from codingdude import worker
+
+    calls = []
+
+    class FakeEngine:
+        async def drain_post_run(self, timeout=None):
+            calls.append(timeout)
+
+    asyncio.run(worker.drain_after_terminal(FakeEngine()))
+    assert calls == [worker._DRAIN_BEFORE_TERMINAL_S]

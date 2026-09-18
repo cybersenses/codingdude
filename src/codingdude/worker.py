@@ -20,21 +20,23 @@ import websockets
 
 from .events import TERMINAL_EVENTS
 
-# Bounded drain before the terminal event: each tail pass is already capped by
+# Bounded tail drain after the terminal event: each tail pass is already capped by
 # run_pipeline._POST_RUN_LLM_TIMEOUT_S and they run concurrently, so ~one pass
-# plus slack. Keeps shutdown deterministic — nothing pending to cancel.
+# plus slack. Keeps shutdown deterministic — nothing pending to cancel. Runs
+# AFTER RUN_FINISHED so extraction latency is invisible to the user (R30).
 _DRAIN_BEFORE_TERMINAL_S = 150.0
 
 
 async def _finish_run(engine, args, on_event, outcome=None, exc=None) -> None:
-    """Emit the terminal event, draining any pending post-run tail first.
+    """Emit the terminal event immediately — no tail drain first (R30).
 
-    For the last turn of a worker's life there is no next-turn drain, and a
-    tail still pending at teardown hangs shutdown in asyncio.run's task
-    cancellation — the worker (and its MCP children) lingers after
-    RUN_FINISHED. Draining first guarantees a clean exit.
+    Draining before the terminal event made the UI wait ~90s on memory
+    extraction after every run. The terminal event goes out as soon as the
+    engine has persisted; the pending tail drains afterwards, in
+    drain_after_terminal (called by run() once the sender has forwarded the
+    terminal event), so the worker still exits clean — the tail is never
+    cancelled at asyncio.run teardown.
     """
-    await engine.drain_post_run(timeout=_DRAIN_BEFORE_TERMINAL_S)
     if exc is not None:
         from .exceptions import BudgetExceeded
 
@@ -56,6 +58,16 @@ async def _finish_run(engine, args, on_event, outcome=None, exc=None) -> None:
     trace_terminal(args.session, terminal)
     # Single writer: queued, so ordering with other events is preserved.
     on_event(terminal)
+
+
+async def drain_after_terminal(engine) -> None:
+    """Drain any pending post-run tail, bounded, before the worker exits.
+
+    Called after the sender has forwarded the terminal event: the UI is
+    already settled, so extraction latency here is invisible. Bounded so a
+    wedged tail cannot hang shutdown.
+    """
+    await engine.drain_post_run(timeout=_DRAIN_BEFORE_TERMINAL_S)
 
 
 async def _resolve_model(name: str | None, base_url: str | None = None):
@@ -273,8 +285,10 @@ async def run(args) -> int:
         sender_task = asyncio.create_task(sender())
         reader_task = asyncio.create_task(reader())
         runner_task = asyncio.create_task(runner())
-        # Sender exits when it forwards the terminal event.
+        # Sender exits when it forwards the terminal event. The UI is
+        # settled by then; drain the pending tail before teardown (R30).
         await sender_task
+        await drain_after_terminal(engine)
         for t in (reader_task, runner_task):
             t.cancel()
 
