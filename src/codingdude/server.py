@@ -1131,6 +1131,15 @@ def serve(host: str = HOST, port: int = 8765) -> None:
     token = load_or_create_token()
     app = create_app(token=token)
     app.state.port = port
+    # Lifecycle diagnostics (R31) must land somewhere readable even when the
+    # console that launched the server is gone.
+    log_dir = config_home() / 'logs'
+    log_dir.mkdir(parents=True, exist_ok=True)
+    handler = logging.FileHandler(log_dir / 'server.log', encoding='utf-8')
+    handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(name)s %(message)s'))
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    root.addHandler(handler)
     logging.getLogger(__name__).info('codingdude server on http://%s:%s', host, port)
     print(f'codingdude server on http://{host}:{port} token={token}')
     uvicorn.run(app, host=host, port=port, log_level='warning')

@@ -16,6 +16,7 @@ import logging
 import os
 import sys
 import threading
+from pathlib import Path
 
 import websockets
 
@@ -408,6 +409,18 @@ def main(argv=None) -> int:
     parser.add_argument('--image', default=None, help='path to an image to include with the prompt')
     parser.add_argument('--budget', type=float, default=None)
     args = parser.parse_args(argv)
+    # Lifecycle diagnostics (R31): always mirror worker logs to a file under
+    # ~/.codingdude/logs/ so post-run forensics don't depend on a console.
+    try:
+        log_dir = Path.home() / '.codingdude' / 'logs'
+        log_dir.mkdir(parents=True, exist_ok=True)
+        handler = logging.FileHandler(
+            log_dir / f'worker-{os.getpid()}.log', encoding='utf-8')
+        handler.setFormatter(logging.Formatter(
+            '%(asctime)s %(levelname)s %(name)s %(message)s'))
+        logging.getLogger().addHandler(handler)
+    except OSError:
+        pass  # console logging still works
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s %(levelname)s %(name)s %(message)s',
