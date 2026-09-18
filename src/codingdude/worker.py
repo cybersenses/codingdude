@@ -414,17 +414,26 @@ def main(argv=None) -> int:
     try:
         log_dir = Path.home() / '.codingdude' / 'logs'
         log_dir.mkdir(parents=True, exist_ok=True)
+        # NOTE: uv's venv python.exe is a trampoline — os.getpid() here is the
+        # real interpreter's pid, which differs from the server-recorded
+        # Popen pid. Key the file on session id (unique, matches RUN_START).
+        session_tag = (args.session or f'pid{os.getpid()}')[:16]
         handler = logging.FileHandler(
-            log_dir / f'worker-{os.getpid()}.log', encoding='utf-8')
+            log_dir / f'worker-{session_tag}.log', encoding='utf-8')
         handler.setFormatter(logging.Formatter(
             '%(asctime)s %(levelname)s %(name)s %(message)s'))
         logging.getLogger().addHandler(handler)
     except OSError:
         pass  # console logging still works
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s %(levelname)s %(name)s %(message)s',
-    )
+    # NOTE: basicConfig no-ops now that root already has our file handler
+    # (it only configures an empty root), so set level/format explicitly.
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    handler.setFormatter(logging.Formatter(
+        '%(asctime)s %(levelname)s %(name)s %(message)s'))
+    logging.getLogger('codingdude.worker').info(
+        'WORKER_BOOT pid=%s session=%s argv=%s', os.getpid(), args.session,
+        ' '.join(sys.argv[1:])[:200])
     try:
         return asyncio.run(review(args) if args.review else run(args))
     except Exception as exc:  # noqa: BLE001 — last-resort report
