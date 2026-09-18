@@ -1223,6 +1223,28 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width, workdir }
     )
   } else if (tab === 'Terminal') {
     body = <Terminal sessionId={sessionId} />
+  } else if (tab === 'Processes') {
+    body = (
+      <div className="space-y-1 overflow-y-auto p-3 text-xs">
+        {!sessionId && <p className="text-ink-muted">No active session.</p>}
+        {sessionId && (!processes || processes.length === 0) && (
+          <p className="text-ink-muted">No processes spawned this session.</p>
+        )}
+        {(processes || []).map((p) => (
+          <div key={`${p.pid}:${p.started_at}`} className="rounded border border-neutral-800 p-2">
+            <div className="flex items-center gap-2">
+              <span className="text-ink-muted">[{p.pid}]</span>
+              <span className={p.status === 'running' ? 'text-green-500' : 'text-neutral-500'}>
+                {p.status === 'running' ? '● running' : `exited (${p.exit_code ?? '?'})`}
+              </span>
+              {p.background && <span className="text-amber-500">background</span>}
+              <span className="ml-auto text-neutral-600">{(p.started_at || '').replace('T', ' ').slice(0, 19)}</span>
+            </div>
+            <div className="mt-1 break-all font-mono text-[11px] text-ink-muted">{p.command}</div>
+          </div>
+        ))}
+      </div>
+    )
   } else if (tab === 'Planning') {
     body = <Planning workdir={workdir} />
   } else if (tab === 'Artifacts') {
@@ -2140,6 +2162,7 @@ export default function App() {
           refreshKey={refreshKey}
           diffBadge={diffBadge}
           workdir={workdir}
+          processes={processes}
         />
       </div>
       <footer className="flex items-center justify-between border-t border-neutral-800 bg-neutral-950 px-3 py-1 text-[10px] text-neutral-500">
