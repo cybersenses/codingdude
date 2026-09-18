@@ -101,6 +101,34 @@ async def test_shell_tool_registers_process(tmp_path):
     assert [e['type'] for e in events] == ['PROCESS_STARTED', 'PROCESS_EXITED']
 
 
+def test_stale_running_rows_reconcile_with_pid_liveness(tmp_path):
+    """A process whose worker died before mark_exited stays 'running' in the
+    DB forever (observed: footer showed a phantom live process, pid dead).
+    list_processes must reconcile status with actual pid liveness."""
+    import subprocess
+    import time
+
+    from codingdude.processes import _pid_alive
+
+    db = Database.connect(tmp_path / 'home')
+    sid = db.create_session(tmp_path)
+
+    proc = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])
+    time.sleep(0.3)
+    assert _pid_alive(proc.pid)
+    proc.kill()
+    proc.wait()
+    assert not _pid_alive(proc.pid)
+
+    db.record_process(
+        sid, pid=proc.pid, command='wedged', started_at='t', status='running'
+    )
+    rows = db.list_processes(sid)
+    assert rows[0]['status'] != 'running'
+    # persisted, not just papered over in the response
+    assert db.list_processes(sid)[0]['status'] == rows[0]['status']
+
+
 def test_server_exposes_session_processes(tmp_path):
     """HITL visibility: the server lists recorded processes for a session."""
     from fastapi.testclient import TestClient

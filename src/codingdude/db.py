@@ -458,16 +458,31 @@ class Database:
         self._conn.commit()
 
     def list_processes(self, session_id: str) -> list[dict]:
-        """Recorded shell processes for a session, newest first."""
+        """Recorded shell processes for a session, newest first.
+
+        Rows still marked 'running' are reconciled against actual pid
+        liveness: a worker that died before mark_exited otherwise leaves a
+        phantom live process in the HITL panel forever. Dead pids are
+        corrected in the DB, not just in the response.
+        """
+        from .processes import _pid_alive
+
         rows = self._conn.execute(
-            'SELECT pid, command, started_at, status, exit_code, background'
+            'SELECT id, pid, command, started_at, status, exit_code, background'
             ' FROM processes WHERE session_id = ? ORDER BY id DESC',
             (session_id,),
         ).fetchall()
         out = []
         for r in rows:
             d = dict(r)
+            d.pop('id', None)
             d['background'] = bool(d['background'])
+            if d['status'] == 'running' and not _pid_alive(d['pid']):
+                d['status'] = 'exited (no capture)'
+                self.update_process(
+                    r['id'], status=d['status'], exit_code=None,
+                    background=d['background'],
+                )
             out.append(d)
         return out
 
