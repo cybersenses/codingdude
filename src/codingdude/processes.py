@@ -11,6 +11,7 @@ adds kill/poll tools over this same registry.
 """
 from __future__ import annotations
 
+import logging
 import os
 import signal
 import subprocess
@@ -76,6 +77,8 @@ class ProcessRegistry:
             'background': False,
         }
         self._records.append(record)
+        logging.getLogger('codingdude.processes').info(
+            'PROCESS_SPAWN pid=%s cmd=%s', pid, command[:160])
         self._emit({
             'type': 'PROCESS_STARTED',
             'pid': pid,
@@ -99,6 +102,9 @@ class ProcessRegistry:
         record['status'] = status
         record['exit_code'] = exit_code
         record['background'] = background
+        logging.getLogger('codingdude.processes').info(
+            'PROCESS_END pid=%s status=%s code=%s cmd=%s',
+            pid, status, exit_code, record['command'][:160])
         self._emit({
             'type': 'PROCESS_EXITED',
             'pid': pid,
@@ -140,6 +146,8 @@ class ProcessRegistry:
             pass
         except OSError as exc:
             return f'failed to kill pid {pid}: {exc}'
+        logging.getLogger('codingdude.processes').info(
+            'PROCESS_KILL pid=%s cmd=%s', pid, record['command'][:160])
         if record['status'] == 'running':
             self.finish(pid, status='killed')
         return f'killed pid {pid} ({record["command"]})'

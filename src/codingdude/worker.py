@@ -44,9 +44,17 @@ def arm_exit_watchdog(timeout: float = _EXIT_WATCHDOG_S) -> None:
     that wedges, the timer fires os._exit(0) and the run settles.
     """
     global _exit_watchdog
+    log = logging.getLogger('codingdude.worker')
+
+    def _fire() -> None:
+        log.error(
+            'WATCHDOG_FIRED pid=%s: forced exit after %.0fs — graceful '
+            'teardown never completed', os.getpid(), timeout)
+        os._exit(0)
+
     if _exit_watchdog is not None:
         _exit_watchdog.cancel()
-    _exit_watchdog = threading.Timer(timeout, os._exit, args=(0,))
+    _exit_watchdog = threading.Timer(timeout, _fire)
     _exit_watchdog.daemon = True
     _exit_watchdog.start()
 
@@ -231,6 +239,9 @@ async def run(args) -> int:
         except Exception:  # noqa: BLE001 — image input is best-effort
             vision_model = None
 
+    log = logging.getLogger('codingdude.worker')
+    log.info('WORKER_START pid=%s session=%s model=%s', os.getpid(), args.session, args.model)
+
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue()
     pending_gate: dict[str, asyncio.Future] = {}
@@ -312,6 +323,7 @@ async def run(args) -> int:
         # Sender exits when it forwards the terminal event. The UI is
         # settled by then; drain the pending tail before teardown (R30).
         await sender_task
+        log.info('WORKER_TERMINAL_SENT pid=%s — terminal event delivered, draining tail', os.getpid())
         # The watchdog must cover the drain too: a drain that never returns
         # (blocked event loop, un-cancellable shielded cleanup) would never
         # reach the arm_exit_watchdog() call below and the worker would hang
@@ -319,12 +331,14 @@ async def run(args) -> int:
         # Long timer during the drain, re-armed short for teardown.
         arm_exit_watchdog(_DRAIN_BEFORE_TERMINAL_S + _EXIT_WATCHDOG_S)
         await drain_after_terminal(engine)
+        log.info('WORKER_DRAIN_DONE pid=%s — tail drained, cancelling tasks', os.getpid())
         for t in (reader_task, runner_task):
             t.cancel()
 
     # Everything is persisted and the ws is closed; only interpreter teardown
     # remains. Arm the watchdog so a wedged Proactor close can't hang the UI.
     arm_exit_watchdog()
+    log.info('WORKER_EXITING pid=%s — run() returning, interpreter teardown next', os.getpid())
 
     return 0
 
@@ -394,6 +408,10 @@ def main(argv=None) -> int:
     parser.add_argument('--image', default=None, help='path to an image to include with the prompt')
     parser.add_argument('--budget', type=float, default=None)
     args = parser.parse_args(argv)
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s %(levelname)s %(name)s %(message)s',
+    )
     try:
         return asyncio.run(review(args) if args.review else run(args))
     except Exception as exc:  # noqa: BLE001 — last-resort report

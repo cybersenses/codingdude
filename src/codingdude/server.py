@@ -101,6 +101,12 @@ class RunChannel:
             # Reap only dead runs: a live worker must stay cancellable even if
             # the browser's EventSource dropped (reconnect, refresh, sleep).
             if self.worker is None or self.worker.poll() is not None:
+                logging.getLogger('codingdude.server').info(
+                    'WORKER_GONE run=%s worker_pid=%s exit=%s',
+                    self.run_id,
+                    self.worker.pid if self.worker else None,
+                    self.worker.poll() if self.worker else None,
+                )
                 self.registry.pop(self.run_id, None)
 
 
@@ -290,6 +296,9 @@ def create_app(
         channel.worker = subprocess.Popen(
             cmd, env={**os.environ, 'CODEDUDE_WORKER_TOKEN': token}
         )
+        logging.getLogger('codingdude.server').info(
+            'RUN_START run=%s session=%s worker_pid=%s prompt=%r',
+            run_id, session_id, channel.worker.pid, body.prompt[:120])
 
         return {'run_id': run_id}
 
@@ -973,6 +982,10 @@ def create_app(
         channel = channels.get(run_id)
         if channel is None:
             raise HTTPException(status_code=404, detail='no such run')
+        worker_pid = channel.worker.pid if channel.worker else None
+        alive = channel.worker is not None and channel.worker.poll() is None
+        logging.getLogger('codingdude.server').warning(
+            'STOP_REQUESTED run=%s worker_pid=%s alive=%s', run_id, worker_pid, alive)
         if channel.worker and channel.worker.poll() is None:
             channel.worker.terminate()
         channel.push({'type': 'RUN_CANCELLED'})
