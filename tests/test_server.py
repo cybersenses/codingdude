@@ -559,3 +559,24 @@ def test_sse_broadcast_two_consumers_both_get_terminal(server, tmp_path):
         types = [e['type'] for e in events]
         assert 'RUN_STARTED' in types, types
         assert types[-1] == 'RUN_FINISHED', types
+
+
+def test_active_runs_excludes_terminal_delivered_runs(server):
+    """A worker draining its post-run tail is alive but the run is over: the
+    UI must not show the stop button for a run whose terminal already landed
+    (live symptom: stop button flickering ~2min after 'finished')."""
+    import subprocess as sp
+
+    from codingdude.server import RunChannel
+
+    app, base = server
+    ch = RunChannel('run-tail', 'sess-tail', app.state.channels)
+    ch.worker = sp.Popen(['python', '-c', 'import time; time.sleep(60)'])
+    app.state.channels['run-tail'] = ch
+    ch.push({'type': 'RUN_FINISHED'})
+    try:
+        active = httpx.get(f'{base}/runs/active', headers=auth(), timeout=10).json()
+        assert 'run-tail' not in [a['run_id'] for a in active]
+    finally:
+        ch.worker.kill()
+        ch.worker.wait()

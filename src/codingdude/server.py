@@ -928,6 +928,11 @@ def create_app(
     def active_runs(_: None = Depends(authorize)) -> list[dict]:
         out = []
         for run_id, ch in channels.items():
+            # Terminal already delivered: the worker may still be draining
+            # its post-run tail (memory extraction), but the run is over —
+            # listing it makes the UI show a stop button after 'finished'.
+            if ch.saw_terminal():
+                continue
             if ch.worker is None or ch.worker.poll() is None:
                 out.append({'run_id': run_id, 'session_id': ch.session_id})
         return out
