@@ -495,3 +495,67 @@ def test_review_route_delegates_to_worker_subprocess(server, tmp_path):
     )
     assert r.status_code == 200, r.text
     assert 'worker-echo-ok' in r.json()['findings']
+
+
+def test_worker_exit_reaps_channel_and_settles_late_consumer(server, tmp_path):
+    """R31: when a worker exits, the server must notice, reap the channel, and
+    give any waiting consumer a terminal event — the UI must never wait on a
+    dead run (live symptom: 'still working' for 300s+ after the worker died)."""
+    import time as _t
+
+    app, base = server
+    workdir = tmp_path / 'proj Reaper'
+    workdir.mkdir()
+    session_id = create_session(base, workdir)
+    r = httpx.post(
+        f'{base}/sessions/{session_id}/runs',
+        json={'prompt': 'say hi', 'model': 'codingdude-test:echo'},
+        headers=auth(),
+        timeout=30,
+    )
+    r.json()['run_id']  # worker pid not needed; reap is server-side
+    deadline = _t.time() + 30
+    active = None
+    while _t.time() < deadline:
+        active = httpx.get(f'{base}/runs/active', headers=auth(), timeout=10).json()
+        if not active:
+            break
+        _t.sleep(0.3)
+    assert active == [], f'channel not reaped after worker exit: {active}'
+
+
+def test_sse_broadcast_two_consumers_both_get_terminal(server, tmp_path):
+    """R31: two attached consumers (two tabs) must BOTH see the full stream.
+    A single-consumer queue let one tab steal RUN_FINISHED and leave the
+    other tab's UI 'still working' forever."""
+    app, base = server
+    workdir = tmp_path / 'proj broadcast'
+    workdir.mkdir()
+    session_id = create_session(base, workdir)
+    r = httpx.post(
+        f'{base}/sessions/{session_id}/runs',
+        json={'prompt': 'say hi', 'model': 'codingdude-test:echo'},
+        headers=auth(),
+        timeout=30,
+    )
+    run_id = r.json()['run_id']
+
+    import threading
+
+    results: list[list[dict]] = [[], []]
+
+    def consume(slot: int) -> None:
+        results[slot] = collect_sse(base, run_id, timeout=30)
+
+    threads = [threading.Thread(target=consume, args=(i,)) for i in range(2)]
+    for th in threads:
+        th.start()
+        time.sleep(0.3)  # stagger attaches so the second joins mid-stream
+    for th in threads:
+        th.join(timeout=45)
+        assert not th.is_alive()
+
+    for events in results:
+        types = [e['type'] for e in events]
+        assert 'RUN_STARTED' in types, types
+        assert types[-1] == 'RUN_FINISHED', types

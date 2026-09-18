@@ -64,24 +64,43 @@ def _image_extension(data: bytes) -> str:
 
 
 class RunChannel:
-    """Bridges worker WebSocket events to SSE subscribers."""
+    """Bridges worker WebSocket events to SSE subscribers.
+
+    Broadcast semantics (R31): every subscriber gets the full event stream —
+    a second tab or a late reattach must never steal the terminal event and
+    starve another consumer into a perpetual 'still working' state. Events
+    are kept in a replay history so subscribers attaching mid-run catch up.
+    """
+
+    _HISTORY_CAP = 5000
 
     def __init__(self, run_id: str, session_id: str, registry: dict):
         self.run_id = run_id
         self.session_id = session_id
         self.registry = registry
-        self.queue: asyncio.Queue = asyncio.Queue()
+        self.history: list[dict] = []
+        self.subscribers: set[asyncio.Queue] = set()
         self.inbox: asyncio.Queue = asyncio.Queue()  # server → worker (approvals)
         self.worker: subprocess.Popen | None = None
         self.loop: asyncio.AbstractEventLoop | None = None
 
+    def _broadcast(self, event: dict) -> None:
+        self.history.append(event)
+        if len(self.history) > self._HISTORY_CAP:
+            del self.history[: len(self.history) - self._HISTORY_CAP]
+        for q in list(self.subscribers):
+            q.put_nowait(event)
+
     def push(self, event: dict) -> None:
         # Sync endpoints run in threadpool threads: marshal onto the loop once
-        # a consumer is attached, before that rely on single-producer safety.
+        # it exists, before that rely on single-producer safety.
         if self.loop is not None:
-            self.loop.call_soon_threadsafe(self.queue.put_nowait, event)
+            self.loop.call_soon_threadsafe(self._broadcast, event)
         else:
-            self.queue.put_nowait(event)
+            self._broadcast(event)
+
+    def saw_terminal(self) -> bool:
+        return any(e.get('type') in TERMINAL_EVENTS for e in self.history)
 
     def send_to_worker(self, message: dict) -> None:
         if self.loop is not None:
@@ -90,14 +109,27 @@ class RunChannel:
             self.inbox.put_nowait(message)
 
     async def sse(self):
-        self.loop = asyncio.get_running_loop()
+        loop = asyncio.get_running_loop()
+        self.loop = loop
+        queue: asyncio.Queue = asyncio.Queue()
+        self.subscribers.add(queue)
+        logging.getLogger('codingdude.server').info(
+            'SSE_ATTACH run=%s subscribers=%d', self.run_id, len(self.subscribers))
         try:
+            for event in list(self.history):
+                yield f'data: {json.dumps(event)}\n\n'
+                if event.get('type') in TERMINAL_EVENTS:
+                    return
             while True:
-                event = await self.queue.get()
+                event = await queue.get()
                 yield f'data: {json.dumps(event)}\n\n'
                 if event.get('type') in TERMINAL_EVENTS:
                     return
         finally:
+            self.subscribers.discard(queue)
+            logging.getLogger('codingdude.server').info(
+                'SSE_DETACH run=%s subscribers=%d terminal_seen=%s',
+                self.run_id, len(self.subscribers), self.saw_terminal())
             # Reap only dead runs: a live worker must stay cancellable even if
             # the browser's EventSource dropped (reconnect, refresh, sleep).
             if self.worker is None or self.worker.poll() is not None:
@@ -108,6 +140,34 @@ class RunChannel:
                     self.worker.poll() if self.worker else None,
                 )
                 self.registry.pop(self.run_id, None)
+
+
+async def _reap_worker(channel) -> None:
+    """Watch a run's worker process after its ws closes; reap on exit (R31).
+
+    If the worker exited without delivering a terminal event, synthesize a
+    RUN_ERROR so any attached consumer settles instead of waiting forever on
+    a dead run (live symptom: UI 'still working' 300s+ after the worker died).
+    """
+    log = logging.getLogger('codingdude.server')
+    worker = channel.worker
+    if worker is None:
+        return
+    while worker.poll() is None:
+        await asyncio.sleep(0.5)
+    log.info(
+        'WORKER_EXITED run=%s worker_pid=%s exit=%s terminal_seen=%s',
+        channel.run_id, worker.pid, worker.returncode, channel.saw_terminal())
+    if not channel.saw_terminal():
+        channel.push({
+            'type': 'RUN_ERROR',
+            'code': 'worker_died',
+            'message': f'worker exited unexpectedly (code {worker.returncode}) '
+                       'without finishing the run',
+        })
+    # Give subscribers a moment to consume the terminal, then reap.
+    await asyncio.sleep(2.0)
+    channel.registry.pop(channel.run_id, None)
 
 
 def create_app(
@@ -1046,6 +1106,11 @@ def create_app(
             pass
         finally:
             inbox_task.cancel()
+            # R31: the worker closing its ws is the only worker-lifecycle
+            # signal the server gets. Watch the process until it exits, log
+            # it, and if it died without a terminal event, synthesize one so
+            # no consumer waits on a dead run. Then reap the channel.
+            asyncio.create_task(_reap_worker(channel))
 
     @app.get('/models')
     def list_models(_: None = Depends(authorize)) -> dict:
