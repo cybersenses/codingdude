@@ -40,6 +40,12 @@ HOST = '127.0.0.1'  # localhost only, by design
 # visible (a stale server shows an old boot time).
 _STARTED_AT = datetime.now(UTC).isoformat()
 
+# How long a finished run's channel stays reapable-but-replayable after the
+# worker exits with a delivered terminal. Long enough that any EventSource
+# auto-reconnect replays the terminal and settles (frontend hardening rides
+# on this); short enough not to leak channels all session.
+_TERMINAL_REPLAY_GRACE_S = 300
+
 
 def _git_sha() -> str:
     """Short git SHA of the running checkout, or '' if unavailable."""
@@ -165,8 +171,13 @@ async def _reap_worker(channel) -> None:
             'message': f'worker exited unexpectedly (code {worker.returncode}) '
                        'without finishing the run',
         })
-    # Give subscribers a moment to consume the terminal, then reap.
-    await asyncio.sleep(2.0)
+        # Brief grace so subscribers consume the synthesized terminal, then reap.
+        await asyncio.sleep(2.0)
+    else:
+        # Terminal already delivered: keep the channel so EventSource
+        # auto-reconnects REPLAY the history (incl. the terminal) and settle
+        # idempotently instead of 404-ing into the frontend error loop.
+        await asyncio.sleep(_TERMINAL_REPLAY_GRACE_S)
     channel.registry.pop(channel.run_id, None)
 
 

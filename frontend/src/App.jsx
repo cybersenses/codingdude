@@ -1802,6 +1802,10 @@ export default function App() {
 
   const [runningSessions, setRunningSessions] = useState(() => new Map()) // session_id -> run_id
   const attachedRunRef = useRef(null)
+  // Set once this browser has seen a terminal event for a run — an SSE error
+  // afterwards (stream end after terminal, channel reaped) must settle
+  // silently, never surface "lost connection" (post-reaper bouncing popups).
+  const terminalSeenRef = useRef(null)
   useEffect(() => {
     if (!loggedIn) return
     let stop = false
@@ -1965,6 +1969,9 @@ export default function App() {
         console.warn('skipping malformed SSE data', e.data)
         return
       }
+      if (['RUN_FINISHED', 'RUN_ERROR', 'RUN_CANCELLED'].includes(ev.type)) {
+        terminalSeenRef.current = run_id
+      }
       setMessages((msgs) => {
             const copy = [...msgs]
             const last = { ...copy[copy.length - 1] }
@@ -2013,6 +2020,14 @@ export default function App() {
     }
     es.onerror = () => {
       es.close()
+      // Stream ended after we already saw the terminal (server closes the
+      // SSE stream right after RUN_FINISHED; browser auto-reconnect races
+      // channel reaping): settle silently — the run IS finished.
+      if (terminalSeenRef.current === run_id) {
+        attachedRunRef.current = null
+        setStreaming(false)
+        return
+      }
       if (attempt >= 5) {
         // Server unreachable repeatedly: say so instead of pretending the
         // run finished cleanly.
