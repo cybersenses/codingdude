@@ -620,7 +620,7 @@ Explicitly out of scope: ASTs as a replacement for LLM intent understanding; bui
 Assessment: viable, low-medium effort per item, reuses existing parsers.
 
 ## R23 — CI stability on GitHub Windows runners
-**Status:** open · **Tracked as:** GitHub issue #1
+**Status:** done
 
 14 test failures in CI (run 34984478320) that pass locally on the dev machine: test_sandbox (6), test_interactive_approvals (2), test_mcp, test_render_persistence, test_server, test_shell (2), test_tools. Likely Windows-runner environment differences (temp paths, spawn behavior, git config). Goal: CI green so GitHub notifications only fire on real regressions.
 
