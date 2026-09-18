@@ -685,3 +685,10 @@ Port aider's layered matching (exact, whitespace-flexible, blank-line tolerance,
 **Status:** done
 
 **Problem (from myai usage):** frontend crashed mid-run; on reopen, chat did not reconnect or catch up to the run's progress. SSE mid-run reattach exists server-side (E2E-tested) but the frontend doesn't exercise it on boot. Scope: on load, check `/runs/{id}/alive` and reattach to the live stream; render missed events; surface reconnect state in UI.
+
+## R30 — R30 — Post-run tail: zero-wait run finish + faster memory extraction
+**Status:** in_progress
+
+Shipped `76f57d7` (tickets #59/#60): RUN_FINISHED emits immediately after persistence; pending tail drains afterwards (bounded 150s, before worker exit) so extraction is never lost. Extraction input trimmed (known 50→25, transcript 12000→6000). Verification pending: next live run should show UI settle in <1s at RUN_FINISHED with MEMORY_EXTRACTED landing shortly after in the trace.
+
+Observed live: run settles only ~94s after work completes because worker._finish_run drains the post-run tail (memory extraction) BEFORE emitting RUN_FINISHED. User-perceived wait budget: 15s. Two work items: (1) emit terminal event first, then drain tail bounded before worker exit; (2) shrink extraction input/prompt to cut actual extraction latency.

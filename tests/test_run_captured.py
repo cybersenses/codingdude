@@ -1,4 +1,6 @@
 """run_captured: shared subprocess capture helper (subprocess-runner dedup)."""
+import asyncio
+import os
 import sys
 import textwrap
 import time
@@ -6,7 +8,26 @@ from pathlib import Path
 
 import pytest
 
+from codingdude.processes import ProcessRegistry
 from codingdude.tools import run_captured
+
+
+def _alive(pid: int) -> bool:
+    """True if `pid` is still a live process (test helper)."""
+    if os.name == 'nt':
+        import ctypes
+        handle = ctypes.windll.kernel32.OpenProcess(0x1000, 0, pid)  # QUERY_LIMITED
+        if not handle:
+            return False
+        ctypes.windll.kernel32.CloseHandle(handle)
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 @pytest.mark.asyncio
@@ -60,3 +81,58 @@ async def test_run_captured_returns_when_parent_exits_despite_grandchild(
     assert cap.code == 0
     assert 'parent done' in cap.stdout
     assert elapsed < 4, f'blocked {elapsed:.1f}s past parent exit'
+
+
+# R30 #61: cancelling run_captured (claims-retry wait_for) must kill the
+# spawned process — otherwise bash + grandchildren survive, hold the pipes,
+# and the worker's Proactor loop can never close (worker exit hang).
+@pytest.mark.asyncio
+async def test_run_captured_cancellation_kills_child(tmp_path: Path):
+    registry = ProcessRegistry(on_event=None)
+    task = asyncio.create_task(run_captured(
+        [sys.executable, '-c', 'import time; time.sleep(30)'],
+        cwd=tmp_path, timeout=60, registry=registry))
+    await asyncio.sleep(0.5)
+    pids = [r['pid'] for r in registry.snapshot()]
+    assert pids, 'child was never registered'
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await asyncio.sleep(0.3)
+    assert not any(_alive(p) for p in pids), (
+        'cancelled run_captured left its child alive — this orphans the '
+        'process tree and hangs worker shutdown on Windows')
+
+
+# R30 #61: the timeout path must kill the whole tree, not just the direct
+# child — a surviving grandchild keeps the pipes open and wedges shutdown.
+@pytest.mark.asyncio
+async def test_run_captured_timeout_kills_grandchild_tree(tmp_path: Path):
+    marker = tmp_path / 'gc.pid'
+    gc_marker = marker.as_posix()  # backslash paths break inside the child's -c source
+    parent = textwrap.dedent(f'''
+        import subprocess, sys, time
+        code = "import os; open({gc_marker!r}, 'w').write(str(os.getpid())); import time; time.sleep(30)"
+        subprocess.Popen([sys.executable, "-c", code])
+
+        def marker_exists():
+            try:
+                open({gc_marker!r})
+                return True
+            except OSError:
+                return False
+
+        deadline = time.time() + 10
+        while not marker_exists() and time.time() < deadline:
+            time.sleep(0.05)
+        time.sleep(30)
+    ''')
+    script = tmp_path / '_tree_parent.py'
+    script.write_text(parent)
+    cap = await run_captured([sys.executable, str(script)],
+                             cwd=tmp_path, timeout=5)
+    assert cap is None
+    gc_pid = int(marker.read_text().strip())
+    await asyncio.sleep(0.3)
+    assert not _alive(gc_pid), (
+        'timeout killed the direct child but the grandchild tree survived')

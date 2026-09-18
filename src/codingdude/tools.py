@@ -89,6 +89,52 @@ def scrubbed_env() -> dict:
         or not any(marker in k.upper() for marker in SECRET_MARKERS)
     }
 
+def _kill_tree_sync(pid: int) -> None:
+    """Kill `pid` and its descendants (blocking; run via to_thread).
+
+    proc.kill() only terminates the direct child — on Windows grandchildren
+    (uv/python under bash) survive holding the pipes. taskkill /T walks the
+    tree; on POSIX the process group covers it.
+    """
+    import logging
+    import signal
+    import subprocess
+
+    try:
+        if os.name == 'nt':
+            subprocess.run(
+                ['taskkill', '/F', '/T', '/PID', str(pid)],
+                capture_output=True, timeout=10, check=False,
+            )
+        else:  # pragma: win32 no cover — POSIX branch
+            getpgid = getattr(os, 'getpgid', None)
+            killpg = getattr(os, 'killpg', None)
+            if getpgid is not None and killpg is not None:
+                killpg(getpgid(pid), getattr(signal, 'SIGKILL', signal.SIGTERM))
+    except (OSError, subprocess.SubprocessError) as exc:
+        logging.getLogger(__name__).warning('tree-kill of pid %s failed: %s', pid, exc)
+
+
+def _close_pipes(proc: asyncio.subprocess.Process) -> None:
+    """Best-effort close of a killed process's pipe transports.
+
+    On the Proactor loop an abandoned pipe read never completes, so the
+    transport lingers and can wedge loop shutdown (R30 #61)."""
+    for reader in (proc.stdout, proc.stderr):
+        if reader is None:
+            continue
+        transport = getattr(reader, '_transport', None)
+        if transport is not None:
+            try:
+                transport.close()
+            except Exception:  # noqa: BLE001 - cleanup must never raise
+                pass
+
+
+async def _kill_tree(pid: int) -> None:
+    await asyncio.to_thread(_kill_tree_sync, pid)
+
+
 class Captured(NamedTuple):
     """Result of a captured subprocess run (run_captured)."""
     code: int
@@ -130,42 +176,52 @@ async def run_captured(
             stderr=asyncio.subprocess.PIPE, env=env)
     if registry is not None:
         registry.register(proc.pid, ' '.join(argv))
-    # R21: wait on the *process*, not communicate()/proc.wait(). Both wait
-    # for pipe EOF on Windows — a grandchild that inherited stdout/stderr
-    # keeps the pipes open after the parent exits, so a finished command
-    # would block to the full timeout, get killed, and lose its output.
-    # Poll returncode instead: it is set the moment the process exits.
-    deadline = time.monotonic() + timeout
-    while proc.returncode is None and time.monotonic() < deadline:
-        await asyncio.sleep(0.05)
-    if proc.returncode is None:
-        proc.kill()
-        while proc.returncode is None:
+    try:
+        # R21: wait on the *process*, not communicate()/proc.wait(). Both wait
+        # for pipe EOF on Windows — a grandchild that inherited stdout/stderr
+        # keeps the pipes open after the parent exits, so a finished command
+        # would block to the full timeout, get killed, and lose its output.
+        # Poll returncode instead: it is set the moment the process exits.
+        deadline = time.monotonic() + timeout
+        while proc.returncode is None and time.monotonic() < deadline:
             await asyncio.sleep(0.05)
+        if proc.returncode is None:
+            await _kill_tree(proc.pid)
+            while proc.returncode is None:
+                await asyncio.sleep(0.05)
+            _close_pipes(proc)
+            if registry is not None:
+                registry.finish(proc.pid, status='killed', exit_code=proc.returncode)
+            return None
+
+        # Drain the pipes with a per-read grace window: stop as soon as the
+        # parent has exited and a read times out (leftover pipe writers like
+        # grandchildren would otherwise hold EOF forever). A stall means the
+        # command spawned something that outlives it — registered as a
+        # background orphan (R28 Phase 1), never killed here.
+        assert proc.stdout is not None and proc.stderr is not None  # PIPEs above
+        stdout, stdout_stalled = await _drain(proc.stdout)
+        stderr, stderr_stalled = await _drain(proc.stderr)
+        background = stdout_stalled or stderr_stalled
         if registry is not None:
-            registry.finish(proc.pid, status='killed', exit_code=proc.returncode)
-        return None
+            registry.finish(
+                proc.pid, status='exited', exit_code=proc.returncode,
+                background=background,
+            )
 
-    # Drain the pipes with a per-read grace window: stop as soon as the
-    # parent has exited and a read times out (leftover pipe writers like
-    # grandchildren would otherwise hold EOF forever). A stall means the
-    # command spawned something that outlives it — registered as a
-    # background orphan (R28 Phase 1), never killed here.
-    assert proc.stdout is not None and proc.stderr is not None  # PIPEs above
-    stdout, stdout_stalled = await _drain(proc.stdout)
-    stderr, stderr_stalled = await _drain(proc.stderr)
-    background = stdout_stalled or stderr_stalled
-    if registry is not None:
-        registry.finish(
-            proc.pid, status='exited', exit_code=proc.returncode,
-            background=background,
+        return Captured(
+            code=proc.returncode if proc.returncode is not None else -1,
+            stdout=stdout.decode(errors='replace'),
+            stderr=stderr.decode(errors='replace'),
         )
-
-    return Captured(
-        code=proc.returncode if proc.returncode is not None else -1,
-        stdout=stdout.decode(errors='replace'),
-        stderr=stderr.decode(errors='replace'),
-    )
+    except BaseException:
+        # R30 #61: cancellation (e.g. a caller's wait_for) must not orphan
+        # the process tree — surviving children hold the pipes and wedge
+        # the Windows Proactor loop close, hanging worker shutdown.
+        if proc.returncode is None:
+            await asyncio.shield(_kill_tree(proc.pid))
+            _close_pipes(proc)
+        raise
 
 
 async def _drain(reader: asyncio.StreamReader) -> tuple[bytes, bool]:
