@@ -704,3 +704,13 @@ Worker still wedges after drain on some runs (trace ends at MEMORY_EXTRACTED, wo
 **Status:** done
 
 Per research (reference/research/language-support-priorities.md): add Tier 3 Java + PHP, Tier 2 JSON/YAML/TOML (HTML/CSS pattern), Bash. R26 batch pattern: `_<lang>_spec()` in langs.py, suffix branch in spec_for, pyproject deps, tests.
+
+## R33 — R33: Review automation (Bito-inspired)
+**Status:** open
+
+Mirror Bito's highest-value capabilities: automated PR summaries and automated code review with fix application. Research source: bito.ai (PR review agent, one-click fixes, model router). Model router deliberately deferred — lowest alignment with current trajectory.
+
+## R34 — R34: Human interface & cowork (Monaco editor)
+**Status:** open
+
+Overhaul the human interface for cowork: humans can see, browse, and edit code alongside the agent. Monaco editor (microsoft.github.io/monaco-editor) as the editing surface, backed by a sandboxed server file API. All writes — human or agent — go through the same validation rails (workdir sandbox, atomic write, staleness registry).

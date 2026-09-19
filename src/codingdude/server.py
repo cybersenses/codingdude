@@ -601,6 +601,8 @@ def create_app(
         target, error = resolve_workdir_path(workdir, path)
         if error or target is None:
             raise HTTPException(status_code=400, detail=error or 'bad path')
+        if not target.is_file():
+            raise HTTPException(status_code=404, detail='not found')
         try:
             text = target.read_text(encoding='utf-8', errors='replace')[:500_000]
         except OSError as exc:
@@ -609,6 +611,7 @@ def create_app(
             'path': path,
             'content': text,
             'is_markdown': path.lower().endswith(('.md', '.markdown')),
+            'mtime': target.stat().st_mtime_ns,
         }
 
     @app.get('/sessions/{session_id}/renders')
@@ -678,10 +681,11 @@ def create_app(
     class FileSaveIn(BaseModel):
         path: str
         content: str
+        expected_mtime: int | None = None  # staleness guard: st_mtime_ns at read time
 
     @app.put('/sessions/{session_id}/file')
     def save_file(session_id: str, body: FileSaveIn, _: None = Depends(authorize)) -> dict:
-        from codingdude.tools import resolve_workdir_path
+        from codingdude.tools import _atomic_write, resolve_workdir_path
 
         workdir = db.session_workdir(session_id)
         if not workdir:
@@ -689,9 +693,22 @@ def create_app(
         target, error = resolve_workdir_path(workdir, body.path)
         if error or target is None:
             raise HTTPException(status_code=400, detail=error or 'bad path')
+        # Same staleness rail as the agent's edit tools: if the file changed
+        # since the editor read it (agent wrote it mid-edit), refuse instead
+        # of silently clobbering.
+        if (
+            body.expected_mtime is not None and target.exists()
+            and target.stat().st_mtime_ns != body.expected_mtime
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail=f'{body.path} changed on disk since it was read; '
+                       'reload it and re-apply your edit.',
+            )
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(body.content, encoding='utf-8')
-        return {'saved': body.path, 'bytes': len(body.content)}
+        _atomic_write(target, body.content)
+        return {'saved': body.path, 'bytes': len(body.content),
+                'mtime': target.stat().st_mtime_ns}
 
     class ProjectIn(BaseModel):
         name: str
