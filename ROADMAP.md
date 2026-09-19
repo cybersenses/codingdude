@@ -728,6 +728,6 @@ Phases:
 3. Visual identity pass.
 
 ## R36 — R36: Agent-core hardening (decomposition, token accounting, vision)
-**Status:** open
+**Status:** done
 
 Informal backlog formalized: engine.run decomposition (maintainability of the highest-traffic method), H7 streaming-vs-usage token accounting (reconcile streamed deltas vs final usage), R1 vision half (engine-side image attachment/passing).
