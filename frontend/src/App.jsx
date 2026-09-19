@@ -5,6 +5,7 @@ import { closeTab, openTab } from './editor'
 import { api, authLocal, call, checkAuth, login } from './api'
 import { runToReattach } from './reattach'
 import { activeProcesses, describeProcess, mergeProcesses } from './processes'
+import { PANE_SPECS, paneWidth } from './panes'
 
 // R6: render-only mermaid diagrams inside spec blocks. Renders each
 // ```mermaid fence to SVG; on failure the raw fence stays visible.
@@ -1516,7 +1517,7 @@ function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, heigh
           document.body.style.userSelect = 'none'
           function onMove(ev) {
             // Drag up grows the dock.
-            onResizeHeight(Math.min(560, Math.max(120, startH - (ev.clientY - startY))))
+            onResizeHeight(paneWidth('dock', startH, ev.clientY - startY))
           }
           function onUp() {
             window.removeEventListener('mousemove', onMove)
@@ -1778,18 +1779,18 @@ export default function App() {
 
   // Resizable panes: widths persist across sessions.
   const [sidebarWidth, setSidebarWidth] = useState(
-    () => Math.min(500, Math.max(180, parseInt(localStorage.getItem('cd-sidebar-w')) || 256))
+    () => parseInt(localStorage.getItem(PANE_SPECS.sidebar.key)) || PANE_SPECS.sidebar.fallback
   )
   const [rightWidth, setRightWidth] = useState(
-    () => Math.min(700, Math.max(280, parseInt(localStorage.getItem('cd-right-w')) || 384))
+    () => parseInt(localStorage.getItem(PANE_SPECS.right.key)) || PANE_SPECS.right.fallback
   )
   // R35 #74: Explorer rail is draggable like the other panes.
   const [railWidth, setRailWidth] = useState(
-    () => Math.min(420, Math.max(140, parseInt(localStorage.getItem('cd-rail-w')) || 208))
+    () => parseInt(localStorage.getItem(PANE_SPECS.rail.key)) || PANE_SPECS.rail.fallback
   )
   // R35 #72: bottom dock height persists like the pane widths.
   const [dockHeight, setDockHeight] = useState(
-    () => Math.min(560, Math.max(120, parseInt(localStorage.getItem('cd-dock-h')) || 240))
+    () => parseInt(localStorage.getItem(PANE_SPECS.dock.key)) || PANE_SPECS.dock.fallback
   )
 
   function dividerFor(which) {
@@ -1800,18 +1801,14 @@ export default function App() {
         onMouseDown={(e) => {
           e.preventDefault()
           const startX = e.clientX
-          const startW = which === 'sidebar' ? sidebarWidth : rightWidth
+          const pane = PANE_SPECS[which]
+          const startW = parseInt(localStorage.getItem(pane.key)) || pane.fallback
+          const setW = { sidebar: setSidebarWidth, rail: setRailWidth, right: setRightWidth }[which]
           document.body.style.userSelect = 'none'
           function onMove(ev) {
-            if (which === 'sidebar') {
-              const w = Math.min(500, Math.max(180, startW + ev.clientX - startX))
-              setSidebarWidth(w)
-              localStorage.setItem('cd-sidebar-w', String(w))
-            } else {
-              const w = Math.min(700, Math.max(280, startW - (ev.clientX - startX)))
-              setRightWidth(w)
-              localStorage.setItem('cd-right-w', String(w))
-            }
+            const w = paneWidth(which, startW, ev.clientX - startX)
+            setW(w)
+            localStorage.setItem(pane.key, String(w))
           }
           function onUp() {
             window.removeEventListener('mousemove', onMove)
@@ -2368,12 +2365,6 @@ export default function App() {
         >
           {theme === 'dark' ? 'dark' : 'light'}
         </button>
-        <span className={streaming ? 'text-brand-400' : ''}>{status}</span>
-        {streaming && quietSeconds >= 30 && (
-          <span className="ml-2 animate-pulse text-neutral-400">
-            still working… (no output for {quietSeconds}s)
-          </span>
-        )}
         {processes.length > 0 && (
           <span
             className="ml-2 cursor-help text-neutral-500"
