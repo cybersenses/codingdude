@@ -361,15 +361,18 @@ class PostRunPipeline:
     def __init__(self, services: RunServices) -> None:
         self._services = services
 
-    def record_run_usage(self, session_id: str, model_name: str, result,
+    def record_run_usage(self, session_id: str, model_name: str, usage,
                          started, emit) -> None:
-        """Bill the run (usage row + RUN_USAGE trace event with duration)."""
+        """Bill the run (usage row + RUN_USAGE trace event with duration).
+
+        `usage` is the combined RunUsage for EVERY request the run made
+        (main + fix-loop retries, #81) — one accounting pass, no double count.
+        """
         from datetime import UTC as _UTC
         from datetime import datetime as _dt
 
         from .telemetry import run_usage_event
 
-        usage = result.usage
         run_cost = float(usage.cost) if usage.cost is not None else None
         self._services.db.record_usage(
             session_id,

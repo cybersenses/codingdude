@@ -61,3 +61,80 @@ async def test_fix_loop_runs_tests_and_converges(engine, workdir):
     )
     # The loop ran tests, failed, fed back; final status complete.
     assert outcome.status == 'complete'
+
+
+async def test_fix_loop_bills_every_request_exactly_once(engine, workdir, capsys):
+    """#81: the fix loop's retries plus the main run must total exactly one
+    accounting pass — no double-billed retry, no lost main-run requests."""
+    from pydantic_ai.usage import RunUsage
+
+    def agent_behavior(messages, info):
+        # First model request (main run) vs retry (history now contains the
+        # failure feedback). Distinct usage per request so totals are exact.
+        seen_failure = any(
+            'still failing' in str(getattr(p, 'content', ''))
+            for m in messages for p in m.parts
+        )
+        if seen_failure:
+            return ModelResponse(
+                parts=[TextPart(content='fixed now')],
+                usage=RunUsage(input_tokens=20, output_tokens=7, requests=1),
+            )
+        return ModelResponse(
+            parts=[TextPart(content='working on it')],
+            usage=RunUsage(input_tokens=10, output_tokens=5, requests=1),
+        )
+
+    script = workdir / 'run_tests.sh'
+    script.write_text(
+        '#!/usr/bin/env bash\n'
+        'if [ -f flag.done ]; then echo "all tests passed"; exit 0; fi\n'
+        'touch flag.done\n'
+        'echo "1 failed"\n'
+        'exit 1\n'
+    )
+
+    events: list[dict] = []
+    outcome = await engine.run(
+        prompt='make the tests pass',
+        workdir=workdir,
+        model=scripted(agent_behavior),
+        approvals=ApprovalPolicy(),
+        fix_loop=True,
+        test_command=f'bash {script}',
+        max_test_iterations=2,
+        emit=events.append,
+    )
+    assert outcome.status == 'complete'
+    usage_events = [e for e in events if e['type'] == 'RUN_USAGE']
+    # One accounting pass for the whole sequence (main run + retries).
+    assert len(usage_events) == 1
+    event = usage_events[0]
+    assert event['input_tokens'] > 0 and event['output_tokens'] > 0
+    # Exactly one usage row in the ledger — the old code double-billed the
+    # retry (loop record_model_usage + finalize record_run_usage) and its
+    # row disagreed with the event. (FunctionModel estimates tokens, so the
+    # property under test is single, consistent accounting, not exact counts.)
+    rows = list(engine._db._conn.execute(
+        'select * from usage where session_id = ?', (outcome.session_id,)
+    ).fetchall())
+    assert len(rows) == 1
+    assert rows[0]['requests'] == event['requests']
+    assert rows[0]['input_tokens'] == event['input_tokens']
+
+
+def test_sum_usages_adds_requests_tokens_and_costs():
+    """#81: combined billing across fix-loop retries adds, never double-counts."""
+    from pydantic_ai.usage import RunUsage
+
+    from codingdude.telemetry import sum_usages
+
+    a = RunUsage(input_tokens=10, output_tokens=5, requests=1)
+    b = RunUsage(input_tokens=20, output_tokens=7, requests=1)
+    b.cost = 0.5
+    total = sum_usages([a, b])
+    assert total.requests == 2
+    assert total.input_tokens == 30
+    assert total.output_tokens == 12
+    assert total.cost == 0.5  # provider cost: sum of the parts that report one
+    assert sum_usages([]).requests == 0

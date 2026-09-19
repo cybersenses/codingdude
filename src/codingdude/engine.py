@@ -312,10 +312,17 @@ class Engine:
         self, session_id: str, resolved: Model, instructions: str, toolsets,
         history: list, result, workdir: Path, test_command: str, shell_bin: str,
         max_test_iterations: int, emit,
-    ):
-        """Fix-until-green: run the tests, feed failures back, repeat."""
+    ) -> tuple[object, list]:
+        """Fix-until-green: run the tests, feed failures back, repeat.
+
+        Returns (final_result, usages): every model request's usage — the main
+        run's plus each retry's — so #81 can bill the whole sequence exactly
+        once in _finalize_run. Retries deliberately do NOT record usage here:
+        doing so double-billed the last retry and lost the main run's tokens.
+        """
         from .tools import run_captured, shell_argv
 
+        usages = [result.usage] if result is not None else []
         for _ in range(max_test_iterations):
             cap = await run_captured(
                 shell_argv(test_command, shell_bin),
@@ -348,10 +355,10 @@ class Engine:
                 + 'Fix the failures. Do not declare success until the tests pass.',
                 message_history=history,
             )
-            self._services.record_model_usage(session_id, resolved, result.usage)
+            usages.append(result.usage)
             self._history.persist(session_id, result.all_messages())
             self._services.check_budget(session_id)
-        return result
+        return result, usages
 
     async def run(
         self,
@@ -628,20 +635,26 @@ class Engine:
         self._history.persist_actual_context(session_id, result, prepared.cm)
 
         # Fix-until-green loop: run the tests, feed failures back, repeat.
+        usages = [result.usage]
         if fix_loop and approvals is not None:
             from .config import load_project_config
 
             shell_bin = load_project_config(workdir).get(
                 'shell', self._config.shell.default
             )
-            result = await self._run_fix_loop(
+            result, retry_usages = await self._run_fix_loop(
                 session_id, prepared.resolved, agent_spec.instructions,
                 agent_spec.toolsets, agent_spec.history, result, workdir,
                 test_command, shell_bin, max_test_iterations, emit,
             )
+            # #81: the loop returns every request's usage (main + retries);
+            # bill the whole sequence exactly once below.
+            usages = retry_usages
+
+        from .telemetry import sum_usages
 
         self._post.record_run_usage(
-            session_id, prepared.model_name, result, started, traced
+            session_id, prepared.model_name, sum_usages(usages), started, traced
         )
         self._services.check_budget(session_id)
         # Post-run passes (extraction ∥ claims audit) run in the background:

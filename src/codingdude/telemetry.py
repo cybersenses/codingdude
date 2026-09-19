@@ -33,6 +33,28 @@ def estimate_cost(
     )
 
 
+def sum_usages(usages) -> 'object':
+    """Combine per-request RunUsage objects into one (#81).
+
+    Sums requests/tokens; provider cost is summed where every part that
+    reports one is additive — i.e. the sum of the costs present. Callers
+    pass the result straight to run_usage_event.
+    """
+    from pydantic_ai.usage import RunUsage
+
+    total = RunUsage()
+    costs: list[float] = []
+    for usage in usages:
+        total.requests += getattr(usage, 'requests', 0) or 0
+        total.input_tokens += getattr(usage, 'input_tokens', 0) or 0
+        total.output_tokens += getattr(usage, 'output_tokens', 0) or 0
+        if getattr(usage, 'cost', None) is not None:
+            costs.append(float(usage.cost))
+    if costs:
+        total.cost = sum(costs)  # type: ignore[assignment]
+    return total
+
+
 def run_usage_event(
     *,
     model_name: str,
