@@ -89,3 +89,14 @@
 - Gates: 531 passed/1 skipped; ruff + mypy clean; pushed, tree clean.
 - Remaining backlog: `engine.run` decomposition, H7 streaming-vs-usage,
   R1 vision half.
+
+## Handover (10aa393)
+- #81 done: fix-loop token accounting. Bug: loop billed each retry inline AND
+  finalize re-billed the final result (double-billed last retry, main run's
+  requests never billed). Fix: `_run_fix_loop` returns (result, usages);
+  `telemetry.sum_usages` combines; `record_run_usage(usage=...)` bills once.
+- TDD: `test_fix_loop_bills_every_request_exactly_once` (red vs old code,
+  verified via git stash) + `test_sum_usages_adds_requests_tokens_and_costs`.
+- Gates: 533 passed/1 skipped (4m09s), ruff clean (after autofix import
+  order), mypy clean (54 files). Pushed `10aa393`, tree clean.
+- Next in R36: #82 vision half (engine-side image passing).
