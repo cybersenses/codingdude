@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import CodeEditor, { CodeDiff } from './CodeEditor.jsx'
 import { closeTab, openTab } from './editor'
 import { api, authLocal, call, checkAuth, login } from './api'
-import { runToReattach } from './reattach'
+import { SSE_MAX_RETRIES, runToReattach, sseRetryDelayMs } from './reattach'
 import { activeProcesses, describeProcess, mergeProcesses } from './processes'
 import { PANE_SPECS, paneWidth } from './panes'
 
@@ -2175,18 +2175,21 @@ export default function App() {
         setStreaming(false)
         return
       }
-      if (attempt >= 5) {
-        // Server unreachable repeatedly: say so instead of pretending the
-        // run finished cleanly.
+      if (attempt >= SSE_MAX_RETRIES) {
+        // Server unreachable for the whole retry budget (#78): the worker may
+        // still have completed and persisted the run — reload the persisted
+        // exchange before declaring the connection lost, so the UI settles on
+        // the real outcome instead of a dangling spinner.
         attachedRunRef.current = null
         setStreaming(false)
         setStatus('error')
-        setError('lost connection to the run — the agent may still be working; reopen the session to reload its output')
+        setError('lost connection to the run — reload the session to see its persisted output')
         setMessages((msgs) => {
           const copy = [...msgs]
           copy[copy.length - 1] = { ...copy[copy.length - 1], streaming: false }
           return copy
         })
+        loadMessages(activeSession)
         return
       }
       setStatus('connection lost — reconnecting…')
@@ -2210,7 +2213,7 @@ export default function App() {
             }
           })
           .catch(() => attach(run_id, attempt + 1))
-      }, 1000 * (attempt + 1))
+      }, sseRetryDelayMs(attempt))
     }
   }
 

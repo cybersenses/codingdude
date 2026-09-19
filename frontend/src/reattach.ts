@@ -10,3 +10,12 @@ export function runToReattach(
   if (!activeSession || attachedRun) return null
   return liveRuns.get(activeSession) ?? null
 }
+
+// #78: a run that bounces its own server must outlive the outage — the worker
+// (post-#73) keeps running and persists its outcome, so the UI retries with a
+// budget sized for a real restart (~2 minutes) before giving up.
+export const SSE_MAX_RETRIES = 30
+
+export function sseRetryDelayMs(attempt: number): number {
+  return Math.min(1000 * (attempt + 1), 5000)
+}
