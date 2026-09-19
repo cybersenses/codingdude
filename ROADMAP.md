@@ -696,7 +696,7 @@ Shipped `76f57d7` (tickets #59/#60): RUN_FINISHED emits immediately after persis
 Observed live: run settles only ~94s after work completes because worker._finish_run drains the post-run tail (memory extraction) BEFORE emitting RUN_FINISHED. User-perceived wait budget: 15s. Two work items: (1) emit terminal event first, then drain tail bounded before worker exit; (2) shrink extraction input/prompt to cut actual extraction latency.
 
 ## R31 — R31 Run-end determinism & process visibility
-**Status:** open
+**Status:** done
 
 Worker still wedges after drain on some runs (trace ends at MEMORY_EXTRACTED, worker never exits; UI stuck until manual stop) — recurring Windows asyncio/Proactor teardown wedge. Two-pronged: (1) make worker teardown fail-safe so it can never hang the UI, (2) surface every spawned process in the UI until it exits, so hangs are diagnosable from the frontend instead of trace archaeology.
 
