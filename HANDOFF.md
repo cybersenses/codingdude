@@ -1,6 +1,17 @@
-*Updated after commit 1e5fb7b (pushed). Main == origin/main, tree clean.*
+*Updated after commit e13e0ac (pushed). Main == origin/main, tree clean.*
 
 ## Current state
+- **R31 CLOSED (`e13e0ac`):** run-end state is now durable. New `runs` DB
+  table (run_id, session, worker pid, status, exit_code, timestamps);
+  server records start at spawn, worker records terminal status in
+  `_finish_run`. Every trace event is stamped with `run_id` (engine tracer),
+  so events are attributable across bounces forever. Server boot reconciles
+  orphaned 'running' rows to 'interrupted' (idempotent). Also removed an
+  accidentally duplicated `runner()` def in `worker.run`. Gates: 523 passed
+  / 1 skipped; ruff + mypy clean. New tests: test_db.py runs lifecycle,
+  test_run_trace.py (run_id stamping), test_server.py boot reconcile.
+  Note: server.py was normalized to consistent CRLF (33 pre-existing LF-only
+  lines cleaned in passing).
 - **#78 FIXED and closed (`862a540`):** run that bounces its own server no
   longer leaves the UI hung/errored. SSE reconnect budget raised from
   5 attempts (~15s) to 30 attempts (~2min, linear backoff capped at 5s);
@@ -34,14 +45,11 @@
 - Nothing mandatory. Clear to start fresh work.
 
 ## Open roadmap
-- **R31 (run-end determinism residual)** - #73/#78/#79 all closed; R31 stays
-  open as insurance: if the run-end hang / ghost-process family recurs, use
-  existing instrumentation (worker-<session>.log, server.log, PROCESS_*
-  trace events, process panel) and the diagnosing-bugs skill.
-- Backlog: H7 streaming-vs-usage, orphan toolsets guard, `engine.run`
-  decomposition, Trace/Sidebar/Standards polish, R1 vision half, delete
-  stale `reference/` pydantic-ai copy. R35 leftovers: #75/#77 (run output
-  in IDE shell).
+- All roadmap items R1–R35 done. Remaining is the backlog: H7
+  streaming-vs-usage, orphan toolsets guard, `engine.run` decomposition,
+  Trace/Sidebar/Standards polish, R1 vision half, delete stale
+  `reference/` pydantic-ai copy, R35 leftovers #75/#77 (run output in IDE
+  shell).
 
 ## Known accepted gaps
 - Post-push review loop is directive-driven, not a hard-enforced pipeline.
