@@ -6,6 +6,7 @@ detection. Files are rewritten with targeted name replacements only.
 """
 
 import ast
+from collections.abc import Callable
 from pathlib import Path
 
 from pydantic_ai import ModelRetry
@@ -92,20 +93,45 @@ def _js_replace(path: Path, old: str, new: str) -> int:
     return len(edits)
 
 
-def build_refactor_toolset(workdir: Path) -> FunctionToolset:
-    """The `rename_symbol` tool: safe project-wide symbol rename."""
+def build_refactor_toolset(
+    workdir: Path, approvals=None, on_edit: Callable[[dict], None] | None = None
+) -> FunctionToolset:
+    """The `rename_symbol` tool: safe project-wide symbol rename.
+
+    Orphan-toolsets guard: a mass rename mutates many files, so it is gated
+    through the approval policy exactly like other file mutations, and every
+    modified file reports one EDIT_APPLIED event (checkpoints/trace/UI).
+    """
 
     async def rename_symbol(old_name: str, new_name: str) -> str:
         """Rename a function or class across every project file. Reports the
         number of replacements per language."""
         if not old_name or not new_name or old_name == new_name:
             raise ModelRetry('Provide distinct non-empty old_name and new_name.')
+        command = f'rename-symbol {old_name} -> {new_name}'
+        if approvals is not None:
+            from .approvals import DENIED, NEEDS_GATE
+            from .tools import _resolve_gate
+
+            decision = approvals.decide(command)
+            if decision in (NEEDS_GATE, DENIED):
+                await _resolve_gate(approvals, command, always=decision == DENIED)
         total = {'python': 0, 'js': 0}
         for f in _iter_source(Path(workdir)):
             if f.suffix == '.py':
-                total['python'] += _python_replace(f, old_name, new_name)
+                count = _python_replace(f, old_name, new_name)
+                total['python'] += count
             elif f.suffix in JS_EXTENSIONS:
-                total['js'] += _js_replace(f, old_name, new_name)
+                count = _js_replace(f, old_name, new_name)
+                total['js'] += count
+            else:
+                continue
+            if count and on_edit is not None:
+                on_edit({
+                    'type': 'EDIT_APPLIED', 'kind': 'rename',
+                    'path': f.relative_to(Path(workdir)).as_posix(),
+                    'before': old_name, 'after': new_name,
+                })
         if total['python'] == 0 and total['js'] == 0:
             raise ModelRetry(
                 f'No occurrences of {old_name!r} found to rename. '

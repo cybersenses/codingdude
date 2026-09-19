@@ -78,6 +78,16 @@ def build_worktree_toolset(workdir: Path, approvals=None) -> FunctionToolset:
     mutations of the main tree."""
 
     async def worktree_create(name: str) -> str:
+        """Create `.codingdude-worktrees/<name>` on branch `codingdude/<name>`
+        (gated: creating a branch mutates the repo like any other write)."""
+        if approvals is not None:
+            from .approvals import DENIED, NEEDS_GATE
+            from .tools import _resolve_gate
+
+            command = f'git worktree add {name}'
+            decision = approvals.decide(command)
+            if decision in (NEEDS_GATE, DENIED):
+                await _resolve_gate(approvals, command, always=decision == DENIED)
         try:
             path = create_worktree(workdir, name)
         except WorktreeError as exc:

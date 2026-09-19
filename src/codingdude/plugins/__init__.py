@@ -135,7 +135,7 @@ async def build_all(ctx: PluginContext) -> list[AbstractToolset]:
     # scripted file edit (same capability class as the edit tools);
     # worktree_merge is gated inside the toolset like other main-tree
     # mutations.
-    toolsets.append(build_refactor_toolset(ctx.workdir))
+    toolsets.append(build_refactor_toolset(ctx.workdir, approvals=ctx.approvals, on_edit=ctx.on_edit))
     toolsets.append(build_worktree_toolset(ctx.workdir, approvals=ctx.approvals))
 
     try:

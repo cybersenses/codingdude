@@ -68,13 +68,20 @@ async def test_merge_gated_by_approvals(repo):
     import pytest as _pytest
     from pydantic_ai import ModelRetry, UnexpectedModelBehavior
 
-    await toolset.tools['worktree_create'].function(name='m')
+    # Setup: create the worktree with a permissive policy (create is gated
+    # too now, but this test is about merge).
+    setup = build_worktree_toolset(repo, approvals=ApprovalPolicy(ask=_allow))
+    await setup.tools['worktree_create'].function(name='m')
     with _pytest.raises((ModelRetry, UnexpectedModelBehavior)):
         await toolset.tools['worktree_merge'].function(name='m')
 
 
 async def _deny(command):
     return 'deny'
+
+
+async def _allow(command):
+    return 'approve'
 
 
 async def test_merge_gated_headless_aborts(repo):
@@ -84,7 +91,8 @@ async def test_merge_gated_headless_aborts(repo):
     from codingdude.worktrees import build_worktree_toolset
 
     toolset = build_worktree_toolset(repo, approvals=ApprovalPolicy())
-    await toolset.tools['worktree_create'].function(name='m2')
+    setup = build_worktree_toolset(repo, approvals=ApprovalPolicy(ask=_allow))
+    await setup.tools['worktree_create'].function(name='m2')
     import pytest as _pytest
 
     with _pytest.raises(GateRequired):
@@ -136,3 +144,30 @@ def test_create_worktree_git_failure_is_clean(repo):
     subprocess.run(['git', 'worktree', 'prune'], cwd=repo, capture_output=True)
     with pytest.raises(WorktreeError, match='git worktree add failed'):
         create_worktree(repo, 'clash')
+
+
+async def test_create_gated_by_approvals(repo):
+    """Orphan-toolsets guard: worktree_create creates a branch + worktree —
+    an interactive policy that denies must prevent it."""
+    from codingdude.approvals import ApprovalPolicy
+    from codingdude.worktrees import build_worktree_toolset
+
+    policy = ApprovalPolicy(ask=_deny)
+    toolset = build_worktree_toolset(repo, approvals=policy)
+    import pytest as _pytest
+    from pydantic_ai import ModelRetry
+
+    with _pytest.raises(ModelRetry):
+        await toolset.tools['worktree_create'].function(name='gated')
+    assert not (repo / '.codingdude-worktrees' / 'gated').exists()
+
+
+async def test_create_gated_headless_aborts(repo):
+    """Headless (no ask callback): create raises GateRequired per ADR-0003."""
+    from codingdude.approvals import ApprovalPolicy
+    from codingdude.tools import GateRequired
+    from codingdude.worktrees import build_worktree_toolset
+
+    toolset = build_worktree_toolset(repo, approvals=ApprovalPolicy())
+    with pytest.raises(GateRequired):
+        await toolset.tools['worktree_create'].function(name='m3')
