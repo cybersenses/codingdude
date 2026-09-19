@@ -711,6 +711,6 @@ Per research (reference/research/language-support-priorities.md): add Tier 3 Jav
 Mirror Bito's highest-value capabilities: automated PR summaries and automated code review with fix application. Research source: bito.ai (PR review agent, one-click fixes, model router). Model router deliberately deferred — lowest alignment with current trajectory.
 
 ## R34 — R34: Human interface & cowork (Monaco editor)
-**Status:** open
+**Status:** done
 
 Overhaul the human interface for cowork: humans can see, browse, and edit code alongside the agent. Monaco editor (microsoft.github.io/monaco-editor) as the editing surface, backed by a sandboxed server file API. All writes — human or agent — go through the same validation rails (workdir sandbox, atomic write, staleness registry).
