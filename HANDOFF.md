@@ -1,39 +1,30 @@
 # Handoff note - to the next agent on duty
 
-*Updated after commit a75b458 (pushed). Main == origin/main, tree clean.*
+*Updated after commit a3811c9 (pushed). Main == origin/main, tree clean.*
 
 ## Current state
-- **R34 (Human interface & cowork / Monaco) DONE** - all 3 tickets closed:
-  - #69 `be12533`: server file API - GET/PUT `/file` + `/tree`; nanosecond
-    staleness guard (GET returns `mtime` ns; PUT takes `expected_mtime`,
-    409 on stale), `_atomic_write` (uuid tmp + retried `os.replace`),
-    path containment via `resolve_workdir_path`.
-  - #70 `afd0241`: Monaco editor (`@monaco-editor/react`, custom `cd-dark`
-    theme) replaced CodeMirror; tabbed editing (max 8 tabs, logic in
-    `frontend/src/editor.ts`, vitest-covered); save gated on dirty +
-    staleness; 409 -> "changed on disk" + explicit reload.
-  - #71 `a75b458`: diff view - `GET /sessions/{id}/file_diff?path=` returns
-    `{path, base, content}` (base = `git show HEAD:...`, '' for new files;
-    route named file_diff because `/diff` whole-tree route already exists).
-    Frontend `CodeDiff` (named export in CodeEditor.jsx) + toggle in
-    FileExplorer showing HEAD vs draft.
-- Gates: 503 passed / 1 skipped, ruff + mypy clean (52 files), vitest 16/16,
-  build clean (17.6s).
+- **R33 (Review automation) DONE** - all 3 tickets closed:
+  - #66 `0cc5c28`: `prsum.py` - pr_summary tool (commit list, diff stat,
+    AST semantic summaries per changed .py file, base..HEAD).
+  - #67 `e445c05`: post-push review directive - git_push returns the pushed
+    range (pre-push remote head..HEAD) and mandates review -> verified fixes
+    -> gates -> commit; never auto-pushes.
+  - #68 `404ca97`: review checklist (prompts/review.md) mandates codegraph
+    impact analysis on touched symbols + verified-only findings.
+- **R34 done earlier this session** (be12533 / afd0241 / a75b458) - Monaco
+  file API/editor/diff; live UI check (tree -> edit -> diff -> save) done.
+- Gates: 510 passed / 1 skipped, ruff + mypy clean (53 files).
 
 ## MUST DO after bounce
-- Bounce the server: new /file_diff endpoint + new dist bundle only serve
-  after restart. Then verify: Files panel loads tree, open file, edit,
-  toggle diff view, save.
+- Nothing mandatory. Server serves latest dist (bounced after R34).
 
 ## Open roadmap
-- R31 (run-end determinism residual) - flicker fix live; user may close it.
-- R33 review automation: #66 auto PR summaries, #67 auto code-review
-  post-push, #68 graph-informed reviews (codegraph impact mandate).
+- R31 (run-end determinism residual) - flicker fix live; scoping pass
+  pending. Only open roadmap item.
 
 ## Known accepted gaps
-- #71 diff state resets on tab activate/close were done in App.jsx; no new
-  logic tests for the thin UI glue (intentional).
-- Monaco adds a large chunk; chunk-size warning in build is pre-existing.
+- Post-push review loop is directive-driven (tool output guidance), not a
+  hard-enforced pipeline - agent discipline may drift.
 - Vision pixel gate still has no live end-to-end check.
 
 ## Environment notes
