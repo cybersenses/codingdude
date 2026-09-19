@@ -33,7 +33,13 @@ def test_suffix_registered(suffix):
 
 
 def test_unregistered_still_none():
-    assert spec_for('.pl') is None
+    # R32 #65: real languages now fall back to tree-sitter-language-pack
+    # (e.g. '.pl' resolves Perl navigation-only); only truly unknown
+    # suffixes return None.
+    assert spec_for('.definitelynotalanguage') is None
+    perl = spec_for('.pl')
+    assert perl is not None
+    assert perl.navigation_only is True
 
 
 def test_c_function_name_via_declarator_chain():

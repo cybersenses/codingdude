@@ -224,6 +224,41 @@ def _css_spec() -> LanguageSpec:
     )
 
 
+# R32 #65: suffixes not pinned above resolve via tree-sitter-language-pack.
+# Name mapping only where the pack name differs from the bare suffix.
+_PACK_NAMES: dict[str, str] = {
+    '.rb': 'ruby',
+    '.swift': 'swift',
+    '.dart': 'dart',
+    '.scala': 'scala',
+    '.sc': 'scala',
+    '.lua': 'lua',
+    '.zig': 'zig',
+    '.jl': 'julia',
+    '.ml': 'ocaml',
+    '.mli': 'ocaml',
+    '.ex': 'elixir',
+    '.exs': 'elixir',
+    '.r': 'r',
+    '.haskell': 'haskell',
+    '.hs': 'haskell',
+    '.perl': 'perl',
+    '.pl': 'perl',
+    '.groovy': 'groovy',
+    '.dockerfile': 'dockerfile',
+}
+
+
+def _pack_spec(suffix: str) -> LanguageSpec | None:
+    """Fallback spec from tree-sitter-language-pack; navigation-only."""
+    from tree_sitter_language_pack import get_language, has_language
+
+    name = _PACK_NAMES.get(suffix, suffix.lstrip('.'))
+    if not has_language(name):
+        return None
+    return LanguageSpec(grammar=get_language(name), navigation_only=True)
+
+
 @cache
 def spec_for(suffix: str) -> LanguageSpec | None:
     """The LanguageSpec for a file suffix, or None if unregistered."""
@@ -264,8 +299,8 @@ def spec_for(suffix: str) -> LanguageSpec | None:
         if suffix == '.toml':
             return _config_spec('tree_sitter_toml')
     except ImportError:
-        return None
-    return None
+        pass  # pinned grammar package missing; try the pack below
+    return _pack_spec(suffix)
 
 
 # Suffixes with navigation-only registry support (HTML/CSS tier 2 plus the
