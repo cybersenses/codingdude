@@ -1,6 +1,18 @@
-*Updated after commit 59ee09a (pushed). Main == origin/main, tree clean.*
+*Updated after commit 1e5fb7b (pushed). Main == origin/main, tree clean.*
 
 ## Current state
+- **#78 FIXED and closed (`862a540`):** run that bounces its own server no
+  longer leaves the UI hung/errored. SSE reconnect budget raised from
+  5 attempts (~15s) to 30 attempts (~2min, linear backoff capped at 5s);
+  helpers `sseRetryDelayMs`/`SSE_MAX_RETRIES` live in `frontend/src/reattach.ts`.
+  Give-up path now reloads persisted messages before declaring error.
+- **#79 FIXED and closed (`1e5fb7b`):** trace BADLINEs gone. New
+  `src/codingdude/traces.py::append_trace_line` — one `os.write` per line
+  under `O_APPEND` + in-process lock; engine tracer and worker
+  `trace_terminal` both migrated. Threaded stress test proves zero malformed
+  lines.
+- Full gates at close: 515 passed / 1 skipped, ruff + mypy clean; frontend
+  vitest 24/24 + eslint + vite build clean.
 - **#73 FIXED and closed (`59ee09a`):** worker no longer exits 1 when the
   server bounces mid-run. Root cause was the unguarded `await sender_task`
   propagating `ConnectionClosedError` out of `run()` mid-engine-iteration.
@@ -22,20 +34,14 @@
 - Nothing mandatory. Clear to start fresh work.
 
 ## Open roadmap
-- **R31 (run-end determinism residual)** - deliberately kept open as
-  insurance: if the run-end hang / ghost-process / UI-settle family recurs,
-  do NOT whack-a-mole - use existing instrumentation (worker-<session>.log,
-  server.log, PROCESS_* trace events, process panel) and the
-  diagnosing-bugs skill.
-- **Known residual, unlogged ticket:** "run bounces its own server -> SSE
-  severed, UI never sees completion" (from the `a4a33af` incident). Worker
-  now survives it (#73) but the UI still misses RUN_FINISHED for that run.
-- Trace writer has no locking - concurrent workers can interleave mid-write
-  (BADLINEs at trace offsets 170333 / 200983 / 257002 in session ccb1b25c).
-  Real but separate bug; not yet ticketed.
+- **R31 (run-end determinism residual)** - #73/#78/#79 all closed; R31 stays
+  open as insurance: if the run-end hang / ghost-process family recurs, use
+  existing instrumentation (worker-<session>.log, server.log, PROCESS_*
+  trace events, process panel) and the diagnosing-bugs skill.
 - Backlog: H7 streaming-vs-usage, orphan toolsets guard, `engine.run`
   decomposition, Trace/Sidebar/Standards polish, R1 vision half, delete
-  stale `reference/` pydantic-ai copy.
+  stale `reference/` pydantic-ai copy. R35 leftovers: #75/#77 (run output
+  in IDE shell).
 
 ## Known accepted gaps
 - Post-push review loop is directive-driven, not a hard-enforced pipeline.
