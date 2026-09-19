@@ -1103,8 +1103,17 @@ def build_git_toolset(workdir: Path, policy) -> FunctionToolset:
         await _gate('gh pr view', always=True)
         return await _run(['gh', 'pr', 'view', str(number)], use_shell=True)
 
+    async def pr_summary(base: str = 'origin/main') -> str:
+        """Compose a PR body from commits, diff stat, and AST summaries."""
+        from .prsum import pr_summary_async
+
+        return await pr_summary_async(workdir, base)
+
     return FunctionToolset(
-        [git_status, git_log, git_diff, git_commit, git_branch, git_push, gh_pr_create, gh_pr_view]
+        [
+            git_status, git_log, git_diff, git_commit, git_branch, git_push,
+            gh_pr_create, gh_pr_view, pr_summary,
+        ]
     )
 
 
