@@ -506,3 +506,55 @@ Everything from tranche 5 onward. **Read this before touching the codebase.**
 The footer should show `ui v0.3.0+<sha>` and `srv v0.3.0+<sha>` with a **fresh boot time** after the bounce.
 
 <!-- END LOG -->
+
+---
+
+## Handback from external reviewer (2026-09-19, ZCode)
+
+CodingDude was handed to an external agent (ZCode) for review and fixes between your last handoff
+and now. Read this section before continuing any self-fix work — these are the facts on the ground.
+
+### What the external agent changed (all committed + pushed to origin/main)
+
+- **`90b882d` — MCP pre-flight (`verify_mcp_toolsets`)**: your M7 guarded the MCP config *load*,
+  but servers spawn lazily at agent-enter time. One flaky codegraph handshake killed every run
+  before you could speak — the "Client failed to connect" deadlock you were stuck in. Now
+  `build_all` is async and pre-flights every MCP server (connect + list tools, one retry);
+  a server that can't initialize is dropped for that run with a warning instead of killing the run.
+  `plugins.build_all` is now `async`; `engine.run` awaits it.
+- **`dba5fd9` — UI crash fix**: R35 #74 shipped `<AgentStrip>` usage without the component, and
+  `focusDiffTab`/`setFocusDiffTab` state without creating it. Both defined now; bundle rebuilt and
+  live-verified. Root cause of the class: esbuild does not flag undefined identifiers, so the
+  build passes while the app crashes at render.
+
+### New hard rule: frontend lint gate
+
+`frontend/eslint.config.mjs` now enforces `react/jsx-no-undef` + `no-undef` on `src/**/*.jsx`
+(browser globals + the Vite `__APP_VERSION__`-family defines are registered). **No UI commit
+without `cd frontend && npm run lint` clean, and `npm run build` after.** This would have caught
+the AgentStrip crash class. The gate is also recorded in AGENTS.md so the review checklist
+surfaces it.
+
+### Current state
+
+- `main` @ `dba5fd9`, pushed. 177 backend tests green at `90b882d`; ruff/mypy clean.
+- Server restarted on the current build (bounce done by the external agent).
+- Working tree clean.
+
+### Still yours (unchanged from your list)
+
+- H7 streaming-vs-usage; gate `refactor`/`worktree` orphan toolsets; `engine.run` decomposition;
+  Trace/Sidebar/Standards polish; R1 vision half (harness-blocked).
+- New from the external review: consider an eslint run in CI-style checks before UI commits
+  (done manually so far); the pydantic-ai vendored copy was removed from the index but the
+  `reference/` directory still exists on disk (gitignored) — delete it when convenient.
+
+### Rules that still bind
+
+- One finding per step, test-first, commit per step with the finding id, verification line with
+  the exact command and observed output.
+- `npm run lint` + `npm run build` before any frontend commit (new — see above).
+- Restart policy: only via the gated `codingdude restart` command (human approves the gate).
+  Never raw taskkill on the server PID, never touch `~/.codingdude`.
+- If a step breaks the suite and can't be fixed within the step: `git checkout -- <files>`,
+  log it deferred, move on. Never leave `main` red.
