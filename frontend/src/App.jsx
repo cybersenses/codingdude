@@ -1042,8 +1042,10 @@ function Planning({ workdir }) {
   )
 }
 
-function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width, workdir }) {
-  const tabs = ['Diff', 'Planning', 'Artifacts', 'Notes', 'Renders', 'Files', 'Terminal', 'Trace', 'Cost', 'Memory', 'MCP', 'Standards']
+// R35 #72: bottom dock — VS Code panel position. Processes comes in as a
+// prop (App polls it); it used to be a bare-identifier crash in this scope.
+function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, height, onResizeHeight }) {
+  const tabs = ['Diff', 'Planning', 'Artifacts', 'Notes', 'Renders', 'Terminal', 'Trace', 'Cost', 'Memory', 'MCP', 'Standards']
   const [tab, setTab] = useState('Diff')
   const [data, setData] = useState({})
 
@@ -1472,8 +1474,28 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width, workdir }
   }
 
   return (
-    <aside className="flex shrink-0 flex-col overflow-hidden border-l border-neutral-800 bg-neutral-950 p-3" style={{ width }}>
-      <div className="mb-2 flex flex-wrap gap-1 border-b border-line pb-2">
+    <section className="flex shrink-0 flex-col overflow-hidden border-t border-neutral-800 bg-neutral-950" style={{ height }}>
+      <div
+        className="h-1 shrink-0 cursor-row-resize bg-neutral-800 transition-colors hover:bg-brand-600"
+        onMouseDown={(e) => {
+          e.preventDefault()
+          const startY = e.clientY
+          const startH = height
+          document.body.style.userSelect = 'none'
+          function onMove(ev) {
+            // Drag up grows the dock.
+            onResizeHeight(Math.min(560, Math.max(120, startH - (ev.clientY - startY))))
+          }
+          function onUp() {
+            window.removeEventListener('mousemove', onMove)
+            window.removeEventListener('mouseup', onUp)
+            document.body.style.userSelect = ''
+          }
+          window.addEventListener('mousemove', onMove)
+          window.addEventListener('mouseup', onUp)
+        }}
+      />
+      <div className="flex flex-wrap gap-1 border-b border-line px-2 py-1">
         {tabs.map((t) => (
           <button
             key={t}
@@ -1487,8 +1509,8 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width, workdir }
           </button>
         ))}
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto text-xs">{body}</div>
-    </aside>
+      <div className="min-h-0 flex-1 overflow-y-auto p-2 text-xs">{body}</div>
+    </section>
   )
 }
 
@@ -1696,6 +1718,10 @@ export default function App() {
   )
   const [rightWidth, setRightWidth] = useState(
     () => Math.min(700, Math.max(280, parseInt(localStorage.getItem('cd-right-w')) || 384))
+  )
+  // R35 #72: bottom dock height persists like the pane widths.
+  const [dockHeight, setDockHeight] = useState(
+    () => Math.min(560, Math.max(120, parseInt(localStorage.getItem('cd-dock-h')) || 240))
   )
 
   function dividerFor(which) {
@@ -2209,6 +2235,19 @@ export default function App() {
         />
         <main className="flex min-w-0 flex-1 flex-col">
           {error && <div className="bg-danger/15 px-4 py-1 text-xs text-danger">{error}</div>}
+          {activeSession ? (
+            <FileExplorer sessionId={activeSession} />
+          ) : (
+            <div className="flex flex-1 items-center justify-center text-sm text-neutral-500">
+              Open a file from the explorer or pick a session to chat.
+            </div>
+          )}
+        </main>
+        {dividerFor('right')}
+        <aside
+          className="flex min-w-0 shrink-0 flex-col overflow-hidden border-l border-neutral-800 bg-neutral-950"
+          style={{ width: rightWidth }}
+        >
           <Prompt
             onSend={send}
             disabled={!activeSession || streaming}
@@ -2225,17 +2264,17 @@ export default function App() {
             toggleNotify={toggleNotify}
           />
           <Chat messages={messages} streaming={streaming} onStop={stop} onDecide={decide} sessionId={activeSession} suggestMode={suggestMode} onEditRevert={onEditRevert} runId={runRef.current} />
-        </main>
-        {dividerFor('right')}
-        <RightPanel
-          width={rightWidth}
-          sessionId={activeSession}
-          refreshKey={refreshKey}
-          diffBadge={diffBadge}
-          workdir={workdir}
-          processes={processes}
-        />
+        </aside>
       </div>
+      <DockPanel
+        sessionId={activeSession}
+        refreshKey={refreshKey}
+        diffBadge={diffBadge}
+        workdir={workdir}
+        processes={processes}
+        height={dockHeight}
+        onResizeHeight={(h) => { setDockHeight(h); localStorage.setItem('cd-dock-h', String(h)) }}
+      />
       <footer className="flex items-center justify-between border-t border-neutral-800 bg-neutral-950 px-3 py-1 text-[10px] text-neutral-500">
         <span>
           {activeSession ? `session ${activeSession.slice(0, 8)}` : 'no session'} ·{' '}

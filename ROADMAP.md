@@ -716,3 +716,13 @@ Shipped: #66 pr_summary tool (commit list + diff stat + AST semantic summaries, 
 **Status:** done
 
 Overhaul the human interface for cowork: humans can see, browse, and edit code alongside the agent. Monaco editor (microsoft.github.io/monaco-editor) as the editing surface, backed by a sandboxed server file API. All writes — human or agent — go through the same validation rails (workdir sandbox, atomic write, staleness registry).
+
+## R35 — IDE layout (VS Code-inspired)
+**Status:** open
+
+Restructure frontend to VS Code spatial grammar: activity bar, center editor (Monaco tabs), right agent-chat panel, bottom dock (Terminal/Trace/Processes), status bar. Deliberately not a 1:1 copy — visual identity stays ours; uniqueness: agent chat as first-class, trace stream, HITL approvals.
+
+Phases:
+1. Move existing panels to VS Code positions (Files/editor center, chat right, dock bottom).
+2. Activity bar + bottom dock structure.
+3. Visual identity pass.
