@@ -733,6 +733,6 @@ Phases:
 Informal backlog formalized: engine.run decomposition (maintainability of the highest-traffic method), H7 streaming-vs-usage token accounting (reconcile streamed deltas vs final usage), R1 vision half (engine-side image attachment/passing).
 
 ## R37 — R37: Selection AI actions in editor
-**Status:** open
+**Status:** done
 
 User highlights code in the editor and gets one-click agent actions (Explain, Fix, Optimise, Improve, …). Each action starts a scoped agent run on the selected snippet.
