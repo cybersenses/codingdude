@@ -100,3 +100,11 @@
 - Gates: 533 passed/1 skipped (4m09s), ruff clean (after autofix import
   order), mypy clean (54 files). Pushed `10aa393`, tree clean.
 - Next in R36: #82 vision half (engine-side image passing).
+
+## Handover (#82)
+- R1 vision half done: `vision.build_run_prompt(prompt, image_path)` is the
+  message-build seam (plain str | [str, BinaryContent]; fails fast on missing
+  file / non-image suffix). `_assemble_agent` uses it; runs emit
+  IMAGE_ATTACHED. Tests: tests/test_vision_prompt.py (4).
+- Gates: 537 passed/1 skipped (3m20s), ruff clean, mypy 54 files clean.
+- R36 now fully done (#80/#81/#82). Roadmap: close R36; next backlog is open.
