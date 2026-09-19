@@ -1582,7 +1582,7 @@ function Prompt({ onSend, disabled, suggestMode, setSuggestMode, fixLoop, setFix
 
   return (
     <form
-      className="flex flex-wrap items-center gap-2 border-b border-neutral-800 p-3"
+      className="flex flex-col gap-2 border-b border-neutral-800 p-3"
       onSubmit={(e) => {
         e.preventDefault()
         if (text.trim() || image) {
@@ -1592,24 +1592,33 @@ function Prompt({ onSend, disabled, suggestMode, setSuggestMode, fixLoop, setFix
         }
       }}
     >
-      <textarea
-        className="min-w-0 flex-1 resize-none rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
-        rows={2}
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault()
-            if (text.trim() || image) {
-              onSend(text.trim() || 'describe this image', image)
-              setText('')
-              setImage(null)
+      <div className="flex items-end gap-2">
+        <textarea
+          className="min-w-0 flex-1 resize-none rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
+          rows={2}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault()
+              if (text.trim() || image) {
+                onSend(text.trim() || 'describe this image', image)
+                setText('')
+                setImage(null)
+              }
             }
-          }
-        }}
-        placeholder={disabled ? 'create or select a session first' : 'describe the task… (Enter to send, Shift+Enter for newline)'}
-        disabled={disabled}
-      />
+          }}
+          placeholder={disabled ? 'create or select a session first' : 'describe the task… (Enter to send, Shift+Enter for newline)'}
+          disabled={disabled}
+        />
+        <button
+          className="rounded bg-brand-700 px-4 py-2 text-sm font-medium text-brand-fg hover:bg-brand-600 disabled:opacity-40"
+          disabled={disabled}
+        >
+          Send
+        </button>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
       {image && (
         <div className="flex items-center gap-1 rounded bg-neutral-900 px-2 py-1 text-[10px] text-success">
           {image.name}
@@ -1674,12 +1683,7 @@ function Prompt({ onSend, disabled, suggestMode, setSuggestMode, fixLoop, setFix
       >
         🔔
       </label>
-      <button
-        className="rounded bg-brand-700 px-4 py-2 text-sm font-medium text-brand-fg hover:bg-brand-600 disabled:opacity-40"
-        disabled={disabled}
-      >
-        Send
-      </button>
+      </div>
     </form>
   )
 }
