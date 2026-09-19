@@ -1,32 +1,31 @@
-import CodeMirror from '@uiw/react-codemirror'
-import { oneDark } from '@codemirror/theme-one-dark'
-import { javascript } from '@codemirror/lang-javascript'
-import { python } from '@codemirror/lang-python'
-import { markdown as markdownLang } from '@codemirror/lang-markdown'
-import { html } from '@codemirror/lang-html'
-import { css } from '@codemirror/lang-css'
+import Editor from '@monaco-editor/react'
+import { langFor } from './editor'
 
-function langFor(path) {
-  const ext = path.split('.').pop().toLowerCase()
-  if (['js', 'jsx', 'mjs'].includes(ext)) return javascript()
-  if (['ts', 'tsx'].includes(ext)) return javascript({ typescript: true })
-  if (ext === 'py') return python()
-  if (['md', 'markdown'].includes(ext)) return markdownLang()
-  if (['html', 'htm'].includes(ext)) return html()
-  if (ext === 'css') return css()
-  return []
+const THEME = {
+  base: 'vs-dark',
+  inherit: true,
+  rules: [],
+  colors: { 'editor.background': '#0a0a0a' },
 }
 
 export default function CodeEditor({ path, value, onChange, height = '100%' }) {
   return (
-    <CodeMirror
+    <Editor
+      language={langFor(path || '')}
       value={value}
-      height={height}
-      theme={oneDark}
-      extensions={langFor(path || '')}
-      basicSetup={{ lineNumbers: true, foldGutter: true, highlightActiveLine: true }}
+      theme="cd-dark"
+      beforeMount={(monaco) => { monaco.editor.defineTheme('cd-dark', THEME) }}
       onChange={onChange}
-      style={{ fontSize: 12.5 }}
+      height={height}
+      options={{
+        fontSize: 12.5,
+        minimap: { enabled: false },
+        lineNumbers: 'on',
+        scrollBeyondLastLine: false,
+        tabSize: 2,
+        wordWrap: 'on',
+        automaticLayout: true,
+      }}
     />
   )
 }

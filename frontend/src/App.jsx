@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import CodeEditor from './CodeEditor.jsx'
+import { closeTab, openTab } from './editor'
 import { api, authLocal, call, checkAuth, login } from './api'
 import { runToReattach } from './reattach'
 import { activeProcesses, describeProcess, mergeProcesses } from './processes'
@@ -466,11 +467,11 @@ function TreeNode({ node, depth, onOpen }) {
 
 function FileExplorer({ sessionId }) {
   const [tree, setTree] = useState(null)
-  const [openPath, setOpenPath] = useState(null)
-  const [file, setFile] = useState(null)
-  const [editing, setEditing] = useState(false)
+  const [tabs, setTabs] = useState([]) // FileTab[] from editor.ts
   const [draft, setDraft] = useState('')
-  const [saved, setSaved] = useState(false)
+  const [dirty, setDirty] = useState(false)
+  const [notice, setNotice] = useState(null)
+  const active = tabs.find((t) => t.active) || null
 
   async function refresh() {
     setTree(await call(`/sessions/${sessionId}/tree`))
@@ -482,27 +483,54 @@ function FileExplorer({ sessionId }) {
   async function openFile(path) {
     try {
       const f = await call(`/sessions/${sessionId}/file?path=${encodeURIComponent(path)}`)
-      setFile(f)
-      setOpenPath(path)
-      setEditing(false)
-      setSaved(false)
+      setTabs(openTab(tabs, { path, content: f.content, mtime: f.mtime }))
+      setDraft(f.content)
+      setDirty(false)
+      setNotice(null)
     } catch (e) {
-      setFile({ path, content: `cannot open: ${e.message}`, is_markdown: false })
-      setOpenPath(path)
-      setEditing(false)
+      setNotice(`cannot open ${path}: ${e.message}`)
     }
   }
 
+  function activate(path) {
+    const t = tabs.find((x) => x.path === path)
+    if (!t) return
+    setTabs(tabs.map((x) => ({ ...x, active: x.path === path })))
+    setDraft(t.content)
+    setDirty(false)
+    setNotice(null)
+  }
+
+  function close(path) {
+    const next = closeTab(tabs, path)
+    setTabs(next)
+    const nowActive = next.find((t) => t.active)
+    setDraft(nowActive ? nowActive.content : '')
+    setDirty(false)
+    setNotice(null)
+  }
+
   async function save() {
-    await call(`/sessions/${sessionId}/file`, {
-      method: 'PUT',
-      body: JSON.stringify({ path: openPath, content: draft }),
-    })
-    setSaved(true)
-    setEditing(false)
-    const f = await call(`/sessions/${sessionId}/file?path=${encodeURIComponent(openPath)}`)
-    setFile(f)
-    setTimeout(() => setSaved(false), 2000)
+    if (!active) return
+    try {
+      const r = await call(`/sessions/${sessionId}/file`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          path: active.path, content: draft, expected_mtime: active.mtime,
+        }),
+      })
+      setTabs(tabs.map((t) => (t.path === active.path
+        ? { ...t, content: draft, mtime: r.mtime }
+        : t)))
+      setDirty(false)
+      setNotice('saved ✓')
+      refresh().catch(() => {})
+    } catch (e) {
+      setNotice(e.message.includes('409')
+        ? `${active.path} changed on disk since you opened it — reload to pick up the agent's version, then re-apply your edit.`
+        : `save failed: ${e.message}`)
+    }
+    setTimeout(() => setNotice(null), 4000)
   }
 
   return (
@@ -512,40 +540,36 @@ function FileExplorer({ sessionId }) {
           <TreeNode key={c.path} node={c} depth={0} onOpen={openFile} />
         )) : <div className="text-neutral-600">loading…</div>}
       </div>
-      {openPath && (
+      {tabs.length > 0 && (
         <div className="flex min-h-0 flex-1 flex-col gap-1">
+          <div className="flex items-center gap-0.5 overflow-x-auto">
+            {tabs.map((t) => (
+              <div key={t.path} className={`group flex items-center rounded-t border-b-2 px-2 py-0.5 text-[10px] ${t.active ? 'border-brand bg-neutral-800 text-ink' : 'border-transparent bg-neutral-900 text-ink-muted'}`}>
+                <button className="max-w-40 truncate font-mono" onClick={() => activate(t.path)} title={t.path}>
+                  {t.path.split('/').pop()}
+                </button>
+                <button className="ml-1 text-neutral-500 hover:text-danger" onClick={() => close(t.path)}>×</button>
+              </div>
+            ))}
+          </div>
           <div className="flex items-center justify-between">
-            <span className="truncate font-mono text-[10px] text-brand-300">{openPath}</span>
+            <span className="truncate font-mono text-[10px] text-brand-300">{active?.path}</span>
             <div className="flex gap-1">
               <button
+                className="rounded bg-brand-700 px-2 py-0.5 text-[10px] text-brand-fg disabled:opacity-40"
+                disabled={!dirty}
+                onClick={save}
+              >save</button>
+              <button
                 className="rounded bg-neutral-700 px-2 py-0.5 text-[10px] text-ink"
-                onClick={() => {
-                  if (!editing) setDraft(file?.content || '')
-                  setEditing(!editing)
-                }}
-              >{editing ? 'view' : 'edit'}</button>
-              {editing && (
-                <button
-                  className="rounded bg-brand-700 px-2 py-0.5 text-[10px] text-brand-fg"
-                  onClick={save}
-                >save</button>
-              )}
+                onClick={() => active && openFile(active.path)}
+              >reload</button>
             </div>
           </div>
-          {saved && <div className="text-[10px] text-brand-400">saved ✓</div>}
-          {editing ? (
-            <div className="min-h-0 flex-1 overflow-hidden rounded border border-neutral-700">
-              <CodeEditor path={openPath} value={draft} onChange={setDraft} height="100%" />
-            </div>
-          ) : file?.is_markdown ? (
-            <div className="min-h-0 flex-1 overflow-y-auto rounded bg-neutral-900 p-2 text-xs text-neutral-200">
-              <ReactMarkdown>{file.content}</ReactMarkdown>
-            </div>
-          ) : (
-            <pre className="min-h-0 flex-1 overflow-auto rounded bg-neutral-900 p-2 font-mono text-[11px] text-neutral-300">
-              {file?.content}
-            </pre>
-          )}
+          {notice && <div className="text-[10px] text-brand-400">{notice}</div>}
+          <div className="min-h-0 flex-1 overflow-hidden rounded border border-neutral-700">
+            <CodeEditor path={active?.path || ''} value={draft} onChange={(v) => { setDraft(v); setDirty(true) }} height="100%" />
+          </div>
         </div>
       )}
     </div>
