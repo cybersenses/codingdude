@@ -23,11 +23,16 @@ function baseOptions() {
 export default function CodeEditor({ path, value, onChange, onSelectionChange, height = '100%' }) {
   function handleMount(editor, monaco) {
     if (onSelectionChange) {
-      editor.onDidChangeCursorSelection((e) => {
+      // Only commit the selection on mouse-up / key-up: reporting mid-drag
+      // mounts the action bar, shifts layout under the cursor and collapses
+      // multi-line drags.
+      const report = () => {
+        const sel = editor.getSelection()
         const model = editor.getModel()
-        const sel = e.selection
-        onSelectionChange(model ? model.getValueInRange(sel) : '')
-      })
+        onSelectionChange(model && sel && !sel.isEmpty() ? model.getValueInRange(sel) : '')
+      }
+      editor.onMouseUp(report)
+      editor.onKeyUp(report)
     }
   }
   return (
