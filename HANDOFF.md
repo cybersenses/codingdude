@@ -1,6 +1,6 @@
 # Handoff note - to the next agent on duty
 
-*Updated after commit a3811c9 (pushed). Main == origin/main, tree clean.*
+*Updated after commit 2880f04 (pushed). Main == origin/main, tree clean.*
 
 ## Current state
 - **R33 (Review automation) DONE** - all 3 tickets closed:
@@ -20,7 +20,10 @@
 
 ## Open roadmap
 - R31 (run-end determinism residual) - flicker fix live; scoping pass
-  pending. Only open roadmap item.
+  pending. **Deliberately kept open** as insurance: if the run-end hang /
+  ghost-process / UI-settle family recurs, do NOT whack-a-mole - use the
+  existing instrumentation (worker-<session>.log, server.log, PROCESS_*
+  trace events, process panel) and diagnose via the diagnosing-bugs skill.
 
 ## Known accepted gaps
 - Post-push review loop is directive-driven (tool output guidance), not a
