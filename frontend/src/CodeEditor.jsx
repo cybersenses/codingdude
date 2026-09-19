@@ -20,13 +20,23 @@ function baseOptions() {
   }
 }
 
-export default function CodeEditor({ path, value, onChange, height = '100%' }) {
+export default function CodeEditor({ path, value, onChange, onSelectionChange, height = '100%' }) {
+  function handleMount(editor, monaco) {
+    if (onSelectionChange) {
+      editor.onDidChangeCursorSelection((e) => {
+        const model = editor.getModel()
+        const sel = e.selection
+        onSelectionChange(model ? model.getValueInRange(sel) : '')
+      })
+    }
+  }
   return (
     <Editor
       language={langFor(path || '')}
       value={value}
       theme="cd-dark"
       beforeMount={(monaco) => { monaco.editor.defineTheme('cd-dark', THEME) }}
+      onMount={handleMount}
       onChange={onChange}
       height={height}
       options={baseOptions()}

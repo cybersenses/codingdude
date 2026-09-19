@@ -6,6 +6,7 @@ import { api, authLocal, call, checkAuth, login } from './api'
 import { SSE_MAX_RETRIES, runToReattach, sseRetryDelayMs } from './reattach'
 import { activeProcesses, describeProcess, mergeProcesses } from './processes'
 import { PANE_SPECS, paneWidth } from './panes'
+import { ACTIONS, buildActionPrompt } from './aiActions'
 import { groupEventsByRun, pickRunId } from './runs'
 
 // R6: render-only mermaid diagrams inside spec blocks. Renders each
@@ -518,8 +519,9 @@ function FileTree({ sessionId, onOpen }) {
 }
 
 // Main area: tab strip + Monaco editor / diff for the shared workspace.
-function EditorPane({ ws }) {
+function EditorPane({ ws, onAsk }) {
   const { sessionId, tabs, setTabs, draft, setDraft, dirty, setDirty, notice, setNotice, diff, setDiff, active, openFile } = ws
+  const [selection, setSelection] = useState('')
 
   function activate(path) {
     const t = tabs.find((x) => x.path === path)
@@ -632,9 +634,38 @@ function EditorPane({ ws }) {
             />
           )
           : (
-            <CodeEditor path={active?.path || ''} value={draft} onChange={(v) => { setDraft(v); setDirty(true) }} height="100%" />
+            <CodeEditor
+              path={active?.path || ''}
+              value={draft}
+              onChange={(v) => { setDraft(v); setDirty(true) }}
+              onSelectionChange={setSelection}
+              height="100%"
+            />
           )}
       </div>
+      {selection.trim() && onAsk && (
+        <div className="flex items-center gap-1">
+          <span className="text-[10px] text-neutral-500">
+            {selection.split('\n').length} line{selection.split('\n').length === 1 ? '' : 's'} selected
+          </span>
+          {ACTIONS.map((a) => (
+            <button
+              key={a.id}
+              className="rounded bg-neutral-700 px-2 py-0.5 text-[10px] text-ink hover:bg-brand-700 hover:text-brand-fg"
+              onClick={() => {
+                const prompt = buildActionPrompt(a.id, active?.path || '', selection)
+                if (!prompt) return
+                setSelection('')
+                onAsk(prompt)
+              }}
+            >{a.label}</button>
+          ))}
+          <button
+            className="rounded px-1 text-[10px] text-neutral-500 hover:text-danger"
+            onClick={() => setSelection('')}
+          >×</button>
+        </div>
+      )}
     </div>
   )
 }
@@ -2364,7 +2395,7 @@ export default function App() {
             streaming={streaming}
             onReviewChanges={() => setFocusDiffTab((n) => n + 1)}
           />
-          <EditorPane ws={fileWs} />
+          <EditorPane ws={fileWs} onAsk={send} />
         </main>
         {dividerFor('right')}
         <aside
