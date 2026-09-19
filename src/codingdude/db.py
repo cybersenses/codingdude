@@ -525,6 +525,16 @@ class Database:
         ).fetchone()
         return dict(row) if row else None
 
+    def list_runs(self, session_id: str, limit: int = 20) -> list[dict]:
+        """Runs for a session, newest first (#77 run-output view)."""
+        rows = self._conn.execute(
+            'SELECT run_id, session_id, worker_pid, status, exit_code,'
+            ' started_at, ended_at FROM runs WHERE session_id = ?'
+            ' ORDER BY started_at DESC, rowid DESC LIMIT ?',
+            (session_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def reconcile_interrupted_runs(self) -> int:
         """Mark runs still 'running' as 'interrupted' (server-boot reconcile).
 

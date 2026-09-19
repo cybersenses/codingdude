@@ -429,6 +429,14 @@ def create_app(
         """Shell processes this session spawned, newest first (R28 Phase 1)."""
         return db.list_processes(session_id)
 
+    @app.get('/sessions/{session_id}/runs')
+    def session_runs(
+        session_id: str, limit: int = 20, _: None = Depends(authorize)
+    ) -> list[dict]:
+        """Recent runs, newest first (#77 run-output view); R31 runs table."""
+        limit = max(1, min(limit, 100))
+        return db.list_runs(session_id, limit=limit)
+
     @app.get('/sessions/{session_id}/artifacts')
     def session_artifacts(session_id: str, _: None = Depends(authorize)) -> list[dict]:
         """Living artifacts (choice cards, spec blocks), newest first (R6)."""

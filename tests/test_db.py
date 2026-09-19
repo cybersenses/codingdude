@@ -228,3 +228,19 @@ def test_reconcile_marks_orphaned_running_runs_interrupted(home, workdir):
     assert db.get_run('runLive')['status'] == 'interrupted'
     assert db.get_run('runDone')['status'] == 'completed'
     assert db.reconcile_interrupted_runs() == 0  # idempotent
+
+
+def test_list_runs_newest_first_scoped_to_session(home, workdir):
+    """#77: the UI run-output view lists a session's recent runs."""
+    db = Database.connect(home)
+    sid = db.create_session(workdir)
+    other = db.create_session(workdir / 'other')
+    db.record_run_start('run1', sid, pid=1)
+    db.record_run_end('run1', 'completed', exit_code=0)
+    db.record_run_start('run2', sid, pid=2)
+    db.record_run_start('run3', other, pid=3)
+    runs = db.list_runs(sid)
+    assert [r['run_id'] for r in runs] == ['run2', 'run1']
+    assert runs[1]['status'] == 'completed'
+    assert runs[1]['exit_code'] == 0
+    assert runs[0]['status'] == 'running'

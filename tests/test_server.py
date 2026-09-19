@@ -595,3 +595,16 @@ def test_server_boot_reconciles_orphaned_runs(tmp_path):
     del app
     db2 = Database.connect(home)
     assert db2.get_run('ghostRun')['status'] == 'interrupted'
+
+
+def test_session_runs_endpoint_lists_recent_runs(server, tmp_path):
+    """#77: run-output view data source — recent runs, newest first."""
+    app, base = server
+    sid = create_session(base, tmp_path / 'work')
+    app.state.db.record_run_start('runX', sid, pid=7)
+    r = httpx.get(f'{base}/sessions/{sid}/runs', headers=auth(), timeout=10)
+    assert r.status_code == 200
+    runs = r.json()
+    assert [x['run_id'] for x in runs] == ['runX']
+    assert runs[0]['status'] == 'running'
+    assert runs[0]['worker_pid'] == 7

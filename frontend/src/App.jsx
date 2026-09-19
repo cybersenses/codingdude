@@ -6,6 +6,7 @@ import { api, authLocal, call, checkAuth, login } from './api'
 import { SSE_MAX_RETRIES, runToReattach, sseRetryDelayMs } from './reattach'
 import { activeProcesses, describeProcess, mergeProcesses } from './processes'
 import { PANE_SPECS, paneWidth } from './panes'
+import { groupEventsByRun, pickRunId } from './runs'
 
 // R6: render-only mermaid diagrams inside spec blocks. Renders each
 // ```mermaid fence to SVG; on failure the raw fence stays visible.
@@ -1075,7 +1076,7 @@ function Planning({ workdir }) {
 // R35 #72: bottom dock — VS Code panel position. Processes comes in as a
 // prop (App polls it); it used to be a bare-identifier crash in this scope.
 function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, height, onResizeHeight, focusDiff = 0 }) {
-  const tabs = ['Diff', 'Planning', 'Artifacts', 'Notes', 'Renders', 'Terminal', 'Trace', 'Cost', 'Memory', 'MCP', 'Standards']
+  const tabs = ['Diff', 'Planning', 'Artifacts', 'Notes', 'Renders', 'Terminal', 'Output', 'Trace', 'Cost', 'Memory', 'MCP', 'Standards']
   const [tab, setTab] = useState('Diff')
   const [data, setData] = useState({})
 
@@ -1091,6 +1092,11 @@ function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, heigh
       try {
         if (tab === 'Diff') { const r = await call(`/sessions/${sessionId}/diff`); setData((d) => ({ ...d, diff: r.diff })) }
         if (tab === 'Cost') { const u = await call(`/sessions/${sessionId}/usage`); setData((d) => ({ ...d, usage: u })) }
+        if (tab === 'Output') {
+          const runs = await call(`/sessions/${sessionId}/runs`)
+          const tr = await call(`/sessions/${sessionId}/trace?limit=300`)
+          setData((d) => ({ ...d, runs, runEvents: tr }))
+        }
         if (tab === 'Memory') { const m = await call('/memory'); setData((d) => ({ ...d, memory: m })) }
         if (tab === 'MCP') { const m = await api.listMcp(sessionId); setData((d) => ({ ...d, mcp: m })) }
         if (tab === 'Trace') {
@@ -1117,6 +1123,8 @@ function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, heigh
   }
 
   const [review, setReview] = useState(null) // {findings} | 'running'
+  // Output tab: which run to show (null = newest).
+  const [selRun, setSelRun] = useState(null)
   async function runReview() {
     setReview({ running: true })
     try {
@@ -1271,6 +1279,47 @@ function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, heigh
             {reviewChecklist ?? 'loading…'}
           </pre>
         )}
+      </div>
+    )
+  } else if (tab === 'Output') {
+    // #75/#77: run output — one run's activity stream plus the run list.
+    const groups = groupEventsByRun(data.runEvents || [])
+    const runId = pickRunId(groups, selRun)
+    const events = groups[runId] || []
+    const statusOf = (rid) => (data.runs || []).find((r) => r.run_id === rid)?.status
+    const statusColor = (s) => s === 'completed' ? 'text-success'
+      : s === 'failed' ? 'text-danger'
+      : s === 'interrupted' ? 'text-warning'
+      : 'text-accent'
+    body = (
+      <div className="flex h-full min-h-0 flex-col gap-2">
+        <div className="flex flex-wrap gap-1">
+          {(data.runs || []).map((r) => (
+            <button
+              key={r.run_id}
+              className={`rounded px-2 py-0.5 font-mono text-[10px] ${r.run_id === runId ? 'bg-neutral-800 text-brand-300' : 'text-neutral-500 hover:text-neutral-300'}`}
+              onClick={() => setSelRun(r.run_id)}
+              title={`${r.status}${r.exit_code != null ? ` (exit ${r.exit_code})` : ''} — started ${r.started_at}`}
+            >
+              {r.run_id} <span className={statusColor(r.status)}>{r.status}</span>
+            </button>
+          ))}
+          {(!data.runs || !data.runs.length) && (
+            <span className="text-[10px] text-ink-muted">no runs recorded yet</span>
+          )}
+        </div>
+        {runId && (
+          <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto font-mono text-[10px]">
+            {events.slice().reverse().map((e, i) => (
+              <div key={i} className="truncate rounded px-1 hover:bg-surface text-ink-muted">
+                <span className="text-ink-muted">{(e.ts || '').slice(11, 19)}</span> {e.type}{' '}
+                {e.command || e.tool_name || e.delta || ''}
+              </div>
+            ))}
+            {!events.length && <div className="px-1 text-ink-muted">no events for this run (pre-R31 trace or dropped)</div>}
+          </div>
+        )}
+        {runId && <div className={`text-[10px] ${statusColor(statusOf(runId))}`}>run {runId} — {statusOf(runId) || 'unknown'}</div>}
       </div>
     )
   } else if (tab === 'Trace') {
