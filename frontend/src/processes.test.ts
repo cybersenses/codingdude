@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { describeProcess, mergeProcesses, type ProcessEntry } from './processes'
+import { activeProcesses, describeProcess, mergeProcesses, type ProcessEntry } from './processes'
 
 const p = (over: Partial<ProcessEntry>): ProcessEntry => ({
   pid: 1,
@@ -38,5 +38,16 @@ describe('describeProcess', () => {
   })
   it('shows exit code when finished', () => {
     expect(describeProcess(p({ status: 'exited', exit_code: 1 }))).toContain('exited (1)')
+  })
+})
+
+describe('activeProcesses', () => {
+  it('lists only rows with status running', () => {
+    const rows: ProcessEntry[] = [
+      { pid: 1, command: 'a', started_at: 't1', status: 'running', exit_code: null, background: false },
+      { pid: 2, command: 'b', started_at: 't2', status: 'exited', exit_code: 0, background: false },
+    ]
+    expect(activeProcesses(rows).map((p) => p.pid)).toEqual([1])
+    expect(activeProcesses([])).toEqual([])
   })
 })

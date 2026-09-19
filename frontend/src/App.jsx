@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import CodeEditor from './CodeEditor.jsx'
 import { api, authLocal, call, checkAuth, login } from './api'
 import { runToReattach } from './reattach'
-import { describeProcess, mergeProcesses } from './processes'
+import { activeProcesses, describeProcess, mergeProcesses } from './processes'
 
 // R6: render-only mermaid diagrams inside spec blocks. Renders each
 // ```mermaid fence to SVG; on failure the raw fence stays visible.
@@ -1227,10 +1227,10 @@ function RightPanel({ sessionId, refreshKey, diffBadge, tabRef, width, workdir }
     body = (
       <div className="space-y-1 overflow-y-auto p-3 text-xs">
         {!sessionId && <p className="text-ink-muted">No active session.</p>}
-        {sessionId && (!processes || processes.length === 0) && (
-          <p className="text-ink-muted">No processes spawned this session.</p>
+        {sessionId && activeProcesses(processes || []).length === 0 && (
+          <p className="text-ink-muted">No running processes this session.</p>
         )}
-        {(processes || []).map((p) => (
+        {activeProcesses(processes || []).map((p) => (
           <div key={`${p.pid}:${p.started_at}`} className="rounded border border-neutral-800 p-2">
             <div className="flex items-center gap-2">
               <span className="text-ink-muted">[{p.pid}]</span>

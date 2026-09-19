@@ -26,6 +26,11 @@ export function mergeProcesses(existing: ProcessEntry[], fetched: ProcessEntry[]
   )
 }
 
+/** Rows currently running — the Processes panel lists only active ones. */
+export function activeProcesses(processes: ProcessEntry[]): ProcessEntry[] {
+  return processes.filter((p) => p.status === 'running')
+}
+
 /** One-line summary for the panel: pid + short command + live/exited badge. */
 export function describeProcess(p: ProcessEntry): string {
   const cmd = p.command.length > 80 ? p.command.slice(0, 77) + '…' : p.command
