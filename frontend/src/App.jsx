@@ -1073,10 +1073,15 @@ function Planning({ workdir }) {
 
 // R35 #72: bottom dock — VS Code panel position. Processes comes in as a
 // prop (App polls it); it used to be a bare-identifier crash in this scope.
-function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, height, onResizeHeight }) {
+function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, height, onResizeHeight, focusDiff = 0 }) {
   const tabs = ['Diff', 'Planning', 'Artifacts', 'Notes', 'Renders', 'Terminal', 'Trace', 'Cost', 'Memory', 'MCP', 'Standards']
   const [tab, setTab] = useState('Diff')
   const [data, setData] = useState({})
+
+  // R35 #75: "review agent changes" bumps focusDiff to switch to the Diff tab.
+  useEffect(() => {
+    if (focusDiff > 0) setTab('Diff')
+  }, [focusDiff])
 
   useEffect(() => {
     if (!sessionId || tab === 'Standards' || tab === 'Terminal' || tab === 'Planning') return
@@ -1752,6 +1757,10 @@ export default function App() {
   const [rightWidth, setRightWidth] = useState(
     () => Math.min(700, Math.max(280, parseInt(localStorage.getItem('cd-right-w')) || 384))
   )
+  // R35 #74: Explorer rail is draggable like the other panes.
+  const [railWidth, setRailWidth] = useState(
+    () => Math.min(420, Math.max(140, parseInt(localStorage.getItem('cd-rail-w')) || 208))
+  )
   // R35 #72: bottom dock height persists like the pane widths.
   const [dockHeight, setDockHeight] = useState(
     () => Math.min(560, Math.max(120, parseInt(localStorage.getItem('cd-dock-h')) || 240))
@@ -2266,12 +2275,20 @@ export default function App() {
           }}
           onNewSession={newSession}
         />
-        <nav className="flex w-52 shrink-0 flex-col border-r border-neutral-800 bg-neutral-950">
+        <nav className="flex shrink-0 flex-col border-r border-neutral-800 bg-neutral-950" style={{ width: railWidth }}>
           <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-ink-muted">Explorer</div>
           <FileTree sessionId={activeSession} onOpen={(p) => fileWs.openFile(p)} />
         </nav>
+        {dividerFor('rail')}
         <main className="flex min-w-0 flex-1 flex-col">
           {error && <div className="bg-danger/15 px-4 py-1 text-xs text-danger">{error}</div>}
+          <AgentStrip
+            status={streaming ? status : 'idle'}
+            quietSeconds={quietSeconds}
+            hasChanges={diffBadge}
+            streaming={streaming}
+            onReviewChanges={() => setFocusDiffTab((n) => n + 1)}
+          />
           <EditorPane ws={fileWs} />
         </main>
         {dividerFor('right')}
@@ -2304,6 +2321,7 @@ export default function App() {
         workdir={workdir}
         processes={processes}
         height={dockHeight}
+        focusDiff={focusDiffTab}
         onResizeHeight={(h) => { setDockHeight(h); localStorage.setItem('cd-dock-h', String(h)) }}
       />
       <footer className="flex items-center justify-between border-t border-neutral-800 bg-neutral-950 px-3 py-1 text-[10px] text-neutral-500">
