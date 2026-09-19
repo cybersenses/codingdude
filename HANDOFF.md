@@ -1,32 +1,33 @@
-# Handoff note - to the next agent on duty
-
-*Updated after commit 0330dec (pushed). Main == origin/main, tree clean.*
+*Updated after commit 1e2aeb8 (pushed). Main == origin/main, tree clean.*
 
 ## Current state
-- **R35 (UI polish, VS Code-style) IN PROGRESS - ticket #72 Phase 1 done
-  (`0330dec`, pushed):**
-  - Center: FileExplorer (tree + Monaco tabs + diff) is the editor area.
-  - Right: chat panel (prompt + messages) as aside, existing rightWidth
-    divider.
-  - Bottom: DockPanel is now a horizontal VS Code-style dock (tab strip on
-    top + body) with drag-to-resize top edge; height persists in
-    `cd-dock-h` (default 240, clamp 120-560). 'Files' removed from dock
-    tabs (it is the center now). Footer stays status bar.
-  - Fixed in passing: Processes tab crashed on bare `processes` identifier
-    - now a proper prop (App already passed it).
-  - User direction: do NOT aim to 100% copy VS Code - rearrange existing
-    panels first, then highlight what makes us unique and what matters to
-    the user.
-  - **Next phase ideas:** narrow explorer gutter inside center; open Files
-    tree default-expanded in center; panel tabs styling; unique-feature
-    emphasis (agent status, run output, diff review).
+- **R35 (UI polish, VS Code-style) IN PROGRESS - ticket #72, Phases 1-3
+  done, pushed:**
+  - Phase 1 (`0330dec`): center = FileExplorer/editor, right = chat aside,
+    bottom = horizontal dock (drag-resize, height in `cd-dock-h`), 'Files'
+    dock tab removed. Fixed Processes-tab bare `processes` crash.
+  - Phase 2 (`7e653ef`): chat prompt rearranged - textarea full-width,
+    Send button top row; all options (attach, image chip, suggest,
+    fix-until-green, model, yolo, notify) moved to a bottom row.
+  - Phase 3 (`1e2aeb8`): file tree moved to its own left rail (`w-52`,
+    refreshes every 10s + on mount); Monaco editor takes the full main
+    area (tab strip + save/reload/diff toolbar + editor). Workspace state
+    lifted into `useFileWorkspace(sessionId)` hook in App.jsx so tree and
+    editor share tabs/draft/dirty/diff. No persistence/resizable width on
+    the rail (accepted for now).
+  - User direction: do NOT 100% copy VS Code - rearrange panels first,
+    then highlight what makes us unique / matters to users (agent status,
+    run output, diff review).
+  - **Next phase ideas:** emphasize unique features in the layout; dock
+    styling; explorer rail polish (resize/drag-drop open); live-verify
+    layout end to end.
 - **R33 DONE** (`0cc5c28` prsum, `e445c05` post-push review directive,
   `404ca97` graph-informed reviews).
 - **R34 done** (be12533 / afd0241 / a75b458) - Monaco file API/editor/diff.
 - Frontend gates: vitest 16/16, build clean. Full backend gates last run:
   510 passed / 1 skipped, ruff + mypy clean (53 files).
-- **Server needs a bounce to serve the new dist** (layout change not yet
-  live-checked).
+- **Bounce pending after the latest commits** - Phase 2/3 layout changes
+  are built into dist but not yet live-verified.
 
 ## MUST DO after bounce
 - Bounce server; live-verify the new layout (center editor, chat right,
