@@ -390,14 +390,13 @@ async def run(args) -> int:
 
 
 def trace_terminal(session_id: str, event: dict) -> None:
-    import json as _json
-    from datetime import UTC as _UTC
-    from datetime import datetime as _dt
+    from codingdude.traces import append_trace_line
 
-    trace_dir = config_home() / 'traces'
-    trace_dir.mkdir(parents=True, exist_ok=True)
-    with open(trace_dir / f'{session_id}.jsonl', 'a', encoding='utf-8') as f:
-        f.write(_json.dumps({'ts': _dt.now(_UTC).isoformat(), **event}) + '\n')
+    # Atomic single-line append (#79) — never interleaves with the engine
+    # tracer writing to the same session trace.
+    append_trace_line(
+        config_home() / 'traces' / f'{session_id}.jsonl', event,
+    )
 
 
 def engine_run_kwargs(args, model, vision_model=None) -> dict:

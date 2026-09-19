@@ -238,15 +238,12 @@ class Engine:
         trace_file = self._config_home() / 'traces' / f'{session_id}.jsonl'
 
         def traced(event: dict) -> None:
-            import json
-            from datetime import UTC as _UTC
-            from datetime import datetime as _dt
+            from codingdude.traces import append_trace_line
 
             if trace:
-                trace_file.parent.mkdir(parents=True, exist_ok=True)
-                payload = json.dumps({'ts': _dt.now(_UTC).isoformat(), **event})
-                with open(trace_file, 'a', encoding='utf-8') as f:
-                    f.write(payload + '\n')
+                # Single atomic append per line (#79): concurrent writers
+                # (engine tracer + trace_terminal) must never interleave.
+                append_trace_line(trace_file, event)
             if event.get('type') == 'RENDER_CAPTURED' and session_id:
                 # R1: capture hook auto-register — persist the render with
                 # session provenance; failures never fail the run.
