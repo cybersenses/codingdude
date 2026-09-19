@@ -465,21 +465,16 @@ function TreeNode({ node, depth, onOpen }) {
   )
 }
 
-function FileExplorer({ sessionId }) {
-  const [tree, setTree] = useState(null)
+// R35 #72: tree and editor share tab state, so the workspace state lives in
+// one hook (used once, in App); the tree renders in the left rail and the
+// editor in the main area.
+function useFileWorkspace(sessionId) {
   const [tabs, setTabs] = useState([]) // FileTab[] from editor.ts
   const [draft, setDraft] = useState('')
   const [dirty, setDirty] = useState(false)
   const [notice, setNotice] = useState(null)
   const [diff, setDiff] = useState(null) // {base} when diff view is on
   const active = tabs.find((t) => t.active) || null
-
-  async function refresh() {
-    setTree(await call(`/sessions/${sessionId}/tree`))
-  }
-  useEffect(() => {
-    if (sessionId) refresh().catch(() => {})
-  }, [sessionId])
 
   async function openFile(path) {
     try {
@@ -493,6 +488,36 @@ function FileExplorer({ sessionId }) {
       setNotice(`cannot open ${path}: ${e.message}`)
     }
   }
+  return { sessionId, tabs, setTabs, draft, setDraft, dirty, setDirty, notice, setNotice, diff, setDiff, active, openFile }
+}
+// Left rail: full-height file tree for the active session.
+function FileTree({ sessionId, onOpen }) {
+  const [tree, setTree] = useState(null)
+  useEffect(() => {
+    if (!sessionId) return
+    let stop = false
+    async function poll() {
+      try {
+        const t = await call(`/sessions/${sessionId}/tree`)
+        if (!stop) setTree(t)
+      } catch { /* transient */ }
+      if (!stop) setTimeout(poll, 10000)
+    }
+    poll()
+    return () => { stop = true }
+  }, [sessionId])
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto p-1">
+      {sessionId && tree ? tree.children.map((c) => (
+        <TreeNode key={c.path} node={c} depth={0} onOpen={onOpen} />
+      )) : <div className="text-neutral-600">{sessionId ? 'loading…' : 'no session'}</div>}
+    </div>
+  )
+}
+
+// Main area: tab strip + Monaco editor / diff for the shared workspace.
+function EditorPane({ ws }) {
+  const { sessionId, tabs, setTabs, draft, setDraft, dirty, setDirty, notice, setNotice, diff, setDiff, active, openFile } = ws
 
   function activate(path) {
     const t = tabs.find((x) => x.path === path)
@@ -528,7 +553,6 @@ function FileExplorer({ sessionId }) {
         : t)))
       setDirty(false)
       setNotice('saved ✓')
-      refresh().catch(() => {})
     } catch (e) {
       setNotice(e.message.includes('409')
         ? `${active.path} changed on disk since you opened it — reload to pick up the agent's version, then re-apply your edit.`
@@ -549,61 +573,66 @@ function FileExplorer({ sessionId }) {
     }
   }
 
-  return (
-    <div className="flex h-full flex-col gap-2">
-      <div className="max-h-48 overflow-y-auto rounded bg-neutral-900 p-1">
-        {tree ? tree.children.map((c) => (
-          <TreeNode key={c.path} node={c} depth={0} onOpen={openFile} />
-        )) : <div className="text-neutral-600">loading…</div>}
+  if (!sessionId) {
+    return (
+      <div className="flex flex-1 items-center justify-center text-sm text-neutral-500">
+        Open a file from the explorer or pick a session to chat.
       </div>
-      {tabs.length > 0 && (
-        <div className="flex min-h-0 flex-1 flex-col gap-1">
-          <div className="flex items-center gap-0.5 overflow-x-auto">
-            {tabs.map((t) => (
-              <div key={t.path} className={`group flex items-center rounded-t border-b-2 px-2 py-0.5 text-[10px] ${t.active ? 'border-brand bg-neutral-800 text-ink' : 'border-transparent bg-neutral-900 text-ink-muted'}`}>
-                <button className="max-w-40 truncate font-mono" onClick={() => activate(t.path)} title={t.path}>
-                  {t.path.split('/').pop()}
-                </button>
-                <button className="ml-1 text-neutral-500 hover:text-danger" onClick={() => close(t.path)}>×</button>
-              </div>
-            ))}
+    )
+  }
+  if (tabs.length === 0) {
+    return (
+      <div className="flex flex-1 items-center justify-center text-sm text-neutral-500">
+        Open a file from the explorer to start editing.
+      </div>
+    )
+  }
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-1 p-2">
+      <div className="flex items-center gap-0.5 overflow-x-auto">
+        {tabs.map((t) => (
+          <div key={t.path} className={`group flex items-center rounded-t border-b-2 px-2 py-0.5 text-[10px] ${t.active ? 'border-brand bg-neutral-800 text-ink' : 'border-transparent bg-neutral-900 text-ink-muted'}`}>
+            <button className="max-w-40 truncate font-mono" onClick={() => activate(t.path)} title={t.path}>
+              {t.path.split('/').pop()}
+            </button>
+            <button className="ml-1 text-neutral-500 hover:text-danger" onClick={() => close(t.path)}>×</button>
           </div>
-          <div className="flex items-center justify-between">
-            <span className="truncate font-mono text-[10px] text-brand-300">{active?.path}</span>
-            <div className="flex gap-1">
-              <button
-                className="rounded bg-brand-700 px-2 py-0.5 text-[10px] text-brand-fg disabled:opacity-40"
-                disabled={!dirty}
-                onClick={save}
-              >save</button>
-              <button
-                className="rounded bg-neutral-700 px-2 py-0.5 text-[10px] text-ink"
-                onClick={() => active && openFile(active.path)}
-              >reload</button>
-              <button
-                className={`rounded px-2 py-0.5 text-[10px] text-ink ${diff ? 'bg-brand-700 text-brand-fg' : 'bg-neutral-700'}`}
-                disabled={!active}
-                onClick={toggleDiff}
-              >diff vs HEAD</button>
-            </div>
-          </div>
-          {notice && <div className="text-[10px] text-brand-400">{notice}</div>}
-          <div className="min-h-0 flex-1 overflow-hidden rounded border border-neutral-700">
-            {diff
-              ? (
-                <CodeDiff
-                  path={active?.path || ''}
-                  original={diff.base}
-                  modified={draft}
-                  height="100%"
-                />
-              )
-              : (
-                <CodeEditor path={active?.path || ''} value={draft} onChange={(v) => { setDraft(v); setDirty(true) }} height="100%" />
-              )}
-          </div>
+        ))}
+      </div>
+      <div className="flex items-center justify-between">
+        <span className="truncate font-mono text-[10px] text-brand-300">{active?.path}</span>
+        <div className="flex gap-1">
+          <button
+            className="rounded bg-brand-700 px-2 py-0.5 text-[10px] text-brand-fg disabled:opacity-40"
+            disabled={!dirty}
+            onClick={save}
+          >save</button>
+          <button
+            className="rounded bg-neutral-700 px-2 py-0.5 text-[10px] text-ink"
+            onClick={() => active && openFile(active.path)}
+          >reload</button>
+          <button
+            className={`rounded px-2 py-0.5 text-[10px] text-ink ${diff ? 'bg-brand-700 text-brand-fg' : 'bg-neutral-700'}`}
+            disabled={!active}
+            onClick={toggleDiff}
+          >diff vs HEAD</button>
         </div>
-      )}
+      </div>
+      {notice && <div className="text-[10px] text-brand-400">{notice}</div>}
+      <div className="min-h-0 flex-1 overflow-hidden rounded border border-neutral-700">
+        {diff
+          ? (
+            <CodeDiff
+              path={active?.path || ''}
+              original={diff.base}
+              modified={draft}
+              height="100%"
+            />
+          )
+          : (
+            <CodeEditor path={active?.path || ''} value={draft} onChange={(v) => { setDraft(v); setDirty(true) }} height="100%" />
+          )}
+      </div>
     </div>
   )
 }
@@ -1050,7 +1079,7 @@ function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, heigh
   const [data, setData] = useState({})
 
   useEffect(() => {
-    if (!sessionId || tab === 'Files' || tab === 'Standards' || tab === 'Terminal' || tab === 'Planning') return
+    if (!sessionId || tab === 'Standards' || tab === 'Terminal' || tab === 'Planning') return
     let stop = false
     async function poll() {
       try {
@@ -1357,8 +1386,6 @@ function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, heigh
         </div>
       </div>
     )
-  } else if (tab === 'Files') {
-    body = <FileExplorer sessionId={sessionId} />
   } else if (tab === 'Cost' && data.usage) {
     const u = data.usage
     body = (
@@ -1715,6 +1742,8 @@ export default function App() {
   const runRef = useRef(null)
   const esRef = useRef(null)
   const lastEventRef = useRef(Date.now()) // watchdog: last SSE event timestamp
+  // R35 #72: shared file workspace — tree lives in the left rail, editor in main.
+  const fileWs = useFileWorkspace(activeSession)
 
   // Resizable panes: widths persist across sessions.
   const [sidebarWidth, setSidebarWidth] = useState(
@@ -2237,15 +2266,13 @@ export default function App() {
           }}
           onNewSession={newSession}
         />
+        <nav className="flex w-52 shrink-0 flex-col border-r border-neutral-800 bg-neutral-950">
+          <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-ink-muted">Explorer</div>
+          <FileTree sessionId={activeSession} onOpen={(p) => fileWs.openFile(p)} />
+        </nav>
         <main className="flex min-w-0 flex-1 flex-col">
           {error && <div className="bg-danger/15 px-4 py-1 text-xs text-danger">{error}</div>}
-          {activeSession ? (
-            <FileExplorer sessionId={activeSession} />
-          ) : (
-            <div className="flex flex-1 items-center justify-center text-sm text-neutral-500">
-              Open a file from the explorer or pick a session to chat.
-            </div>
-          )}
+          <EditorPane ws={fileWs} />
         </main>
         {dividerFor('right')}
         <aside
