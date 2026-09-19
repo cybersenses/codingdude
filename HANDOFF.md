@@ -77,3 +77,15 @@
 - ALWAYS leave handover notes (update this file) before ending a session.
 - Keep ROADMAP.md statuses in sync when closing items; ticket tool closes
   record the closing commit.
+
+## Handover 2025-09-19 (e082906)
+- Orphan-toolsets guard shipped: `rename_symbol` + `worktree_create` now gate
+  through the approval policy (deny → ModelRetry, headless → GateRequired) and
+  `rename_symbol` emits `EDIT_APPLIED kind:'rename'` per modified file
+  (trace/checkpoints/UI see mass renames). `build_refactor_toolset(workdir,
+  approvals, on_edit)`; wired via `ctx.on_edit` in plugins `build_all`.
+- Backlog item "vendored reference/ deletion" done earlier this session
+  (259MB freed); `ReferenceStore._prune_deleted()` keeps the index honest.
+- Gates: 531 passed/1 skipped; ruff + mypy clean; pushed, tree clean.
+- Remaining backlog: `engine.run` decomposition, H7 streaming-vs-usage,
+  R1 vision half.
