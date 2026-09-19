@@ -26,8 +26,8 @@
 - **R34 done** (be12533 / afd0241 / a75b458) - Monaco file API/editor/diff.
 - Frontend gates: vitest 16/16, build clean. Full backend gates last run:
   510 passed / 1 skipped, ruff + mypy clean (53 files).
-- **Bounce pending after the latest commits** - Phase 2/3 layout changes
-  are built into dist but not yet live-verified.
+- **Live-verified after bounce (8765 serves current dist):** Phase 2/3
+  layout confirmed working by user + served-bundle check.
 
 ## MUST DO after bounce
 - Bounce server; live-verify the new layout (center editor, chat right,
