@@ -1089,7 +1089,27 @@ def build_git_toolset(workdir: Path, policy) -> FunctionToolset:
 
     async def git_push(remote: str = 'origin', branch: str = 'main') -> str:
         await _gate('git push', always=True)  # always-gated: only explicit consent
-        return await _run(['git', 'push', remote, branch])
+        old = await _run(['git', 'rev-parse', f'{remote}/{branch}'])
+        out = await _run(['git', 'push', remote, branch])
+        if 'exit 0' not in out.split('\n')[0]:
+            return out
+        # R33 #67: post-push auto review directive. The pushed range feeds
+        # the review loop; the loop never auto-pushes again.
+        base = old.split('\n')[-1].strip() if 'exit 0' in old else ''
+        range_note = (
+            f'pushed range {base}..HEAD'
+            if base else
+            f'first push of {branch} — review the full branch diff'
+        )
+        return (
+            f'{out}\n\nPOST-PUSH REVIEW REQUIRED ({range_note}).\n'
+            'Before any further work: run the code-review flow over the pushed '
+            'range — delegate review sub-agents on the Standards and Spec axes, '
+            'include codegraph impact analysis on touched symbols, verify each '
+            'finding against the code, then apply only verified fixes '
+            '(surgical-patch / edit_symbol), re-run the project gates, and '
+            'commit. Do NOT push the fixes without fresh explicit user consent.'
+        )
 
     async def gh_pr_create(title: str, body: str) -> str:
         await _gate('gh pr create', always=True)
