@@ -19,6 +19,7 @@ import threading
 from pathlib import Path
 
 import websockets
+from websockets.exceptions import ConnectionClosed
 
 from .events import TERMINAL_EVENTS
 
@@ -212,6 +213,55 @@ async def review(args) -> int:
     return 0
 
 
+async def _sender_loop(ws, queue: 'asyncio.Queue') -> None:
+    """Forward queued events over the ws.
+
+    #73: a mid-run connection drop (server bounce) must not crash the worker.
+    Once the socket is dead we stop sending (events are dropped; the engine
+    persists trace/messages itself) but keep draining the queue so the runner
+    never blocks, and return on the terminal event as before.
+    """
+    log = logging.getLogger('codingdude.worker')
+    dead = False
+    while True:
+        event = await queue.get()
+        if not dead:
+            try:
+                await ws.send(json.dumps(event))
+            except ConnectionClosed:
+                dead = True
+                log.warning(
+                    'WORKER_WS_LOST pid=%s — server connection dropped mid-run; '
+                    'letting the engine finish, dropping further UI events',
+                    os.getpid(),
+                )
+        if event.get('type') in TERMINAL_EVENTS:
+            return
+
+
+async def _reader_loop(ws, pending_gate: dict, pending_ask: dict) -> None:
+    """Consume server messages (approval/ask-user responses).
+
+    #73: connection drops end the iteration with ConnectionClosedError; that
+    is expected once the server is gone — return instead of raising (which
+    surfaced as 'Task exception was never retrieved' and exit 1).
+    """
+    log = logging.getLogger('codingdude.worker')
+    try:
+        async for raw in ws:
+            msg = json.loads(raw)
+            if msg.get('type') == 'APPROVAL_RESPONSE':
+                fut = pending_gate.pop('fut', None)
+                if fut and not fut.done():
+                    fut.set_result(msg.get('decision', 'deny'))
+            elif msg.get('type') == 'ASK_USER_RESPONSE':
+                fut = pending_ask.pop('fut', None)
+                if fut and not fut.done():
+                    fut.set_result(msg.get('answers', {}))
+    except ConnectionClosed:
+        log.warning('WORKER_WS_LOST pid=%s — reader exiting (server gone)', os.getpid())
+
+
 async def run(args) -> int:
     from codingdude.approvals import ApprovalPolicy
     from codingdude.config import load_config
@@ -287,24 +337,8 @@ async def run(args) -> int:
     if worker_token:
         server_url += ('&' if '?' in server_url else '?') + 'token=' + worker_token
     async with websockets.connect(server_url) as ws:
-        async def sender():
-            while True:
-                event = await queue.get()
-                await ws.send(json.dumps(event))
-                if event.get('type') in TERMINAL_EVENTS:
-                    return
-
-        async def reader():
-            async for raw in ws:
-                msg = json.loads(raw)
-                if msg.get('type') == 'APPROVAL_RESPONSE':
-                    fut = pending_gate.pop('fut', None)
-                    if fut and not fut.done():
-                        fut.set_result(msg.get('decision', 'deny'))
-                elif msg.get('type') == 'ASK_USER_RESPONSE':
-                    fut = pending_ask.pop('fut', None)
-                    if fut and not fut.done():
-                        fut.set_result(msg.get('answers', {}))
+        sender_task = asyncio.create_task(_sender_loop(ws, queue))
+        reader_task = asyncio.create_task(_reader_loop(ws, pending_gate, pending_ask))
 
         async def runner():
             try:
@@ -318,9 +352,20 @@ async def run(args) -> int:
                 return
             await _finish_run(engine, args, on_event, outcome=outcome)
 
-        sender_task = asyncio.create_task(sender())
-        reader_task = asyncio.create_task(reader())
         runner_task = asyncio.create_task(runner())
+
+        async def runner():
+            try:
+                outcome = await engine.run(
+                    **engine_run_kwargs(args, model, vision_model),
+                    approvals=policy,
+                    emit=on_event,
+                )
+            except Exception as exc:  # noqa: BLE001 — reported to the UI, not crashed
+                await _finish_run(engine, args, on_event, exc=exc)
+                return
+            await _finish_run(engine, args, on_event, outcome=outcome)
+
         # Sender exits when it forwards the terminal event. The UI is
         # settled by then; drain the pending tail before teardown (R30).
         await sender_task

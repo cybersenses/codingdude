@@ -146,3 +146,57 @@ def test_arm_exit_watchdog_cancels_previous():
     assert t1 is not None
     worker._exit_watchdog.cancel()
     worker._exit_watchdog = None
+
+
+def test_sender_loop_survives_connection_closed():
+    """#73: a ws drop mid-run must not kill the worker. The sender drops the
+    event, keeps draining the queue, and returns on the terminal event."""
+    import asyncio
+
+    from websockets.exceptions import ConnectionClosedError
+
+    from codingdude import worker
+
+    sent: list[str] = []
+
+    class DyingWS:
+        def __init__(self):
+            self.calls = 0
+
+        async def send(self, msg):
+            self.calls += 1
+            if self.calls == 1:
+                raise ConnectionClosedError(None, None, None)
+            sent.append(msg)
+
+    async def main():
+        ws = DyingWS()
+        q: asyncio.Queue = asyncio.Queue()
+        q.put_nowait({'type': 'TEXT_MESSAGE_START'})
+        q.put_nowait({'type': 'TEXT_MESSAGE_END'})
+        q.put_nowait({'type': 'RUN_FINISHED'})
+        await worker._sender_loop(ws, q)
+
+    asyncio.run(main())  # must not raise
+    assert sent == []  # socket was dead; events dropped, not crashed on
+
+
+def test_reader_loop_returns_on_connection_closed():
+    """#73: the reader must not leak 'Task exception was never retrieved'."""
+    import asyncio
+
+    from websockets.exceptions import ConnectionClosedError
+
+    from codingdude import worker
+
+    class DyingWS:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            raise ConnectionClosedError(None, None, None)
+
+    async def main():
+        await worker._reader_loop(DyingWS(), {}, {})
+
+    asyncio.run(main())  # must not raise
