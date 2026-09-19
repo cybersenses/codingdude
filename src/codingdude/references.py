@@ -46,7 +46,26 @@ class ReferenceStore:
                 continue
             self._index_file(rel, path, sig)
             indexed += 1
+        self._prune_deleted(root)
         return indexed
+
+    def _prune_deleted(self, root: Path) -> None:
+        """Drop index rows for reference files that no longer exist on disk."""
+        conn = self._db._conn
+        rows = conn.execute(
+            'SELECT path FROM reference_meta WHERE workdir = ?', (self._workdir,)
+        ).fetchall()
+        for row in rows:
+            if not (root.parent / row['path']).is_file():
+                conn.execute(
+                    'DELETE FROM reference_sections WHERE workdir = ? AND path = ?',
+                    (self._workdir, row['path']),
+                )
+                conn.execute(
+                    'DELETE FROM reference_meta WHERE workdir = ? AND path = ?',
+                    (self._workdir, row['path']),
+                )
+        conn.commit()
 
     def _index_file(self, rel: str, path: Path, sig: str) -> None:
         text = path.read_text(encoding='utf-8', errors='replace')

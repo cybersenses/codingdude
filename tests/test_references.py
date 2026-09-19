@@ -106,6 +106,20 @@ def test_reindex_is_incremental(db, workdir):
     assert 'defer' in store.search('defer')[0]
 
 
+def test_reindex_prunes_deleted_files(db, workdir):
+    store = ReferenceStore(db, workdir)
+    store.reindex()
+    assert store.read('reference/pydantic-ai-main/agent.md')
+
+    import shutil
+
+    shutil.rmtree(workdir / 'reference' / 'pydantic-ai-main')
+    store.reindex()
+    with pytest.raises(ValueError, match='not in the reference index'):
+        store.read('reference/pydantic-ai-main/agent.md')
+    assert not any('agent.md' in h for h in store.search('streaming'))
+
+
 def test_staleness_against_pyproject_pin(db, workdir):
     (workdir / 'pyproject.toml').write_text(
         '[project]\ndependencies = ["pydantic>=2.11", "httpx>=0.27"]\n',
