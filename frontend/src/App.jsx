@@ -1720,6 +1720,31 @@ function Prompt({ onSend, disabled, suggestMode, setSuggestMode, fixLoop, setFix
   )
 }
 
+function AgentStrip({ status, quietSeconds, hasChanges, streaming, onReviewChanges }) {
+  const stalled = streaming && quietSeconds >= 120
+  return (
+    <div className="flex h-7 shrink-0 items-center gap-3 border-b border-neutral-800 bg-neutral-950 px-3 text-[11px]">
+      <span className={streaming ? 'text-brand-400' : 'text-neutral-500'}>
+        <span
+          className={`mr-1.5 inline-block h-1.5 w-1.5 rounded-full align-middle ${streaming ? 'animate-pulse bg-brand-400' : 'bg-neutral-600'}`}
+        />
+        agent {status || 'idle'}
+      </span>
+      {streaming && quietSeconds > 0 && (
+        <span className={stalled ? 'text-red-400' : 'text-neutral-500'}>quiet {quietSeconds}s</span>
+      )}
+      {hasChanges && (
+        <button
+          className="ml-auto rounded bg-brand-700 px-2 py-0.5 text-[10px] font-medium text-white hover:bg-brand-600"
+          onClick={onReviewChanges}
+        >
+          Review changes →
+        </button>
+      )}
+    </div>
+  )
+}
+
 export default function App() {
   const [loggedIn, setLoggedIn] = useState(null) // null = checking cookie
   const [workdir, setWorkdir] = useState(localStorage.getItem('codingdude-workdir') || '')
@@ -1734,6 +1759,7 @@ export default function App() {
   const [error, setError] = useState('')
   const [refreshKey, setRefreshKey] = useState(0)
   const [diffBadge, setDiffBadge] = useState(false)
+  const [focusDiffTab, setFocusDiffTab] = useState(0)
   const [status, setStatus] = useState('idle')
   const [srv, setSrv] = useState(null)
   const [theme, setTheme] = useState(() =>
