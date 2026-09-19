@@ -157,6 +157,19 @@ def nav_symbols(
             )
             if text:
                 found.append((text, node.start_point[0] + 1))
+        if spec.nav_keys and node.type.endswith('pair'):
+            key_node = node.child_by_field_name('key')
+            if key_node is None and node.named_children:
+                # TOML grammar has no field names; the pair's first named
+                # child is the key.
+                key_node = node.named_children[0]
+            if key_node is not None and key_node.text:
+                # JSON keys are string literals: strip surrounding quotes.
+                key = key_node.text.decode('utf-8', 'replace').strip().strip(
+                    '"\''
+                )
+                if key:
+                    found.append((key, key_node.start_point[0] + 1))
         stack.extend(reversed(node.children))
     return found
 

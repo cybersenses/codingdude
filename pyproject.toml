@@ -24,6 +24,12 @@ dependencies = [
     "tree-sitter-css>=0.25.0",
     "vulture>=2.16",
     "websockets>=16.1.1",
+    "tree-sitter-java>=0.23.5",
+    "tree-sitter-php>=0.24.1",
+    "tree-sitter-json>=0.24.8",
+    "tree-sitter-yaml>=0.7.2",
+    "tree-sitter-toml>=0.7.0",
+    "tree-sitter-bash>=0.25.1",
 ]
 
 [project.scripts]

@@ -29,6 +29,9 @@ class LanguageSpec:
     # edit_symbol, but ids/classes/selectors are navigable symbols.
     navigation_only: bool = False
     symbol_nodes: frozenset[str] = field(default_factory=frozenset)
+    # Config languages (JSON/YAML/TOML): navigation symbols are mapping keys,
+    # found via each pair node's 'key' field.
+    nav_keys: bool = False
 
 
 _JS_NODES = frozenset({'function_declaration', 'function_definition', 'method_definition'})
@@ -146,6 +149,60 @@ def _kotlin_spec() -> LanguageSpec:
     )
 
 
+def _java_spec() -> LanguageSpec:
+    import tree_sitter_java as tsj
+
+    return LanguageSpec(
+        grammar=Language(tsj.language()),
+        function_nodes=frozenset(
+            {'method_declaration', 'constructor_declaration'}
+        ),
+        class_nodes=frozenset(
+            {
+                'class_declaration',
+                'interface_declaration',
+                'enum_declaration',
+                'record_declaration',
+            }
+        ),
+    )
+
+
+def _php_spec() -> LanguageSpec:
+    import tree_sitter_php as tsp
+
+    return LanguageSpec(
+        grammar=Language(tsp.language_php()),
+        function_nodes=frozenset(
+            {'function_definition', 'method_declaration'}
+        ),
+        class_nodes=frozenset(
+            {'class_declaration', 'interface_declaration', 'trait_declaration'}
+        ),
+    )
+
+
+def _bash_spec() -> LanguageSpec:
+    import tree_sitter_bash as tsb
+
+    return LanguageSpec(
+        grammar=Language(tsb.language()),
+        function_nodes=frozenset({'function_definition'}),
+        class_nodes=frozenset(),
+    )
+
+
+def _config_spec(module: str) -> LanguageSpec:
+    import importlib
+
+    mod = importlib.import_module(module)
+    return LanguageSpec(
+        grammar=Language(mod.language()),
+        navigation_only=True,
+        nav_keys=True,
+    )
+
+
 def _html_spec() -> LanguageSpec:
     import tree_sitter_html as tsh
 
@@ -194,13 +251,28 @@ def spec_for(suffix: str) -> LanguageSpec | None:
             return _html_spec()
         if suffix == '.css':
             return _css_spec()
+        if suffix == '.java':
+            return _java_spec()
+        if suffix in ('.php', '.phtml'):
+            return _php_spec()
+        if suffix in ('.sh', '.bash'):
+            return _bash_spec()
+        if suffix == '.json':
+            return _config_spec('tree_sitter_json')
+        if suffix in ('.yaml', '.yml'):
+            return _config_spec('tree_sitter_yaml')
+        if suffix == '.toml':
+            return _config_spec('tree_sitter_toml')
     except ImportError:
         return None
     return None
 
 
-# Suffixes with navigation-only registry support (HTML/CSS tier 2).
-NAV_SUFFIXES = frozenset({'.html', '.htm', '.css'})
+# Suffixes with navigation-only registry support (HTML/CSS tier 2 plus the
+# config languages JSON/YAML/TOML).
+NAV_SUFFIXES = frozenset(
+    {'.html', '.htm', '.css', '.json', '.yaml', '.yml', '.toml'}
+)
 
 
 def language_for(suffix: str) -> Language:

@@ -687,7 +687,9 @@ Port aider's layered matching (exact, whitespace-flexible, blank-line tolerance,
 **Problem (from myai usage):** frontend crashed mid-run; on reopen, chat did not reconnect or catch up to the run's progress. SSE mid-run reattach exists server-side (E2E-tested) but the frontend doesn't exercise it on boot. Scope: on load, check `/runs/{id}/alive` and reattach to the live stream; render missed events; surface reconnect state in UI.
 
 ## R30 — R30 — Post-run tail: zero-wait run finish + faster memory extraction
-**Status:** in_progress
+**Status:** done
+
+Zero-wait run finish + faster extraction. Verified live: RUN_FINISHED lands immediately; extraction ~12s; MEMORY_EXTRACTED before/after tail confirmed; UI settles instantly, stop-button flicker (worker-alive-during-tail listed as active) fixed via active_runs excluding terminal-delivered channels (752e080).
 
 Shipped `76f57d7` (tickets #59/#60): RUN_FINISHED emits immediately after persistence; pending tail drains afterwards (bounded 150s, before worker exit) so extraction is never lost. Extraction input trimmed (known 50→25, transcript 12000→6000). Verification pending: next live run should show UI settle in <1s at RUN_FINISHED with MEMORY_EXTRACTED landing shortly after in the trace.
 
@@ -697,3 +699,8 @@ Observed live: run settles only ~94s after work completes because worker._finish
 **Status:** open
 
 Worker still wedges after drain on some runs (trace ends at MEMORY_EXTRACTED, worker never exits; UI stuck until manual stop) — recurring Windows asyncio/Proactor teardown wedge. Two-pronged: (1) make worker teardown fail-safe so it can never hang the UI, (2) surface every spawned process in the UI until it exits, so hangs are diagnosable from the frontend instead of trace archaeology.
+
+## R32 — Language registry expansion: Java, PHP, config languages, Bash
+**Status:** open
+
+Per research (reference/research/language-support-priorities.md): add Tier 3 Java + PHP, Tier 2 JSON/YAML/TOML (HTML/CSS pattern), Bash. R26 batch pattern: `_<lang>_spec()` in langs.py, suffix branch in spec_for, pyproject deps, tests.
