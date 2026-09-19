@@ -701,6 +701,6 @@ Observed live: run settles only ~94s after work completes because worker._finish
 Worker still wedges after drain on some runs (trace ends at MEMORY_EXTRACTED, worker never exits; UI stuck until manual stop) — recurring Windows asyncio/Proactor teardown wedge. Two-pronged: (1) make worker teardown fail-safe so it can never hang the UI, (2) surface every spawned process in the UI until it exits, so hangs are diagnosable from the frontend instead of trace archaeology.
 
 ## R32 — Language registry expansion: Java, PHP, config languages, Bash
-**Status:** open
+**Status:** done
 
 Per research (reference/research/language-support-priorities.md): add Tier 3 Java + PHP, Tier 2 JSON/YAML/TOML (HTML/CSS pattern), Bash. R26 batch pattern: `_<lang>_spec()` in langs.py, suffix branch in spec_for, pyproject deps, tests.
