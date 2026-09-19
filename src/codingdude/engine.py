@@ -28,6 +28,7 @@ from .run_pipeline import (
 from .tools import (
     GateRequired,
 )
+from .vision import build_run_prompt
 
 # Generous cap for waiting out background post-run passes before the next
 # turn: each pass is already bounded by _POST_RUN_LLM_TIMEOUT_S (run_pipeline).
@@ -600,13 +601,9 @@ class Engine:
             prepared.resolved, instructions, toolsets,
             self._prompts.model_settings(self._services, prepared.resolved, thinking),
         )
-        run_prompt: str | list = prompt
+        run_prompt = build_run_prompt(prompt, image_path)  # #82: image → BinaryContent
         if image_path is not None:
-            from pydantic_ai.messages import BinaryContent
-
-            image_bytes = Path(image_path).read_bytes()
-            media = 'image/png' if str(image_path).lower().endswith('.png') else 'image/jpeg'
-            run_prompt = [prompt, BinaryContent(data=image_bytes, media_type=media)]
+            traced({'type': 'IMAGE_ATTACHED', 'path': str(image_path)})
         return AgentSpec(
             agent=agent, run_prompt=run_prompt, instructions=instructions,
             toolsets=toolsets, history=prepared.history,

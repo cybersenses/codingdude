@@ -36,6 +36,27 @@ DEFAULT_QUESTION = (
 )
 
 
+def build_run_prompt(prompt: str, image_path: Path | None) -> str | list:
+    """The run prompt with an optional attached image (#82 R1 vision half).
+
+    No image → the plain string. An image → `[text, BinaryContent]`, the
+    multi-part form pydantic-ai passes to vision-capable models. Fail fast on
+    missing files and non-image suffixes — a silent text-only run would look
+    like a model misunderstanding instead of a broken attachment.
+    """
+    if image_path is None:
+        return prompt
+    media = MEDIA_TYPES.get(image_path.suffix.lower())
+    if media is None:
+        raise ValueError(
+            f'{image_path.name!r} is not an image (expected one of: '
+            + ', '.join(sorted(MEDIA_TYPES)) + ').'
+        )
+    from pydantic_ai.messages import BinaryContent
+
+    return [prompt, BinaryContent(data=image_path.read_bytes(), media_type=media)]
+
+
 def build_vision_toolset(
     vision_model: Model,
     workdir: Path,
