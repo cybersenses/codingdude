@@ -1122,7 +1122,7 @@ function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, heigh
     let stop = false
     async function poll() {
       try {
-        if (tab === 'Diff') { const r = await call(`/sessions/${sessionId}/diff`); setData((d) => ({ ...d, diff: r.diff })) }
+        if (tab === 'Diff') { const r = await call(`/sessions/${sessionId}/diff`); setData((d) => ({ ...d, diff: r.diff, diffSummary: r.summary || [] })) }
         if (tab === 'Cost') { const u = await call(`/sessions/${sessionId}/usage`); setData((d) => ({ ...d, usage: u })) }
         if (tab === 'Output') {
           const runs = await call(`/sessions/${sessionId}/runs`)
@@ -1509,6 +1509,17 @@ function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, heigh
           <span className="text-danger">-{removed}</span>
           <span className="ml-auto uppercase tracking-wide text-ink-muted">working tree</span>
         </div>
+        {(data.diffSummary || []).length > 0 && (
+          <div className="space-y-0.5 border-b border-line px-2 py-1.5">
+            <div className="text-[9px] uppercase tracking-wide text-ink-muted">semantic changes</div>
+            {data.diffSummary.filter((f) => f.summary).map((f) => (
+              <div key={f.path} className="font-mono text-[10px]">
+                <span className="text-brand-300">{f.path}</span>{' '}
+                <span className="text-ink-muted">{f.summary}</span>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="max-h-[70vh] overflow-auto p-2 font-mono text-[11px] leading-[1.5]">
           {diffLines.map((l, i) => (
             <div key={i} className={`whitespace-pre ${lineClass(l)}`}>{l || ' '}</div>

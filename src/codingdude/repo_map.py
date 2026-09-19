@@ -43,16 +43,26 @@ def _python_signatures(path: Path) -> list[str]:
     return sigs
 
 
-def _js_signatures(path: Path) -> list[str]:
+def js_signatures(path: Path) -> list[str]:
+    """Top-level JS/TS function/class signatures (tree-sitter; [] if unavailable)."""
+    try:
+        source = path.read_bytes()
+    except OSError:
+        return []
+    return js_signatures_source(source, path.suffix)
+
+
+def js_signatures_source(source: bytes, suffix: str) -> list[str]:
+    """Same, from raw source bytes (suffix like '.ts')."""
     try:
         from tree_sitter import Parser
 
         from .jslang import language_for
     except ImportError:
         return []
-    parser = Parser(language_for(path.suffix))
+    parser = Parser(language_for(suffix))
     try:
-        tree = parser.parse(path.read_bytes())
+        tree = parser.parse(source)
     except Exception:
         return []
 
@@ -129,7 +139,7 @@ def build_repo_map(workdir: Path, budget: int = DEFAULT_BUDGET,
                 if not add(sig):
                     break
         elif rel.suffix in {'.js', '.jsx', '.mjs', '.ts', '.tsx'}:
-            for sig in _js_signatures(root / rel):
+            for sig in js_signatures(root / rel):
                 if not add(sig):
                     break
     return '\n'.join(lines)

@@ -556,7 +556,14 @@ def create_app(
         result = subprocess.run(
             ['git', 'diff', 'HEAD'], cwd=workdir, capture_output=True, text=True, timeout=30
         )
-        return {'diff': result.stdout}
+        # #85: symbol-level "what changed" beside the raw diff.
+        from .changesummary import summarize
+
+        try:
+            summary = summarize(Path(workdir))
+        except Exception:
+            summary = []
+        return {'diff': result.stdout, 'summary': summary}
 
     @app.get('/sessions/{session_id}/files')
     def session_files(session_id: str, _: None = Depends(authorize)) -> list[str]:
