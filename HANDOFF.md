@@ -1,49 +1,17 @@
-*Updated after commit e13e0ac (pushed). Main == origin/main, tree clean.*
+*Updated after commit a2e8db5 (pushed). Main == origin/main, tree clean.*
 
 ## Current state
-- **R31 CLOSED (`e13e0ac`):** run-end state is now durable. New `runs` DB
-  table (run_id, session, worker pid, status, exit_code, timestamps);
-  server records start at spawn, worker records terminal status in
-  `_finish_run`. Every trace event is stamped with `run_id` (engine tracer),
-  so events are attributable across bounces forever. Server boot reconciles
-  orphaned 'running' rows to 'interrupted' (idempotent). Also removed an
-  accidentally duplicated `runner()` def in `worker.run`. Gates: 523 passed
-  / 1 skipped; ruff + mypy clean. New tests: test_db.py runs lifecycle,
-  test_run_trace.py (run_id stamping), test_server.py boot reconcile.
-  Note: server.py was normalized to consistent CRLF (33 pre-existing LF-only
-  lines cleaned in passing).
-- **#78 FIXED and closed (`862a540`):** run that bounces its own server no
-  longer leaves the UI hung/errored. SSE reconnect budget raised from
-  5 attempts (~15s) to 30 attempts (~2min, linear backoff capped at 5s);
-  helpers `sseRetryDelayMs`/`SSE_MAX_RETRIES` live in `frontend/src/reattach.ts`.
-  Give-up path now reloads persisted messages before declaring error.
-- **#79 FIXED and closed (`1e5fb7b`):** trace BADLINEs gone. New
-  `src/codingdude/traces.py::append_trace_line` — one `os.write` per line
-  under `O_APPEND` + in-process lock; engine tracer and worker
-  `trace_terminal` both migrated. Threaded stress test proves zero malformed
-  lines.
-- Full gates at close: 515 passed / 1 skipped, ruff + mypy clean; frontend
-  vitest 24/24 + eslint + vite build clean.
-- **#73 FIXED and closed (`59ee09a`):** worker no longer exits 1 when the
-  server bounces mid-run. Root cause was the unguarded `await sender_task`
-  propagating `ConnectionClosedError` out of `run()` mid-engine-iteration.
-  Fix: extracted `_sender_loop`/`_reader_loop` in `src/codingdude/worker.py`;
-  on ws loss sender logs `WORKER_WS_LOST` and keeps draining the queue so the
-  engine finishes and persists its own trace; worker exits 0 via the normal
-  drain path. TDD: 10/10 worker tests (2 new). No reconnect logic (server was
-  dead anyway) - deliberate.
-- **#75/#77 COMPLETE (`ffe2fbc`):** run output view in the dock — new
-  `GET /sessions/{sid}/runs` (R31 runs table, newest first) + Output tab
-  (run selector w/ status badges, selected run's trace events grouped by
-  run_id; pre-R31 events under '(unattributed)'). Gates: 525/1, ruff+mypy,
-  eslint, 29/29 vitest, build ✓.
-  via `frontend/src/panes.ts` (single source for all four panes + dock);
-  duplicate footer status removed (AgentStrip is sole indicator); CRLF in
-  App.jsx restored; unused CodeMirror deps dropped. AgentStrip shows current
-  activity; run output lives in the IDE dock.
-- Full gates at close: 512 passed / 1 skipped, ruff + mypy clean; frontend
-  vitest + build clean at the last UI commit.
-- Server healthy on 127.0.0.1:8765.
+- **#83 / R37 CLOSED (`a2e8db5`):** selection AI actions in the editor.
+  Highlight code in the Monaco editor -> toolbar appears under the editor
+  (Explain / Fix / Optimise / Improve + clear). Click sends a scoped agent
+  prompt (directive + file path + verbatim snippet, with "read the file for
+  context first") through the normal `send()` run flow. Seams: pure
+  `frontend/src/aiActions.ts` (`ACTIONS`, `buildActionPrompt` — 5 vitest
+  tests), `CodeEditor` `onSelectionChange` prop, `EditorPane` action bar +
+  new `onAsk` prop wired to App's `send`.
+- Gates: vitest 34/34, eslint clean, vite build OK (dist rebuilt — hard
+  refresh browser to see it).
+- Tracker fully clean: all tickets + R1-R37 done.
 
 ## MUST DO after bounce
 - Nothing mandatory. Clear to start fresh work.
