@@ -9,6 +9,7 @@ import { PANE_SPECS, paneWidth } from './panes'
 import { ACTIONS, buildActionPrompt } from './aiActions'
 import { groupEventsByRun, pickRunId } from './runs'
 import { buildSpans } from './waterfall'
+import { impactMermaid } from './impact'
 
 // R6: render-only mermaid diagrams inside spec blocks. Renders each
 // ```mermaid fence to SVG; on failure the raw fence stays visible.
@@ -1122,7 +1123,7 @@ function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, heigh
     let stop = false
     async function poll() {
       try {
-        if (tab === 'Diff') { const r = await call(`/sessions/${sessionId}/diff`); setData((d) => ({ ...d, diff: r.diff, diffSummary: r.summary || [] })) }
+        if (tab === 'Diff') { const r = await call(`/sessions/${sessionId}/diff`); setData((d) => ({ ...d, diff: r.diff, diffSummary: r.summary || [], impact: r.impact || null })) }
         if (tab === 'Cost') { const u = await call(`/sessions/${sessionId}/usage`); setData((d) => ({ ...d, usage: u })) }
         if (tab === 'Output') {
           const runs = await call(`/sessions/${sessionId}/runs`)
@@ -1519,6 +1520,14 @@ function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, heigh
               </div>
             ))}
           </div>
+        )}
+        {impactMermaid(data.impact) && (
+          <details className="border-b border-line px-2 py-1.5">
+            <summary className="cursor-pointer text-[9px] uppercase tracking-wide text-ink-muted">impact graph</summary>
+            <div className="pt-1">
+              <Mermaid code={impactMermaid(data.impact)} />
+            </div>
+          </details>
         )}
         <div className="max-h-[70vh] overflow-auto p-2 font-mono text-[11px] leading-[1.5]">
           {diffLines.map((l, i) => (

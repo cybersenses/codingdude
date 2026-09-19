@@ -557,13 +557,18 @@ def create_app(
             ['git', 'diff', 'HEAD'], cwd=workdir, capture_output=True, text=True, timeout=30
         )
         # #85: symbol-level "what changed" beside the raw diff.
-        from .changesummary import summarize
+        from .changesummary import changed_files, summarize
+        from .impact import impact_graph
 
         try:
             summary = summarize(Path(workdir))
         except Exception:
             summary = []
-        return {'diff': result.stdout, 'summary': summary}
+        try:
+            impact = impact_graph(Path(workdir), changed_files(Path(workdir)))
+        except Exception:
+            impact = {'edges': [], 'orphans': []}
+        return {'diff': result.stdout, 'summary': summary, 'impact': impact}
 
     @app.get('/sessions/{session_id}/files')
     def session_files(session_id: str, _: None = Depends(authorize)) -> list[str]:
