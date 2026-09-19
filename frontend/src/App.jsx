@@ -8,6 +8,7 @@ import { activeProcesses, describeProcess, mergeProcesses } from './processes'
 import { PANE_SPECS, paneWidth } from './panes'
 import { ACTIONS, buildActionPrompt } from './aiActions'
 import { groupEventsByRun, pickRunId } from './runs'
+import { buildSpans } from './waterfall'
 
 // R6: render-only mermaid diagrams inside spec blocks. Renders each
 // ```mermaid fence to SVG; on failure the raw fence stays visible.
@@ -1107,7 +1108,7 @@ function Planning({ workdir }) {
 // R35 #72: bottom dock — VS Code panel position. Processes comes in as a
 // prop (App polls it); it used to be a bare-identifier crash in this scope.
 function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, height, onResizeHeight, focusDiff = 0 }) {
-  const tabs = ['Diff', 'Planning', 'Artifacts', 'Notes', 'Renders', 'Terminal', 'Output', 'Trace', 'Cost', 'Memory', 'MCP', 'Standards']
+  const tabs = ['Diff', 'Planning', 'Artifacts', 'Notes', 'Renders', 'Terminal', 'Output', 'Waterfall', 'Trace', 'Cost', 'Memory', 'MCP', 'Standards']
   const [tab, setTab] = useState('Diff')
   const [data, setData] = useState({})
 
@@ -1351,6 +1352,49 @@ function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, heigh
           </div>
         )}
         {runId && <div className={`text-[10px] ${statusColor(statusOf(runId))}`}>run {runId} — {statusOf(runId) || 'unknown'}</div>}
+      </div>
+    )
+  } else if (tab === 'Waterfall') {
+    // #84 (R38): span timeline of the selected run's tool calls, edits, gates.
+    const groups = groupEventsByRun(data.runEvents || [])
+    const wfRunId = pickRunId(groups, selRun)
+    const { spans, total } = buildSpans(groups[wfRunId] || [])
+    const kindColor = (k) => k === 'edit' ? 'bg-brand-500' : k === 'gate' ? 'bg-warning' : k === 'tool' ? 'bg-accent' : 'bg-neutral-600'
+    body = (
+      <div className="flex h-full min-h-0 flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-1">
+          {(data.runs || []).map((r) => (
+            <button
+              key={r.run_id}
+              className={`rounded px-2 py-0.5 font-mono text-[10px] ${r.run_id === wfRunId ? 'bg-neutral-800 text-brand-300' : 'text-neutral-500 hover:text-neutral-300'}`}
+              onClick={() => setSelRun(r.run_id)}
+            >{r.run_id}</button>
+          ))}
+          {total > 0 && <span className="ml-auto text-[10px] text-ink-muted">{total.toFixed(1)}s</span>}
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {spans.length > 0 && total > 0 && (
+            <div className="relative space-y-1">
+              {spans.map((s, i) => (
+                <div key={i} className="flex items-center gap-2 font-mono text-[10px]">
+                  <span className="w-8 shrink-0 text-right text-ink-muted">{s.start.toFixed(1)}s</span>
+                  <div className="relative h-3 min-w-0 flex-1 rounded bg-neutral-900">
+                    <div
+                      className={`absolute h-3 rounded ${kindColor(s.kind)} ${s.kind !== 'tool' || s.end === s.start ? 'w-1.5' : ''} opacity-80`}
+                      style={s.kind === 'tool' && s.end > s.start ? {
+                        left: `${(s.start / total) * 100}%`,
+                        width: `${Math.max(((s.end - s.start) / total) * 100, 1)}%`,
+                      } : { left: `${(s.start / total) * 100}%` }}
+                      title={s.unclosed ? `${s.label} (unclosed)` : `${s.label}: ${s.start.toFixed(1)}s → ${s.end.toFixed(1)}s`}
+                    />
+                  </div>
+                  <span className="w-40 shrink-0 truncate text-neutral-300" title={s.label}>{s.label}{s.unclosed ? ' ?' : ''}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {!spans.length && <div className="text-[10px] text-ink-muted">no timed events for this run</div>}
+        </div>
       </div>
     )
   } else if (tab === 'Trace') {
