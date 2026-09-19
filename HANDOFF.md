@@ -32,7 +32,11 @@
   engine finishes and persists its own trace; worker exits 0 via the normal
   drain path. TDD: 10/10 worker tests (2 new). No reconnect logic (server was
   dead anyway) - deliberate.
-- **#74/#75 repair round COMPLETE (earlier commits):** rail drag + persistence
+- **#75/#77 COMPLETE (`ffe2fbc`):** run output view in the dock — new
+  `GET /sessions/{sid}/runs` (R31 runs table, newest first) + Output tab
+  (run selector w/ status badges, selected run's trace events grouped by
+  run_id; pre-R31 events under '(unattributed)'). Gates: 525/1, ruff+mypy,
+  eslint, 29/29 vitest, build ✓.
   via `frontend/src/panes.ts` (single source for all four panes + dock);
   duplicate footer status removed (AgentStrip is sole indicator); CRLF in
   App.jsx restored; unused CodeMirror deps dropped. AgentStrip shows current
