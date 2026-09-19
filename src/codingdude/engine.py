@@ -90,6 +90,33 @@ class RunOutcome:
     gate: GateRequest | None = None
 
 
+@dataclass
+class PreparedRun:
+    """Stage output of _prepare_history: model + history + context manager."""
+
+    resolved: Model
+    model_name: str
+    history: list
+    cm: object
+
+
+@dataclass
+class AgentSpec:
+    """Stage output of _assemble_agent: what _run_agent consumes."""
+
+    agent: object
+    run_prompt: str | list
+    instructions: str
+    toolsets: list
+    history: list
+
+
+def _utcnow():
+    from datetime import UTC, datetime
+
+    return datetime.now(UTC)
+
+
 class Engine:
     def __init__(
         self,
@@ -345,61 +372,23 @@ class Engine:
         vision_model: Model | None = None,
         run_id: str | None = None,
     ) -> RunOutcome:
-        if session_id is None:
-            session_id = self._db.create_session(workdir, title=prompt[:80])
-            created_session = True
-        else:
-            created_session = False
+        """Flat orchestrator: each stage is a private method; no logic here."""
+        session_id, created_session = self._ensure_session(session_id, workdir, prompt)
+
         # Wait out the previous turn's background post-run passes so memory
         # extraction lands before this prompt is assembled.
         await self._drain_pending_post_run()
 
         traced = self._make_tracer(session_id, workdir, trace, emit, run_id=run_id)
+        boot_event = self._boot_project(workdir)
 
-        from .codegraph_boot import boot_codegraph, boot_hint
-        from .scaffold import ensure_project_scaffold
-
-        scaffold = ensure_project_scaffold(workdir)
-        boot_status = boot_codegraph(workdir)
-        boot_event: dict = {'type': 'CODEGRAPH_BOOT', 'status': boot_status['status']}
-        if boot_status['reason']:
-            boot_event['reason'] = boot_status['reason']
-        if scaffold['created']:
-            boot_event['scaffold_created'] = scaffold['created']
-        if scaffold['errors']:
-            logger.warning('project scaffold incomplete: %s', scaffold['errors'])
-        # Emitted after USER_PROMPT below: the trace contract keeps
-        # USER_PROMPT as the first event of a run (test_evals relies on it).
-
-        from datetime import UTC as _UTC
-        from datetime import datetime as _dt
-
-        started = _dt.now(_UTC)
+        started = _utcnow()
         try:
             self._services.check_budget(session_id)
-            resolved = self._resolve_run_model(model, image_path, vision_model)
-            model_name = getattr(resolved, 'model_name', str(resolved))
-
-            history = self._history.load(session_id)
-            traced({'type': 'USER_PROMPT', 'text': prompt})
-            traced(boot_event)
-            cm = self._history.context_manager(model_name)
-            history, compacted = await self._history.maybe_compact(
-                history, resolved, on_event, session_id, cm=cm
+            prepared = await self._prepare_history(
+                session_id, prompt, model, image_path, vision_model,
+                on_event, traced, boot_event,
             )
-            if compacted:
-                self._history.persist(session_id, history)
-            ctx_stats = cm.usage(history)
-            traced({
-                'type': 'CONTEXT_USAGE',
-                'total_tokens': ctx_stats.total_tokens,
-                'model_limit': ctx_stats.model_limit,
-                'usage_percent': round(ctx_stats.usage_percent, 4),
-            })
-            self._db.update_session_context(
-                session_id, ctx_stats.total_tokens, ctx_stats.model_limit
-            )
-
             cp_holder: list[str] = []
 
             def capture_for_checkpoints(abs_path: Path) -> None:
@@ -412,77 +401,19 @@ class Engine:
                 if on_event:
                     on_event(ec)
 
-            thinking = parse_thinking(self._config.models.thinking)
-
-            # Pattern Approvals are session-scoped: load what past runs saved.
-            if approvals is not None:
-                approvals.patterns.update(self._db.session_patterns(session_id))
-                if fix_loop:
-                    approvals.patterns.add(test_command.strip())
-                approvals.on_pattern = (
-                    lambda pattern: self._db.record_pattern_approval(session_id, pattern)
-                )
-
-            from .config import load_project_config
-            project_shell = load_project_config(workdir).get(
-                'shell', self._config.shell.default
-            )
-            subagent = subagent_model or self._build_subagent_model()
-
-            from .plugins import PluginContext, build_all
-
-            plugin_ctx = PluginContext(
-                workdir=workdir,
-                config=self._config,
-                db=self._db,
-                session_id=session_id,
-                home=self._config_home(),
-                shell_bin=project_shell,
+            agent_spec = await self._assemble_agent(
+                session_id, workdir, prompt, prepared, boot_event,
+                image_path=image_path,
+                approvals=approvals, subagent_model=subagent_model,
+                vision_model=vision_model, fix_loop=fix_loop,
                 test_command=test_command,
-                fix_loop=fix_loop,
-                approvals=approvals,
-                subagent_model=subagent,
-                thinking=thinking,
-                review_model=self._extraction_model,
-                vision_model=vision_model,
-                embedder=self.embedder,
-                on_edit=on_edit_dispatch,
-                capture=capture_for_checkpoints,
-                emitter=traced,
+                on_edit=on_edit_dispatch, capture=capture_for_checkpoints,
+                traced=traced,
             )
-            toolsets = await build_all(plugin_ctx)
-            # R25: tool runtime errors feed back to the model as retries
-            # instead of killing the run (3 strikes in PromptAssembler.agent).
-            from .tool_errors import error_feedback_toolset
-
-            toolsets = [error_feedback_toolset(toolsets)]
-
-            from .memory import MemoryStore
-            from .skills import SkillRegistry
-
-            registry = SkillRegistry(self._config_home())
-            store = MemoryStore(self._db)
-            instructions = self._prompts.instructions(
-                self._services, workdir, prompt, registry, store, self.embedder
-            )
-            hint = boot_hint(boot_status)
-            if hint:
-                instructions += '\n\n' + hint
-
-            agent = self._prompts.agent(
-                resolved, instructions, toolsets,
-                self._prompts.model_settings(self._services, resolved, thinking),
-            )
-            run_prompt: str | list = prompt
-            if image_path is not None:
-                from pydantic_ai.messages import BinaryContent
-
-                image_bytes = Path(image_path).read_bytes()
-                media = 'image/png' if str(image_path).lower().endswith('.png') else 'image/jpeg'
-                run_prompt = [prompt, BinaryContent(data=image_bytes, media_type=media)]
             try:
                 result = await self._run_agent(
-                    agent, run_prompt, history, model_name, traced,
+                    agent_spec.agent, agent_spec.run_prompt, prepared.history,
+                    prepared.model_name, traced,
                     cp_holder=cp_holder,
                     persist=lambda msgs: self._history.persist(session_id, msgs),
                     stream=emit is not None,
@@ -494,7 +425,7 @@ class Engine:
                 return RunOutcome(
                     session_id=session_id,
                     output=f'gate required: {gate.command}',
-                    model_name=model_name,
+                    model_name=prepared.model_name,
                     status='gate_aborted',
                     gate=GateRequest(command=gate.command),
                 )
@@ -504,10 +435,197 @@ class Engine:
                 self._db.delete_session(session_id)
             raise
 
+        return await self._finalize_run(
+            session_id, workdir, result, prepared, agent_spec,
+            approvals=approvals, fix_loop=fix_loop, test_command=test_command,
+            max_test_iterations=max_test_iterations, emit=emit, traced=traced,
+            started=started,
+        )
+
+    def _ensure_session(
+        self, session_id: str | None, workdir: Path, prompt: str,
+    ) -> tuple[str, bool]:
+        """The Session this run appends to; created fresh when not given."""
+        if session_id is None:
+            return self._db.create_session(workdir, title=prompt[:80]), True
+        return session_id, False
+
+    def _boot_project(self, workdir: Path) -> dict:
+        """Project scaffold + codegraph boot; returns the CODEGRAPH_BOOT event.
+
+        Emitted after USER_PROMPT in _prepare_history: the trace contract
+        keeps USER_PROMPT as the first event of a run (test_evals relies on
+        it), so the event is built here but traced later.
+        """
+        from .codegraph_boot import boot_codegraph
+        from .scaffold import ensure_project_scaffold
+
+        scaffold = ensure_project_scaffold(workdir)
+        boot_status = boot_codegraph(workdir)
+        boot_event: dict = {'type': 'CODEGRAPH_BOOT', 'status': boot_status['status']}
+        if boot_status['reason']:
+            boot_event['reason'] = boot_status['reason']
+        if scaffold['created']:
+            boot_event['scaffold_created'] = scaffold['created']
+        if scaffold['errors']:
+            logger.warning('project scaffold incomplete: %s', scaffold['errors'])
+        return boot_event
+
+    async def _prepare_history(
+        self,
+        session_id: str,
+        prompt: str,
+        model: Model | str | None,
+        image_path: Path | None,
+        vision_model: Model | None,
+        on_event: Callable[[object], None] | None,
+        traced: Callable[[dict], None],
+        boot_event: dict,
+    ) -> PreparedRun:
+        """Resolve the model, load/compact history, record context usage."""
+        resolved = self._resolve_run_model(model, image_path, vision_model)
+        model_name = getattr(resolved, 'model_name', str(resolved))
+
+        history = self._history.load(session_id)
+        traced({'type': 'USER_PROMPT', 'text': prompt})
+        traced(boot_event)
+        cm = self._history.context_manager(model_name)
+        history, compacted = await self._history.maybe_compact(
+            history, resolved, on_event, session_id, cm=cm
+        )
+        if compacted:
+            self._history.persist(session_id, history)
+        ctx_stats = cm.usage(history)
+        traced({
+            'type': 'CONTEXT_USAGE',
+            'total_tokens': ctx_stats.total_tokens,
+            'model_limit': ctx_stats.model_limit,
+            'usage_percent': round(ctx_stats.usage_percent, 4),
+        })
+        self._db.update_session_context(
+            session_id, ctx_stats.total_tokens, ctx_stats.model_limit
+        )
+        return PreparedRun(
+            resolved=resolved, model_name=model_name, history=history, cm=cm,
+        )
+
+    async def _assemble_agent(
+        self,
+        session_id: str,
+        workdir: Path,
+        prompt: str,
+        prepared: PreparedRun,
+        boot_event: dict,
+        *,
+        image_path: Path | None,
+        approvals,
+        subagent_model: Model | None,
+        vision_model: Model | None,
+        fix_loop: bool,
+        test_command: str,
+        on_edit: Callable[[dict], None],
+        capture: Callable[[Path], None],
+        traced: Callable[[dict], None],
+    ) -> AgentSpec:
+        """Toolsets + instructions + the Agent, and the prompt to feed it."""
+        thinking = parse_thinking(self._config.models.thinking)
+
+        # Pattern Approvals are session-scoped: load what past runs saved.
+        if approvals is not None:
+            approvals.patterns.update(self._db.session_patterns(session_id))
+            if fix_loop:
+                approvals.patterns.add(test_command.strip())
+            approvals.on_pattern = (
+                lambda pattern: self._db.record_pattern_approval(session_id, pattern)
+            )
+
+        from .config import load_project_config
+        project_shell = load_project_config(workdir).get(
+            'shell', self._config.shell.default
+        )
+        subagent = subagent_model or self._build_subagent_model()
+
+        from .plugins import PluginContext, build_all
+
+        plugin_ctx = PluginContext(
+            workdir=workdir,
+            config=self._config,
+            db=self._db,
+            session_id=session_id,
+            home=self._config_home(),
+            shell_bin=project_shell,
+            test_command=test_command,
+            fix_loop=fix_loop,
+            approvals=approvals,
+            subagent_model=subagent,
+            thinking=thinking,
+            review_model=self._extraction_model,
+            vision_model=vision_model,
+            embedder=self.embedder,
+            on_edit=on_edit,
+            capture=capture,
+            emitter=traced,
+        )
+        toolsets = await build_all(plugin_ctx)
+        # R25: tool runtime errors feed back to the model as retries
+        # instead of killing the run (3 strikes in PromptAssembler.agent).
+        from .tool_errors import error_feedback_toolset
+
+        toolsets = [error_feedback_toolset(toolsets)]
+
+        from .memory import MemoryStore
+        from .skills import SkillRegistry
+
+        registry = SkillRegistry(self._config_home())
+        store = MemoryStore(self._db)
+        instructions = self._prompts.instructions(
+            self._services, workdir, prompt, registry, store, self.embedder
+        )
+        from .codegraph_boot import boot_hint
+
+        hint = boot_hint(
+            {'status': boot_event['status'], 'reason': boot_event.get('reason')}
+        )
+        if hint:
+            instructions += '\n\n' + hint
+
+        agent = self._prompts.agent(
+            prepared.resolved, instructions, toolsets,
+            self._prompts.model_settings(self._services, prepared.resolved, thinking),
+        )
+        run_prompt: str | list = prompt
+        if image_path is not None:
+            from pydantic_ai.messages import BinaryContent
+
+            image_bytes = Path(image_path).read_bytes()
+            media = 'image/png' if str(image_path).lower().endswith('.png') else 'image/jpeg'
+            run_prompt = [prompt, BinaryContent(data=image_bytes, media_type=media)]
+        return AgentSpec(
+            agent=agent, run_prompt=run_prompt, instructions=instructions,
+            toolsets=toolsets, history=prepared.history,
+        )
+
+    async def _finalize_run(
+        self,
+        session_id: str,
+        workdir: Path,
+        result,
+        prepared: PreparedRun,
+        agent_spec: AgentSpec,
+        *,
+        approvals,
+        fix_loop: bool,
+        test_command: str,
+        max_test_iterations: int,
+        emit,
+        traced,
+        started,
+    ) -> RunOutcome:
+        """Persist, run the fix loop if asked, record usage, spawn the tail."""
         self._history.persist(session_id, result.all_messages())
         # Prefer the provider's own token count for the final request (it
         # includes instructions + history); fall back to the estimate.
-        self._history.persist_actual_context(session_id, result, cm)
+        self._history.persist_actual_context(session_id, result, prepared.cm)
 
         # Fix-until-green loop: run the tests, feed failures back, repeat.
         if fix_loop and approvals is not None:
@@ -517,12 +635,14 @@ class Engine:
                 'shell', self._config.shell.default
             )
             result = await self._run_fix_loop(
-                session_id, resolved, instructions, toolsets,
-                history, result, workdir, test_command, shell_bin,
-                max_test_iterations, emit,
+                session_id, prepared.resolved, agent_spec.instructions,
+                agent_spec.toolsets, agent_spec.history, result, workdir,
+                test_command, shell_bin, max_test_iterations, emit,
             )
 
-        self._post.record_run_usage(session_id, model_name, result, started, traced)
+        self._post.record_run_usage(
+            session_id, prepared.model_name, result, started, traced
+        )
         self._services.check_budget(session_id)
         # Post-run passes (extraction ∥ claims audit) run in the background:
         # RUN_FINISHED must not wait ~90s on them (user friction). The next
@@ -530,12 +650,13 @@ class Engine:
         # still lands before it can matter (see _drain_pending_post_run).
         self._pending_post_run[session_id] = asyncio.create_task(
             self._post_run_tail(session_id, result, workdir, approvals, traced,
-                                resolved, history, toolsets, instructions)
+                                prepared.resolved, agent_spec.history,
+                                agent_spec.toolsets, agent_spec.instructions)
         )
         return RunOutcome(
             session_id=session_id,
             output=result.output,
-            model_name=model_name,
+            model_name=prepared.model_name,
         )
 
     async def _post_run_tail(self, session_id: str, result, workdir, approvals,
