@@ -128,3 +128,38 @@ def test_path_escape_rejected(server, tmp_path):
         params={'path': '../outside.txt'}, headers=auth(), timeout=10,
     )
     assert r.status_code == 400
+
+
+def test_diff_against_head(server, tmp_path):
+    """#71: diff endpoint returns the git HEAD baseline + on-disk content."""
+    import subprocess
+
+    app, base = server
+    workdir = tmp_path / 'proj'
+    workdir.mkdir()
+    (workdir / 'a.txt').write_text('v1\n', encoding='utf-8')
+    subprocess.run(['git', 'init', '-q'], cwd=workdir, check=True)
+    subprocess.run(['git', 'add', '.'], cwd=workdir, check=True)
+    env = dict(**__import__('os').environ)
+    env.update({'GIT_AUTHOR_NAME': 't', 'GIT_AUTHOR_EMAIL': 't@t',
+                'GIT_COMMITTER_NAME': 't', 'GIT_COMMITTER_EMAIL': 't@t'})
+    subprocess.run(['git', 'commit', '-qm', 'init'], cwd=workdir, check=True, env=env)
+    (workdir / 'a.txt').write_text('v2\n', encoding='utf-8')
+    (workdir / 'new.txt').write_text('brand new\n', encoding='utf-8')
+
+    sid = make_session(base, workdir)
+    r = httpx.get(f'{base}/sessions/{sid}/file_diff', params={'path': 'a.txt'},
+                  headers=auth(), timeout=10)
+    assert r.status_code == 200
+    body = r.json()
+    assert body['base'] == 'v1\n'
+    assert body['content'] == 'v2\n'
+
+    r = httpx.get(f'{base}/sessions/{sid}/file_diff', params={'path': 'new.txt'},
+                  headers=auth(), timeout=10)
+    assert r.status_code == 200
+    assert r.json()['base'] == ''
+
+    r = httpx.get(f'{base}/sessions/{sid}/file_diff', params={'path': '../escape'},
+                  headers=auth(), timeout=10)
+    assert r.status_code == 400

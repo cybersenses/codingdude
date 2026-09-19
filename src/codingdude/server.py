@@ -614,6 +614,39 @@ def create_app(
             'mtime': target.stat().st_mtime_ns,
         }
 
+    @app.get('/sessions/{session_id}/file_diff')
+    def file_diff(session_id: str, path: str, _: None = Depends(authorize)) -> dict:
+        """HEAD baseline + on-disk content for the HITL diff view (#71).
+
+        `base` is the git HEAD version of the file ('' for new/untracked
+        files); `content` is what is on disk right now (the agent's edits).
+        """
+        import subprocess
+
+        from codingdude.tools import resolve_workdir_path
+
+        workdir = db.session_workdir(session_id)
+        if not workdir:
+            raise HTTPException(status_code=404, detail='no such session')
+        target, error = resolve_workdir_path(workdir, path)
+        if error or target is None:
+            raise HTTPException(status_code=400, detail=error or 'bad path')
+        if not target.is_file():
+            raise HTTPException(status_code=404, detail='not found')
+        try:
+            proc = subprocess.run(
+                ['git', 'show', f'HEAD:{path}'],
+                cwd=workdir, capture_output=True, timeout=10,
+            )
+            base = proc.stdout.decode('utf-8', errors='replace') if proc.returncode == 0 else ''
+        except (OSError, subprocess.TimeoutExpired):
+            base = ''
+        try:
+            content = target.read_text(encoding='utf-8', errors='replace')[:500_000]
+        except OSError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {'path': path, 'base': base, 'content': content}
+
     @app.get('/sessions/{session_id}/renders')
     def session_renders(session_id: str, _: None = Depends(authorize)) -> dict:
         """Image files in the Workdir, newest first (screenshots, previews)."""

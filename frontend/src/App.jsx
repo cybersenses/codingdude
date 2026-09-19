@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
-import CodeEditor from './CodeEditor.jsx'
+import CodeEditor, { CodeDiff } from './CodeEditor.jsx'
 import { closeTab, openTab } from './editor'
 import { api, authLocal, call, checkAuth, login } from './api'
 import { runToReattach } from './reattach'
@@ -471,6 +471,7 @@ function FileExplorer({ sessionId }) {
   const [draft, setDraft] = useState('')
   const [dirty, setDirty] = useState(false)
   const [notice, setNotice] = useState(null)
+  const [diff, setDiff] = useState(null) // {base} when diff view is on
   const active = tabs.find((t) => t.active) || null
 
   async function refresh() {
@@ -487,6 +488,7 @@ function FileExplorer({ sessionId }) {
       setDraft(f.content)
       setDirty(false)
       setNotice(null)
+      setDiff(null)
     } catch (e) {
       setNotice(`cannot open ${path}: ${e.message}`)
     }
@@ -499,6 +501,7 @@ function FileExplorer({ sessionId }) {
     setDraft(t.content)
     setDirty(false)
     setNotice(null)
+    setDiff(null)
   }
 
   function close(path) {
@@ -508,6 +511,7 @@ function FileExplorer({ sessionId }) {
     setDraft(nowActive ? nowActive.content : '')
     setDirty(false)
     setNotice(null)
+    setDiff(null)
   }
 
   async function save() {
@@ -531,6 +535,18 @@ function FileExplorer({ sessionId }) {
         : `save failed: ${e.message}`)
     }
     setTimeout(() => setNotice(null), 4000)
+  }
+
+  async function toggleDiff() {
+    if (diff) { setDiff(null); return }
+    if (!active) return
+    try {
+      const r = await call(`/sessions/${sessionId}/file_diff?path=${encodeURIComponent(active.path)}`)
+      setDiff({ base: r.base })
+    } catch (e) {
+      setNotice(`diff failed: ${e.message}`)
+      setTimeout(() => setNotice(null), 4000)
+    }
   }
 
   return (
@@ -564,11 +580,27 @@ function FileExplorer({ sessionId }) {
                 className="rounded bg-neutral-700 px-2 py-0.5 text-[10px] text-ink"
                 onClick={() => active && openFile(active.path)}
               >reload</button>
+              <button
+                className={`rounded px-2 py-0.5 text-[10px] text-ink ${diff ? 'bg-brand-700 text-brand-fg' : 'bg-neutral-700'}`}
+                disabled={!active}
+                onClick={toggleDiff}
+              >diff vs HEAD</button>
             </div>
           </div>
           {notice && <div className="text-[10px] text-brand-400">{notice}</div>}
           <div className="min-h-0 flex-1 overflow-hidden rounded border border-neutral-700">
-            <CodeEditor path={active?.path || ''} value={draft} onChange={(v) => { setDraft(v); setDirty(true) }} height="100%" />
+            {diff
+              ? (
+                <CodeDiff
+                  path={active?.path || ''}
+                  original={diff.base}
+                  modified={draft}
+                  height="100%"
+                />
+              )
+              : (
+                <CodeEditor path={active?.path || ''} value={draft} onChange={(v) => { setDraft(v); setDirty(true) }} height="100%" />
+              )}
           </div>
         </div>
       )}
