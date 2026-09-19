@@ -168,6 +168,17 @@ CREATE TABLE IF NOT EXISTS processes (
     background INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_processes ON processes (session_id, id);
+CREATE TABLE IF NOT EXISTS runs (
+    run_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(session_id),
+    worker_pid INTEGER,
+    status TEXT NOT NULL DEFAULT 'running'
+        CHECK (status IN ('running', 'completed', 'failed', 'gate_aborted', 'interrupted')),
+    exit_code INTEGER,
+    started_at TEXT NOT NULL,
+    ended_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_runs ON runs (session_id, started_at);
 CREATE TABLE IF NOT EXISTS design_decisions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     workdir TEXT NOT NULL,
@@ -485,6 +496,48 @@ class Database:
                 )
             out.append(d)
         return out
+
+    # --- Runs (R31): durable run lifecycle so end-state survives bounces ---
+
+    def record_run_start(self, run_id: str, session_id: str, *, pid: int | None = None) -> None:
+        self._conn.execute(
+            'INSERT OR REPLACE INTO runs'
+            ' (run_id, session_id, worker_pid, status, started_at)'
+            " VALUES (?, ?, ?, 'running', ?)",
+            (run_id, session_id, pid, _now()),
+        )
+        self._conn.commit()
+
+    def record_run_end(
+        self, run_id: str, status: str, *, exit_code: int | None = None
+    ) -> None:
+        self._conn.execute(
+            'UPDATE runs SET status = ?, exit_code = ?, ended_at = ? WHERE run_id = ?',
+            (status, exit_code, _now(), run_id),
+        )
+        self._conn.commit()
+
+    def get_run(self, run_id: str) -> dict | None:
+        row = self._conn.execute(
+            'SELECT run_id, session_id, worker_pid, status, exit_code,'
+            ' started_at, ended_at FROM runs WHERE run_id = ?',
+            (run_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def reconcile_interrupted_runs(self) -> int:
+        """Mark runs still 'running' as 'interrupted' (server-boot reconcile).
+
+        A run that was live when the server died can never deliver a terminal
+        event; its end state is 'interrupted' by definition. Idempotent.
+        """
+        cur = self._conn.execute(
+            "UPDATE runs SET status = 'interrupted', ended_at = ?"
+            " WHERE status = 'running'",
+            (_now(),),
+        )
+        self._conn.commit()
+        return cur.rowcount
 
     def list_session_notes(self, session_id: str) -> list[dict]:
         rows = self._conn.execute(

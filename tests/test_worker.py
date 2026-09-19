@@ -200,3 +200,15 @@ def test_reader_loop_returns_on_connection_closed():
         await worker._reader_loop(DyingWS(), {}, {})
 
     asyncio.run(main())  # must not raise
+
+
+def test_engine_run_kwargs_forwards_run_id():
+    from codingdude import worker
+
+    assert worker.engine_run_kwargs(_args(run_id='abc123'), model='m')['run_id'] == 'abc123'
+
+
+def test_engine_run_kwargs_run_id_default_none():
+    from codingdude import worker
+
+    assert worker.engine_run_kwargs(_args(), model=None).get('run_id') is None

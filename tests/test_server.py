@@ -580,3 +580,18 @@ def test_active_runs_excludes_terminal_delivered_runs(server):
     finally:
         ch.worker.kill()
         ch.worker.wait()
+
+
+def test_server_boot_reconciles_orphaned_runs(tmp_path):
+    """R31: runs still 'running' in the DB when the server starts are marked
+    'interrupted' at boot — a bounced run gets a deterministic end state."""
+    from codingdude.db import Database
+
+    home = tmp_path / 'home'
+    db = Database.connect(home)
+    sid = db.create_session(tmp_path / 'work')
+    db.record_run_start('ghostRun', sid, pid=1)
+    app = create_app(home=home, token='test-token', allow_testclient=True)
+    del app
+    db2 = Database.connect(home)
+    assert db2.get_run('ghostRun')['status'] == 'interrupted'

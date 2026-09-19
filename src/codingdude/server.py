@@ -191,6 +191,12 @@ def create_app(
     ensure_default_mcp(home)
     app = FastAPI()
     db = Database.connect(home)
+    # R31: runs still marked 'running' from a previous server life can never
+    # finish — give them a deterministic 'interrupted' end state at boot.
+    interrupted = db.reconcile_interrupted_runs()
+    if interrupted:
+        logging.getLogger('codingdude.server').info(
+            'RUNS_RECONCILED interrupted=%s', interrupted)
     channels: dict[str, RunChannel] = {}
 
     def authorize(request: Request) -> None:
@@ -338,6 +344,8 @@ def create_app(
         run_id = secrets.token_urlsafe(8)
         channel = RunChannel(run_id, session_id, channels)
         channels[run_id] = channel
+        # R31: durable run record — survives a server bounce, unlike `channels`.
+        db.record_run_start(run_id, session_id, pid=None)
 
         cmd = [
             sys.executable, '-m', 'codingdude.worker',
@@ -345,6 +353,7 @@ def create_app(
             '--session', session_id,
             '--workdir', workdir,
             '--prompt', body.prompt,
+            '--run-id', run_id,
         ]
         if body.model:
             cmd += ['--model', body.model]
@@ -367,6 +376,8 @@ def create_app(
         channel.worker = subprocess.Popen(
             cmd, env={**os.environ, 'CODEDUDE_WORKER_TOKEN': token}
         )
+        # R31: backfill the live pid now that the process exists.
+        db.record_run_start(run_id, session_id, pid=channel.worker.pid)
         logging.getLogger('codingdude.server').info(
             'RUN_START run=%s session=%s worker_pid=%s prompt=%r',
             run_id, session_id, channel.worker.pid, body.prompt[:120])

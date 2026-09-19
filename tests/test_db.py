@@ -192,3 +192,39 @@ def test_delete_session_cascades_all_session_scoped_tables(home, workdir):
             orphaned.append(f'{table}={n}')
     assert not orphaned, f'orphaned rows after delete_session: {orphaned}'
     assert db.list_sessions(workdir) == []
+
+
+def test_run_lifecycle_start_then_end(home, workdir):
+    """R31: runs are persisted so run end-state survives a server bounce."""
+    db = Database.connect(home)
+    sid = db.create_session(workdir)
+    db.record_run_start('runA', sid, pid=4242)
+    row = db.get_run('runA')
+    assert row['status'] == 'running'
+    assert row['session_id'] == sid
+    assert row['worker_pid'] == 4242
+    db.record_run_end('runA', 'completed')
+    assert db.get_run('runA')['status'] == 'completed'
+
+
+def test_run_end_status_variants(home, workdir):
+    db = Database.connect(home)
+    sid = db.create_session(workdir)
+    db.record_run_start('runB', sid, pid=1)
+    db.record_run_end('runB', 'failed', exit_code=1)
+    assert db.get_run('runB')['status'] == 'failed'
+    assert db.get_run('runB')['exit_code'] == 1
+
+
+def test_reconcile_marks_orphaned_running_runs_interrupted(home, workdir):
+    """A run still 'running' after a server restart can never finish — it is
+    interrupted by definition. Reconcile makes that end-state durable."""
+    db = Database.connect(home)
+    sid = db.create_session(workdir)
+    db.record_run_start('runLive', sid, pid=1)
+    db.record_run_start('runDone', sid, pid=2)
+    db.record_run_end('runDone', 'completed')
+    assert db.reconcile_interrupted_runs() == 1
+    assert db.get_run('runLive')['status'] == 'interrupted'
+    assert db.get_run('runDone')['status'] == 'completed'
+    assert db.reconcile_interrupted_runs() == 0  # idempotent

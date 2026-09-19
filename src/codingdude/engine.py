@@ -233,13 +233,18 @@ class Engine:
             return False
         return bool(result.stdout.strip())
 
-    def _make_tracer(self, session_id: str, workdir: Path, trace: bool, emit):
+    def _make_tracer(self, session_id: str, workdir: Path, trace: bool, emit,
+                     run_id: str | None = None):
         """The per-run event sink: trace JSONL + render capture + UI emit."""
         trace_file = self._config_home() / 'traces' / f'{session_id}.jsonl'
 
         def traced(event: dict) -> None:
             from codingdude.traces import append_trace_line
 
+            if run_id is not None:
+                # R31 provenance: every trace event names the run that
+                # produced it, so forensics survive server bounces.
+                event = {**event, 'run_id': run_id}
             if trace:
                 # Single atomic append per line (#79): concurrent writers
                 # (engine tracer + trace_terminal) must never interleave.
@@ -338,6 +343,7 @@ class Engine:
         max_test_iterations: int = 3,
         image_path: Path | None = None,
         vision_model: Model | None = None,
+        run_id: str | None = None,
     ) -> RunOutcome:
         if session_id is None:
             session_id = self._db.create_session(workdir, title=prompt[:80])
@@ -348,7 +354,7 @@ class Engine:
         # extraction lands before this prompt is assembled.
         await self._drain_pending_post_run()
 
-        traced = self._make_tracer(session_id, workdir, trace, emit)
+        traced = self._make_tracer(session_id, workdir, trace, emit, run_id=run_id)
 
         from .codegraph_boot import boot_codegraph, boot_hint
         from .scaffold import ensure_project_scaffold

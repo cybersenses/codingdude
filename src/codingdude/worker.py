@@ -79,16 +79,28 @@ async def _finish_run(engine, args, on_event, outcome=None, exc=None) -> None:
             'code': 'budget' if isinstance(exc, BudgetExceeded) else 'error',
             'message': str(exc),
         }
+        end_status, end_code = 'failed', 1
     elif outcome.status == 'gate_aborted':
         terminal = {
             'type': 'RUN_ERROR',
             'code': 'gate',
             'message': outcome.output,
         }
+        end_status, end_code = 'gate_aborted', 0
     else:
         # Only after persistence: the UI reading messages must see
         # the full exchange when RUN_FINISHED lands.
         terminal = {'type': 'RUN_FINISHED'}
+        end_status, end_code = 'completed', 0
+    # R31: durable run end-state — a bounce after this point still leaves a
+    # terminal status in the DB, not a phantom 'running' row.
+    run_id = getattr(args, 'run_id', None)
+    if run_id:
+        try:
+            engine._db.record_run_end(run_id, end_status, exit_code=end_code)
+        except Exception:  # noqa: BLE001 — bookkeeping must never fail the run
+            logging.getLogger('codingdude.worker').warning(
+                'RUN_END_RECORD_FAILED run=%s', run_id, exc_info=True)
     trace_terminal(args.session, terminal)
     # Single writer: queued, so ordering with other events is preserved.
     on_event(terminal)
@@ -354,18 +366,6 @@ async def run(args) -> int:
 
         runner_task = asyncio.create_task(runner())
 
-        async def runner():
-            try:
-                outcome = await engine.run(
-                    **engine_run_kwargs(args, model, vision_model),
-                    approvals=policy,
-                    emit=on_event,
-                )
-            except Exception as exc:  # noqa: BLE001 — reported to the UI, not crashed
-                await _finish_run(engine, args, on_event, exc=exc)
-                return
-            await _finish_run(engine, args, on_event, outcome=outcome)
-
         # Sender exits when it forwards the terminal event. The UI is
         # settled by then; drain the pending tail before teardown (R30).
         await sender_task
@@ -414,6 +414,7 @@ def engine_run_kwargs(args, model, vision_model=None) -> dict:
         'fix_loop': args.fix_loop,
         'image_path': image_path_arg(args),
         'vision_model': vision_model,
+        'run_id': getattr(args, 'run_id', None),
     }
 
 
@@ -452,6 +453,7 @@ def main(argv=None) -> int:
     parser.add_argument('--fix-loop', action='store_true')
     parser.add_argument('--image', default=None, help='path to an image to include with the prompt')
     parser.add_argument('--budget', type=float, default=None)
+    parser.add_argument('--run-id', default=None, help='run id for durable lifecycle records (R31)')
     args = parser.parse_args(argv)
     # Lifecycle diagnostics (R31): always mirror worker logs to a file under
     # ~/.codingdude/logs/ so post-run forensics don't depend on a console.
