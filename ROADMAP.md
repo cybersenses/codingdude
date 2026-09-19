@@ -706,9 +706,11 @@ Worker still wedges after drain on some runs (trace ends at MEMORY_EXTRACTED, wo
 Per research (reference/research/language-support-priorities.md): add Tier 3 Java + PHP, Tier 2 JSON/YAML/TOML (HTML/CSS pattern), Bash. R26 batch pattern: `_<lang>_spec()` in langs.py, suffix branch in spec_for, pyproject deps, tests.
 
 ## R33 — R33: Review automation (Bito-inspired)
-**Status:** open
+**Status:** done
 
 Mirror Bito's highest-value capabilities: automated PR summaries and automated code review with fix application. Research source: bito.ai (PR review agent, one-click fixes, model router). Model router deliberately deferred — lowest alignment with current trajectory.
+
+Shipped: #66 pr_summary tool (commit list + diff stat + AST semantic summaries, `0cc5c28`); #67 post-push review directive — git_push returns the pushed range and mandates the review→verify→fix→gates loop, never auto-pushes (`e445c05`); #68 review checklist mandates codegraph impact analysis + verified-only findings (`404ca97`).
 
 ## R34 — R34: Human interface & cowork (Monaco editor)
 **Status:** done
