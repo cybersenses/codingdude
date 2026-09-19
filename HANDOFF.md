@@ -1,29 +1,46 @@
 # Handoff note - to the next agent on duty
 
-*Updated after commit 2880f04 (pushed). Main == origin/main, tree clean.*
+*Updated after commit 0330dec (pushed). Main == origin/main, tree clean.*
 
 ## Current state
-- **R33 (Review automation) DONE** - all 3 tickets closed:
-  - #66 `0cc5c28`: `prsum.py` - pr_summary tool (commit list, diff stat,
-    AST semantic summaries per changed .py file, base..HEAD).
-  - #67 `e445c05`: post-push review directive - git_push returns the pushed
-    range (pre-push remote head..HEAD) and mandates review -> verified fixes
-    -> gates -> commit; never auto-pushes.
-  - #68 `404ca97`: review checklist (prompts/review.md) mandates codegraph
-    impact analysis on touched symbols + verified-only findings.
-- **R34 done earlier this session** (be12533 / afd0241 / a75b458) - Monaco
-  file API/editor/diff; live UI check (tree -> edit -> diff -> save) done.
-- Gates: 510 passed / 1 skipped, ruff + mypy clean (53 files).
+- **R35 (UI polish, VS Code-style) IN PROGRESS - ticket #72 Phase 1 done
+  (`0330dec`, pushed):**
+  - Center: FileExplorer (tree + Monaco tabs + diff) is the editor area.
+  - Right: chat panel (prompt + messages) as aside, existing rightWidth
+    divider.
+  - Bottom: DockPanel is now a horizontal VS Code-style dock (tab strip on
+    top + body) with drag-to-resize top edge; height persists in
+    `cd-dock-h` (default 240, clamp 120-560). 'Files' removed from dock
+    tabs (it is the center now). Footer stays status bar.
+  - Fixed in passing: Processes tab crashed on bare `processes` identifier
+    - now a proper prop (App already passed it).
+  - User direction: do NOT aim to 100% copy VS Code - rearrange existing
+    panels first, then highlight what makes us unique and what matters to
+    the user.
+  - **Next phase ideas:** narrow explorer gutter inside center; open Files
+    tree default-expanded in center; panel tabs styling; unique-feature
+    emphasis (agent status, run output, diff review).
+- **R33 DONE** (`0cc5c28` prsum, `e445c05` post-push review directive,
+  `404ca97` graph-informed reviews).
+- **R34 done** (be12533 / afd0241 / a75b458) - Monaco file API/editor/diff.
+- Frontend gates: vitest 16/16, build clean. Full backend gates last run:
+  510 passed / 1 skipped, ruff + mypy clean (53 files).
+- **Server needs a bounce to serve the new dist** (layout change not yet
+  live-checked).
 
 ## MUST DO after bounce
-- Nothing mandatory. Server serves latest dist (bounced after R34).
+- Bounce server; live-verify the new layout (center editor, chat right,
+  dock bottom, dock resize + persistence).
 
 ## Open roadmap
-- R31 (run-end determinism residual) - flicker fix live; scoping pass
-  pending. **Deliberately kept open** as insurance: if the run-end hang /
-  ghost-process / UI-settle family recurs, do NOT whack-a-mole - use the
-  existing instrumentation (worker-<session>.log, server.log, PROCESS_*
-  trace events, process panel) and diagnose via the diagnosing-bugs skill.
+- **R35 (UI polish) open - #72 in progress (Phase 1 done), #73 logged:**
+  worker exited unexpectedly (code 1) without finishing the run. Belongs
+  to the R31 hang family.
+- R31 (run-end determinism residual) - **deliberately kept open** as
+  insurance: if the run-end hang / ghost-process / UI-settle family
+  recurs, do NOT whack-a-mole - use the existing instrumentation
+  (worker-<session>.log, server.log, PROCESS_* trace events, process
+  panel) and diagnose via the diagnosing-bugs skill.
 
 ## Known accepted gaps
 - Post-push review loop is directive-driven (tool output guidance), not a
