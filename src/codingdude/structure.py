@@ -51,12 +51,9 @@ def _python_symbols(path: Path) -> list[dict]:
 
 
 def _js_symbols(path: Path) -> list[dict]:
-    from .repo_map import js_signatures_source
+    from .repo_map import js_symbols_source
 
-    out: list[dict] = []
-    for sig in js_signatures_source(path.read_bytes(), path.suffix):
-        sig = sig.strip()
-        kind, _, name = sig.partition(' ')
-        name = name.replace(' = fn', '')
-        out.append({'kind': kind, 'name': name, 'line': 0})
-    return out
+    return [
+        {'kind': s.kind, 'name': s.name, 'line': s.line}
+        for s in js_symbols_source(path.read_bytes(), path.suffix)
+    ]

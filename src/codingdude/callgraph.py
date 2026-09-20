@@ -39,6 +39,7 @@ def _python_graph(path: Path) -> dict:
     nodes: list[dict] = []
     edges: list[list[str]] = []
     defined: dict[str, str] = {}  # bare name -> qualified id
+    fn_nodes: list[tuple[ast.AST, str]] = []  # (node, qualified id), one pass
 
     def qual(prefix: str, name: str) -> str:
         return f'{prefix}.{name}' if prefix else name
@@ -49,16 +50,17 @@ def _python_graph(path: Path) -> dict:
                 qid = qual(prefix, child.name)
                 defined.setdefault(child.name, qid)
                 nodes.append({'id': qid, 'name': child.name, 'line': child.lineno})
+                fn_nodes.append((child, qid))
                 collect(child, qid)
             elif isinstance(child, ast.ClassDef):
                 qid = qual(prefix, child.name)
                 defined.setdefault(child.name, qid)
                 collect(child, qid)
 
-    # Pass 1: collect all definitions so forward/self references resolve.
+    # Single pass: collect definitions (so forward/self references resolve)
+    # and remember each function node with its qualified id for edge resolution.
     collect(tree, '')
 
-    # Pass 2: resolve call edges.
     def calls_of(fn, fn_id: str) -> None:
         for sub in ast.walk(fn):
             if isinstance(sub, ast.Call):
@@ -70,27 +72,9 @@ def _python_graph(path: Path) -> dict:
                 if name and name in defined and defined[name] != fn_id:
                     edges.append([fn_id, defined[name]])
 
-    # Resolve edges using the qualified ids from nodes directly.
-    for n in nodes:
-        fn = _find_fn(tree, n['id'])
-        if fn is not None:
-            calls_of(fn, n['id'])
+    for fn, qid in fn_nodes:
+        calls_of(fn, qid)
     return _finish(nodes, edges)
-
-
-def _find_fn(tree: ast.AST, qid: str):
-    parts = qid.split('.')
-
-    def descend(node, i: int):
-        for child in ast.iter_child_nodes(node):
-            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef,
-                                  ast.ClassDef)) and child.name == parts[i]:
-                if i == len(parts) - 1:
-                    return child
-                return descend(child, i + 1)
-        return None
-
-    return descend(tree, 0)
 
 
 def _js_graph(path: Path) -> dict:

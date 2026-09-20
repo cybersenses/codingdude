@@ -8,6 +8,7 @@ map exceeds its budget, signature sections drop first (the file tree survives).
 
 import ast
 from pathlib import Path
+from typing import NamedTuple
 
 from pydantic_ai.toolsets import FunctionToolset
 
@@ -53,7 +54,25 @@ def js_signatures(path: Path) -> list[str]:
 
 
 def js_signatures_source(source: bytes, suffix: str) -> list[str]:
-    """Same, from raw source bytes (suffix like '.ts')."""
+    """Formatted signatures from raw source bytes (suffix like '.ts')."""
+    return [
+        f'    {sym.kind} {sym.name}{" = fn" if sym.kind == "const" else ""}'
+        for sym in js_symbols_source(source, suffix)
+    ]
+
+
+class Symbol(NamedTuple):
+    kind: str
+    name: str
+    line: int
+
+
+def js_symbols_source(source: bytes, suffix: str) -> list[Symbol]:
+    """Structured JS/TS symbols from raw source bytes (suffix like '.ts').
+
+    Single source of truth for both the repo map's formatted signatures and
+    structure.py's per-file outlines (#100): kind/name/1-based line.
+    """
     try:
         from tree_sitter import Parser
 
@@ -70,27 +89,28 @@ def js_signatures_source(source: bytes, suffix: str) -> list[str]:
         name_node = node.child_by_field_name('name')
         return name_node.text.decode() if name_node else None
 
-    sigs = []
+    symbols: list[Symbol] = []
 
     def walk(node, depth):
         if node.type in ('function_declaration', 'class_declaration') and depth <= 2:
             name = name_of(node)
             if name:
                 kind = 'class' if 'class' in node.type else 'function'
-                sigs.append(f'    {kind} {name}')
+                symbols.append(Symbol(kind, name, node.start_point[0] + 1))
                 return
         if node.type == 'variable_declarator' and depth <= 2:
             value = node.child_by_field_name('value')
             if value is not None and value.type in ('arrow_function', 'function_expression'):
                 name_node = node.child_by_field_name('name')
                 if name_node:
-                    sigs.append(f'    const {name_node.text.decode()} = fn')
+                    symbols.append(
+                        Symbol('const', name_node.text.decode(), node.start_point[0] + 1))
                     return
         for child in node.children:
             walk(child, depth + 1)
 
     walk(tree.root_node, 0)
-    return sigs
+    return symbols
 
 
 def build_repo_map(workdir: Path, budget: int = DEFAULT_BUDGET,

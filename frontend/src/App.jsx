@@ -11,6 +11,7 @@ import { groupEventsByRun, pickRunId } from './runs'
 import { buildSpans } from './waterfall'
 import { impactMermaid } from './impact'
 import { callgraphMermaid, graphView } from './callgraph'
+import { structureRows } from './structure'
 
 // R6: render-only mermaid diagrams inside spec blocks. Renders each
 // ```mermaid fence to SVG; on failure the raw fence stays visible.
@@ -1520,18 +1521,27 @@ function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, heigh
       <div className="rounded border border-line bg-surface">
         <div className="border-b border-line px-2 py-1 font-mono text-[10px] uppercase tracking-wide text-ink-muted">project structure</div>
         <div className="max-h-[70vh] overflow-auto p-2 text-[11px]">
-          {(data.structure?.files || []).length > 0 ? data.structure.files.map((f) => (
-            <details key={f.path} className="mb-0.5">
-              <summary className="cursor-pointer font-mono text-brand-300">{f.path} <span className="text-ink-muted">({f.lines} lines)</span></summary>
-              <div className="pl-4">
-                {(f.symbols || []).map((s, i) => (
-                  <div key={i} className="font-mono text-ink-muted">
-                    <span className={s.kind === 'class' ? 'text-accent' : ''}>{s.kind}</span> {s.name}
-                  </div>
-                ))}
-              </div>
-            </details>
-          )) : <div className="text-xs text-ink-muted">No source files yet.</div>}
+          {(() => {
+            const rows = structureRows(data.structure)
+            if (rows.length === 0) return <div className="text-xs text-ink-muted">No source files yet.</div>
+            const byPath = new Map()
+            for (const r of rows) {
+              if (!byPath.has(r.path)) byPath.set(r.path, { lines: r.lines, symbols: [] })
+              byPath.get(r.path).symbols.push(r)
+            }
+            return [...byPath.entries()].map(([p, { lines, symbols }]) => (
+              <details key={p} className="mb-0.5">
+                <summary className="cursor-pointer font-mono text-brand-300">{p} <span className="text-ink-muted">({lines} lines)</span></summary>
+                <div className="pl-4">
+                  {symbols.map((s, i) => (
+                    <div key={i} className="font-mono text-ink-muted">
+                      <span className={s.kind === 'class' ? 'text-accent' : ''}>{s.kind}</span> {s.name}
+                    </div>
+                  ))}
+                </div>
+              </details>
+            ))
+          })()}
         </div>
       </div>
     )
