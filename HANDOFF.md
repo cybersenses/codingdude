@@ -99,3 +99,10 @@
   - #89 writing-skills: skeleton gains required "Success Signal" section (observable compliance check) + checklist item. Red→green verified.
 - Skills edited in C:/Users/norma/.codingdude/skills/ (not a git repo — no commit possible there). Scratch patch scripts deleted.
 - ROADMAP.md R39→done committed with this handover.
+
+## Handover — 2026-09-20 (R41 #92)
+- R40 logged: #90 surgical-patch scope discipline (Minimal Change Engineer), #91 caveman-explore three-level output. #90 in_progress, not started.
+- R41 #92 DONE: 13 checklists in reference/checklists/ (api, backend, cost-finops, data-eng, database, dev-exp, devops, frontend, i18n, incident-response, llm-app, payments, security-privacy). Format: As-of + source URLs + Use when + Checklist + Failure modes + Rejected. Indexed + search-verified. reference/ is gitignored — files live on disk only, not in git.
+- Skipped with reasons (recorded in #92): mobile×2, multi-agent-architect, 4 already-adopted personas.
+- Lesson: delegated write=true agents' sandbox writes did NOT land on disk (reported success falsely); sub-agents also couldn't see files created after session start. Distill heavy work in main session or verify delegated writes with real reads.
+- #93 (specialty-actions seam) next after #90/#91. Gates not run (no code changed); ROADMAP committed c16d018, pushed, tree clean, main == origin/main.
