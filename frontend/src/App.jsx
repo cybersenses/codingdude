@@ -1138,6 +1138,10 @@ function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, heigh
             // not masquerade as "no callable symbols found".
             if (activePath === (data.callgraphPath || activePath)) setData((d) => ({ ...d, graphError: String(err instanceof Error ? err.message : err) }))
           }
+          try {
+            const t = await call(`/sessions/${sessionId}/trust?path=${encodeURIComponent(activePath)}`)
+            setData((d) => ({ ...d, trust: t, trustPath: activePath }))
+          } catch { /* trust is supplementary; callgraph errors already surfaced */ }
         }
         if (tab === 'Graph' && !activePath) {
           const s = await call(`/sessions/${sessionId}/structure`)
@@ -1523,6 +1527,19 @@ function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, heigh
             return <Mermaid code={callgraphMermaid(data.callgraph)} />
           })()}
         </div>
+        {data.trust && data.trustPath === activePath && (
+          <div className="border-t border-line px-2 py-1 text-[11px]">
+            <div className="font-mono text-[10px] uppercase tracking-wide text-ink-muted">test evidence</div>
+            {data.trust.referencing_tests.length === 0
+              ? <div className="text-xs text-danger">⚠ No tests reference this file — changes here are unverified.</div>
+              : (
+                <>
+                  <div className="text-xs text-ink">{data.trust.referencing_tests.length} test file(s): {data.trust.referencing_tests.join(', ')}</div>
+                  {data.trust.property_test_files.length > 0 && <div className="text-xs text-brand-300">includes property tests: {data.trust.property_test_files.join(', ')}</div>}
+                </>
+              )}
+          </div>
+        )}
       </div>
     ) : (
       <div className="rounded border border-line bg-surface">

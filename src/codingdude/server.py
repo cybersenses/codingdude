@@ -677,6 +677,19 @@ def create_app(
             raise HTTPException(status_code=404, detail='no such session')
         return build_module_graph(Path(workdir))
 
+    @app.get('/sessions/{session_id}/trust')
+    def session_trust(session_id: str, path: str, _: None = Depends(authorize)) -> dict:
+        """Trust-my-tests: which tests reference this file (#103, R43)."""
+        from .trustreport import build_trust_report
+
+        workdir = db.session_workdir(session_id)
+        if not workdir:
+            raise HTTPException(status_code=404, detail='no such session')
+        target = Path(workdir) / path
+        if not target.resolve().is_relative_to(Path(workdir).resolve()):
+            raise HTTPException(status_code=400, detail='path escapes workdir')
+        return build_trust_report(workdir, path)
+
     @app.get('/sessions/{session_id}/structure')
     def session_structure(session_id: str, _: None = Depends(authorize)) -> dict:
         """Per-file symbol outlines — human project overview (#95, R42)."""
