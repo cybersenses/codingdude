@@ -137,3 +137,11 @@
 - Gates: pytest 565/1 skip (one infra flake of test_interactive_approval_roundtrip, green on rerun), ruff+mypy clean, eslint clean, vitest 59/59, build ✓. R40/R41/R42 → done; ALL tickets closed.
 - SERVER BOUNCE NEEDED to serve new dist + /checklists endpoints (last push @ 1fda07a).
 - Fixture removal note: skillscope test scaffold committed then removed (922da08).
+
+## Handover — 2026-09-20 (R43 wave 2: #101 + #102 shipped, bounce needed)
+- Research: reference/research/human-code-comprehension.md (As-of 2026-09-20, indexed, gitignored). Top-5 shortlist → R43 tickets #101–#105.
+- #101 shipped `5820a35`: build_module_graph(workdir) in callgraph.py — files as nodes, cross-file imports as edges (Python AST incl. relative/package resolution; JS/TS import specifiers with ext/index resolution); reuses _finish orphan flagging. GET /sessions/{sid}/archmap. Graph tab (no file open) renders the map via existing callgraphMermaid above the structure list. 7 new python tests.
+- #102 shipped `9069b3f`: frontend/src/repoqa.ts buildRepoQuestionPrompt (4 vitest tests) — question grounded in structure+archmap, demands file+line citations, runs through the normal send() flow. Ask box in Graph tab; DockPanel gained onAsk prop.
+- Gates: pytest 573/1 skip, ruff+mypy (58 files) clean, eslint clean, vitest 63/63, build ✓. main == origin/main @ 9069b3f.
+- SERVER BOUNCE NEEDED (new dist + /archmap endpoint; last push @ 9069b3f).
+- Remaining R43: #103 trust-my-tests report (S/M), #104 code tour of a run (M), #105 auto design doc/ADR (M/L).
