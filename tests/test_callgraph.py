@@ -55,7 +55,23 @@ def helper():
     g = build_call_graph(tmp_path / 'm.py')
     by_id = {n['id']: n for n in g['nodes']}
     assert by_id['unused']['orphan'] is True
-    assert by_id['entry']['orphan'] is False
+    # entry() calls helper but nothing calls entry => dead code too.
+    assert by_id['entry']['orphan'] is True
+    assert by_id['helper']['orphan'] is False
+
+
+def test_dead_but_calling_function_flagged_orphan(tmp_path):
+    _write(tmp_path, 'm.py', '''
+def dead():
+    helper()
+
+def helper():
+    pass
+''')
+    g = build_call_graph(tmp_path / 'm.py')
+    by_id = {n['id']: n for n in g['nodes']}
+    # dead() is never called => dead code, even though it calls helper().
+    assert by_id['dead']['orphan'] is True
     assert by_id['helper']['orphan'] is False
 
 

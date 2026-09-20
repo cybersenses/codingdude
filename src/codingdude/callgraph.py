@@ -25,12 +25,12 @@ def build_call_graph(path: Path) -> dict:
 
 
 def _finish(nodes: list[dict], edges: list[list[str]]) -> dict:
-    degree: dict[str, int] = {}
-    for a, b in edges:
-        degree[a] = degree.get(a, 0) + 1
-        degree[b] = degree.get(b, 0) + 1
+    callers: set[str] = set()
+    for _a, b in edges:
+        callers.add(b)
+    # orphan = dead code: no caller anywhere in the file (in-degree 0).
     for n in nodes:
-        n['orphan'] = degree.get(n['id'], 0) == 0
+        n['orphan'] = n['id'] not in callers
     return {'nodes': nodes, 'edges': edges}
 
 
