@@ -751,16 +751,16 @@ Phase 3 — Dependency/impact mini-graph: AST/tree-sitter import edges for edite
 Adopt 4 ideas from the agency-agents repo review into our skill library: standard skill skeleton with success signals, post-mortem template + hypothesis timebox in diagnosing-bugs, triage markers + no-drip-feed in code-review.
 
 ## R40 — R40 — Engineering persona distillation
-**Status:** open
+**Status:** done
 
 Adopt behavioral techniques (not personas) from agency-agents Engineering Division: (a) Minimal Change Engineer scope discipline into surgical-patch; (b) three-level explanation + inspection-coverage honesty into caveman-explore.
 
 ## R41 — R41 — Persona checklist distillation + specialty-actions seam
-**Status:** open
+**Status:** done
 
 Strip the idea-value from all agency-agents personas (~130, 23 divisions) into versioned reference checklists per specialty, indexed via search_references. Later: a specialty-actions seam so users can invoke these as actions on the systems CodingDude builds. Explicitly NOT adopting personas as identity.
 
 ## R42 — R42 — Human code comprehension (user-facing views of generated code)
-**Status:** open
+**Status:** done
 
 Second feature thrust: tools that help a HUMAN understand the code the agent generates — call graphs, structure views, dependency maps of the produced code itself (not run telemetry). Audience shift: agent introspection (R31/R35/R38) stays, but new work must derive from user value.

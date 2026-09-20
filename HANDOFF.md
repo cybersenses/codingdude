@@ -127,3 +127,13 @@
 - #100: structure seam untested; _js_symbols re-parses repo_map display strings; duplicate tree descent in callgraph; inline untested structure render in App.jsx.
 - Gates at review time: 555 pytest/1 skip, ruff+mypy clean, eslint clean, vitest 49/49, build ✓. Tree clean, main == origin/main @ da22f1f. Server healthy :8765 on 525cc8b.
 - Next session order: #97 → #98 → #99 → #100 (all TDD, red-first), then update ROADMAP/handover.
+
+## Handover — 2026-09-20 (AFK run: fixes + remaining tickets)
+- #97-#100 review fixes shipped (orphan semantics, JS arrows, error surfacing, structure seam) — c6daa49, df5c6ca, c705f40, 900ac0f.
+- #90 surgical-patch scope discipline: RED (43-line creep control) → GREEN (6-line patch, "Not done on purpose" section, traps table, Success Signal).
+- #91 caveman-explore: Shapes A/B (evidence block + 3-level explanation) + mandatory `not inspected:` coverage line. RED→GREEN verified via delegation.
+- #96 audience gate: AGENTS.md rule + project note 3 (Audience: human|agent, human first).
+- #93 checklists as user-invokable runs: GET /checklists + /checklists/{name}; frontend checklists.ts (checklistTitle/checklistPrompt, TDD 4 tests); "checklist…" picker in chat composer sends an evidence-citing NEEDS WORK/PARTIAL/PASS audit run. Commit 1fda07a pushed.
+- Gates: pytest 565/1 skip (one infra flake of test_interactive_approval_roundtrip, green on rerun), ruff+mypy clean, eslint clean, vitest 59/59, build ✓. R40/R41/R42 → done; ALL tickets closed.
+- SERVER BOUNCE NEEDED to serve new dist + /checklists endpoints (last push @ 1fda07a).
+- Fixture removal note: skillscope test scaffold committed then removed (922da08).
