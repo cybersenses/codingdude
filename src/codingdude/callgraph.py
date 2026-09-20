@@ -104,35 +104,46 @@ def _js_graph(path: Path) -> dict:
     edges: list[list[str]] = []
     defined: set[str] = set()
 
+    # A callable is a declared function/method/class OR a variable holding an
+    # arrow/function expression (the dominant style in generated React/TS).
+    DECL_TYPES = ('function_declaration', 'class_declaration',
+                  'method_definition')
+    ARROW_TYPES = ('arrow_function', 'function_expression')
+
     def name_of(node):
         n = node.child_by_field_name('name')
         return n.text.decode() if n else None
 
+    def callable_name(node) -> str | None:
+        if node.type in DECL_TYPES:
+            return name_of(node)
+        if node.type == 'variable_declarator':
+            value = node.child_by_field_name('value')
+            if value is not None and value.type in ARROW_TYPES:
+                return name_of(node)
+        return None
+
     def collect(node) -> None:
-        if node.type in ('function_declaration', 'class_declaration',
-                         'method_definition'):
-            name = name_of(node)
-            if name:
-                defined.add(name)
-                nodes.append({'id': name, 'name': name, 'line': node.start_point[0] + 1})
+        name = callable_name(node)
+        if name:
+            defined.add(name)
+            nodes.append({'id': name, 'name': name,
+                          'line': node.start_point[0] + 1})
         for child in node.children:
             collect(child)
 
     collect(tree.root_node)
 
     def walk_calls(node, current: str | None) -> None:
-        if node.type in ('function_declaration', 'method_definition',
-                         'arrow_function', 'function_expression'):
-            name = name_of(node) if node.type != 'arrow_function' else current
-            current = name or current
+        inner = callable_name(node) or current
         if node.type == 'call_expression':
             fn = node.child_by_field_name('function')
             if fn is not None and fn.type == 'identifier':
                 name = fn.text.decode()
-                if name in defined and name != current:
-                    edges.append([current or name, name])
+                if name in defined and name != inner:
+                    edges.append([inner or name, name])
         for child in node.children:
-            walk_calls(child, current)
+            walk_calls(child, inner)
 
     walk_calls(tree.root_node, None)
     return _finish(nodes, edges)

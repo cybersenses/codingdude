@@ -105,6 +105,37 @@ function main() { helper(); }
     assert ('main', 'helper') in {tuple(e) for e in g['edges']}
 
 
+def test_js_arrow_and_const_functions_are_callables(tmp_path):
+    _write(tmp_path, 'm.jsx', '''
+const helper = () => 1;
+const main = () => { helper(); };
+export default main;
+''')
+    g = build_call_graph(tmp_path / 'm.jsx')
+    names = {n['name'] for n in g['nodes']}
+    assert names == {'helper', 'main'}
+    assert ('main', 'helper') in {tuple(e) for e in g['edges']}
+    by_name = {n['name']: n for n in g['nodes']}
+    # main is never called (export is not a call) => dead code; helper is called by main.
+    assert by_name['main']['orphan'] is True
+    assert by_name['helper']['orphan'] is False
+
+
+def test_js_self_edge_not_emitted_for_nested_calls(tmp_path):
+    _write(tmp_path, 'm.js', '''
+const outer = () => {
+  const inner = () => 1;
+  inner();
+};
+''')
+    g = build_call_graph(tmp_path / 'm.js')
+    nodes = {n['name'] for n in g['nodes']}
+    assert nodes == {'outer', 'inner'}
+    edges = {tuple(e) for e in g['edges']}
+    assert ('outer', 'inner') in edges
+    assert all(a != b for a, b in edges), 'self-edges are bogus'
+
+
 def test_node_carries_line_numbers(tmp_path):
     _write(tmp_path, 'm.py', 'def a():\n    pass\n')
     g = build_call_graph(tmp_path / 'm.py')
