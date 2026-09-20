@@ -48,6 +48,26 @@ async def test_semantic_memory_retrieval_finds_synonyms(engine_ready, workdir):
     assert 'spaces only' in contents[0]
 
 
+def test_reference_dir_is_excluded_from_code_index(engine_ready, workdir):
+    """Scaffold-seeded checklists must not crowd code out of semantic results."""
+    engine, _ = engine_ready
+    (workdir / 'reference' / 'checklists').mkdir(parents=True)
+    (workdir / 'reference' / 'checklists' / 'backend.md').write_text(
+        'retry with backoff delays after a failed operation, retries, backoff\n' * 200
+    )
+    (workdir / 'retry.py').write_text(
+        'def backoff_after_failure(attempt):\n    return min(2 ** attempt, 60)\n'
+    )
+
+    index = SemanticIndex(engine.embedder, engine._db)
+    index.index_workdir(workdir)
+    hits = index.search('delays after a failed operation', workdir)
+    paths = [p for p, _ in hits]
+    assert paths, 'code files should still be indexed'
+    assert all(not p.startswith('reference/') for p in paths)
+    assert 'retry.py' in paths, f'code crowded out of semantic results: {paths}'
+
+
 async def test_semantic_code_search_tool_finds_concept(engine_ready, workdir):
     engine, _ = engine_ready
     (workdir / 'retry.py').write_text(

@@ -17,6 +17,10 @@ from .tools import SKIP_DIRS
 
 EMBED_EXTENSIONS = {'.py', '.md', '.txt', '.toml', '.json', '.js', '.ts', '.jsx', '.tsx'}
 MAX_FILE_CHARS = 20_000
+# `reference/` is curated documentation with its own search seam
+# (ReferenceStore); indexing it here lets long prose documents crowd real
+# code out of semantic results.
+EMBED_SKIP_DIRS = SKIP_DIRS | {'reference'}
 
 
 class FakeEmbedder:
@@ -64,7 +68,7 @@ class SemanticIndex:
         for f in sorted(workdir.rglob('*')):
             if not f.is_file() or f.suffix not in EMBED_EXTENSIONS:
                 continue
-            if any(part in SKIP_DIRS for part in f.relative_to(workdir).parts):
+            if any(part in EMBED_SKIP_DIRS for part in f.relative_to(workdir).parts):
                 continue
             content = f.read_text(encoding='utf-8', errors='replace')[:MAX_FILE_CHARS]
             digest = hashlib.sha256(content.encode()).hexdigest()
@@ -83,6 +87,10 @@ class SemanticIndex:
                 (rel, str(workdir), digest, vector),
             )
             count += 1
+        self.db._conn.execute(
+            'DELETE FROM embeddings WHERE workdir = ? AND path LIKE "reference/%"',
+            (str(workdir),),
+        )
         self.db._conn.commit()
         return count
 
