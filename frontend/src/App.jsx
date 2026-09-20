@@ -9,6 +9,7 @@ import { PANE_SPECS, paneWidth } from './panes'
 import { ACTIONS, buildActionPrompt } from './aiActions'
 import { groupEventsByRun, pickRunId } from './runs'
 import { buildSpans } from './waterfall'
+import { buildTour } from './tour'
 import { impactMermaid } from './impact'
 import { callgraphMermaid, graphView } from './callgraph'
 import { buildRepoQuestionPrompt } from './repoqa'
@@ -1377,6 +1378,20 @@ function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, heigh
           </div>
         )}
         {runId && <div className={`text-[10px] ${statusColor(statusOf(runId))}`}>run {runId} — {statusOf(runId) || 'unknown'}</div>}
+        {runId && (
+          <div className="rounded border border-line bg-surface p-1">
+            <div className="font-mono text-[10px] uppercase tracking-wide text-ink-muted">tour of this run</div>
+            {(() => {
+              const steps = buildTour(events)
+              if (!steps.length) return <div className="px-1 text-[10px] text-ink-muted">nothing narratable happened in this run.</div>
+              return (
+                <ol className="list-inside list-decimal space-y-0.5 px-1 text-[11px] text-neutral-300">
+                  {steps.map((s, i) => <li key={i}>{s.label}</li>)}
+                </ol>
+              )
+            })()}
+          </div>
+        )}
       </div>
     )
   } else if (tab === 'Waterfall') {
