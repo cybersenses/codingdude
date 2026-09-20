@@ -28,8 +28,23 @@ the codebase evolves — the agent reads this before every run.
 """
 
 
+def _bundled_checklists() -> list[tuple[str, str]]:
+    """(filename, content) for the distilled checklists shipped with the package."""
+    import importlib.resources
+
+    root = importlib.resources.files('codingdude') / 'data' / 'checklists'
+    out: list[tuple[str, str]] = []
+    for res in sorted(root.iterdir(), key=lambda r: r.name):
+        if res.name.endswith('.md'):
+            out.append((res.name, res.read_text(encoding='utf-8')))
+    return out
+
+
 def ensure_project_scaffold(workdir: Path) -> dict:
     """Create any missing base infrastructure in `workdir`.
+
+    Includes seeding `reference/checklists/` with the distilled checklists
+    (per-file idempotent: existing files are never overwritten).
 
     Returns {'created': [names], 'errors': [messages]}.
     """
@@ -51,4 +66,10 @@ def ensure_project_scaffold(workdir: Path) -> dict:
     _want('reference', lambda p: p.mkdir(parents=True))
     _want('ROADMAP.md', lambda p: p.write_text(_ROADMAP_TEMPLATE, encoding='utf-8'))
     _want('CONTEXT.md', lambda p: p.write_text(_CONTEXT_TEMPLATE, encoding='utf-8'))
+
+    for name, content in _bundled_checklists():
+        _want(
+            f'reference/checklists/{name}',
+            lambda p, _c=content: (p.parent.mkdir(parents=True, exist_ok=True), p.write_text(_c, encoding='utf-8')),
+        )
     return {'created': created, 'errors': errors}
