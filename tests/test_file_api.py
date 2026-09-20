@@ -194,6 +194,21 @@ def test_callgraph_endpoint_rejects_escape(server, tmp_path):
     assert r.status_code == 400
 
 
+def test_callgraph_endpoint_non_utf8_returns_422(server, tmp_path):
+    """#99: a non-UTF-8 file must yield a readable 422, not a 500."""
+    app, base = server
+    workdir = tmp_path / 'proj'
+    workdir.mkdir()
+    (workdir / 'legacy.py').write_bytes(b'x = "\xff\xfe"\n')
+    sid = make_session(base, workdir)
+    r = httpx.get(
+        f'{base}/sessions/{sid}/callgraph',
+        params={'path': 'legacy.py'}, headers=auth(), timeout=10,
+    )
+    assert r.status_code == 422
+    assert 'legacy.py' in r.json()['detail']
+
+
 def test_structure_endpoint(server, tmp_path):
     """#95 (R42): project structure overview for humans."""
     app, base = server

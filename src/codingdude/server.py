@@ -660,8 +660,12 @@ def create_app(
             raise HTTPException(status_code=400, detail=error or 'bad path')
         try:
             return build_call_graph(target)
-        except (SyntaxError, ValueError, FileNotFoundError) as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except (
+            SyntaxError, ValueError, FileNotFoundError, UnicodeDecodeError
+        ) as exc:
+            raise HTTPException(
+                status_code=422, detail=f'cannot analyze {path}: {exc}'
+            ) from exc
 
     @app.get('/sessions/{session_id}/structure')
     def session_structure(session_id: str, _: None = Depends(authorize)) -> dict:

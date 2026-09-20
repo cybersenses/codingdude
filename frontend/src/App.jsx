@@ -10,7 +10,7 @@ import { ACTIONS, buildActionPrompt } from './aiActions'
 import { groupEventsByRun, pickRunId } from './runs'
 import { buildSpans } from './waterfall'
 import { impactMermaid } from './impact'
-import { callgraphMermaid } from './callgraph'
+import { callgraphMermaid, graphView } from './callgraph'
 
 // R6: render-only mermaid diagrams inside spec blocks. Renders each
 // ```mermaid fence to SVG; on failure the raw fence stays visible.
@@ -1125,7 +1125,16 @@ function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, heigh
     async function poll() {
       try {
         if (tab === 'Diff') { const r = await call(`/sessions/${sessionId}/diff`); setData((d) => ({ ...d, diff: r.diff, diffSummary: r.summary || [], impact: r.impact || null })) }
-        if (tab === 'Graph' && activePath) { const g = await call(`/sessions/${sessionId}/callgraph?path=${encodeURIComponent(activePath)}`); setData((d) => ({ ...d, callgraph: g, callgraphPath: activePath })) }
+        if (tab === 'Graph' && activePath) {
+          try {
+            const g = await call(`/sessions/${sessionId}/callgraph?path=${encodeURIComponent(activePath)}`)
+            setData((d) => ({ ...d, callgraph: g, callgraphPath: activePath, graphError: undefined }))
+          } catch (err) {
+            // #99: a 422 (unparseable file) must reach the user verbatim,
+            // not masquerade as "no callable symbols found".
+            if (activePath === (data.callgraphPath || activePath)) setData((d) => ({ ...d, graphError: String(err instanceof Error ? err.message : err) }))
+          }
+        }
         if (tab === 'Graph' && !activePath) { const s = await call(`/sessions/${sessionId}/structure`); setData((d) => ({ ...d, structure: s })) }
         if (tab === 'Cost') { const u = await call(`/sessions/${sessionId}/usage`); setData((d) => ({ ...d, usage: u })) }
         if (tab === 'Output') {
@@ -1498,11 +1507,13 @@ function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, heigh
           <span className="ml-auto uppercase tracking-wide text-ink-muted">call graph</span>
         </div>
         <div className="max-h-[70vh] overflow-auto p-2">
-          {data.callgraph && data.callgraphPath === activePath && (data.callgraph.nodes || []).length > 0 ? (
-            <Mermaid code={callgraphMermaid(data.callgraph)} />
-          ) : (
-            <div className="text-xs text-ink-muted">No callable symbols found in this file.</div>
-          )}
+          {(() => {
+            const view = graphView(data.callgraph, data.callgraphPath, activePath, data.graphError)
+            if (view.kind === 'error') return <div className="text-xs text-danger">{view.error}</div>
+            if (view.kind === 'loading') return <div className="text-xs text-ink-muted">Analyzing…</div>
+            if (view.kind === 'empty') return <div className="text-xs text-ink-muted">No callable symbols found in this file.</div>
+            return <Mermaid code={callgraphMermaid(data.callgraph)} />
+          })()}
         </div>
       </div>
     ) : (

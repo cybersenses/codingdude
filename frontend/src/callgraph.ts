@@ -29,3 +29,24 @@ export function callgraphMermaid(graph: CallGraph | null): string {
   lines.push('    classDef orphan stroke:#f59e0b,stroke-dasharray: 4 4')
   return lines.join('\n')
 }
+
+export type GraphView =
+  | { kind: 'graph' }
+  | { kind: 'loading' }
+  | { kind: 'empty' }
+  | { kind: 'error'; error: string }
+
+/** #99: which state the Graph tab is in. An error (e.g. a 422 from an
+ * unparseable file) must surface verbatim — never masquerade as
+ * "no callable symbols found". */
+export function graphView(
+  graph: CallGraph | undefined,
+  callgraphPath: string | undefined,
+  activePath: string,
+  error?: string,
+): GraphView {
+  if (error) return { kind: 'error', error }
+  if (!graph || callgraphPath !== activePath) return { kind: 'loading' }
+  if (graph.nodes.length === 0) return { kind: 'empty' }
+  return { kind: 'graph' }
+}

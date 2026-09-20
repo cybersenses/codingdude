@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { callgraphMermaid } from './callgraph'
+import { callgraphMermaid, graphView } from './callgraph'
 
 describe('callgraphMermaid', () => {
   it('renders nodes and edges', () => {
@@ -34,5 +34,27 @@ describe('callgraphMermaid', () => {
   it('returns empty string for null/empty graph', () => {
     expect(callgraphMermaid(null)).toBe('')
     expect(callgraphMermaid({ nodes: [], edges: [] })).toBe('')
+  })
+})
+
+describe('graphView', () => {
+  const graph = { nodes: [{ id: 'a', name: 'a', line: 1, orphan: false }], edges: [] }
+
+  it('renders a fresh graph', () => {
+    expect(graphView(graph, 'm.py', 'm.py')).toEqual({ kind: 'graph' })
+  })
+
+  it('shows stale data as loading, not empty', () => {
+    expect(graphView(graph, 'old.py', 'm.py').kind).toBe('loading')
+  })
+
+  it('empty graph without error says no symbols', () => {
+    const v = graphView({ nodes: [], edges: [] }, 'm.py', 'm.py')
+    expect(v).toEqual({ kind: 'empty' })
+  })
+
+  it('error beats everything: the message must reach the user', () => {
+    const v = graphView(undefined, 'm.py', 'm.py', 'cannot analyze m.py: bad utf-8')
+    expect(v).toEqual({ kind: 'error', error: 'cannot analyze m.py: bad utf-8' })
   })
 })
