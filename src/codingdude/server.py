@@ -283,7 +283,13 @@ def create_app(
 
     @app.post('/sessions')
     def create_session(body: SessionIn, _: None = Depends(authorize)) -> dict:
-        session_id = db.create_session(Path(body.workdir).resolve(), title=body.title)
+        resolved = Path(body.workdir).resolve()
+        if not resolved.is_dir():
+            raise HTTPException(
+                status_code=422,
+                detail=f'no such directory: {resolved} — create it (or fix the path) first',
+            )
+        session_id = db.create_session(resolved, title=body.title)
         return {'session_id': session_id}
 
     @app.get('/sessions')
@@ -872,6 +878,11 @@ def create_app(
     @app.post('/projects')
     def add_project(body: ProjectIn, _: None = Depends(authorize)) -> dict:
         workdir = str(Path(body.workdir).resolve())
+        if not Path(workdir).is_dir():
+            raise HTTPException(
+                status_code=422,
+                detail=f'no such directory: {workdir} — create it (or fix the path) first',
+            )
         for p in db.list_projects():
             if p['workdir'] == workdir:
                 raise HTTPException(status_code=409, detail='a project with this workdir already exists')

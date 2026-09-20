@@ -1,6 +1,7 @@
 """Projects: named workdir registry, no cross-project bleeding."""
 
 import time
+from pathlib import Path
 
 import pytest
 
@@ -22,10 +23,12 @@ def _auth(token):
     return {'Authorization': f'Bearer {token}'}
 
 
-def test_project_crud_flow(client):
+def test_project_crud_flow(client, tmp_path):
     c, token = client
     h = {'Authorization': f'Bearer {token}'}
-    r = c.post('/projects', json={'name': 'Alpha', 'workdir': 'C:/proj/alpha'}, headers=h)
+    proj = tmp_path / 'alpha'
+    proj.mkdir()
+    r = c.post('/projects', json={'name': 'Alpha', 'workdir': str(proj)}, headers=h)
     assert r.status_code == 200
     r = c.get('/projects', headers=h)
     assert any(p['name'] == 'Alpha' for p in r.json())
@@ -57,6 +60,8 @@ def test_projects_recent_first(client, tmp_path):
     h = _auth(token)
     a = str(tmp_path / 'aaa')
     b = str(tmp_path / 'zzz')
+    Path(a).mkdir()
+    Path(b).mkdir()
     c.post('/projects', json={'name': 'AAA', 'workdir': a}, headers=h)
     c.post('/projects', json={'name': 'ZZZ', 'workdir': b}, headers=h)
     # Activity only in AAA (alphabetically first — must now sort first).
@@ -70,3 +75,22 @@ def test_projects_recent_first(client, tmp_path):
     r = c.get('/projects', headers=h)
     names = [p['name'] for p in r.json()]
     assert names.index('ZZZ') < names.index('AAA')
+
+
+def test_project_with_nonexistent_workdir_rejected(client, tmp_path):
+    """A typo'd path (e.g. 'G:Ai-Dev\\Godot' — missing backslash after the
+    drive) must 422, not silently register a garbage workdir that later
+    resolves against the server CWD and scaffolds nowhere (#steraids)."""
+    c, token = client
+    h = _auth(token)
+    r = c.post('/projects', json={'name': 'X', 'workdir': str(tmp_path / 'nope')}, headers=h)
+    assert r.status_code == 422
+    assert 'no such directory' in r.json()['detail']
+
+
+def test_session_with_nonexistent_workdir_rejected(client, tmp_path):
+    c, token = client
+    h = _auth(token)
+    r = c.post('/sessions', json={'workdir': str(tmp_path / 'missing')}, headers=h)
+    assert r.status_code == 422
+    assert 'no such directory' in r.json()['detail']

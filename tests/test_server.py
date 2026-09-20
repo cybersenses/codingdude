@@ -43,6 +43,7 @@ def auth(version='o'):
 
 
 def create_session(base, workdir: Path) -> str:
+    workdir.mkdir(parents=True, exist_ok=True)  # server rejects nonexistent dirs now
     r = httpx.post(
         f'{base}/sessions', json={'workdir': str(workdir)}, headers=auth(), timeout=10
     )
