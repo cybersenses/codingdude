@@ -738,7 +738,7 @@ Informal backlog formalized: engine.run decomposition (maintainability of the hi
 User highlights code in the editor and gets one-click agent actions (Explain, Fix, Optimise, Improve, …). Each action starts a scoped agent run on the selected snippet.
 
 ## R38 — R38: Visual aids (waterfall, semantic diff summary, impact graph)
-**Status:** in_progress
+**Status:** done
 
 Big-picture visual aids for humans, per reference/research/agent-activity-visualization.md (all zero/minimal new deps).
 Phase 1 — Run waterfall: hand-rolled SVG span timeline (TOOL_CALL_START/END brackets, delegations nested) in a new DockPanel tab; optional Chrome Trace Format export.
