@@ -140,3 +140,71 @@ def test_node_carries_line_numbers(tmp_path):
     _write(tmp_path, 'm.py', 'def a():\n    pass\n')
     g = build_call_graph(tmp_path / 'm.py')
     assert g['nodes'][0]['line'] == 1
+
+
+# ---- #101 (R43): module-level architecture map (cross-file import edges) ----
+
+from codingdude.callgraph import build_module_graph  # noqa: E402
+
+
+def test_python_relative_import_edge(tmp_path):
+    _write(tmp_path, 'main.py', 'from helpers import util\n\ndef run():\n    util()\n')
+    _write(tmp_path, 'helpers.py', 'def util():\n    return 1\n')
+    g = build_module_graph(tmp_path)
+    ids = {n['id'] for n in g['nodes']}
+    assert ids == {'main.py', 'helpers.py'}
+    assert ('main.py', 'helpers.py') in {tuple(e) for e in g['edges']}
+
+
+def test_python_package_relative_import(tmp_path):
+    (tmp_path / 'pkg').mkdir()
+    _write(tmp_path, 'pkg/__init__.py', '')
+    _write(tmp_path, 'pkg/core.py', 'X = 1\n')
+    _write(tmp_path, 'pkg/app.py', 'from .core import X\n')
+    _write(tmp_path, 'main.py', 'from pkg.app import run\n')
+    g = build_module_graph(tmp_path)
+    edges = {tuple(e) for e in g['edges']}
+    assert ('pkg/app.py', 'pkg/core.py') in edges
+    assert ('main.py', 'pkg/app.py') in edges
+
+
+def test_external_imports_not_edges(tmp_path):
+    _write(tmp_path, 'm.py', 'import os\nfrom fastapi import FastAPI\n')
+    g = build_module_graph(tmp_path)
+    assert g['edges'] == []
+    assert [n['id'] for n in g['nodes']] == ['m.py']
+
+
+def test_js_relative_import_edge(tmp_path):
+    _write(tmp_path, 'main.js', "import { util } from './helpers.js';\nutil();\n")
+    _write(tmp_path, 'helpers.js', 'export const util = () => 1;\n')
+    g = build_module_graph(tmp_path)
+    assert ('main.js', 'helpers.js') in {tuple(e) for e in g['edges']}
+
+
+def test_unresolvable_import_does_not_crash_or_edge(tmp_path):
+    _write(tmp_path, 'm.py', 'from .missing import thing\nfrom doesnotexist import x\n')
+    g = build_module_graph(tmp_path)
+    assert g['edges'] == []
+
+
+def test_module_graph_skips_venv_and_orphans_flagged(tmp_path):
+    _write(tmp_path, 'main.py', 'import helper\n')
+    _write(tmp_path, 'helper.py', 'X = 1\n')
+    venv = tmp_path / '.venv' / 'lib'
+    venv.mkdir(parents=True)
+    _write(venv, 'site.py', 'Y = 2\n')
+    g = build_module_graph(tmp_path)
+    ids = {n['id'] for n in g['nodes']}
+    assert 'main.py' in ids and 'helper.py' in ids
+    assert not any(i.startswith('.venv') for i in ids)
+    by_id = {n['id']: n for n in g['nodes']}
+    assert by_id['main.py']['orphan'] is True   # nothing imports it
+    assert by_id['helper.py']['orphan'] is False
+
+
+def test_module_graph_capped(tmp_path):
+    for i in range(12):
+        _write(tmp_path, f'm{i}.py', f'X = {i}\n')
+    g = build_module_graph(tmp_path, max_files=10)
+    assert len(g['nodes']) <= 10

@@ -1137,7 +1137,11 @@ function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, heigh
             if (activePath === (data.callgraphPath || activePath)) setData((d) => ({ ...d, graphError: String(err instanceof Error ? err.message : err) }))
           }
         }
-        if (tab === 'Graph' && !activePath) { const s = await call(`/sessions/${sessionId}/structure`); setData((d) => ({ ...d, structure: s })) }
+        if (tab === 'Graph' && !activePath) {
+          const s = await call(`/sessions/${sessionId}/structure`)
+          const a = await call(`/sessions/${sessionId}/archmap`)
+          setData((d) => ({ ...d, structure: s, archmap: a }))
+        }
         if (tab === 'Cost') { const u = await call(`/sessions/${sessionId}/usage`); setData((d) => ({ ...d, usage: u })) }
         if (tab === 'Output') {
           const runs = await call(`/sessions/${sessionId}/runs`)
@@ -1520,6 +1524,12 @@ function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, heigh
       </div>
     ) : (
       <div className="rounded border border-line bg-surface">
+        <div className="border-b border-line px-2 py-1 font-mono text-[10px] uppercase tracking-wide text-ink-muted">architecture map</div>
+        <div className="max-h-[40vh] overflow-auto p-2">
+          {data.archmap && data.archmap.nodes.length > 0
+            ? <Mermaid code={callgraphMermaid(data.archmap)} />
+            : <div className="text-xs text-ink-muted">No source files yet.</div>}
+        </div>
         <div className="border-b border-line px-2 py-1 font-mono text-[10px] uppercase tracking-wide text-ink-muted">project structure</div>
         <div className="max-h-[70vh] overflow-auto p-2 text-[11px]">
           {(() => {

@@ -667,6 +667,16 @@ def create_app(
                 status_code=422, detail=f'cannot analyze {path}: {exc}'
             ) from exc
 
+    @app.get('/sessions/{session_id}/archmap')
+    def session_archmap(session_id: str, _: None = Depends(authorize)) -> dict:
+        """Module-level architecture map — files as nodes, imports as edges (#101)."""
+        from .callgraph import build_module_graph
+
+        workdir = db.session_workdir(session_id)
+        if not workdir:
+            raise HTTPException(status_code=404, detail='no such session')
+        return build_module_graph(Path(workdir))
+
     @app.get('/sessions/{session_id}/structure')
     def session_structure(session_id: str, _: None = Depends(authorize)) -> dict:
         """Per-file symbol outlines — human project overview (#95, R42)."""

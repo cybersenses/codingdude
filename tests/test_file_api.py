@@ -227,6 +227,21 @@ def test_checklists_endpoints(server, tmp_path):
     assert r.status_code == 404
 
 
+def test_archmap_endpoint(server, tmp_path):
+    """#101 (R43): module-level architecture map — files as nodes, imports as edges."""
+    app, base = server
+    workdir = tmp_path / 'proj'
+    workdir.mkdir()
+    (workdir / 'main.py').write_text('import helper\n', encoding='utf-8')
+    (workdir / 'helper.py').write_text('X = 1\n', encoding='utf-8')
+    sid = make_session(base, workdir)
+    r = httpx.get(f'{base}/sessions/{sid}/archmap', headers=auth(), timeout=10)
+    assert r.status_code == 200
+    g = r.json()
+    assert {n['id'] for n in g['nodes']} == {'main.py', 'helper.py'}
+    assert ['main.py', 'helper.py'] in [list(e) for e in g['edges']]
+
+
 def test_structure_endpoint(server, tmp_path):
     """#95 (R42): project structure overview for humans."""
     app, base = server
