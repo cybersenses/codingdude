@@ -766,6 +766,6 @@ Strip the idea-value from all agency-agents personas (~130, 23 divisions) into v
 Second feature thrust: tools that help a HUMAN understand the code the agent generates — call graphs, structure views, dependency maps of the produced code itself (not run telemetry). Audience shift: agent introspection (R31/R35/R38) stays, but new work must derive from user value.
 
 ## R43 — R43 — Human comprehension wave 2 (research-backed)
-**Status:** open
+**Status:** in_progress
 
 From reference/research/human-code-comprehension.md (As-of 2026-09-20). Five user-facing features: repo Q&A with citations, module architecture map (C4-lite), trust-my-tests report, code tour of a run, auto design doc/ADR.

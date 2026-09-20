@@ -11,6 +11,7 @@ import { groupEventsByRun, pickRunId } from './runs'
 import { buildSpans } from './waterfall'
 import { impactMermaid } from './impact'
 import { callgraphMermaid, graphView } from './callgraph'
+import { buildRepoQuestionPrompt } from './repoqa'
 import { checklistPrompt } from './checklists'
 import { structureRows } from './structure'
 
@@ -1111,7 +1112,8 @@ function Planning({ workdir }) {
 
 // R35 #72: bottom dock — VS Code panel position. Processes comes in as a
 // prop (App polls it); it used to be a bare-identifier crash in this scope.
-function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, height, onResizeHeight, focusDiff = 0, activePath = '' }) {
+function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, height, onResizeHeight, focusDiff = 0, activePath = '', onAsk }) {
+  const [repoQuestion, setRepoQuestion] = useState('')
   const tabs = ['Diff', 'Graph', 'Planning', 'Artifacts', 'Notes', 'Renders', 'Terminal', 'Output', 'Waterfall', 'Trace', 'Cost', 'Memory', 'MCP', 'Standards']
   const [tab, setTab] = useState('Diff')
   const [data, setData] = useState({})
@@ -1530,6 +1532,26 @@ function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, heigh
             ? <Mermaid code={callgraphMermaid(data.archmap)} />
             : <div className="text-xs text-ink-muted">No source files yet.</div>}
         </div>
+        {onAsk && (
+          <form
+            className="flex gap-1 border-b border-line px-2 py-1"
+            onSubmit={(e) => {
+              e.preventDefault()
+              const prompt = buildRepoQuestionPrompt(repoQuestion, data.structure, data.archmap)
+              if (!prompt) return
+              setRepoQuestion('')
+              onAsk(prompt)
+            }}
+          >
+            <input
+              className="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-900 px-2 py-0.5 text-xs text-ink"
+              placeholder="ask about this project — answered with file+line citations…"
+              value={repoQuestion}
+              onChange={(e) => setRepoQuestion(e.target.value)}
+            />
+            <button className="rounded bg-brand-700 px-2 py-0.5 text-[10px] text-brand-fg" disabled={!sessionId}>ask</button>
+          </form>
+        )}
         <div className="border-b border-line px-2 py-1 font-mono text-[10px] uppercase tracking-wide text-ink-muted">project structure</div>
         <div className="max-h-[70vh] overflow-auto p-2 text-[11px]">
           {(() => {
@@ -2597,6 +2619,7 @@ export default function App() {
         height={dockHeight}
         focusDiff={focusDiffTab}
         activePath={fileWs.active?.path || ''}
+        onAsk={send}
         onResizeHeight={(h) => { setDockHeight(h); localStorage.setItem('cd-dock-h', String(h)) }}
       />
       <footer className="flex items-center justify-between border-t border-neutral-800 bg-neutral-950 px-3 py-1 text-[10px] text-neutral-500">
