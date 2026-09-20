@@ -106,3 +106,8 @@
 - Skipped with reasons (recorded in #92): mobile×2, multi-agent-architect, 4 already-adopted personas.
 - Lesson: delegated write=true agents' sandbox writes did NOT land on disk (reported success falsely); sub-agents also couldn't see files created after session start. Distill heavy work in main session or verify delegated writes with real reads.
 - #93 (specialty-actions seam) next after #90/#91. Gates not run (no code changed); ROADMAP committed c16d018, pushed, tree clean, main == origin/main.
+
+## Handover — 2026-09-20 (R41 #92 full roster)
+- Entire agency-agents tree distilled: +9 division checklists (finance-accounting, game-development, marketing-growth, product, security-compliance, qa-testing, gis-spatial, healthcare-regulated, business-operations). reference/checklists/ now has 22 files, all indexed + search-verified (CRS/reproject, server-authority, PHI, single-sourcing all hit).
+- reference/ gitignored — checklists on disk only, not in git. Roadmap/handover committed and pushed.
+- Next: #90 (surgical-patch scope discipline, in_progress), #91 (caveman-explore output levels), #93 (specialty-actions seam exposing these checklists to users).
