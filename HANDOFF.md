@@ -118,3 +118,12 @@
 - #95 shipped `525cc8b`: `src/codingdude/structure.py` (per-file symbol outlines, 200-file cap), `GET /sessions/{sid}/structure`; Graph tab shows collapsible structure overview when no file open.
 - Gates: 555 pytest / 1 skipped, ruff+mypy (58 files) clean, eslint clean, vitest 49/49, vite build. Server healthy :8765 on `525cc8b`. Tree clean, main == origin/main.
 - For refinement guidance: line numbers currently decorative in structure view; JS symbol lines are 0; no click-through from structure to editor; call graph is single-file only (no cross-file edges yet).
+
+## Handover — 2026-09-20 (post-R42 review)
+- Review of 9468136...HEAD complete (two-axis). 0 standards blockers; 1 spec blocker. All findings ticketed, none fixed yet — fixes are the next session's first work.
+- #97 (🔴): orphan flagging inverted — orphan = total degree 0; should be in-degree 0 (never called). Dead-but-calling fns never flagged.
+- #98: JS arrow/const fns invisible in call graph (no node + bogus self-edge) — frontend files graph as ~empty.
+- #99: 422 readable errors swallowed by DockPanel poll catch; tab shows misleading "no callable symbols". Also catch UnicodeDecodeError server-side.
+- #100: structure seam untested; _js_symbols re-parses repo_map display strings; duplicate tree descent in callgraph; inline untested structure render in App.jsx.
+- Gates at review time: 555 pytest/1 skip, ruff+mypy clean, eslint clean, vitest 49/49, build ✓. Tree clean, main == origin/main @ da22f1f. Server healthy :8765 on 525cc8b.
+- Next session order: #97 → #98 → #99 → #100 (all TDD, red-first), then update ROADMAP/handover.
