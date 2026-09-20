@@ -111,3 +111,10 @@
 - Entire agency-agents tree distilled: +9 division checklists (finance-accounting, game-development, marketing-growth, product, security-compliance, qa-testing, gis-spatial, healthcare-regulated, business-operations). reference/checklists/ now has 22 files, all indexed + search-verified (CRS/reproject, server-authority, PHI, single-sourcing all hit).
 - reference/ gitignored — checklists on disk only, not in git. Roadmap/handover committed and pushed.
 - Next: #90 (surgical-patch scope discipline, in_progress), #91 (caveman-explore output levels), #93 (specialty-actions seam exposing these checklists to users).
+
+## Handover — 2026-09-20 (R42 user-facing comprehension, #94/#95)
+- Audience correction accepted: prior tickets were agent-introspective; R42 = human comprehension of generated code. #96 = process gate (state user value in every ticket).
+- #94 shipped `1720941`: `src/codingdude/callgraph.py` (AST py / tree-sitter JS/TS, orphan = zero in/out degree, fails fast on bad file), `GET /sessions/{sid}/callgraph?path=` (workdir-contained, 422 on parse fail), frontend `callgraphMermaid` + Graph tab (Mermaid of active file).
+- #95 shipped `525cc8b`: `src/codingdude/structure.py` (per-file symbol outlines, 200-file cap), `GET /sessions/{sid}/structure`; Graph tab shows collapsible structure overview when no file open.
+- Gates: 555 pytest / 1 skipped, ruff+mypy (58 files) clean, eslint clean, vitest 49/49, vite build. Server healthy :8765 on `525cc8b`. Tree clean, main == origin/main.
+- For refinement guidance: line numbers currently decorative in structure view; JS symbol lines are 0; no click-through from structure to editor; call graph is single-file only (no cross-file edges yet).
