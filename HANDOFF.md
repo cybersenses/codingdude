@@ -145,3 +145,10 @@
 - Gates: pytest 573/1 skip, ruff+mypy (58 files) clean, eslint clean, vitest 63/63, build ✓. main == origin/main @ 9069b3f.
 - SERVER BOUNCE NEEDED (new dist + /archmap endpoint; last push @ 9069b3f).
 - Remaining R43: #103 trust-my-tests report (S/M), #104 code tour of a run (M), #105 auto design doc/ADR (M/L).
+
+## Handover — 2026-09-20 (R43 complete: #103/#104/#105)
+- #103 `72fe6b7`: src/codingdude/trustreport.py build_trust_report (tests referencing a file via dotted-name match; hypothesis property-test flagging; honest empty evidence); GET /sessions/{sid}/trust?path=; "test evidence" panel under the call graph in Graph tab (⚠ no tests = red).
+- #104 `4f65bd0`: frontend/src/tour.ts buildTour (run events → ordered narrative steps; handles EDIT_APPLIED-before-TOOL_CALL_END, unclosed calls, ISO+numeric ts); "tour of this run" list in Output tab.
+- #105 `b7c5e1a`: frontend/src/designdoc.ts buildDesignDocPrompt (tour → ADR-drafting prompt, Context/Decision/Consequences); "draft design doc" button in Output tab sends through normal send() flow.
+- R43 COMPLETE — all five tickets (#101–#105) done. Gates: pytest 576/1 skip, ruff+mypy (59 files) clean, eslint clean, vitest 70/70, build ✓. main == origin/main @ b7c5e1a, tree clean.
+- SERVER BOUNCE NEEDED for #103 endpoint + new dist (trust panel, tour, design-doc button all appear after bounce).
