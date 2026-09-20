@@ -10,6 +10,7 @@ import { ACTIONS, buildActionPrompt } from './aiActions'
 import { groupEventsByRun, pickRunId } from './runs'
 import { buildSpans } from './waterfall'
 import { buildTour } from './tour'
+import { buildDesignDocPrompt } from './designdoc'
 import { impactMermaid } from './impact'
 import { callgraphMermaid, graphView } from './callgraph'
 import { buildRepoQuestionPrompt } from './repoqa'
@@ -1380,7 +1381,19 @@ function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, heigh
         {runId && <div className={`text-[10px] ${statusColor(statusOf(runId))}`}>run {runId} — {statusOf(runId) || 'unknown'}</div>}
         {runId && (
           <div className="rounded border border-line bg-surface p-1">
-            <div className="font-mono text-[10px] uppercase tracking-wide text-ink-muted">tour of this run</div>
+            <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-wide text-ink-muted">
+              <span>tour of this run</span>
+              {onAsk && (
+                <button
+                  className="ml-auto rounded bg-brand-700 px-2 py-0.5 text-[10px] normal-case text-brand-fg"
+                  onClick={() => {
+                    const steps = buildTour(events)
+                    const prompt = buildDesignDocPrompt(`run ${runId} (${statusOf(runId)})`, steps)
+                    if (prompt) onAsk(prompt)
+                  }}
+                >draft design doc</button>
+              )}
+            </div>
             {(() => {
               const steps = buildTour(events)
               if (!steps.length) return <div className="px-1 text-[10px] text-ink-muted">nothing narratable happened in this run.</div>
