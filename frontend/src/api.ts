@@ -84,6 +84,7 @@ export interface PlanningData {
 export type ApprovalDecision = 'approve' | 'pattern' | 'deny'
 
 export async function call<T = unknown>(path: string, options: RequestInit = {}): Promise<T> {
+
   const res = await fetch(`/api${path}`, {
     headers: { 'Content-Type': 'application/json' },
     ...options,

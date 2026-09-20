@@ -11,6 +11,7 @@ import { groupEventsByRun, pickRunId } from './runs'
 import { buildSpans } from './waterfall'
 import { impactMermaid } from './impact'
 import { callgraphMermaid, graphView } from './callgraph'
+import { checklistPrompt } from './checklists'
 import { structureRows } from './structure'
 
 // R6: render-only mermaid diagrams inside spec blocks. Renders each
@@ -1812,8 +1813,16 @@ function Chat({ messages, streaming, onStop, onDecide, sessionId, suggestMode, o
 function Prompt({ onSend, disabled, suggestMode, setSuggestMode, fixLoop, setFixLoop, models, model, setModel, yolo, setYolo, notify, toggleNotify }) {
   const [text, setText] = useState('')
   const [image, setImage] = useState(null) // {b64, name}
+  const [checklists, setChecklists] = useState(null) // null = picker not opened yet
   const fileRef = useRef(null)
   // notify state is owned by App (single source of truth, L13) and passed in.
+
+  // #93: checklist picker — load the list on first open, send a checklist run on pick.
+  async function pickChecklist(name) {
+    if (!name || disabled) return
+    const md = await call(`/checklists/${name}`)
+    onSend(checklistPrompt(name, md.markdown, ''))
+  }
 
   return (
     <form
@@ -1888,6 +1897,33 @@ function Prompt({ onSend, disabled, suggestMode, setSuggestMode, fixLoop, setFix
         <input type="checkbox" checked={suggestMode} onChange={(e) => setSuggestMode(e.target.checked)} />
         suggest
       </label>
+      <select
+        className="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-ink"
+        value=""
+        disabled={disabled}
+        title="run a distilled review checklist against the project"
+        aria-label="Checklist"
+        onChange={async (e) => {
+          const name = e.target.value
+          e.target.value = ''
+          if (!checklists) {
+            const r = await call('/checklists')
+            setChecklists(r.checklists)
+          }
+          pickChecklist(name)
+        }}
+        onFocus={async () => {
+          if (!checklists) {
+            const r = await call('/checklists')
+            setChecklists(r.checklists)
+          }
+        }}
+      >
+        <option value="">checklist…</option>
+        {(checklists || []).map((c) => (
+          <option key={c.name} value={c.name}>{c.title || c.name}</option>
+        ))}
+      </select>
       <label className="flex items-center gap-1 text-[10px] text-neutral-400" title="run tests after the task and fix failures until green (max 3 rounds)">
         <input type="checkbox" checked={fixLoop} onChange={(e) => setFixLoop(e.target.checked)} />
         fix until green

@@ -209,6 +209,24 @@ def test_callgraph_endpoint_non_utf8_returns_422(server, tmp_path):
     assert 'legacy.py' in r.json()['detail']
 
 
+def test_checklists_endpoints(server, tmp_path):
+    """#93 (R41): distilled checklists are user-invokable actions."""
+    app, base = server
+    r = httpx.get(f'{base}/checklists', headers=auth(), timeout=10)
+    assert r.status_code == 200
+    items = r.json()['checklists']
+    qa = next(c for c in items if c['name'] == 'qa-testing')
+    assert qa['title'] == 'QA & Testing'
+    assert 'building test suites' in qa['use_when']
+
+    r = httpx.get(f'{base}/checklists/qa-testing', headers=auth(), timeout=10)
+    assert r.status_code == 200
+    assert '# QA & Testing Checklist' in r.json()['markdown']
+
+    r = httpx.get(f'{base}/checklists/no-such-thing', headers=auth(), timeout=10)
+    assert r.status_code == 404
+
+
 def test_structure_endpoint(server, tmp_path):
     """#95 (R42): project structure overview for humans."""
     app, base = server
