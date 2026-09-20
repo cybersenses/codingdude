@@ -76,3 +76,17 @@
   IMAGE_ATTACHED. Tests: tests/test_vision_prompt.py (4).
 - Gates: 537 passed/1 skipped (3m20s), ruff clean, mypy 54 files clean.
 - R36 now fully done (#80/#81/#82). Roadmap: close R36; next backlog is open.
+
+## Handover (41500f8) — R38 Visual aids complete
+- All 3 phases shipped: #84 run waterfall (DockPanel span timeline, pure
+  `waterfall.ts` buildSpans, LIFO pairing + sort by start); #85 semantic
+  change summary in Diff tab (`changesummary.ts`, astdiff symbols, Py ast +
+  tree-sitter JS/TS); #86 Mermaid impact graph in Diff tab (`impact.py`
+  reverse-dep edges via stdlib ast / import regex, `impact.ts` pure builder,
+  server /diff now returns `impact`).
+- Gates: ruff clean, mypy 56 files clean, vitest 45/45, eslint clean,
+  vite build OK, dist rebuilt. Pushed `41500f8`, tree clean, main==origin/main.
+- Known flake: test_interactive_approval_roundtrip timed out in one combined
+  run, passed standalone — infra timing, watch for recurrence.
+- Research doc: reference/research/agent-activity-visualization.md (indexed).
+- Roadmap: R38 done. No open tickets. Next: pick new work from a clean baseline.
