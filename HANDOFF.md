@@ -152,3 +152,10 @@
 - #105 `b7c5e1a`: frontend/src/designdoc.ts buildDesignDocPrompt (tour → ADR-drafting prompt, Context/Decision/Consequences); "draft design doc" button in Output tab sends through normal send() flow.
 - R43 COMPLETE — all five tickets (#101–#105) done. Gates: pytest 576/1 skip, ruff+mypy (59 files) clean, eslint clean, vitest 70/70, build ✓. main == origin/main @ b7c5e1a, tree clean.
 - SERVER BOUNCE NEEDED for #103 endpoint + new dist (trust panel, tour, design-doc button all appear after bounce).
+## 2026-09-20 — #107 semantic search "found:nothing" (fixed, ef93c61)
+### Post-Mortem
+- **Timeline**: red repro 2.3s → isolated retrieval probe passed → engine probe showed checklist hits → fix same session.
+- **Impact**: semantic_search returned reference docs / nothing in every new project since #106.
+- **Contributing factors**: two index seams over one workdir (SemanticIndex + ReferenceStore) with no corpus ownership rule; "pre-existing at HEAD~1" verification was wrong (scaffold changes uncommitted in tree).
+- **5 Whys**: found:nothing → code crowded out of top-5 → checklists indexed → scaffold seeds reference/ into workdir (#106) → no rule that reference/ belongs only to ReferenceStore.
+- **Action items**: exclude+prune reference/ in SemanticIndex (done, ef93c61); corpus-ownership rule noted in module docstring (done). No open items.
