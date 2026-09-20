@@ -192,3 +192,19 @@ def test_callgraph_endpoint_rejects_escape(server, tmp_path):
         params={'path': '../outside.py'}, headers=auth(), timeout=10,
     )
     assert r.status_code == 400
+
+
+def test_structure_endpoint(server, tmp_path):
+    """#95 (R42): project structure overview for humans."""
+    app, base = server
+    workdir = tmp_path / 'proj'
+    (workdir / 'src').mkdir(parents=True)
+    (workdir / 'src' / 'm.py').write_text(
+        'class A:\n    def go(self):\n        pass\n\ndef top():\n    pass\n', encoding='utf-8')
+    sid = make_session(base, workdir)
+    r = httpx.get(f'{base}/sessions/{sid}/structure', headers=auth(), timeout=10)
+    assert r.status_code == 200
+    files = r.json()['files']
+    m = next(f for f in files if f['path'] == 'src/m.py')
+    assert any(s['kind'] == 'class' and s['name'] == 'A' for s in m['symbols'])
+    assert any(s['kind'] == 'function' and s['name'] == 'top' for s in m['symbols'])

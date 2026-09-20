@@ -663,6 +663,16 @@ def create_app(
         except (SyntaxError, ValueError, FileNotFoundError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    @app.get('/sessions/{session_id}/structure')
+    def session_structure(session_id: str, _: None = Depends(authorize)) -> dict:
+        """Per-file symbol outlines — human project overview (#95, R42)."""
+        from .structure import project_structure
+
+        workdir = db.session_workdir(session_id)
+        if not workdir:
+            raise HTTPException(status_code=404, detail='no such session')
+        return project_structure(Path(workdir))
+
     @app.get('/sessions/{session_id}/file_diff')
     def file_diff(session_id: str, path: str, _: None = Depends(authorize)) -> dict:
         """HEAD baseline + on-disk content for the HITL diff view (#71).

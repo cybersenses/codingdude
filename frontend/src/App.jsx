@@ -1126,6 +1126,7 @@ function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, heigh
       try {
         if (tab === 'Diff') { const r = await call(`/sessions/${sessionId}/diff`); setData((d) => ({ ...d, diff: r.diff, diffSummary: r.summary || [], impact: r.impact || null })) }
         if (tab === 'Graph' && activePath) { const g = await call(`/sessions/${sessionId}/callgraph?path=${encodeURIComponent(activePath)}`); setData((d) => ({ ...d, callgraph: g, callgraphPath: activePath })) }
+        if (tab === 'Graph' && !activePath) { const s = await call(`/sessions/${sessionId}/structure`); setData((d) => ({ ...d, structure: s })) }
         if (tab === 'Cost') { const u = await call(`/sessions/${sessionId}/usage`); setData((d) => ({ ...d, usage: u })) }
         if (tab === 'Output') {
           const runs = await call(`/sessions/${sessionId}/runs`)
@@ -1490,11 +1491,7 @@ function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, heigh
       </div>
     )
   } else if (tab === 'Graph') {
-    body = !activePath ? (
-      <div className="rounded border border-line bg-surface p-4 text-xs text-ink-muted">
-        Open a file in the editor to see its call graph.
-      </div>
-    ) : (
+    body = activePath ? (
       <div className="rounded border border-line bg-surface">
         <div className="flex items-center gap-3 border-b border-line px-2 py-1 font-mono text-[10px]">
           <span className="text-brand-300">{activePath}</span>
@@ -1506,6 +1503,24 @@ function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, heigh
           ) : (
             <div className="text-xs text-ink-muted">No callable symbols found in this file.</div>
           )}
+        </div>
+      </div>
+    ) : (
+      <div className="rounded border border-line bg-surface">
+        <div className="border-b border-line px-2 py-1 font-mono text-[10px] uppercase tracking-wide text-ink-muted">project structure</div>
+        <div className="max-h-[70vh] overflow-auto p-2 text-[11px]">
+          {(data.structure?.files || []).length > 0 ? data.structure.files.map((f) => (
+            <details key={f.path} className="mb-0.5">
+              <summary className="cursor-pointer font-mono text-brand-300">{f.path} <span className="text-ink-muted">({f.lines} lines)</span></summary>
+              <div className="pl-4">
+                {(f.symbols || []).map((s, i) => (
+                  <div key={i} className="font-mono text-ink-muted">
+                    <span className={s.kind === 'class' ? 'text-accent' : ''}>{s.kind}</span> {s.name}
+                  </div>
+                ))}
+              </div>
+            </details>
+          )) : <div className="text-xs text-ink-muted">No source files yet.</div>}
         </div>
       </div>
     )
