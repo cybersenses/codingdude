@@ -88,6 +88,25 @@ def test_project_with_nonexistent_workdir_rejected(client, tmp_path):
     assert 'no such directory' in r.json()['detail']
 
 
+def test_project_with_drive_relative_workdir_rejected(client):
+    """`G:Ai-Dev\\X` (backslash dropped after the drive) must 422 before the
+    existence check — the engine may have already scaffolded the phantom
+    CWD-relative dir, which would make the existence check pass (#108)."""
+    c, token = client
+    h = _auth(token)
+    r = c.post('/projects', json={'name': 'X', 'workdir': 'G:Ai-Dev\\Godot-Steroids'}, headers=h)
+    assert r.status_code == 422
+    assert 'drive-relative' in r.json()['detail']
+
+
+def test_session_with_drive_relative_workdir_rejected(client):
+    c, token = client
+    h = _auth(token)
+    r = c.post('/sessions', json={'workdir': 'G:Ai-Dev\\Godot-Steroids'}, headers=h)
+    assert r.status_code == 422
+    assert 'drive-relative' in r.json()['detail']
+
+
 def test_session_with_nonexistent_workdir_rejected(client, tmp_path):
     c, token = client
     h = _auth(token)

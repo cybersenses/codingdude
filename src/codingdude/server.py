@@ -273,6 +273,19 @@ def create_app(
         workdir: str
         title: str | None = None
 
+    def _validated_workdir(raw: str) -> Path:
+        import re
+
+        if re.match(r'^[A-Za-z]:(?!\\)', raw):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f'drive-relative path rejected: {raw!r} — a backslash is missing '
+                    f'after the drive letter (did you mean {raw[0]}:\\{raw[2:]}?)'
+                ),
+            )
+        return Path(raw).resolve()
+
     class RunIn(BaseModel):
         prompt: str
         model: str | None = None
@@ -283,7 +296,7 @@ def create_app(
 
     @app.post('/sessions')
     def create_session(body: SessionIn, _: None = Depends(authorize)) -> dict:
-        resolved = Path(body.workdir).resolve()
+        resolved = _validated_workdir(body.workdir)
         if not resolved.is_dir():
             raise HTTPException(
                 status_code=422,
@@ -877,7 +890,7 @@ def create_app(
 
     @app.post('/projects')
     def add_project(body: ProjectIn, _: None = Depends(authorize)) -> dict:
-        workdir = str(Path(body.workdir).resolve())
+        workdir = str(_validated_workdir(body.workdir))
         if not Path(workdir).is_dir():
             raise HTTPException(
                 status_code=422,
