@@ -90,3 +90,12 @@
   run, passed standalone — infra timing, watch for recurrence.
 - Research doc: reference/research/agent-activity-visualization.md (indexed).
 - Roadmap: R38 done. No open tickets. Next: pick new work from a clean baseline.
+
+## Handover — R39 skill rigor upgrades (from agency-agents review)
+- Researched msitarzewski/agency-agents (persona-prompt library). Adopted 4 ideas, rejected persona theatre/roster sprawl.
+- R39 done, tickets #87/#88/#89 closed:
+  - #87 diagnosing-bugs: added "Hypothesis timebox" (~15 min probe cap, cheapest killing test first) + "Phase 6: Post-mortem" (required Timeline/Impact/Contributing factors/5 Whys/Action items). TDD: red (untrained agent blessed 50-min sunk cost, prose-only wrap-up) → green (full template compliance).
+  - #88 code-review: "Output contract" — 🔴/🟡/💭 markers matching ticket triage, one-pass complete feedback, red flags for drip-feeding. Red→green verified.
+  - #89 writing-skills: skeleton gains required "Success Signal" section (observable compliance check) + checklist item. Red→green verified.
+- Skills edited in C:/Users/norma/.codingdude/skills/ (not a git repo — no commit possible there). Scratch patch scripts deleted.
+- ROADMAP.md R39→done committed with this handover.

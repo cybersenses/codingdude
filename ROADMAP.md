@@ -744,3 +744,8 @@ Big-picture visual aids for humans, per reference/research/agent-activity-visual
 Phase 1 — Run waterfall: hand-rolled SVG span timeline (TOOL_CALL_START/END brackets, delegations nested) in a new DockPanel tab; optional Chrome Trace Format export.
 Phase 2 — Semantic change summary: reuse astdiff.describe_ast_change beside the Diff tab; extend TS via tree-sitter.
 Phase 3 — Dependency/impact mini-graph: AST/tree-sitter import edges for edited files rendered via existing Mermaid flowchart component.
+
+## R39 — Skill rigor upgrades (from agency-agents review)
+**Status:** done
+
+Adopt 4 ideas from the agency-agents repo review into our skill library: standard skill skeleton with success signals, post-mortem template + hypothesis timebox in diagnosing-bugs, triage markers + no-drip-feed in code-review.
