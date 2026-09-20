@@ -10,6 +10,7 @@ import { ACTIONS, buildActionPrompt } from './aiActions'
 import { groupEventsByRun, pickRunId } from './runs'
 import { buildSpans } from './waterfall'
 import { impactMermaid } from './impact'
+import { callgraphMermaid } from './callgraph'
 
 // R6: render-only mermaid diagrams inside spec blocks. Renders each
 // ```mermaid fence to SVG; on failure the raw fence stays visible.
@@ -1108,8 +1109,8 @@ function Planning({ workdir }) {
 
 // R35 #72: bottom dock — VS Code panel position. Processes comes in as a
 // prop (App polls it); it used to be a bare-identifier crash in this scope.
-function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, height, onResizeHeight, focusDiff = 0 }) {
-  const tabs = ['Diff', 'Planning', 'Artifacts', 'Notes', 'Renders', 'Terminal', 'Output', 'Waterfall', 'Trace', 'Cost', 'Memory', 'MCP', 'Standards']
+function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, height, onResizeHeight, focusDiff = 0, activePath = '' }) {
+  const tabs = ['Diff', 'Graph', 'Planning', 'Artifacts', 'Notes', 'Renders', 'Terminal', 'Output', 'Waterfall', 'Trace', 'Cost', 'Memory', 'MCP', 'Standards']
   const [tab, setTab] = useState('Diff')
   const [data, setData] = useState({})
 
@@ -1124,6 +1125,7 @@ function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, heigh
     async function poll() {
       try {
         if (tab === 'Diff') { const r = await call(`/sessions/${sessionId}/diff`); setData((d) => ({ ...d, diff: r.diff, diffSummary: r.summary || [], impact: r.impact || null })) }
+        if (tab === 'Graph' && activePath) { const g = await call(`/sessions/${sessionId}/callgraph?path=${encodeURIComponent(activePath)}`); setData((d) => ({ ...d, callgraph: g, callgraphPath: activePath })) }
         if (tab === 'Cost') { const u = await call(`/sessions/${sessionId}/usage`); setData((d) => ({ ...d, usage: u })) }
         if (tab === 'Output') {
           const runs = await call(`/sessions/${sessionId}/runs`)
@@ -1147,7 +1149,7 @@ function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, heigh
     }
     poll()
     return () => { stop = true }
-  }, [sessionId, tab])
+  }, [sessionId, tab, activePath])
 
   async function toggleServer(name, disabled) {
     await api.toggleMcp(sessionId, name, disabled).catch(() => {})
@@ -1485,6 +1487,26 @@ function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, heigh
           </div>
         ))}
         <div className="text-neutral-600">config: ~/.codingdude/mcp.json (global) + .codingdude/mcp.json (project)</div>
+      </div>
+    )
+  } else if (tab === 'Graph') {
+    body = !activePath ? (
+      <div className="rounded border border-line bg-surface p-4 text-xs text-ink-muted">
+        Open a file in the editor to see its call graph.
+      </div>
+    ) : (
+      <div className="rounded border border-line bg-surface">
+        <div className="flex items-center gap-3 border-b border-line px-2 py-1 font-mono text-[10px]">
+          <span className="text-brand-300">{activePath}</span>
+          <span className="ml-auto uppercase tracking-wide text-ink-muted">call graph</span>
+        </div>
+        <div className="max-h-[70vh] overflow-auto p-2">
+          {data.callgraph && data.callgraphPath === activePath && (data.callgraph.nodes || []).length > 0 ? (
+            <Mermaid code={callgraphMermaid(data.callgraph)} />
+          ) : (
+            <div className="text-xs text-ink-muted">No callable symbols found in this file.</div>
+          )}
+        </div>
       </div>
     )
   } else if (tab === 'Diff') {
@@ -2492,6 +2514,7 @@ export default function App() {
         processes={processes}
         height={dockHeight}
         focusDiff={focusDiffTab}
+        activePath={fileWs.active?.path || ''}
         onResizeHeight={(h) => { setDockHeight(h); localStorage.setItem('cd-dock-h', String(h)) }}
       />
       <footer className="flex items-center justify-between border-t border-neutral-800 bg-neutral-950 px-3 py-1 text-[10px] text-neutral-500">

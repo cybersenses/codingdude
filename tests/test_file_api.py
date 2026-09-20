@@ -163,3 +163,32 @@ def test_diff_against_head(server, tmp_path):
     r = httpx.get(f'{base}/sessions/{sid}/file_diff', params={'path': '../escape'},
                   headers=auth(), timeout=10)
     assert r.status_code == 400
+
+
+def test_callgraph_endpoint(server, tmp_path):
+    """#94 (R42): user-facing call graph of a workdir file."""
+    app, base = server
+    workdir = tmp_path / 'proj'
+    workdir.mkdir()
+    (workdir / 'm.py').write_text('def a():\n    pass\n\ndef b():\n    a()\n', encoding='utf-8')
+    sid = make_session(base, workdir)
+    r = httpx.get(
+        f'{base}/sessions/{sid}/callgraph',
+        params={'path': 'm.py'}, headers=auth(), timeout=10,
+    )
+    assert r.status_code == 200
+    g = r.json()
+    assert {n['name'] for n in g['nodes']} == {'a', 'b'}
+    assert ['b', 'a'] in [list(e) for e in g['edges']]
+
+
+def test_callgraph_endpoint_rejects_escape(server, tmp_path):
+    app, base = server
+    workdir = tmp_path / 'proj'
+    workdir.mkdir()
+    sid = make_session(base, workdir)
+    r = httpx.get(
+        f'{base}/sessions/{sid}/callgraph',
+        params={'path': '../outside.py'}, headers=auth(), timeout=10,
+    )
+    assert r.status_code == 400
