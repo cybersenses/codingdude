@@ -198,6 +198,14 @@ def create_app(
         logging.getLogger('codingdude.server').info(
             'RUNS_RECONCILED interrupted=%s', interrupted)
     channels: dict[str, RunChannel] = {}
+    # Stale prompt files (run 500'd before the worker consumed them) would
+    # otherwise linger forever holding full prompt text on disk.
+    for stale in (home / 'prompts').glob('*.prompt'):
+        try:
+            if stale.stat().st_mtime < (datetime.now(UTC).timestamp() - 86_400):
+                stale.unlink()
+        except OSError:
+            pass
 
     def authorize(request: Request) -> None:
         """Bearer header (headless/tests), session cookie (browser login),
@@ -366,12 +374,19 @@ def create_app(
         # R31: durable run record — survives a server bounce, unlike `channels`.
         db.record_run_start(run_id, session_id, pid=None)
 
+        # The prompt rides on a file, not argv: Windows caps a process command
+        # line at ~32k chars, and a long prompt (big editor selection) blew
+        # CreateProcess up with WinError 206 → 500 on every long run.
+        prompts = home / 'prompts'
+        prompts.mkdir(parents=True, exist_ok=True)
+        prompt_file = prompts / f'{run_id}.prompt'
+        prompt_file.write_text(body.prompt, encoding='utf-8')
         cmd = [
             sys.executable, '-m', 'codingdude.worker',
             '--server', f'ws://{HOST}:{app.state.port}/runs/{run_id}/ws',
             '--session', session_id,
             '--workdir', workdir,
-            '--prompt', body.prompt,
+            '--prompt-file', str(prompt_file),
             '--run-id', run_id,
         ]
         if body.model:

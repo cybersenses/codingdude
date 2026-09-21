@@ -49,6 +49,25 @@ def test_engine_run_kwargs_resolves_image_path(tmp_path):
     assert kwargs['image_path'] == img.resolve()
 
 
+def test_prompt_file_loaded_and_deleted(tmp_path):
+    """A long prompt can't ride on argv (Windows 32k limit, WinError 206):
+    --prompt-file supplies it, and the file is removed after read."""
+    from codingdude import worker
+
+    pf = tmp_path / 'abc.prompt'
+    pf.write_text('a very long prompt', encoding='utf-8')
+    args = worker.load_prompt_file(_args(prompt=None, prompt_file=str(pf)))
+    assert args.prompt == 'a very long prompt'
+    assert not pf.exists()
+
+
+def test_prompt_file_absent_leaves_prompt_alone():
+    from codingdude import worker
+
+    args = worker.load_prompt_file(_args(prompt='inline'))
+    assert args.prompt == 'inline'
+
+
 # --- _finish_run: terminal event FIRST (R30); the tail drains after the
 # --- sender exits, in run(), so the UI never waits on extraction.
 

@@ -436,6 +436,23 @@ def config_home():
     return config_home()
 
 
+def load_prompt_file(args):
+    """--prompt-file: read the prompt from a file instead of argv.
+
+    Windows caps a process command line at ~32k chars; long prompts blew up
+    CreateProcess (WinError 206). The file is consumed (deleted) after read.
+    """
+    pf = getattr(args, 'prompt_file', None)
+    if not pf:
+        return args
+    args.prompt = Path(pf).read_text(encoding='utf-8')
+    try:
+        Path(pf).unlink()
+    except OSError:
+        pass  # a leftover file is harmless; never fail the run over it
+    return args
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog='codingdude-worker')
     parser.add_argument(
@@ -448,13 +465,17 @@ def main(argv=None) -> int:
     parser.add_argument('--session')
     parser.add_argument('--workdir')
     parser.add_argument('--prompt')
+    parser.add_argument(
+        '--prompt-file',
+        help='read the prompt from this file (long prompts cannot ride on argv)',
+    )
     parser.add_argument('--model', default=None)
     parser.add_argument('--yolo', action='store_true')
     parser.add_argument('--fix-loop', action='store_true')
     parser.add_argument('--image', default=None, help='path to an image to include with the prompt')
     parser.add_argument('--budget', type=float, default=None)
     parser.add_argument('--run-id', default=None, help='run id for durable lifecycle records (R31)')
-    args = parser.parse_args(argv)
+    args = load_prompt_file(parser.parse_args(argv))
     # Lifecycle diagnostics (R31): always mirror worker logs to a file under
     # ~/.codingdude/logs/ so post-run forensics don't depend on a console.
     try:

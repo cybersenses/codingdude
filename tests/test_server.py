@@ -598,6 +598,24 @@ def test_server_boot_reconciles_orphaned_runs(tmp_path):
     assert db2.get_run('ghostRun')['status'] == 'interrupted'
 
 
+def test_long_prompt_spawns_worker_via_prompt_file(server, tmp_path):
+    """Windows caps a process command line at ~32k chars: a long prompt passed
+    as --prompt argv made CreateProcess fail (WinError 206) and the run 500'd.
+    Long prompts must travel via a prompt file instead."""
+    app, base = server
+    session_id = create_session(base, tmp_path / 'proj-longprompt')
+    big = 'explain this code: ' + 'x' * 40_000
+    r = httpx.post(
+        f'{base}/sessions/{session_id}/runs',
+        json={'prompt': big, 'model': 'codingdude-test:echo'},
+        headers=auth(),
+        timeout=30,
+    )
+    assert r.status_code == 200, r.text
+    events = collect_sse(base, r.json()['run_id'], timeout=30)
+    assert events[-1]['type'] == 'RUN_FINISHED'
+
+
 def test_session_runs_endpoint_lists_recent_runs(server, tmp_path):
     """#77: run-output view data source — recent runs, newest first."""
     app, base = server
