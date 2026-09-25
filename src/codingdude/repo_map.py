@@ -12,6 +12,8 @@ from typing import NamedTuple
 
 from pydantic_ai.toolsets import FunctionToolset
 
+from codingdude.pyparse import parse_python
+
 from .tools import SKIP_DIRS
 
 SOURCE_EXTENSIONS = {'.py', '.js', '.jsx', '.mjs', '.ts', '.tsx'}
@@ -20,7 +22,7 @@ DEFAULT_BUDGET = 6000
 
 def _python_signatures(path: Path) -> list[str]:
     try:
-        tree = ast.parse(path.read_text(encoding='utf-8', errors='replace'))
+        tree = parse_python(path.read_text(encoding='utf-8', errors='replace'))
     except (SyntaxError, OSError):
         return []
 

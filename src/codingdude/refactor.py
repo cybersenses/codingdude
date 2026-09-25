@@ -12,6 +12,8 @@ from pathlib import Path
 from pydantic_ai import ModelRetry
 from pydantic_ai.toolsets import FunctionToolset
 
+from codingdude.pyparse import parse_python
+
 from .tools import SKIP_DIRS
 
 SOURCE_EXTENSIONS = {'.py', '.js', '.jsx', '.mjs', '.ts', '.tsx'}
@@ -32,7 +34,7 @@ def _python_replace(path: Path, old: str, new: str) -> int:
     """Replace only identifier-classified occurrences via AST positions."""
     source = path.read_text(encoding='utf-8', errors='replace')
     try:
-        tree = ast.parse(source)
+        tree = parse_python(source)
     except SyntaxError:
         return 0
     by_line: dict[int, list[int]] = {}

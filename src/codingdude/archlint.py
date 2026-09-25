@@ -14,6 +14,8 @@ from pathlib import Path
 
 from pydantic_ai import FunctionToolset
 
+from codingdude.pyparse import parse_python
+
 from .db import Database
 from .roadmap import RoadmapStore
 
@@ -302,7 +304,7 @@ def _trees(workdir: Path):
         if any(part in ('.venv', 'venv', 'node_modules', '.git') for part in path.parts):
             continue
         try:
-            yield path, ast.parse(path.read_text(encoding='utf-8'))
+            yield path, parse_python(path.read_text(encoding='utf-8'))
         except SyntaxError:
             continue  # unparseable file: not this linter's job
 

@@ -10,6 +10,8 @@ import ast
 import re as _re
 from pathlib import Path
 
+from codingdude.pyparse import parse_python
+
 from .tools import SKIP_DIRS
 
 PY = '.py'
@@ -38,7 +40,7 @@ def _finish(nodes: list[dict], edges: list[list[str]]) -> dict:
 
 
 def _python_graph(path: Path) -> dict:
-    tree = ast.parse(path.read_text(encoding='utf-8', errors='strict'))
+    tree = parse_python(path.read_text(encoding='utf-8', errors='strict'))
     nodes: list[dict] = []
     edges: list[list[str]] = []
     defined: dict[str, str] = {}  # bare name -> qualified id
@@ -207,7 +209,7 @@ def build_module_graph(workdir: Path, max_files: int = 200) -> dict:
 def _python_import_targets(f: Path, root: Path,
                            by_module: dict[str, Path]) -> set[str]:
     try:
-        tree = ast.parse(f.read_text(encoding='utf-8', errors='replace'))
+        tree = parse_python(f.read_text(encoding='utf-8', errors='replace'))
     except SyntaxError:
         return set()
     rel = f.relative_to(root)

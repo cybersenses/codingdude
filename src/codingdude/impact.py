@@ -11,6 +11,8 @@ import ast
 import re
 from pathlib import Path
 
+from codingdude.pyparse import parse_python
+
 from .repo_map import SKIP_DIRS
 
 SOURCE_EXTS = {'.py', '.js', '.jsx', '.ts', '.tsx'}
@@ -28,7 +30,7 @@ def _module_name(rel: str) -> str:
 
 def _py_imports_of(text: str) -> set[str]:
     try:
-        tree = ast.parse(text)
+        tree = parse_python(text)
     except SyntaxError:
         return set()
     mods: set[str] = set()

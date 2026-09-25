@@ -8,6 +8,8 @@ instead of a budget-capped text map.
 import ast as _ast
 from pathlib import Path
 
+from codingdude.pyparse import parse_python
+
 from .tools import SKIP_DIRS
 
 SOURCE_EXTENSIONS = {'.py', '.js', '.jsx', '.mjs', '.ts', '.tsx'}
@@ -38,7 +40,7 @@ def project_structure(workdir: Path, max_files: int = 200) -> dict:
 
 def _python_symbols(path: Path) -> list[dict]:
     try:
-        tree = _ast.parse(path.read_text(encoding='utf-8', errors='replace'))
+        tree = parse_python(path.read_text(encoding='utf-8', errors='replace'))
     except SyntaxError:
         return []
     out: list[dict] = []

@@ -769,3 +769,8 @@ Second feature thrust: tools that help a HUMAN understand the code the agent gen
 **Status:** done
 
 From reference/research/human-code-comprehension.md (As-of 2026-09-20). Five user-facing features: repo Q&A with citations, module architecture map (C4-lite), trust-my-tests report, code tour of a run, auto design doc/ADR.
+
+## R44 — R44 — Friction fixes from SteroidsEngine usage
+**Status:** open
+
+Fixes surfacing from real SteroidsEngine usage.

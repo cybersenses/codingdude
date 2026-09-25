@@ -17,6 +17,7 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from codingdude.editmatch import find_similar_lines, replace_most_similar_chunk
 from codingdude.langs import LanguageSpec, spec_for
 from codingdude.processes import ProcessRegistry
+from codingdude.pyparse import parse_python
 
 from .approvals import DENIED, NEEDS_GATE
 from .astdiff import describe_ast_change
@@ -514,7 +515,7 @@ def build_toolset(
 
     def _parse_module(target: Path, text: str):
         try:
-            return ast.parse(text)
+            return parse_python(text)
         except SyntaxError:
             raise ModelRetry(
                 f'{target.name} does not parse as Python; edit_symbol needs a '

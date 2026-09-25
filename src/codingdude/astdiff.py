@@ -7,6 +7,8 @@ is verifiable without re-reading the file.
 
 import ast
 
+from codingdude.pyparse import parse_python
+
 
 def _signature(node) -> str:
     """Rendered signature like 'def f(a, b=1)' / 'class C'."""
@@ -62,8 +64,8 @@ def _collect(tree: ast.AST) -> dict[str, tuple[str, str]]:
 def describe_ast_change(before: str, after: str) -> str:
     """One line per semantic change, or '' when nothing structural changed."""
     try:
-        old = _collect(ast.parse(before))
-        new = _collect(ast.parse(after))
+        old = _collect(parse_python(before))
+        new = _collect(parse_python(after))
     except SyntaxError:
         return '(file no longer parses as Python)'
 
