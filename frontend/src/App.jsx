@@ -8,6 +8,7 @@ import { activeProcesses, describeProcess, mergeProcesses } from './processes'
 import { PANE_SPECS, paneWidth } from './panes'
 import { ACTIONS, buildActionPrompt } from './aiActions'
 import { groupEventsByRun, pickRunId } from './runs'
+import { pickPending } from './pending'
 import { buildAnswers, clearPendingPrompts } from './askUser'
 import { buildSpans } from './waterfall'
 import { buildTour } from './tour'
@@ -2296,6 +2297,27 @@ export default function App() {
   // R29 (#58): on boot/refresh, a run that is still live in the selected
   // session must reattach — reload the persisted exchange, then stream the
   // tail from the run's (buffered) SSE channel.
+  // #147: after a refresh, a run that is still waiting on the user must
+  // re-show the pending ask/gate card — the interaction is persisted in the
+  // session trace (ASK_USER/GATE_REQUEST + RESOLVED markers).
+  async function restorePending(sessionId, runId) {
+    try {
+      const tr = await call(`/sessions/${sessionId}/trace?limit=300`)
+      const p = pickPending(tr || [], runId)
+      if (!p) return
+      setMessages((msgs) => {
+        if (!msgs.length) return msgs
+        const copy = [...msgs]
+        const last = { ...copy[copy.length - 1] }
+        if (p.kind === 'ask') last.ask = { questions: p.questions, answered: false }
+        else last.gate = p.command
+        copy[copy.length - 1] = last
+        return copy
+      })
+      if (p.kind === 'gate') setStatus('waiting for approval')
+    } catch { /* transient; the trace poll will retry */ }
+  }
+
   useEffect(() => {
     const runId = runToReattach(runningSessions, activeSession, attachedRunRef.current)
     if (!runId) return
@@ -2304,6 +2326,7 @@ export default function App() {
     setStatus('running')
     runRef.current = runId
     loadMessages(activeSession).catch(() => {})
+    restorePending(activeSession, runId)
     attach(runId)
   }, [activeSession, runningSessions])
 

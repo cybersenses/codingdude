@@ -231,3 +231,66 @@ def test_engine_run_kwargs_run_id_default_none():
     from codingdude import worker
 
     assert worker.engine_run_kwargs(_args(), model=None).get('run_id') is None
+
+
+# --- #147: pending ask/gate interactions are persisted to the trace so a
+# --- page refresh can restore the card while the run is still alive.
+
+def test_ask_user_interaction_traces_request_and_resolution():
+    import asyncio
+
+    from codingdude import worker
+
+    traced = []
+    fut = None
+    async def main():
+        nonlocal fut
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+        emitted = []
+        task = asyncio.create_task(worker.ask_user_interaction(
+            emitted.append, traced.append, 'run1', [{'question': 'q?'}], fut))
+        await asyncio.sleep(0)
+        assert emitted[0]['type'] == 'ASK_USER'
+        fut.set_result({'q': 'a'})
+        answers = await task
+        assert answers == {'q': 'a'}
+    asyncio.run(main())
+    assert [e['type'] for e in traced] == ['ASK_USER', 'ASK_USER_RESOLVED']
+    assert traced[0]['questions'] == [{'question': 'q?'}]
+
+
+def test_ask_user_interaction_timeout_traces_resolution():
+    import asyncio
+
+    from codingdude import worker
+
+    async def main():
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+        traced = []
+        answers = await worker.ask_user_interaction(
+            lambda e: None, traced.append, 'run1', [], fut, timeout=0.01)
+        assert answers == {'error': 'no answer (timed out)'}
+        assert traced[-1]['type'] == 'ASK_USER_RESOLVED'
+    asyncio.run(main())
+
+
+def test_gate_interaction_traces_request_and_resolution():
+    import asyncio
+
+    from codingdude import worker
+
+    async def main():
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+        emitted, traced = [], []
+        task = asyncio.create_task(worker.gate_interaction(
+            emitted.append, traced.append, 'run1', 'pytest -q', fut))
+        await asyncio.sleep(0)
+        assert emitted[0] == {'type': 'GATE_REQUEST', 'command': 'pytest -q'}
+        fut.set_result('approve')
+        decision = await task
+        assert decision == 'approve'
+        assert [e['type'] for e in traced] == ['GATE_REQUEST', 'GATE_RESOLVED']
+    asyncio.run(main())

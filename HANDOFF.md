@@ -169,3 +169,8 @@
 - run_captured converts spawn failures (missing binary, WinError 206, OSError) into Captured(code=-1, stderr="spawn failed: ...") — every one of the 26 call sites now surfaces readable errors instead of aborting the run. Tool bodies remain covered by R25 ToolErrorFeedback -> ModelRetry.
 - gh/audit toolsets updated to detect spawn-failure Captured and keep friendly "not installed" wording.
 - Gates: 590 passed/1 skipped, ruff+mypy clean. Bounce needed to go live.
+
+## 2026-09-25 — #147 durable pending ask/gate restore
+- worker: ask_user_interaction/gate_interaction seam traces ASK_USER/GATE_REQUEST + RESOLVED markers (run_id stamped); run() wired to them.
+- frontend: pending.ts pickPending pure seam (6 tests); reattach effect restores pending card for still-active runs; refresh no longer hides an open question.
+- Gates: pytest 593/1 skip, ruff+mypy clean, eslint clean, vitest 82/82, build ok. Bounce to go live.

@@ -274,6 +274,38 @@ async def _reader_loop(ws, pending_gate: dict, pending_ask: dict) -> None:
         log.warning('WORKER_WS_LOST pid=%s — reader exiting (server gone)', os.getpid())
 
 
+async def ask_user_interaction(on_event, trace, run_id, payload, fut, timeout=1800):
+    """#147: surface an interactive question, persist request+resolution.
+
+    The ASK_USER event rides the UI queue as before, but is also appended to
+    the session trace (run_id stamped) so a page refresh can restore the
+    pending card while the run is still alive. The resolution is traced too,
+    so a restored card is only shown while the question is still open.
+    """
+    event = {'type': 'ASK_USER', 'questions': payload}
+    on_event(event)
+    trace(event)
+    try:
+        answers = await asyncio.wait_for(fut, timeout)
+    except TimeoutError:
+        answers = {'error': 'no answer (timed out)'}
+    trace({'type': 'ASK_USER_RESOLVED', 'run_id': run_id, 'timed_out': 'error' in answers})
+    return answers
+
+
+async def gate_interaction(on_event, trace, run_id, command, fut, timeout=600):
+    """#147: gated-command approval with durable trace (see ask_user_interaction)."""
+    event = {'type': 'GATE_REQUEST', 'command': command}
+    on_event(event)
+    trace(event)
+    try:
+        decision = await asyncio.wait_for(fut, timeout)
+    except TimeoutError:
+        decision = 'deny'
+    trace({'type': 'GATE_RESOLVED', 'run_id': run_id, 'decision': decision})
+    return decision
+
+
 async def run(args) -> int:
     from codingdude.approvals import ApprovalPolicy
     from codingdude.config import load_config
@@ -316,16 +348,16 @@ async def run(args) -> int:
     policy = ApprovalPolicy(yolo=args.yolo)
     if not args.yolo:
 
+        async def trace_interaction(event: dict) -> None:
+            # #147: persist the interaction so a refresh can restore the
+            # pending card while this run is still alive.
+            run_id = getattr(args, 'run_id', None)
+            trace_terminal(args.session, {**event, 'run_id': run_id})
+
         async def ask(command: str) -> str:
             fut = loop.create_future()
             pending_gate['fut'] = fut
-            # Single writer: gate requests flow through the same queue as
-            # every other event, so frames can never interleave.
-            on_event({'type': 'GATE_REQUEST', 'command': command})
-            try:
-                decision = await asyncio.wait_for(fut, timeout=600)
-            except TimeoutError:
-                decision = 'deny'
+            decision = await gate_interaction(on_event, trace_interaction, getattr(args, 'run_id', None), command, fut)
             if decision == 'pattern':
                 engine.approve_pattern(args.session, command)
             return decision
@@ -336,11 +368,8 @@ async def run(args) -> int:
         """Surface an interactive question form and wait for the user's answers."""
         fut = loop.create_future()
         pending_ask['fut'] = fut
-        on_event({'type': 'ASK_USER', 'questions': payload})
-        try:
-            return await asyncio.wait_for(fut, timeout=1800)
-        except TimeoutError:
-            return {'error': 'no answer (timed out)'}
+        return await ask_user_interaction(
+            on_event, trace_interaction, getattr(args, 'run_id', None), payload, fut)
 
     policy.ask_user = ask_user_fn
 
