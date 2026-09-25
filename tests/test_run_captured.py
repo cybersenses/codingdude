@@ -136,3 +136,31 @@ async def test_run_captured_timeout_kills_grandchild_tree(tmp_path: Path):
     await asyncio.sleep(0.3)
     assert not _alive(gc_pid), (
         'timeout killed the direct child but the grandchild tree survived')
+
+
+async def test_run_captured_missing_binary_returns_readable_error(tmp_path: Path):
+    """#146: a spawn failure (missing binary) surfaces as tool output, not
+    an exception that kills the run."""
+    cap = await run_captured(['definitely-not-a-real-binary-xyz'],
+                             cwd=tmp_path, timeout=10)
+    assert cap is not None
+    assert cap.code == -1
+    assert 'definitely-not-a-real-binary-xyz' in cap.stderr or \
+        'FileNotFoundError' in cap.stderr
+
+
+async def test_run_captured_spawn_oserror_returns_readable_error(
+    tmp_path: Path, monkeypatch,
+):
+    """#146: OSError at spawn (e.g. WinError 206, command line too long)
+    becomes a Captured with the OS message, not a raised exception."""
+    import codingdude.tools as tools_mod
+
+    async def boom(*a, **kw):
+        raise OSError(206, 'The filename or extension is too long')
+
+    monkeypatch.setattr(tools_mod.asyncio, 'create_subprocess_exec', boom)
+    cap = await run_captured(['git', 'status'], cwd=tmp_path, timeout=10)
+    assert cap is not None
+    assert cap.code == -1
+    assert 'too long' in cap.stderr

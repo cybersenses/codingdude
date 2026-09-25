@@ -168,13 +168,21 @@ async def run_captured(
     if env is None:
         env = scrubbed_env()
     if shell:
-        proc = await asyncio.create_subprocess_shell(
-            ' '.join(argv), cwd=cwd, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE, env=env)
+        try:
+            proc = await asyncio.create_subprocess_shell(
+                ' '.join(argv), cwd=cwd, stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE, env=env)
+        except OSError as exc:  # #146: WinError 206, bad shell, ...
+            return Captured(code=-1, stdout='',
+                            stderr=f'spawn failed: {type(exc).__name__}: {exc}')
     else:
-        proc = await asyncio.create_subprocess_exec(
-            *argv, cwd=cwd, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE, env=env)
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *argv, cwd=cwd, stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE, env=env)
+        except OSError as exc:  # FileNotFoundError (missing binary) is an OSError
+            return Captured(code=-1, stdout='',
+                            stderr=f'spawn failed: {type(exc).__name__}: {exc}')
     if registry is not None:
         registry.register(proc.pid, ' '.join(argv))
     try:
@@ -1216,9 +1224,8 @@ def build_ci_toolset(workdir: Path) -> FunctionToolset:
     always-gated tier; never auto-approved here."""
 
     async def _gh(argv: list[str], timeout: int = 120) -> str:
-        try:
-            cap = await run_captured(['gh', *argv], cwd=workdir, timeout=timeout)
-        except FileNotFoundError:
+        cap = await run_captured(['gh', *argv], cwd=workdir, timeout=timeout)
+        if cap is not None and cap.code == -1 and 'spawn failed' in cap.stderr:
             return (
                 'gh is not installed - these CI tools need the GitHub CLI '
                 '(https://cli.github.com).'
@@ -1251,9 +1258,8 @@ def build_audit_toolset(workdir: Path) -> FunctionToolset:
     tools are surfaced so the agent can suggest installation."""
 
     async def _run(cmd: list[str], timeout: int = 300) -> str:
-        try:
-            cap = await run_captured(cmd, cwd=workdir, timeout=timeout)
-        except FileNotFoundError:
+        cap = await run_captured(cmd, cwd=workdir, timeout=timeout)
+        if cap is not None and cap.code == -1 and 'spawn failed' in cap.stderr:
             return f'{cmd[0]} is not installed'
         if cap is None:
             return 'audit timed out'
