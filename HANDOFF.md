@@ -164,3 +164,8 @@
 - Terminal events (RUN_FINISHED/ERROR/CANCELLED) and stop() now clear last.ask/last.gate; runRef nulled on stop. Pure seam clearPendingPrompts in askUser.ts (+1 test).
 - Gates: vitest 76/76, eslint clean, build OK. Commit 3d81ec1 pushed, tree clean.
 - Bounce needed to serve new dist.
+
+## 2026-09-25 — #146 spawn errors fed back to agent
+- run_captured converts spawn failures (missing binary, WinError 206, OSError) into Captured(code=-1, stderr="spawn failed: ...") — every one of the 26 call sites now surfaces readable errors instead of aborting the run. Tool bodies remain covered by R25 ToolErrorFeedback -> ModelRetry.
+- gh/audit toolsets updated to detect spawn-failure Captured and keep friendly "not installed" wording.
+- Gates: 590 passed/1 skipped, ruff+mypy clean. Bounce needed to go live.
