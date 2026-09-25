@@ -174,3 +174,23 @@
 - worker: ask_user_interaction/gate_interaction seam traces ASK_USER/GATE_REQUEST + RESOLVED markers (run_id stamped); run() wired to them.
 - frontend: pending.ts pickPending pure seam (6 tests); reattach effect restores pending card for still-active runs; refresh no longer hides an open question.
 - Gates: pytest 593/1 skip, ruff+mypy clean, eslint clean, vitest 82/82, build ok. Bounce to go live.
+
+## 2026-09-25 — #148 run janitor (post-mortem + fix, caa3553)
+- **Root cause (run -cnQwMpicBI, "bounce has completed", 11:16 UTC):** worker
+  process died before executing ANY worker code (silent spawn failure 17s
+  after server bounce; prompt file never consumed, zero log lines). The R31
+  reaper was armed only in the worker-ws endpoint's finally — a worker that
+  never connects arms nothing → no RUN_ERROR, runs row stuck 'running',
+  UI waiting forever. Boot reconcile is the only other sweep and needs a bounce.
+- **Fix:** `_run_janitor` (app startup task) sweeps channels: reaps exited
+  workers (idempotent `_reap_worker`) regardless of ws lifecycle; terminates
+  live workers that never connected ws within `_BOOT_TIMEOUT_S` (60s).
+  `_reap_worker` now records terminal status on the runs row
+  (`_terminal_status`: completed/cancelled/failed). `RunChannel` gained
+  boot_seen/created/reaped; ws connect stamps boot_seen.
+- Stuck row -cnQwMpicBI manually marked 'failed' in live DB.
+- Gates: 599 passed/1 skipped (4m48s), ruff clean, mypy clean (62 files).
+  Commit caa3553 pushed, tree clean, #148 closed.
+- **BOUNCE NEEDED** for janitor to go live (also still serving pre-#147 dist).
+- Process note: another edit_file ghost edit (import cleanup reported success,
+  didn't persist — caught by ruff). Recurring seam, stay suspicious.
