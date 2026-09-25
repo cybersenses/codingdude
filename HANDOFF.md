@@ -159,3 +159,8 @@
 - **Contributing factors**: two index seams over one workdir (SemanticIndex + ReferenceStore) with no corpus ownership rule; "pre-existing at HEAD~1" verification was wrong (scaffold changes uncommitted in tree).
 - **5 Whys**: found:nothing → code crowded out of top-5 → checklists indexed → scaffold seeds reference/ into workdir (#106) → no rule that reference/ belongs only to ReferenceStore.
 - **Action items**: exclude+prune reference/ in SemanticIndex (done, ef93c61); corpus-ownership rule noted in module docstring (done). No open items.
+
+## 2026-09-25 — #145 zombie ask/gate cards
+- Terminal events (RUN_FINISHED/ERROR/CANCELLED) and stop() now clear last.ask/last.gate; runRef nulled on stop. Pure seam clearPendingPrompts in askUser.ts (+1 test).
+- Gates: vitest 76/76, eslint clean, build OK. Commit 3d81ec1 pushed, tree clean.
+- Bounce needed to serve new dist.
