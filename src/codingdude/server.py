@@ -13,6 +13,7 @@ import os
 import secrets
 import subprocess
 import sys
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -45,6 +46,11 @@ _STARTED_AT = datetime.now(UTC).isoformat()
 # auto-reconnect replays the terminal and settles (frontend hardening rides
 # on this); short enough not to leak channels all session.
 _TERMINAL_REPLAY_GRACE_S = 300
+# #148 janitor: independent watchdog over spawned workers. Interval between
+# sweeps; boot timeout = how long a live worker may stay without connecting
+# its WebSocket before we conclude it never booted (silent spawn failure).
+_JANITOR_INTERVAL_S = 2.0
+_BOOT_TIMEOUT_S = 60.0
 
 
 def _git_sha() -> str:
@@ -89,6 +95,10 @@ class RunChannel:
         self.inbox: asyncio.Queue = asyncio.Queue()  # server → worker (approvals)
         self.worker: subprocess.Popen | None = None
         self.loop: asyncio.AbstractEventLoop | None = None
+        # #148: worker-lifecycle visibility that does not depend on the ws.
+        self.boot_seen = False       # worker connected its WebSocket
+        self.created = time.monotonic()
+        self.reaped = False          # _reap_worker already handled this run
 
     def _broadcast(self, event: dict) -> None:
         self.history.append(event)
@@ -148,22 +158,30 @@ class RunChannel:
                 self.registry.pop(self.run_id, None)
 
 
-async def _reap_worker(channel) -> None:
+async def _reap_worker(channel, db: 'Database | None' = None) -> None:
     """Watch a run's worker process after its ws closes; reap on exit (R31).
 
     If the worker exited without delivering a terminal event, synthesize a
     RUN_ERROR so any attached consumer settles instead of waiting forever on
     a dead run (live symptom: UI 'still working' 300s+ after the worker died).
+    Idempotent (#148): the janitor and the ws teardown may both call this.
     """
     log = logging.getLogger('codingdude.server')
+    if channel.reaped:
+        return
     worker = channel.worker
     if worker is None:
         return
+    channel.reaped = True
     while worker.poll() is None:
         await asyncio.sleep(0.5)
     log.info(
         'WORKER_EXITED run=%s worker_pid=%s exit=%s terminal_seen=%s',
         channel.run_id, worker.pid, worker.returncode, channel.saw_terminal())
+    if db is not None:
+        db.record_run_end(
+            channel.run_id, _terminal_status(channel),
+            exit_code=worker.returncode)
     if not channel.saw_terminal():
         channel.push({
             'type': 'RUN_ERROR',
@@ -179,6 +197,48 @@ async def _reap_worker(channel) -> None:
         # idempotently instead of 404-ing into the frontend error loop.
         await asyncio.sleep(_TERMINAL_REPLAY_GRACE_S)
     channel.registry.pop(channel.run_id, None)
+
+
+def _terminal_status(channel) -> str:
+    """Durable end-state for the runs row, derived from channel history."""
+    terminals = [e['type'] for e in channel.history
+                 if e['type'] in TERMINAL_EVENTS]
+    if terminals and terminals[-1] == 'RUN_FINISHED':
+        return 'completed'
+    if terminals and terminals[-1] == 'RUN_CANCELLED':
+        return 'cancelled'
+    return 'failed'
+
+
+async def _run_janitor(channels: dict, db: Database) -> None:
+    """#148: sweep channels so no run can hang invisibly.
+
+    The R31 reaper was armed only in the worker-ws endpoint's `finally` — a
+    worker that died before ever connecting (silent spawn failure after a
+    bounce, live run -cnQwMpicBI) armed nothing: no reaper, no RUN_ERROR, a
+    runs row stuck 'running', a UI waiting forever. The janitor covers both
+    halves without depending on the ws lifecycle:
+
+    - exited worker → run the (idempotent) reaper;
+    - live worker that never connected within _BOOT_TIMEOUT_S → treat as a
+      failed boot, terminate it (the reaper then settles the run).
+    """
+    log = logging.getLogger('codingdude.server')
+    while True:
+        await asyncio.sleep(_JANITOR_INTERVAL_S)
+        for channel in list(channels.values()):
+            worker = channel.worker
+            if worker is None:
+                continue
+            if worker.poll() is not None:
+                if not channel.reaped:
+                    asyncio.create_task(_reap_worker(channel, db))
+            elif (not channel.boot_seen
+                    and time.monotonic() - channel.created > _BOOT_TIMEOUT_S):
+                log.info(
+                    'WORKER_NEVER_BOOTED run=%s worker_pid=%s — terminating',
+                    channel.run_id, worker.pid)
+                worker.terminate()
 
 
 def create_app(
@@ -198,6 +258,11 @@ def create_app(
         logging.getLogger('codingdude.server').info(
             'RUNS_RECONCILED interrupted=%s', interrupted)
     channels: dict[str, RunChannel] = {}
+
+    @app.on_event('startup')
+    async def _start_run_janitor() -> None:
+        # #148: independent worker-lifecycle watchdog (see _run_janitor).
+        app.state.janitor_task = asyncio.create_task(_run_janitor(channels, db))
     # Stale prompt files (run 500'd before the worker consumed them) would
     # otherwise linger forever holding full prompt text on disk.
     for stale in (home / 'prompts').glob('*.prompt'):
@@ -1313,6 +1378,7 @@ def create_app(
         if channel is None:
             await ws.close(code=4404)
             return
+        channel.boot_seen = True  # #148: worker reached the server
         channel.loop = asyncio.get_running_loop()
 
         async def forward_inbox():
@@ -1333,7 +1399,9 @@ def create_app(
             # signal the server gets. Watch the process until it exits, log
             # it, and if it died without a terminal event, synthesize one so
             # no consumer waits on a dead run. Then reap the channel.
-            asyncio.create_task(_reap_worker(channel))
+            # #148: pass db so the runs row gets its terminal status here;
+            # the janitor covers workers that never connected.
+            asyncio.create_task(_reap_worker(channel, db))
 
     @app.get('/models')
     def list_models(_: None = Depends(authorize)) -> dict:
