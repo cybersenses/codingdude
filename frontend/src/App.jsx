@@ -8,6 +8,7 @@ import { activeProcesses, describeProcess, mergeProcesses } from './processes'
 import { PANE_SPECS, paneWidth } from './panes'
 import { ACTIONS, buildActionPrompt } from './aiActions'
 import { groupEventsByRun, pickRunId } from './runs'
+import { buildAnswers } from './askUser'
 import { buildSpans } from './waterfall'
 import { buildTour } from './tour'
 import { buildDesignDocPrompt } from './designdoc'
@@ -303,7 +304,8 @@ function EditBlock({ edit, sessionId, onRevert }) {
 }
 
 function AskUserCard({ ask, runId }) {
-  const [answers, setAnswers] = useState({})
+  const [picks, setPicks] = useState({})
+  const [texts, setTexts] = useState({})
   const [sent, setSent] = useState(false)
   const [error, setError] = useState('')
   const [sending, setSending] = useState(false)
@@ -313,10 +315,7 @@ function AskUserCard({ ask, runId }) {
     if (sending) return
     setSending(true)
     setError('')
-    const out = {}
-    for (const q of ask.questions || []) {
-      out[q.question] = answers[q.question] ?? ''
-    }
+    const out = buildAnswers(ask.questions || [], picks, texts)
     call(`/runs/${runId}/ask`, { method: 'POST', body: JSON.stringify({ answers: out }) })
       .then(() => setSent(true))
       .catch((e) => { setError(String(e)); setSending(false) })
@@ -327,10 +326,14 @@ function AskUserCard({ ask, runId }) {
         Questions for you
       </div>
       <div className="space-y-3 px-3 py-2">
-        {(ask.questions || []).map((q) => (
+        {(ask.questions || []).map((q) => {
+          const hasOptions = (q.options || []).length > 0
+          const setPick = (fn) => setPicks((a) => ({ ...a, [q.question]: fn(a[q.question]) }))
+          const setText = (v) => setTexts((a) => ({ ...a, [q.question]: v }))
+          return (
           <div key={q.question}>
             <div className="mb-1 text-xs text-ink">{q.question}</div>
-            {(q.options || []).length > 0 ? (
+            {hasOptions ? (
               <div className="space-y-1">
                 {(q.options || []).map((o) => (
                   <label key={o} className="flex items-center gap-2 text-xs text-ink-muted">
@@ -338,31 +341,39 @@ function AskUserCard({ ask, runId }) {
                       type={q.multi ? 'checkbox' : 'radio'}
                       name={q.question}
                       checked={q.multi
-                        ? (answers[q.question] || []).includes(o)
-                        : answers[q.question] === o}
-                      onChange={() => setAnswers((a) => {
-                        const cur = a[q.question]
+                        ? (picks[q.question] || []).includes(o)
+                        : picks[q.question] === o}
+                      onChange={() => setPick((cur) => {
                         if (q.multi) {
                           const list = Array.isArray(cur) ? cur : []
-                          return { ...a, [q.question]: list.includes(o)
-                            ? list.filter((x) => x !== o) : [...list, o] }
+                          return list.includes(o) ? list.filter((x) => x !== o) : [...list, o]
                         }
-                        return { ...a, [q.question]: o }
+                        return o
                       })}
                     />
                     {o}
                   </label>
                 ))}
+                <label className="flex items-center gap-2 text-xs text-ink-muted">
+                  Other…
+                  <input
+                    className="w-full rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-ink"
+                    placeholder="type your own answer"
+                    value={texts[q.question] || ''}
+                    onChange={(e) => setText(e.target.value)}
+                  />
+                </label>
               </div>
             ) : (
               <input
                 className="w-full rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-ink"
-                value={answers[q.question] || ''}
-                onChange={(e) => setAnswers((a) => ({ ...a, [q.question]: e.target.value }))}
+                value={texts[q.question] || ''}
+                onChange={(e) => setText(e.target.value)}
               />
             )}
           </div>
-        ))}
+          )
+        })}
       </div>
       {error && <div className="px-3 py-1 text-xs text-danger">{error}</div>}
       <div className="flex justify-end border-t border-line px-3 py-2">

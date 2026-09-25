@@ -1307,7 +1307,10 @@ def build_ask_user_toolset(policy, recorder=None):
         `questions` is a JSON array, for example:
           [{"question": "Which database?", "options": ["postgres", "sqlite"],
             "multi": false}]
-        Empty `options` renders a free-text field. Returns the answers as JSON.
+        Set `"multi": true` when several options may apply — the user sees
+        checkboxes instead of radios. Leave `options` empty for a free-text
+        question. Even with options, the user always gets an "Other…" field,
+        so they can type an answer you did not list. Returns the answers as JSON.
         """
         from pydantic_ai import ModelRetry
 
