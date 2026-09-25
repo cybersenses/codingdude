@@ -8,7 +8,7 @@ import { activeProcesses, describeProcess, mergeProcesses } from './processes'
 import { PANE_SPECS, paneWidth } from './panes'
 import { ACTIONS, buildActionPrompt } from './aiActions'
 import { groupEventsByRun, pickRunId } from './runs'
-import { buildAnswers } from './askUser'
+import { buildAnswers, clearPendingPrompts } from './askUser'
 import { buildSpans } from './waterfall'
 import { buildTour } from './tour'
 import { buildDesignDocPrompt } from './designdoc'
@@ -2480,6 +2480,10 @@ export default function App() {
             if (ev.type === 'REVIEW_FINDINGS') last.review = ev.findings
             if (['RUN_FINISHED', 'RUN_ERROR', 'RUN_CANCELLED'].includes(ev.type)) {
               last.streaming = false
+              // #145: pending ask/gate cards must not outlive the run —
+              // the worker is gone, answering would just 404.
+              last.ask = null
+              last.gate = null
               setStatus(ev.type === 'RUN_ERROR' ? `error: ${ev.message || ''}` : 'finished')
               if (ev.type === 'RUN_ERROR') setError(ev.message || 'run error')
               es.close()
@@ -2554,6 +2558,8 @@ export default function App() {
     if (runRef.current) api.cancelRun(runRef.current).catch(() => {})
     esRef.current?.close()
     attachedRunRef.current = null
+    runRef.current = null // #145: kills any zombie AskUserCard rendering
+    setMessages((msgs) => clearPendingPrompts(msgs))
     setStreaming(false)
     setStatus('stopped')
   }

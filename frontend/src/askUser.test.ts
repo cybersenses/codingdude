@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildAnswers } from './askUser'
+import { buildAnswers, clearPendingPrompts } from './askUser'
 
 const qs = [
   { question: 'Which database?', options: ['postgres', 'sqlite'] },
@@ -50,5 +50,19 @@ describe('buildAnswers', () => {
       'Which stacks?': [],
       'Project name?': '',
     })
+  })
+})
+
+describe('clearPendingPrompts (#145)', () => {
+  const msgs = [
+    { role: 'user', text: 'hi' },
+    { role: 'assistant', text: '', ask: { questions: [{ question: 'Q?' }] }, gate: 'rm -rf' },
+    { role: 'assistant', text: 'done', ask: null },
+  ]
+  it('strips ask and gate from every message, without mutating input', () => {
+    const out = clearPendingPrompts(msgs)
+    expect(out.every((m) => m.ask === null && m.gate === null)).toBe(true)
+    expect(msgs[1].ask).not.toBeNull() // input untouched
+    expect(out[2].text).toBe('done')
   })
 })

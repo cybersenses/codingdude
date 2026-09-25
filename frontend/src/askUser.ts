@@ -10,6 +10,15 @@ export interface AskQuestion {
 export type Picks = Record<string, string | string[]>
 export type Texts = Record<string, string>
 
+/** #145: pending prompts must not outlive the run. On stop or terminal
+ * event, strip ask/gate cards from every message (the worker behind them is
+ * gone — answering would just 404). Pure: returns a new array. */
+export function clearPendingPrompts<T extends { ask?: unknown; gate?: unknown }>(
+  messages: T[],
+): T[] {
+  return messages.map((m) => ({ ...m, ask: null, gate: null }))
+}
+
 export function buildAnswers(
   questions: AskQuestion[],
   picks: Picks,
