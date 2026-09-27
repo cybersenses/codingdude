@@ -17,9 +17,14 @@
 - E2E verified: mutmut on a scratch project, 1/1 mutant killed; gates: pytest
   636/1 skipped, ruff clean, mypy clean (65 files), eslint clean, vitest 87/87,
   vite build OK.
-- **Still open in R47:** #157 BLOCKED (semgrep has no native Windows build,
-  returntocorp/semgrep#1330 — uv add fails; reopen on WSL adoption or platform
-  support), #159/#160 parked by user decision.
+- **#157 DONE (13d5051):** the earlier 'blocked on Windows' note was WRONG —
+  `uv tool install semgrep` works natively (1.178.0); only `uv add` as project
+  dep fails. Bundled custom rules at src/codingdude/semgrep_rules/codingdude.yaml
+  (SQLi f-string/concat, os.system, unsafe deserialization, Flask debug=True);
+  _semgrep_findings runs them as an OPTIONAL gate layer when semgrep is on PATH
+  (absent → skip; scanner error → fail closed, same as Bandit). UTF-8 capture
+  required (cp1252 reader-thread crash). R47 remaining: #159/#160 parked.
+  Server bounce still pending to serve the #155 B101 fix.
 
 *Updated after commit (see git log). Main == origin/main, tree clean.*
 
