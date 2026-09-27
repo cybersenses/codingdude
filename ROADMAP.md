@@ -771,7 +771,7 @@ Second feature thrust: tools that help a HUMAN understand the code the agent gen
 From reference/research/human-code-comprehension.md (As-of 2026-09-20). Five user-facing features: repo Q&A with citations, module architecture map (C4-lite), trust-my-tests report, code tour of a run, auto design doc/ADR.
 
 ## R44 — R44 — Friction fixes from SteroidsEngine usage
-**Status:** open
+**Status:** done
 
 Fixes surfacing from real SteroidsEngine usage.
 
@@ -786,6 +786,6 @@ CFG of basic blocks per function, unreachable-code analysis, green/red Mermaid H
 Control-flow graph analysis exposed both ways: agent tool (dead-code detection during work) and human UI panel (green/red basic-block view of generated code). Build on cfg.py::build_cfg seam from #152.
 
 ## R47 — R47: Analysis hardening
-**Status:** open
+**Status:** done
 
 Security + verification gates from the local-agent tooling research. Adopt: T1 security gate on edits (Bandit + gitleaks), T2 mutation testing into trustreport (mutmut), T3 conditional Semgrep custom rules, T4 parked perf smoke (cProfile tool). Rejected: Zoekt/SCIP, Joern/CodeQL CPG, symbolic execution, Docker sandbox (per existing design decision), local LLM.
