@@ -1,0 +1,44 @@
+# CodingDude bundled Semgrep rules (R47 #157) — extra layer over Bandit.
+# High-signal custom checks for user workdirs; the edit-gate runs these
+# on every changed file when semgrep is on PATH (skipped silently if not).
+rules:
+  - id: CD-sql-injection-fstring
+    message: >-
+      f-string / concatenation inside a database execute call builds SQL from
+      variables — SQL injection risk. Use parameterized queries
+      (cur.execute(sql, params)).
+    severity: ERROR
+    languages: [python]
+    patterns:
+      - pattern-either:
+          - pattern: $CUR.execute(f"...{$X}...")
+          - pattern: $CUR.executemany(f"...{$X}...")
+          - pattern: $CUR.executescript(f"...{$X}...")
+          - pattern: $CUR.execute("..." + $X + "...")
+
+  - id: CD-os-system
+    message: >-
+      os.system runs a shell command with no argument escaping. Use
+      subprocess with an argv list (no shell=True) instead.
+    severity: WARNING
+    languages: [python]
+    pattern: os.system(...)
+
+  - id: CD-unsafe-deserialization
+    message: >-
+      pickle/marshal/yaml.load can execute arbitrary code on untrusted
+      input. Prefer json, or yaml.safe_load / restricted unpicklers.
+    severity: ERROR
+    languages: [python]
+    pattern-either:
+      - pattern: pickle.loads(...)
+      - pattern: marshal.loads(...)
+      - pattern: yaml.load(...)
+
+  - id: CD-flask-debug-true
+    message: >-
+      Flask debug=True exposes the interactive debugger (remote code
+      execution) — never ship it enabled.
+    severity: ERROR
+    languages: [python]
+    pattern: $APP.run(..., debug=True, ...)

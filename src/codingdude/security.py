@@ -4,6 +4,9 @@ Two layers, one seam (`scan_source`):
 - Python files: Bandit (in-process CLI module) flags dangerous constructs.
 - All text files: curated regexes flag hardcoded secrets (AWS keys, tokens,
   private key blocks).
+- Optional third layer (#157): bundled custom Semgrep rules when the
+  semgrep binary is on PATH; skipped silently when absent (Bandit +
+  secrets remain the fail-closed core).
 
 Findings block the write via ModelRetry in tools.py — gate before disk,
 not after. Bandit runs on a temp copy of the content so uncommitted drafts
@@ -98,6 +101,58 @@ def _bandit_findings(source: str, tmp_dir: Path, skip: str = '') -> list[dict]:
     ]
 
 
+def _semgrep_findings(source: str, tmp_dir: Path, suffix: str) -> list[dict]:
+    """#157: run bundled custom rules over the content (optional layer).
+
+    Skipped (returns []) when semgrep is not on PATH — Bandit + secret
+    regexes remain the fail-closed core. Scanner failure raises (fail
+    closed), matching the Bandit layer's policy.
+    """
+    import importlib.resources
+    import shutil
+
+    semgrep = shutil.which('semgrep')
+    if semgrep is None:
+        return []
+    with importlib.resources.as_file(
+        importlib.resources.files('codingdude') / 'semgrep_rules'
+    ) as rules_dir:
+        scan_path = tmp_dir / f'_security_gate_scan{suffix or ".txt"}'
+        scan_path.write_text(source, encoding='utf-8')
+        argv = [
+            semgrep, 'scan', '--quiet', '--json',
+            f'--config={rules_dir}', '--no-git-ignore',
+            str(scan_path),
+        ]
+        try:
+            # Fixed argv, no shell: nothing user-controlled is executed.
+            proc = subprocess.run(  # nosec B603
+                argv,
+                capture_output=True, text=True, encoding='utf-8',
+                errors='replace', timeout=60, check=False,
+                cwd=tmp_dir,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError('semgrep timed out after 60s') from exc
+    if proc.returncode not in (0, 1):
+        # 0 = clean, 1 = findings; anything else is a scanner error.
+        raise RuntimeError(
+            f'semgrep failed (code {proc.returncode}): {proc.stderr[:400]}'
+        )
+    data = json.loads(proc.stdout) if proc.stdout.strip() else {'results': []}
+    return [
+        {
+            'id': str(r.get('check_id', '?')),
+            'line': int((r.get('start') or {}).get('line') or 0),
+            'severity': str(
+                ((r.get('extra') or {}).get('severity') or '?').title()
+            ),
+            'message': str((r.get('extra') or {}).get('message', '')),
+        }
+        for r in data.get('results', [])
+    ]
+
+
 def _is_test_file(rel: str) -> bool:
     """B101 (assert) is the point of pytest files - never gate on it there."""
     name = Path(rel).name
@@ -118,6 +173,7 @@ def scan_source(
             findings.extend(_bandit_findings(source, tmp_dir, skip='B101'))
         else:
             findings.extend(_bandit_findings(source, tmp_dir))
+    findings.extend(_semgrep_findings(source, tmp_dir, suffix))
     return findings
 
 

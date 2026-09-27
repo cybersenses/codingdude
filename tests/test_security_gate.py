@@ -1,5 +1,10 @@
 """Security gate (R47 #155): Bandit + secrets scan on edited file content."""
 
+import shutil
+from importlib.resources import files
+
+import pytest
+
 from codingdude.security import format_findings, scan_source
 
 CLEAN_PY = 'def add(a, b):\n    return a + b\n'
@@ -100,3 +105,32 @@ def test_write_file_allows_clean_code(tmp_path):
     out = write('ok.py', CLEAN_PY)
     assert 'ok.py' in out
     assert (tmp_path / 'ok.py').exists()
+
+
+# --- #157: bundled Semgrep rules, optional third scan layer -----------------
+
+_semgrep_on_path = shutil.which('semgrep') is not None
+
+SQLI_PY = (
+    'def get_user(cur, user_id):\n'
+    "    cur.execute(f'SELECT * FROM users WHERE id = {user_id}')\n"
+)
+
+
+def test_bundled_semgrep_rules_ship_as_package_data():
+    rules = files('codingdude') / 'semgrep_rules'
+    yamls = [p.name for p in rules.iterdir()] if rules.is_dir() else []
+    assert yamls, 'bundled semgrep_rules package data dir must not be empty'
+
+
+@pytest.mark.skipif(not _semgrep_on_path, reason='semgrep not installed')
+def test_semgrep_layer_flags_fstring_sql_execute(tmp_path):
+    findings = scan_source('db.py', SQLI_PY, '.py', tmp_path)
+    assert any('CD' in f['id'] for f in findings), (
+        f'custom semgrep rules must flag f-string SQL execute; got {findings}'
+    )
+
+
+@pytest.mark.skipif(not _semgrep_on_path, reason='semgrep not installed')
+def test_semgrep_layer_clean_source_stays_clean(tmp_path):
+    assert scan_source('ok.py', CLEAN_PY, '.py', tmp_path) == []
