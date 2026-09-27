@@ -1,6 +1,23 @@
-*Updated after commit a2e8db5 (pushed). Main == origin/main, tree clean.*
+*Updated after commit (see git log). Main == origin/main, tree clean.*
 
-## Current state
+## Handover — R46 CFG analysis done (agent + HITL)
+- **#153 (`3575c3d`):** `analyze_control_flow(path, function?)` agent tool —
+  `cfg.py::build_cfg_toolset`, attached in `plugins.build_all` next to the
+  AST toolset. ModelRetry on bad path/function/escape. 5 tests
+  (`tests/test_cfg_toolset.py`).
+- **#154 (`c6a0f84`):** `GET /sessions/{sid}/cfg?path=&function=` — no
+  `function` → `{functions: [...]}` picker payload; with it → blocks/edges
+  (`reachable` flag). Frontend: `frontend/src/cfgView.ts` (`cfgMermaid`, 5
+  tests) + Graph tab "control flow" section (function picker, green =
+  reachable / red = dead, dead-count warning line).
+- Gates run this session: pytest **618 passed/1 skipped**, ruff + mypy
+  (63 files) clean, eslint clean, vitest **87/87**, vite build OK, dist
+  rebuilt. Porcelain 0; HEAD == origin/main.
+- Bounce required to serve the new endpoint + dist.
+- Note: ROADMAP.md bookkeeping writes land *after* the work commit —
+  commit it separately before claiming clean (bit me twice today).
+
+## Previous state (R37-era, superseded)
 - **#83 / R37 CLOSED (`a2e8db5`):** selection AI actions in the editor.
   Highlight code in the Monaco editor -> toolbar appears under the editor
   (Explain / Fix / Optimise / Improve + clear). Click sends a scoped agent
