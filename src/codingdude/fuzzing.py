@@ -12,6 +12,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from .tools import resolve_workdir_file
+
 _DRIVER = r'''
 import importlib.util, json, sys
 
@@ -80,13 +82,6 @@ print(json.dumps({"routes_fuzzed": routes_fuzzed, "crashes": crashes[:20]}))
 '''
 
 
-def _resolve(root: Path, rel_path: str) -> Path | None:
-    target = (root / rel_path).resolve()
-    if root not in target.parents or not target.is_file():
-        return None
-    return target
-
-
 async def fuzz_api(
     workdir: str | Path, rel_path: str, max_examples: int = 25, timeout: int = 180,
 ) -> dict:
@@ -96,7 +91,7 @@ async def fuzz_api(
     — never raises. Derandomized, so a reported crash reproduces.
     """
     root = Path(workdir).resolve()
-    target = _resolve(root, rel_path)
+    target = resolve_workdir_file(root, rel_path)
     if target is None:
         return {"error": f"file not found in workdir: {rel_path}"}
 

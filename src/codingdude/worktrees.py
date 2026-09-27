@@ -26,6 +26,7 @@ def _git(workdir: Path, *args: str, check: bool = True) -> str:
 
 
 class WorktreeError(Exception):
+    """Raised when a git worktree operation fails."""
     pass
 
 

@@ -178,6 +178,7 @@ def scan_source(
 
 
 def format_findings(rel: str, findings: list[dict]) -> str:
+    """Render security-gate findings as a readable multi-line report."""
     lines = [f'security gate: rejecting the write to {rel}:']
     lines.extend(
         f'  - :{f["line"]} [{f["severity"]}] {f["id"]}: {f["message"]}'

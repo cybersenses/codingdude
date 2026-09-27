@@ -31,6 +31,7 @@ def _default_config_toml(lineup: ModelLineup) -> str:
 
 @dataclass(frozen=True)
 class ModelLineup:
+    """Ordered model fallback lineup with per-model provider binding."""
     main: str
     subagent: str
     fallback: str
@@ -89,11 +90,13 @@ class DelegationConfig:
 
 @dataclass(frozen=True)
 class ShellConfig:
+    """Shell command allow/deny policy configuration."""
     default: str = 'bash'
 
 
 @dataclass(frozen=True)
 class ProviderKeys:
+    """API keys per provider, read from the environment at load time."""
     deepseek: str | None = None
     zai: str | None = None
     github: str | None = None
@@ -101,6 +104,7 @@ class ProviderKeys:
 
 @dataclass(frozen=True)
 class Config:
+    """Top-level CodingDude configuration assembled from config home + environment."""
     models: ModelLineup
     shell: ShellConfig
     providers: ProviderKeys = field(default_factory=ProviderKeys)
@@ -120,6 +124,7 @@ class Config:
 
 
 def config_home() -> Path:
+    """Resolve the CodingDude config home directory (override via env)."""
     return Path(os.environ.get('CODEDUDE_HOME', Path.home() / '.codingdude'))
 
 

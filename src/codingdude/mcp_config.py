@@ -99,6 +99,7 @@ def ensure_default_mcp(home: Path) -> None:
 
 
 def list_mcp_servers(home: Path, workdir: Path) -> list[dict]:
+    """List MCP servers configured for this project."""
     config = merged_mcp_config(home, workdir)
     disabled = set(config['disabled'])
     return [

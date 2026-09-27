@@ -84,6 +84,7 @@ class GateRequest:
 
 @dataclass(frozen=True)
 class RunOutcome:
+    """Result of one agent run: final output, usage, cost, and terminal trace."""
     session_id: str
     output: str
     model_name: str
@@ -119,6 +120,7 @@ def _utcnow():
 
 
 class Engine:
+    """Agent runtime: wires model, tools, approvals, and persistence into run()."""
     def __init__(
         self,
         config: Config,

@@ -344,6 +344,7 @@ def wire_interactions(policy, args, engine, loop, on_event, pending_gate, pendin
 
 
 async def run(args) -> int:
+    """Worker entry: run one agent turn for a session and persist the trace."""
     from codingdude.approvals import ApprovalPolicy
     from codingdude.config import load_config
     from codingdude.db import Database
@@ -431,6 +432,7 @@ async def run(args) -> int:
 
 
 def trace_terminal(session_id: str, event: dict) -> None:
+    """Emit the terminal trace event for a finished run."""
     from codingdude.traces import append_trace_line
 
     # Atomic single-line append (#79) — never interleaves with the engine
@@ -460,18 +462,21 @@ def engine_run_kwargs(args, model, vision_model=None) -> dict:
 
 
 def workdir_path(args):
+    """Resolve the session workdir path argument."""
     from pathlib import Path
 
     return Path(args.workdir).resolve()
 
 
 def image_path_arg(args):
+    """Validate/normalize an image path CLI argument."""
     from pathlib import Path
 
     return Path(args.image).resolve() if args.image else None
 
 
 def config_home():
+    """Resolve the config home for this worker process."""
     from codingdude.config import config_home
 
     return config_home()
@@ -495,6 +500,7 @@ def load_prompt_file(args):
 
 
 def main(argv=None) -> int:
+    """Worker process entry point (spawned by the server per run)."""
     parser = argparse.ArgumentParser(prog='codingdude-worker')
     parser.add_argument(
         '--review',

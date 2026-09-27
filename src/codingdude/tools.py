@@ -1174,7 +1174,17 @@ def resolve_workdir_path(workdir: str | Path, path: str) -> tuple[Path | None, s
         return None, f'path {path!r} escapes the Workdir'
     return target, None
 
+def resolve_workdir_file(root: Path, rel_path: str) -> Path | None:
+    """Containment-checked resolution of an existing *file* under ``root``.
 
+    Returns the resolved path, or None when it escapes the root or is not
+    a regular file. Used by the subprocess-based analysis tools (bench,
+    fuzzing, profile).
+    """
+    target = (root / rel_path).resolve()
+    if root not in target.parents or not target.is_file():
+        return None
+    return target
 
 
 def build_coverage_toolset(workdir: Path, policy) -> FunctionToolset:

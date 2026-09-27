@@ -54,16 +54,19 @@ def _serialize_response(message: ModelResponse) -> dict:
 
 
 def write_scenario(scenario: dict, path: Path) -> None:
+    """Persist one eval scenario to disk as JSON."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(scenario, indent=2) + '\n', encoding='utf-8')
 
 
 def load_scenario(path: Path) -> dict:
+    """Load one eval scenario from disk; raises on missing/malformed files."""
     return json.loads(path.read_text(encoding='utf-8'))
 
 
 @dataclass
 class Failure:
+    """One eval failure: scenario id, expectation, and actual output."""
     scenario: str
     check: str
     message: str

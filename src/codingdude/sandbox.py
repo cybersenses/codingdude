@@ -135,6 +135,7 @@ async def _run(argv: list[str], cwd: Path, timeout: int) -> str:
 
 
 async def container_running(container: str) -> bool:
+    """True when the sandbox container is up and reachable."""
     proc = subprocess.run(
         [docker_cli() or 'docker', 'inspect', '-f',
          '{{.State.Running}}', container],

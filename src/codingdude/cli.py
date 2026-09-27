@@ -96,6 +96,7 @@ def _run_eval(args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Console-script entry point: parse argv and dispatch the requested subcommand."""
     parser = argparse.ArgumentParser(prog='codingdude')
     parser.add_argument('--version', action='version', version=f'codingdude {__version__}')
     sub = parser.add_subparsers(dest='command')

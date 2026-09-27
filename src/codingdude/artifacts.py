@@ -12,16 +12,14 @@ import json
 import secrets
 import time
 from collections.abc import Iterator
-from datetime import UTC, datetime
 
 from pydantic_ai.toolsets import FunctionToolset
 
-
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
+from .db import utc_now_iso as _now
 
 
 class ArtifactStore:
+    """SQLite-backed store of tool artifacts (request/response pairs) per session."""
     def __init__(self, db, session_id: str):
         self._db = db
         self._session_id = session_id

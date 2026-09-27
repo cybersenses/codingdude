@@ -7,6 +7,7 @@ from importlib import resources
 
 @cache
 def load_prompt(name: str) -> str:
+    """Load a bundled prompt template by name from the prompts directory."""
     return (
         resources.files('codingdude').joinpath(f'prompts/{name}.md').read_text(encoding='utf-8')
     )

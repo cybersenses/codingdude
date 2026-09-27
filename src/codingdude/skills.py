@@ -46,6 +46,7 @@ def _parse_frontmatter(raw: str) -> tuple[dict, str]:
 
 
 class SkillRegistry:
+    """Discovers and loads SKILL.md files from the configured skill roots."""
     def __init__(self, home: Path):
         self.home = home
 
@@ -182,6 +183,7 @@ class SkillRegistry:
 
 
 def build_skills_toolset(registry: SkillRegistry) -> FunctionToolset:
+    """Agent tools for listing and loading skill bodies."""
     def load_skill(name: str, file: str | None = None) -> str:
         """Load a skill's full body by name, or one of its companion files.
 

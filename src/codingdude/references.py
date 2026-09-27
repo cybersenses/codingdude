@@ -8,10 +8,11 @@ the workdir-scoped SQLite and exposes search/read/version-pin tools.
 from __future__ import annotations
 
 import re
-from datetime import UTC, datetime
 from pathlib import Path
 
 from pydantic_ai.toolsets import FunctionToolset
+
+from .db import utc_now_iso as _now
 
 _HEADING = re.compile(r'^(#{1,3}) (.+)$', re.MULTILINE)
 _VERSION_COMMENT = re.compile(
@@ -20,11 +21,8 @@ _VERSION_COMMENT = re.compile(
 _PIN = re.compile(r'"?([A-Za-z0-9_.-]+)[><=~!^]+(\d+)\.(\d+)')
 
 
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
-
-
 class ReferenceStore:
+    """SQLite section index over the reference/ markdown corpus."""
     def __init__(self, db, workdir: Path | str):
         self._db = db
         self._workdir = str(workdir)

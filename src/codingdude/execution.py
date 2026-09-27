@@ -10,7 +10,8 @@ from datetime import UTC, datetime, timedelta
 
 from pydantic_ai import FunctionToolset
 
-from .roadmap import RoadmapStore, _now
+from .db import utc_now_iso as _now
+from .roadmap import RoadmapStore
 
 
 def _iso(dt: datetime) -> str:

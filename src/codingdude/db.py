@@ -190,12 +190,15 @@ CREATE TABLE IF NOT EXISTS design_decisions (
 """
 
 
-def _now() -> str:
+def utc_now_iso() -> str:
+    """Current UTC time as an ISO-8601 string; the canonical timestamp
+    format for every persisted row."""
     return datetime.now(UTC).isoformat()
 
 
 @dataclass(frozen=True)
 class SessionInfo:
+    """Immutable view of one session row (id, workdir, timestamps, title)."""
     session_id: str
     workdir: str
     created_at: str
@@ -268,7 +271,7 @@ class Database:
     def create_project(self, name: str, workdir: Path) -> int:
         cur = self._conn.execute(
             'INSERT INTO projects (name, workdir, created_at) VALUES (?, ?, ?)',
-            (name, str(workdir), _now()),
+            (name, str(workdir), utc_now_iso()),
         )
         self._conn.commit()
         assert cur.lastrowid is not None
@@ -303,7 +306,7 @@ class Database:
 
     def create_session(self, workdir: Path, title: str | None = None) -> str:
         session_id = uuid.uuid4().hex
-        now = _now()
+        now = utc_now_iso()
         self._conn.execute(
             'INSERT INTO sessions (session_id, workdir, created_at, updated_at, title)'
             ' VALUES (?, ?, ?, ?, ?)',
@@ -334,7 +337,7 @@ class Database:
             (session_id, row['next'], payload),
         )
         self._conn.execute(
-            'UPDATE sessions SET updated_at = ? WHERE session_id = ?', (_now(), session_id)
+            'UPDATE sessions SET updated_at = ? WHERE session_id = ?', (utc_now_iso(), session_id)
         )
         self._conn.commit()
 
@@ -349,7 +352,7 @@ class Database:
                 (session_id, seq, payload),
             )
         self._conn.execute(
-            'UPDATE sessions SET updated_at = ? WHERE session_id = ?', (_now(), session_id)
+            'UPDATE sessions SET updated_at = ? WHERE session_id = ?', (utc_now_iso(), session_id)
         )
         self._conn.commit()
 
@@ -381,7 +384,7 @@ class Database:
         self._conn.execute(
             'INSERT INTO approvals (session_id, tool_name, args, pattern, status, created_at)'
             " VALUES (?, 'shell', '', ?, 'approved', ?)",
-            (session_id, pattern, _now()),
+            (session_id, pattern, utc_now_iso()),
         )
         self._conn.commit()
 
@@ -410,7 +413,7 @@ class Database:
             'INSERT INTO session_notes'
             ' (session_id, run_id, offset_s, content, created_at)'
             ' VALUES (?, ?, ?, ?, ?)',
-            (session_id, run_id, offset_s, content, _now()),
+            (session_id, run_id, offset_s, content, utc_now_iso()),
         )
         self._conn.commit()
         return cur.lastrowid or 0
@@ -423,7 +426,7 @@ class Database:
         self._conn.execute(
             'INSERT INTO renders (session_id, path, bytes, mtime, captured_at)'
             ' VALUES (?, ?, ?, ?, ?)',
-            (session_id, path, bytes_, mtime, _now()),
+            (session_id, path, bytes_, mtime, utc_now_iso()),
         )
         self._conn.commit()
 
@@ -504,7 +507,7 @@ class Database:
             'INSERT OR REPLACE INTO runs'
             ' (run_id, session_id, worker_pid, status, started_at)'
             " VALUES (?, ?, ?, 'running', ?)",
-            (run_id, session_id, pid, _now()),
+            (run_id, session_id, pid, utc_now_iso()),
         )
         self._conn.commit()
 
@@ -513,7 +516,7 @@ class Database:
     ) -> None:
         self._conn.execute(
             'UPDATE runs SET status = ?, exit_code = ?, ended_at = ? WHERE run_id = ?',
-            (status, exit_code, _now(), run_id),
+            (status, exit_code, utc_now_iso(), run_id),
         )
         self._conn.commit()
 
@@ -544,7 +547,7 @@ class Database:
         cur = self._conn.execute(
             "UPDATE runs SET status = 'interrupted', ended_at = ?"
             " WHERE status = 'running'",
-            (_now(),),
+            (utc_now_iso(),),
         )
         self._conn.commit()
         return cur.rowcount
@@ -590,7 +593,7 @@ class Database:
         self._conn.execute(
             'INSERT INTO usage (session_id, model, requests, input_tokens, output_tokens,'
             ' cost_usd, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            (session_id, model, requests, input_tokens, output_tokens, cost_usd, _now()),
+            (session_id, model, requests, input_tokens, output_tokens, cost_usd, utc_now_iso()),
         )
         self._conn.commit()
 

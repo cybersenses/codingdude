@@ -16,6 +16,7 @@ SOURCE_EXTENSIONS = {'.py', '.js', '.jsx', '.mjs', '.ts', '.tsx'}
 
 
 def project_structure(workdir: Path, max_files: int = 200) -> dict:
+    """Per-file symbol outlines (kind/name/size) for the project tree."""
     root = Path(workdir)
     files: list[dict] = []
     for f in sorted(root.rglob('*')):

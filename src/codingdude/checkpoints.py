@@ -25,6 +25,7 @@ def _now() -> float:
 
 
 class CheckpointStore:
+    """File-backed snapshot store enabling rollback of workdir state."""
     def __init__(self, home: Path, max_per_session: int = DEFAULT_MAX_PER_SESSION,
                  max_age_days: int = DEFAULT_MAX_AGE_DAYS):
         self.home = home

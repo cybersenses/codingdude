@@ -6,9 +6,10 @@ list/delete directly).
 """
 
 import re
-from datetime import UTC, datetime
 
 from pydantic_ai.toolsets import FunctionToolset
+
+from .db import utc_now_iso as _now
 
 _DUPLICATE_JACCARD = 0.8
 
@@ -27,6 +28,7 @@ def _similar(a: frozenset[str], b: frozenset[str]) -> bool:
 
 
 class MemoryStore:
+    """SQLite-backed persistent memory (global and per-workdir scopes)."""
     def __init__(self, db):
         self._db = db
 
@@ -94,10 +96,6 @@ class MemoryStore:
         scored = [(r['content'], cosine(qv, embedder.embed(r['content']))) for r in rows]
         scored.sort(key=lambda x: x[1], reverse=True)
         return scored[:top_n]
-
-
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
 
 
 def build_memory_toolset(store: MemoryStore, workdir: str) -> FunctionToolset:

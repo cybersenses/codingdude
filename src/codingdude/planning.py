@@ -7,20 +7,17 @@ triggers an automatic review pass whose findings go back to the model.
 """
 
 import json
-from datetime import UTC, datetime
 from pathlib import Path
 
 from pydantic_ai import ModelRetry
 from pydantic_ai.toolsets import FunctionToolset
 
 from .config import ThinkingSetting
-
-
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
+from .db import utc_now_iso as _now
 
 
 class PlanStore:
+    """SQLite-backed store of plans, plan steps, and their statuses."""
     def __init__(self, db):
         self.db = db
 
@@ -84,6 +81,7 @@ class PlanStore:
 def build_planning_toolset(
     db, session_id: str, policy, emit, review_model=None, thinking=None
 ) -> FunctionToolset:
+    """Agent tools for plan CRUD (propose_plan/update_step)."""
     store = PlanStore(db)
     emit = emit or (lambda event: None)
 

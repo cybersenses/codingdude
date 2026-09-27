@@ -11,15 +11,10 @@ import io
 import pstats
 from pathlib import Path
 
+from .tools import resolve_workdir_file
+
 _TOP_N = 15
 _DEFAULT_TIMEOUT = 120
-
-
-def _resolve(root: Path, rel_path: str) -> Path | None:
-    target = (root / rel_path).resolve()
-    if root not in target.parents or not target.is_file():
-        return None
-    return target
 
 
 async def run_profile(
@@ -32,7 +27,7 @@ async def run_profile(
     total_s, cumulative_s}]} or {"error": ...} — never raises.
     """
     root = Path(workdir).resolve()
-    target = _resolve(root, rel_path)
+    target = resolve_workdir_file(root, rel_path)
     if target is None:
         return {"error": f"file not found in workdir: {rel_path}"}
 

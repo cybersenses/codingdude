@@ -11,11 +11,12 @@ from pydantic_ai.toolsets import FunctionToolset
 
 
 class ProjectNoteStore:
+    """SQLite-backed durable guidance notes per project."""
     def __init__(self, db):
         self._db = db
 
     def add(self, workdir: str, content: str) -> int:
-        from .db import _now
+        from .db import utc_now_iso as _now
 
         cur = self._db._conn.execute(
             'INSERT INTO project_notes (workdir, content, status, created_at)'
@@ -36,7 +37,7 @@ class ProjectNoteStore:
         return [dict(r) for r in rows]
 
     def resolve(self, note_id: int) -> bool:
-        from .db import _now
+        from .db import utc_now_iso as _now
 
         cur = self._db._conn.execute(
             "UPDATE project_notes SET status = 'resolved', resolved_at = ?"

@@ -59,11 +59,10 @@ class _Builder:
         *,
         break_target: int | None,
         continue_target: int | None,
-        next_target: int | None,
         entry_block: _Block | None = None,
     ) -> _Block:
         """Emit a statement list; returns the block where control exits
-        (the block that should flow to ``next_target``), or a block that
+        or a block that has already terminated.
         already terminated."""
         cur = entry_block if entry_block is not None else self._new_block()
         for idx, stmt in enumerate(stmts):
@@ -80,15 +79,13 @@ class _Builder:
                     stmt.body,
                     break_target=break_target,
                     continue_target=continue_target,
-                    next_target=None,
                 )
                 else_b = (
                     self.emit_body(
                         stmt.orelse,
                         break_target=break_target,
                         continue_target=continue_target,
-                        next_target=None,
-                    )
+                        )
                     if stmt.orelse
                     else None
                 )
@@ -108,14 +105,13 @@ class _Builder:
                     stmt.body,
                     break_target=None,  # patched after exit exists
                     continue_target=head.id,
-                    next_target=None,
                     entry_block=body_entry,
                 )
                 after = self._new_block()
                 self._edge(head.id, body_entry.id, "true")
                 self._edge(head.id, after.id, "false")
                 self._close_branch(body, head, back=True)
-                self._patch_breaks(body, after)
+                self._patch_breaks(after)
                 cur = after
             elif isinstance(stmt, ast.Break):
                 cur.lines.extend(self._src(stmt))
@@ -147,7 +143,7 @@ class _Builder:
         if not has_out and tail.lines:
             self._edge(tail.id, join.id, "back" if back else "flow")
 
-    def _patch_breaks(self, body_tail: _Block, after: _Block) -> None:
+    def _patch_breaks(self, after: _Block) -> None:
         for bid in self._breaks:
             self._edge(bid, after.id, "flow")
         self._breaks = []
@@ -175,7 +171,7 @@ def build_cfg(source: str, function: str | None = None) -> dict:
     b.fn.name = fn_node.name
     entry = b._new_block()
     b.emit_body(
-        fn_node.body, break_target=None, continue_target=None, next_target=None,
+        fn_node.body, break_target=None, continue_target=None,
         entry_block=entry,
     )
     reach = _reachable(b.fn, entry.id)

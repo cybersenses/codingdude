@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.0 — 2026-09-21
+
+Analysis hardening (R47) + codebase hygiene sweep.
+
+### Added
+- Security gate (#155): Bandit + secret regexes + bundled Semgrep rules, ModelRetry, fails closed
+- Mutation testing trustreport (#156): mutmut-backed survived-mutant evidence
+- On-demand cProfile (`profile_code` tool, #158) and A/B micro-bench (`compare_bench`, #160)
+- Hypothesis API fuzzing (`fuzz_api` tool, #159)
+- `resolve_workdir_file`: shared containment-checked file resolution for the analysis tools
+- `setup-codingdude.bat`: one-shot setup that installs everything (uv, deps, Semgrep CLI, frontend build)
+
+### Changed
+- Contract docstrings on all public store/engine/server symbols (arch-lint clean)
+- `utc_now_iso` is the single canonical timestamp helper (was duplicated in 6 modules)
+- Dead `next_target`/`body_tail` parameters removed from the CFG builder
+
 ## 0.3.0 — 2026-09-09
 
 Modernization completion (WS-C/E/F/G/H remainder).

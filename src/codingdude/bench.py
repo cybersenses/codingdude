@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from .tools import resolve_workdir_file
+
 _DEFAULT_REPEAT = 5
 _DEFAULT_INNER = 50
 
@@ -37,13 +39,6 @@ _DRIVER = (
 )
 
 
-def _resolve(root: Path, rel_path: str) -> Path | None:
-    target = (root / rel_path).resolve()
-    if root not in target.parents or not target.is_file():
-        return None
-    return target
-
-
 async def run_bench(
     workdir: str | Path, rel_path: str, entries: list[str],
     repeat: int = _DEFAULT_REPEAT, inner: int = _DEFAULT_INNER,
@@ -55,7 +50,7 @@ async def run_bench(
     {"error": ...} — never raises. `winner` is the fastest `best_s`.
     """
     root = Path(workdir).resolve()
-    target = _resolve(root, rel_path)
+    target = resolve_workdir_file(root, rel_path)
     if target is None:
         return {"error": f"file not found in workdir: {rel_path}"}
     if not entries:

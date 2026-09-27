@@ -148,6 +148,7 @@ def build_deadcode_toolset(workdir: Path) -> FunctionToolset:
 
 
 def sys_executable() -> str:
+    """Indirection over sys.executable so tests can stub the interpreter path."""
     import sys
 
     return sys.executable

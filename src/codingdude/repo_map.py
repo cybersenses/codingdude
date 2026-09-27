@@ -64,6 +64,7 @@ def js_signatures_source(source: bytes, suffix: str) -> list[str]:
 
 
 class Symbol(NamedTuple):
+    """One code symbol in the repo map: kind, name, file, and line span."""
     kind: str
     name: str
     line: int

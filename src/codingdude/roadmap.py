@@ -10,21 +10,17 @@ current HEAD sha, so every closed ticket links to the commit that closed it.
 import logging
 import re
 import subprocess
-from datetime import UTC, datetime
 from pathlib import Path
 
 from pydantic_ai.toolsets import FunctionToolset
 
 from .db import Database
+from .db import utc_now_iso as _now
 
 logger = logging.getLogger(__name__)
 
 ROADMAP_STATUSES = ('open', 'in_progress', 'done')
 TICKET_STATUSES = ('todo', 'in_progress', 'done')
-
-
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
 
 
 # ---- ROADMAP.md bridge -----------------------------------------------------

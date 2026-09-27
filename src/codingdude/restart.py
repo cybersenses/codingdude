@@ -72,6 +72,7 @@ def _proc_processes() -> list[dict]:
 
 
 def list_processes() -> list[dict]:
+    """Snapshot of processes this session spawned, newest first."""
     return _ps_processes() if os.name == 'nt' else _proc_processes()
 
 
@@ -116,6 +117,7 @@ def find_server_processes(port: int = DEFAULT_PORT) -> list[dict]:
 
 
 def health_ok(port: int = DEFAULT_PORT) -> bool:
+    """Return True when the server answers /health within the timeout."""
     try:
         with urllib.request.urlopen(f'http://127.0.0.1:{port}/health', timeout=2) as r:
             return r.status == 200
@@ -211,6 +213,7 @@ def trigger_restart(port: int = DEFAULT_PORT, delay: int = 5) -> int:
 
 
 def status(port: int = DEFAULT_PORT) -> dict:
+    """Human-readable one-screen status of the server and its workers."""
     return {
         'port': port,
         'listening_pid': listening_pid(port),
@@ -221,6 +224,7 @@ def status(port: int = DEFAULT_PORT) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """CLI entry: restart (or inspect) the local agent server."""
     parser = argparse.ArgumentParser(prog='codingdude.restart')
     parser.add_argument('--port', type=int, default=DEFAULT_PORT)
     parser.add_argument('--bounce', action='store_true', help='internal: do the kill+relaunch')

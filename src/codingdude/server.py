@@ -244,6 +244,7 @@ async def _run_janitor(channels: dict, db: Database) -> None:
 def create_app(
     home: Path | None = None, token: str | None = None, allow_testclient: bool = False
 ) -> FastAPI:
+    """Build the Starlette app: routes, static dist serving, and auth middleware."""
     home = home or config_home()
     token = token or secrets.token_urlsafe(16)
     from .mcp_config import ensure_default_mcp
@@ -1521,6 +1522,7 @@ def load_or_create_token(home: Path | None = None) -> str:
 
 
 def serve(host: str = HOST, port: int = 8765) -> None:
+    """Run the uvicorn server on the given host/port (foreground)."""
     import uvicorn
 
     token = load_or_create_token()

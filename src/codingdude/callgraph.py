@@ -19,6 +19,7 @@ JS_EXTENSIONS = {'.js', '.jsx', '.mjs', '.ts', '.tsx'}
 
 
 def build_call_graph(path: Path) -> dict:
+    """Parse a source file and return {nodes, edges, orphans} for its call graph."""
     path = Path(path)
     if not path.is_file():
         raise FileNotFoundError(f'no such file: {path}')

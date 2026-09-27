@@ -4,10 +4,12 @@ from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 
 
 def encode_messages(messages: list[ModelMessage]) -> str:
+    """Serialize message history to the JSON wire format stored per session."""
     return ModelMessagesTypeAdapter.dump_json(messages).decode('utf-8')
 
 
 def decode_messages(payloads: list[str]) -> list[ModelMessage]:
+    """Deserialize stored JSON back into message history objects."""
     return [
         m for payload in payloads for m in ModelMessagesTypeAdapter.validate_json(payload)
     ]
