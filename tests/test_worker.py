@@ -294,3 +294,34 @@ def test_gate_interaction_traces_request_and_resolution():
         assert decision == 'approve'
         assert [e['type'] for e in traced] == ['GATE_REQUEST', 'GATE_RESOLVED']
     asyncio.run(main())
+
+
+def test_wire_interactions_ask_user_works_in_yolo_mode(monkeypatch):
+    """Regression: trace_interaction was defined only under `if not yolo:`,
+    so every ask_user call in yolo mode raised NameError (free variable).
+    wire_interactions must attach a working ask_user regardless of yolo."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from codingdude import worker
+    from codingdude.approvals import ApprovalPolicy
+
+    monkeypatch.setattr(worker, 'trace_terminal', lambda *a: None)
+    events = []
+    policy = ApprovalPolicy(yolo=True)
+
+    async def main():
+        loop = asyncio.get_running_loop()
+        pending_ask = {}
+        worker.wire_interactions(
+            policy, _args(run_id='r1'), SimpleNamespace(),
+            loop, events.append, {}, pending_ask)
+        assert policy.ask_user is not None  # attached even in yolo mode
+        task = asyncio.create_task(policy.ask_user([{'question': 'q?'}]))
+        await asyncio.sleep(0)
+        assert events[0]['type'] == 'ASK_USER'
+        pending_ask['fut'].set_result({'q?': 'yes'})
+        answers = await task
+        assert answers == {'q?': 'yes'}
+
+    asyncio.run(main())

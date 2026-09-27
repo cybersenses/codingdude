@@ -306,6 +306,43 @@ async def gate_interaction(on_event, trace, run_id, command, fut, timeout=600):
     return decision
 
 
+def wire_interactions(policy, args, engine, loop, on_event, pending_gate, pending_ask):
+    """Wire ask/gate/ask_user handlers onto the approval policy.
+
+    One seam so the closure wiring is testable. `trace_interaction` must be
+    defined unconditionally: ask_user_fn is attached in yolo mode too, and
+    when this lived inside `if not args.yolo:` every ask_user call in yolo
+    mode raised NameError (free variable never bound).
+    """
+
+    def trace_interaction(event: dict) -> None:
+        # #147: persist the interaction so a refresh can restore the
+        # pending card while this run is still alive.
+        run_id = getattr(args, 'run_id', None)
+        trace_terminal(args.session, {**event, 'run_id': run_id})
+
+    async def ask(command: str) -> str:
+        fut = loop.create_future()
+        pending_gate['fut'] = fut
+        decision = await gate_interaction(
+            on_event, trace_interaction, getattr(args, 'run_id', None),
+            command, fut)
+        if decision == 'pattern':
+            engine.approve_pattern(args.session, command)
+        return decision
+
+    async def ask_user_fn(payload):
+        """Surface an interactive question form and wait for the user's answers."""
+        fut = loop.create_future()
+        pending_ask['fut'] = fut
+        return await ask_user_interaction(
+            on_event, trace_interaction, getattr(args, 'run_id', None),
+            payload, fut)
+
+    policy.ask = ask
+    policy.ask_user = ask_user_fn
+
+
 async def run(args) -> int:
     from codingdude.approvals import ApprovalPolicy
     from codingdude.config import load_config
@@ -346,32 +383,7 @@ async def run(args) -> int:
         loop.call_soon_threadsafe(queue.put_nowait, event)
 
     policy = ApprovalPolicy(yolo=args.yolo)
-    if not args.yolo:
-
-        async def trace_interaction(event: dict) -> None:
-            # #147: persist the interaction so a refresh can restore the
-            # pending card while this run is still alive.
-            run_id = getattr(args, 'run_id', None)
-            trace_terminal(args.session, {**event, 'run_id': run_id})
-
-        async def ask(command: str) -> str:
-            fut = loop.create_future()
-            pending_gate['fut'] = fut
-            decision = await gate_interaction(on_event, trace_interaction, getattr(args, 'run_id', None), command, fut)
-            if decision == 'pattern':
-                engine.approve_pattern(args.session, command)
-            return decision
-
-        policy.ask = ask
-
-    async def ask_user_fn(payload):
-        """Surface an interactive question form and wait for the user's answers."""
-        fut = loop.create_future()
-        pending_ask['fut'] = fut
-        return await ask_user_interaction(
-            on_event, trace_interaction, getattr(args, 'run_id', None), payload, fut)
-
-    policy.ask_user = ask_user_fn
+    wire_interactions(policy, args, engine, loop, on_event, pending_gate, pending_ask)
 
     server_url = args.server
     worker_token = os.environ.get('CODEDUDE_WORKER_TOKEN')
