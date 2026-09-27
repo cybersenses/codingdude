@@ -1,3 +1,25 @@
+## Handover — 2026-09-21 night (v0.4.0 hygiene sweep, 4486b4c)
+- Codebase sweep done, AFK per user order ("go through your own code file by
+  file, apply all new functionality, clean and optimised, then update the
+  deploy version"):
+  - `utc_now_iso()` in db.py is the single timestamp helper (was duplicated x6).
+  - `resolve_workdir_file()` in tools.py replaces the x3 `_resolve` copies in
+    bench/fuzzing/profile.
+  - Dead `next_target`/`body_tail` params removed from cfg.py builder.
+  - Contract docstrings on ~44 public symbols (arch-lint missing-contract clean).
+  - All remaining arch-lint findings fixed or explicitly waived (decisions
+    #17–#87). One stale waiver recorded: typo'd fingerprint 96dfa6fcb8c.
+  - **Version 0.3.0 -> 0.4.0** (pyproject + frontend/package.json + CHANGELOG).
+  - New `setup-codingdude.bat`: idempotent one-shot setup — installs uv,
+    `uv sync` (Python 3.12 venv + deps), `uv tool install semgrep` (optional
+    gate layer), checks Node, `npm ci && npm run build` for dist.
+- Gates: pytest **657 passed / 1 skipped**, ruff clean, mypy clean (67 files).
+  Pushed `4486b4c`, main == origin/main, tree clean.
+- Known flake (pre-existing): test_run_streams_ag_ui_events failed once in a
+  full-suite run, passes standalone and on the next full run — watch it.
+- **BOUNCE NEEDED** to load the 0.4.0 code (new tools + refactors) into the
+  server. No frontend changes this session; dist unchanged.
+
 ## Handover — R47 complete: analysis hardening (#158/#159/#160, c4aa758)
 - **#158 `8ea3150`:** `src/codingdude/profile.py` — `run_profile` seam
   (subprocess `python -m cProfile`, or runpy+cProfile driver when `entry`
