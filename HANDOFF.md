@@ -1,3 +1,28 @@
+## Handover — R47 complete: analysis hardening (#158/#159/#160, c4aa758)
+- **#158 `8ea3150`:** `src/codingdude/profile.py` — `run_profile` seam
+  (subprocess `python -m cProfile`, or runpy+cProfile driver when `entry`
+  given; fails closed; top-15 by cumulative time) + `profile_code` agent
+  tool (ModelRetry on error). 6 tests red→green.
+- **#160 `49a2425`:** `src/codingdude/bench.py` — `run_bench` seam
+  (subprocess perf_counter loops, repeat×inner, best-of metric; zero-arg
+  callables in one module; decision #16: no external bench binaries) +
+  `compare_benchmark` tool. 6 tests.
+- **#159 `dec9b48`:** `src/codingdude/fuzzing.py` — `fuzz_api` seam
+  (derandomized Hypothesis subprocess driver over FastAPI/Starlette apps
+  via TestClient; 5xx/unhandled = crash w/ route; **hypothesis added as dev
+  dep**) + `fuzz_api` tool (registered via `Tool(..., name='fuzz_api')` —
+  inner fn can't shadow the seam). 6 tests.
+- All three toolsets wired in `plugins.build_all` next to the mutation
+  toolset. Gates: pytest **657 passed / 1 skipped**, ruff clean, mypy clean
+  (69 files). R47 → done; R44 closed as duplicate-bookkeeping (#151 closed
+  superseded by #152–#154). Tree clean, main == origin/main @ `c4aa758`.
+- **Bounce needed** to attach the three new tools in worker runs.
+- Gotcha hit twice: same-name inner tool fn shadowing the module seam —
+  alias or `Tool(name=...)`; and one edit_file ghost edit (json import
+  claimed success, didn't land — caught by NameError).
+
+*Updated after commit c4aa758. Main == origin/main, tree clean.*
+
 ## Handover — R47 #156 mutation-testing evidence (`8ae8cbc`)
 - **mutmut 3.x refuses native Windows** (boxed/mutmut#397) -> pinned `mutmut<3`
   (2.4.4) as dev dep; runs with `PYTHONUTF8=1` (cp1252 cannot encode its emoji
