@@ -134,6 +134,9 @@ async def build_all(ctx: PluginContext) -> list[AbstractToolset]:
     from codingdude.profile import build_profile_toolset
 
     toolsets.append(build_profile_toolset(ctx.workdir))
+    from codingdude.bench import build_bench_toolset
+
+    toolsets.append(build_bench_toolset(ctx.workdir))
     toolsets.append(build_archlint_toolset(ctx.workdir, ArchLint(db=ctx.db, workdir=str(ctx.workdir))))
     toolsets.append(build_deadcode_toolset(ctx.workdir))
     toolsets.append(build_repo_map_toolset(ctx.workdir))
