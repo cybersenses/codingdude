@@ -779,3 +779,8 @@ Fixes surfacing from real SteroidsEngine usage.
 **Status:** done
 
 CFG of basic blocks per function, unreachable-code analysis, green/red Mermaid HTML render (user request).
+
+## R46 — R46 — CFG analysis for agent + HITL
+**Status:** open
+
+Control-flow graph analysis exposed both ways: agent tool (dead-code detection during work) and human UI panel (green/red basic-block view of generated code). Build on cfg.py::build_cfg seam from #152.

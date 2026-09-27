@@ -14,6 +14,7 @@ from __future__ import annotations
 import ast
 import html
 from dataclasses import dataclass, field
+from pathlib import Path
 
 
 @dataclass
@@ -254,3 +255,46 @@ def render_mermaid_html(source: str, title: str = "cfg.py") -> str:
         + "\n".join(sections)
         + "\n</body></html>"
     )
+
+
+def build_cfg_toolset(workdir: Path):
+    """The `analyze_control_flow` tool: basic-block CFG + dead-code verdict
+    for one function in one workdir file (#153, R46)."""
+    from pydantic_ai import ModelRetry
+    from pydantic_ai.toolsets import FunctionToolset
+
+    from .tools import resolve_workdir_path
+
+    root = Path(workdir)
+
+    def _summarize(cfg: dict) -> str:
+        dead = [b for b in cfg["blocks"] if not b["reachable"]]
+        lines = [f"function {cfg['function']}: {len(cfg['blocks'])} block(s)."]
+        if not dead:
+            lines.append("No unreachable blocks — control flow is fully reachable.")
+        else:
+            lines.append(f"{len(dead)} unreachable block(s):")
+            for b in dead:
+                lines.append(f"  block {b['id']}: {' | '.join(b['lines'][:3])!r}")
+        return "\n".join(lines)
+
+    async def analyze_control_flow(path: str, function: str | None = None) -> str:
+        """Static control-flow analysis of one function in a project file.
+
+        Builds the basic-block graph and reports unreachable (dead) blocks
+        with their source lines. `function` optional — first function in the
+        file when omitted. Read-only.
+        """
+        target, error = resolve_workdir_path(root, path)
+        if error or target is None:
+            raise ModelRetry(f"cannot read {path!r}: {error or 'bad path'}")
+        try:
+            source = target.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            raise ModelRetry(f"cannot read {path!r}: {exc}") from exc
+        try:
+            return _summarize(build_cfg(source, function))
+        except (SyntaxError, ValueError) as exc:
+            raise ModelRetry(f"cannot analyze {path!r}: {exc}") from exc
+
+    return FunctionToolset([analyze_control_flow])
