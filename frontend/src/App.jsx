@@ -15,6 +15,7 @@ import { buildTour } from './tour'
 import { buildDesignDocPrompt } from './designdoc'
 import { impactMermaid } from './impact'
 import { callgraphMermaid, graphView } from './callgraph'
+import { cfgMermaid } from './cfgView'
 import { buildRepoQuestionPrompt } from './repoqa'
 import { checklistPrompt } from './checklists'
 import { structureRows } from './structure'
@@ -1156,6 +1157,14 @@ function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, heigh
             const t = await call(`/sessions/${sessionId}/trust?path=${encodeURIComponent(activePath)}`)
             setData((d) => ({ ...d, trust: t, trustPath: activePath }))
           } catch { /* trust is supplementary; callgraph errors already surfaced */ }
+          if (activePath.endsWith('.py')) {
+            try {
+              const cf = await call(`/sessions/${sessionId}/cfg?path=${encodeURIComponent(activePath)}`)
+              setData((d) => ({ ...d, cfgFunctions: cf.functions || [], cfgFunctionsPath: activePath, cfg: undefined, cfgFn: undefined, cfgError: undefined }))
+            } catch (err) {
+              setData((d) => ({ ...d, cfgFunctions: [], cfgFunctionsPath: activePath, cfgError: String(err instanceof Error ? err.message : err) }))
+            }
+          }
         }
         if (tab === 'Graph' && !activePath) {
           const s = await call(`/sessions/${sessionId}/structure`)
@@ -1567,6 +1576,49 @@ function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, heigh
             return <Mermaid code={callgraphMermaid(data.callgraph)} />
           })()}
         </div>
+        {data.cfgFunctionsPath === activePath && (data.cfgFunctions.length > 0 || data.cfgError) && (
+          <div className="border-t border-line px-2 py-1 text-[11px]">
+            <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-wide text-ink-muted">
+              <span>control flow</span>
+              <select
+                className="ml-auto rounded border border-line bg-surface px-1 py-0.5 font-mono text-[10px] text-ink"
+                value={data.cfgFn || ''}
+                onChange={async (e) => {
+                  const fn = e.target.value
+                  if (!fn) { setData((d) => ({ ...d, cfgFn: '', cfg: undefined, cfgError: undefined })); return }
+                  try {
+                    const c = await call(`/sessions/${sessionId}/cfg?path=${encodeURIComponent(activePath)}&function=${encodeURIComponent(fn)}`)
+                    setData((d) => ({ ...d, cfgFn: fn, cfg: c, cfgError: undefined }))
+                  } catch (err) {
+                    setData((d) => ({ ...d, cfgFn: fn, cfg: undefined, cfgError: String(err instanceof Error ? err.message : err) }))
+                  }
+                }}
+              >
+                <option value="">pick a function…</option>
+                {data.cfgFunctions.map((fn) => <option key={fn} value={fn}>{fn}</option>)}
+              </select>
+            </div>
+            {data.cfgError
+              ? <div className="text-xs text-danger">{data.cfgError}</div>
+              : data.cfg
+                ? (
+                  <div className="mt-1 max-h-[50vh] overflow-auto">
+                    {(() => {
+                      const dead = data.cfg.blocks.filter((b) => !b.reachable).length
+                      return (
+                        <>
+                          <div className={dead > 0 ? 'text-xs text-danger' : 'text-xs text-ink-muted'}>
+                            {dead > 0 ? `⚠ ${dead} unreachable block(s) — dead code` : 'all blocks reachable'}
+                          </div>
+                          <Mermaid code={cfgMermaid(data.cfg)} />
+                        </>
+                      )
+                    })()}
+                  </div>
+                )
+                : <div className="text-xs text-ink-muted">Green blocks are reachable; red blocks are dead code.</div>}
+          </div>
+        )}
         {data.trust && data.trustPath === activePath && (
           <div className="border-t border-line px-2 py-1 text-[11px]">
             <div className="font-mono text-[10px] uppercase tracking-wide text-ink-muted">test evidence</div>

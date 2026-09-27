@@ -789,6 +789,45 @@ def create_app(
             raise HTTPException(status_code=400, detail='path escapes workdir')
         return build_trust_report(workdir, path)
 
+    @app.get('/sessions/{session_id}/cfg')
+    def session_cfg(
+        session_id: str, path: str, function: str | None = None,
+        _: None = Depends(authorize),
+    ) -> dict:
+        """Control-flow graph of one function — green reachable / red dead (#154, R46).
+
+        With ``function`` omitted, returns the file's function list instead
+        (the UI uses it to populate the picker).
+        """
+        import ast
+
+        from codingdude.tools import resolve_workdir_path
+
+        from .cfg import build_cfg
+
+        workdir = db.session_workdir(session_id)
+        if not workdir:
+            raise HTTPException(status_code=404, detail='no such session')
+        target, error = resolve_workdir_path(workdir, path)
+        if error or target is None:
+            raise HTTPException(status_code=400, detail=error or 'bad path')
+        try:
+            source = target.read_text(encoding='utf-8', errors='replace')
+            if function is None:
+                names = [
+                    node.name
+                    for node in ast.walk(ast.parse(source))
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                ]
+                return {'path': path, 'functions': names}
+            return build_cfg(source, function)
+        except (
+            SyntaxError, ValueError, FileNotFoundError, UnicodeDecodeError
+        ) as exc:
+            raise HTTPException(
+                status_code=422, detail=f'cannot analyze {path}: {exc}'
+            ) from exc
+
     @app.get('/sessions/{session_id}/structure')
     def session_structure(session_id: str, _: None = Depends(authorize)) -> dict:
         """Per-file symbol outlines — human project overview (#95, R42)."""
