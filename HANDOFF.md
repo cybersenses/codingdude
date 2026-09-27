@@ -1,3 +1,24 @@
+## Handover — R47 #156 mutation-testing evidence (`8ae8cbc`)
+- **mutmut 3.x refuses native Windows** (boxed/mutmut#397) -> pinned `mutmut<3`
+  (2.4.4) as dev dep; runs with `PYTHONUTF8=1` (cp1252 cannot encode its emoji
+  output). Results parsed from the `.mutmut-cache` SQLite (Mutant/Line/SourceFile).
+- **`src/codingdude/mutation.py`:** `mutation_cache_evidence` (read-only cache
+  summary, scoped per file), `run_mutation` (async; targeted via
+  `--paths-to-mutate`; readable `error` dicts, never raises), `build_mutation_toolset`
+  -> `run_mutation_suite(path?)` agent tool (ModelRetry on error), attached in
+  `plugins.build_all` next to the CFG toolset.
+- **Trust report:** `build_trust_report` adds a `mutation` key when the cache has
+  data for the file (never runs tests from a GET). Graph tab trust panel shows
+  kill rate, red when mutants survived.
+- **Security gate fix (#155 follow-up):** B101 (assert) no longer blocks
+  `tests/**`/`test_*`/`conftest.py` — the gate had rejected pytest files. Also
+  self-gated `security.py` (nosec B404/B603). **Bounce needed**: running workers
+  still hold the pre-fix module (B101 false positives persist until restart).
+- E2E verified: mutmut on a scratch project, 1/1 mutant killed; gates: pytest
+  636/1 skipped, ruff clean, mypy clean (65 files), eslint clean, vitest 87/87,
+  vite build OK.
+- **Still open in R47:** #157 (Semgrep rules for user workdirs), #159/#160 parked.
+
 *Updated after commit (see git log). Main == origin/main, tree clean.*
 
 ## Handover — R46 CFG analysis done (agent + HITL)
