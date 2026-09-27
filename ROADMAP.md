@@ -776,6 +776,6 @@ From reference/research/human-code-comprehension.md (As-of 2026-09-20). Five use
 Fixes surfacing from real SteroidsEngine usage.
 
 ## R45 — Static analysis: control-flow graphs
-**Status:** open
+**Status:** done
 
 CFG of basic blocks per function, unreachable-code analysis, green/red Mermaid HTML render (user request).
