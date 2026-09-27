@@ -17,7 +17,9 @@
 - E2E verified: mutmut on a scratch project, 1/1 mutant killed; gates: pytest
   636/1 skipped, ruff clean, mypy clean (65 files), eslint clean, vitest 87/87,
   vite build OK.
-- **Still open in R47:** #157 (Semgrep rules for user workdirs), #159/#160 parked.
+- **Still open in R47:** #157 BLOCKED (semgrep has no native Windows build,
+  returntocorp/semgrep#1330 — uv add fails; reopen on WSL adoption or platform
+  support), #159/#160 parked by user decision.
 
 *Updated after commit (see git log). Main == origin/main, tree clean.*
 
