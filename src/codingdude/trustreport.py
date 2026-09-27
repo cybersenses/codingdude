@@ -42,6 +42,15 @@ def build_trust_report(workdir: str, rel_path: str) -> dict[str, object]:
     referencing: list[str] = []
     property_files: list[str] = []
 
+    # Mutation evidence (#156): surface the cache if one exists for this
+    # file — never run tests from a report path (a GET must stay fast).
+    from .mutation import mutation_cache_evidence
+
+    cached = mutation_cache_evidence(root, rel)
+    mutation: dict[str, object] | None = (
+        cached if cached.get("available") and cached.get("total") else None
+    )
+
     for test_file in sorted((root / "tests").rglob("test_*.py")):
         try:
             text = test_file.read_text(encoding="utf-8")
@@ -54,8 +63,11 @@ def build_trust_report(workdir: str, rel_path: str) -> dict[str, object]:
         if _HYPOTHESIS_RE.search(text):
             property_files.append(rel_test)
 
-    return {
+    report: dict[str, object] = {
         "file": rel,
         "referencing_tests": referencing,
         "property_test_files": property_files,
     }
+    if mutation is not None:
+        report["mutation"] = mutation
+    return report

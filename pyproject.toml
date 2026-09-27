@@ -48,6 +48,7 @@ dev = [
     "pytest-cov>=7.1.0",
     "pip-audit>=2.10.1",
     "playwright>=1.62.0",
+    "mutmut<3",
 ]
 
 [build-system]

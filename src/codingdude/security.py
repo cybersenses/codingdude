@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
+import subprocess  # nosec B404
 import sys
 from pathlib import Path
 
@@ -58,15 +58,19 @@ def _secret_findings(source: str) -> list[dict]:
     return findings
 
 
-def _bandit_findings(source: str, tmp_dir: Path) -> list[dict]:
+def _bandit_findings(source: str, tmp_dir: Path, skip: str = '') -> list[dict]:
     scan_path = tmp_dir / '_security_gate_scan.py'
     scan_path.write_text(source, encoding='utf-8')
+    argv = [sys.executable, '-m', 'bandit', '-q', '-f', 'json']
+    if skip:
+        argv += ['--skip', skip]
+    argv.append(str(scan_path))
     # Sync on purpose: the edit tools that call this gate are synchronous.
     # Bounded timeout so a wedged scanner can never hang an edit.
     try:
-        proc = subprocess.run(  # noqa: S603 - fixed argv, no shell
-            [sys.executable, '-m', 'bandit', '-q', '-f', 'json',
-             str(scan_path)],
+        # Fixed argv, no shell: nothing user-controlled is executed.
+        proc = subprocess.run(  # nosec B603
+            argv,
             capture_output=True, text=True, timeout=60, check=False,
             cwd=tmp_dir,
         )
@@ -74,7 +78,7 @@ def _bandit_findings(source: str, tmp_dir: Path) -> list[dict]:
         raise RuntimeError('bandit timed out after 60s') from exc
     if not proc.stdout.strip():
         # Bandit prints nothing when clean (-q); no stdout with a failure
-        # code means the scanner itself broke — fail closed.
+        # code means the scanner itself broke - fail closed.
         if proc.returncode != 0:
             raise RuntimeError(
                 f'bandit failed (code {proc.returncode}): {proc.stderr[:400]}'
@@ -94,13 +98,26 @@ def _bandit_findings(source: str, tmp_dir: Path) -> list[dict]:
     ]
 
 
+def _is_test_file(rel: str) -> bool:
+    """B101 (assert) is the point of pytest files - never gate on it there."""
+    name = Path(rel).name
+    return (
+        'tests' in Path(rel).parts
+        or name.startswith('test_')
+        or name == 'conftest.py'
+    )
+
+
 def scan_source(
     rel: str, source: str, suffix: str, tmp_dir: Path
 ) -> list[dict]:
     """Scan file content; returns findings (empty = clean)."""
     findings = _secret_findings(source)
     if suffix == '.py':
-        findings.extend(_bandit_findings(source, tmp_dir))
+        if _is_test_file(rel):
+            findings.extend(_bandit_findings(source, tmp_dir, skip='B101'))
+        else:
+            findings.extend(_bandit_findings(source, tmp_dir))
     return findings
 
 

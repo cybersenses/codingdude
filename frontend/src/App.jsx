@@ -1628,6 +1628,12 @@ function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, heigh
                 <>
                   <div className="text-xs text-ink">{data.trust.referencing_tests.length} test file(s): {data.trust.referencing_tests.join(', ')}</div>
                   {data.trust.property_test_files.length > 0 && <div className="text-xs text-brand-300">includes property tests: {data.trust.property_test_files.join(', ')}</div>}
+                  {data.trust.mutation && data.trust.mutation.total > 0 && (
+                    <div className={data.trust.mutation.survived > 0 ? 'text-xs text-danger' : 'text-xs text-success'}>
+                      mutation kill rate: {data.trust.mutation.killed}/{data.trust.mutation.total}
+                      {data.trust.mutation.survived > 0 && ` — ${data.trust.mutation.survived} mutant(s) survived`}
+                    </div>
+                  )}
                 </>
               )}
           </div>
