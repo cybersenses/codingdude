@@ -24,6 +24,7 @@ from .astdiff import describe_ast_change
 from .config import ThinkingSetting
 from .directives import project_directives_guard
 from .errors import GateRequired
+from .security import format_findings, scan_source
 
 MAX_READ_BYTES = 256 * 1024
 MAX_GREP_RESULTS = 50
@@ -465,6 +466,15 @@ def build_toolset(
         if not approvals.yolo:
             raise GateRequired(f'edit {path}')
 
+    def _security_gate(path: str, content: str, suffix: str) -> None:
+        """R47 #155: scan content before it hits disk; findings block the write."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            findings = scan_source(path, content, suffix, Path(td))
+        if findings:
+            raise ModelRetry(format_findings(path, findings))
+
     def edit_file(path: str, old_text: str, new_text: str) -> str:
         """Replace `old_text` with `new_text` — the match must be unique."""
         _guard_project_context(path)
@@ -502,6 +512,7 @@ def build_toolset(
                     msg += f'\nDid you mean to match these lines?\n\n{hint}\n'
                 raise ModelRetry(msg)
             after = replaced
+        _security_gate(path, after, target.suffix)
         _atomic_write(target, after)
         # Verify + rollback (R12 #3): the file on disk must equal what we
         # meant to write, or the original bytes go back.
@@ -569,6 +580,7 @@ def build_toolset(
             after, summary = _ts_symbol_replacement(
                 before, path, symbol, new_body, spec
             )
+            _security_gate(path, after, target.suffix)
             _atomic_write(target, after)
             written = _read_verbatim(target)
             if written != after:
@@ -649,6 +661,7 @@ def build_toolset(
             )
         replacement = body + eol
         after = ''.join(lines[: start - 1]) + replacement + ''.join(lines[end:])
+        _security_gate(path, after, target.suffix)
         _atomic_write(target, after)
         written = _read_verbatim(target)
         if written != after:
@@ -689,6 +702,7 @@ def build_toolset(
                 f'{path} already exists and is not empty — use edit_file to change it.'
             )
         target.parent.mkdir(parents=True, exist_ok=True)
+        _security_gate(path, content, target.suffix)
         _atomic_write(target, content)
         observe(path, target)
         emit_edit(path, existed, content)

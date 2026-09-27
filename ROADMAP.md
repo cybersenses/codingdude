@@ -784,3 +784,8 @@ CFG of basic blocks per function, unreachable-code analysis, green/red Mermaid H
 **Status:** done
 
 Control-flow graph analysis exposed both ways: agent tool (dead-code detection during work) and human UI panel (green/red basic-block view of generated code). Build on cfg.py::build_cfg seam from #152.
+
+## R47 — R47: Analysis hardening
+**Status:** open
+
+Security + verification gates from the local-agent tooling research. Adopt: T1 security gate on edits (Bandit + gitleaks), T2 mutation testing into trustreport (mutmut), T3 conditional Semgrep custom rules, T4 parked perf smoke (cProfile tool). Rejected: Zoekt/SCIP, Joern/CodeQL CPG, symbolic execution, Docker sandbox (per existing design decision), local LLM.
