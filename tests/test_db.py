@@ -311,13 +311,17 @@ def test_reconcile_dead_processes_marks_orphaned_running_rows(home, workdir, mon
     db = Database.connect(home)
     sid = db.create_session(workdir)
     db.record_process(sid, pid=4242, command='gone', started_at='t', status='running')
+    db.record_process(sid, pid=4243, command='gone-bg', started_at='t',
+                      status='running', background=True)
     db.record_process(sid, pid=1, command='alive', started_at='t', status='running')
     monkeypatch.setattr(
-        'codingdude.processes._pid_alive', lambda pid: pid != 4242)
+        'codingdude.processes._pid_alive', lambda pid: pid not in (4242, 4243))
 
-    assert db.reconcile_dead_processes() == 1
+    assert db.reconcile_dead_processes() == 2
     rows = {r['pid']: r for r in db.list_processes(sid)}
     assert rows[4242]['status'] == 'exited (no capture)'
+    assert rows[4243]['status'] == 'exited (no capture)'
+    assert rows[4243]['background'] is True  # sweep must not drop the flag
     assert rows[1]['status'] == 'running'
     assert db.reconcile_dead_processes() == 0  # idempotent
 

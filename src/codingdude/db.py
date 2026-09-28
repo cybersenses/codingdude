@@ -543,12 +543,14 @@ class Database:
         from .processes import _pid_alive
 
         rows = self._conn.execute(
-            "SELECT id, pid FROM processes WHERE status = 'running'",
+            "SELECT id, pid, background FROM processes WHERE status = 'running'",
         ).fetchall()
         marked = 0
         for r in rows:
             if not _pid_alive(r['pid']):
-                self.update_process(r['id'], status='exited (no capture)')
+                self.update_process(
+                    r['id'], status='exited (no capture)',
+                    background=bool(r['background']))
                 marked += 1
         return marked
 
