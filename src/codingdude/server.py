@@ -206,7 +206,10 @@ def _terminal_status(channel) -> str:
     if terminals and terminals[-1] == 'RUN_FINISHED':
         return 'completed'
     if terminals and terminals[-1] == 'RUN_CANCELLED':
-        return 'cancelled'
+        # 'cancelled' is not in the runs CHECK constraint (db.py) — mapping to
+        # 'interrupted' keeps record_run_end from crashing the reaper on every
+        # user-cancelled run.
+        return 'interrupted'
     return 'failed'
 
 

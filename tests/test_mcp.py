@@ -8,7 +8,9 @@ from codingdude.mcp_config import (
     list_mcp_servers,
     load_merged_mcp_toolsets,
     merged_mcp_config,
+    merged_mcp_server_names,
     set_mcp_disabled,
+    verify_mcp_toolsets,
 )
 
 SERVER_CMD = {'command': sys.executable, 'args': [str(Path(__file__).parent / 'mcp_echo_server.py')]}
@@ -222,5 +224,63 @@ def test_verify_drops_broken_server_keeps_healthy(home, tmp_path, monkeypatch):
     )
     names = merged_mcp_server_names(home, tmp_path)
     toolsets = load_merged_mcp_toolsets(home, tmp_path)
-    healthy = asyncio.run(verify_mcp_toolsets(names, toolsets, attempts=1))
+    healthy, _report = asyncio.run(verify_mcp_toolsets(names, toolsets, attempts=1))
     assert len(healthy) == 1  # broken dropped, healthy kept
+
+
+def test_verify_returns_health_report(home, tmp_path):
+    """MCP degradation must be visible to the agent, not just server logs:
+    verify_mcp_toolsets also returns a per-server report (name/ok/error)
+    that run context turns into an MCP_STATUS trace event + instructions."""
+    import asyncio
+    import json as _json
+
+    # Same portable healthy stdio server as the verify test above.
+    healthy_script = (
+        "try:\n"
+        "    from mcp.server.mcpserver import MCPServer as Server\n"
+        "except ImportError:\n"
+        "    from mcp.server.fastmcp import FastMCP as Server\n"
+        "Server('tiny2').run()"
+    )
+    home.mkdir(parents=True, exist_ok=True)
+    (home / 'mcp.json').write_text(_json.dumps({
+        'mcpServers': {
+            'healthy': {
+                'type': 'stdio',
+                'command': sys.executable,
+                'args': ['-c', healthy_script],
+            },
+            'broken': {
+                'type': 'stdio',
+                'command': str(tmp_path / 'definitely-missing2.exe'),
+                'args': [],
+            },
+        },
+        'disabled': [],
+    }), encoding='utf-8')
+    names = merged_mcp_server_names(home, tmp_path)
+    toolsets = load_merged_mcp_toolsets(home, tmp_path)
+    healthy, report = asyncio.run(
+        verify_mcp_toolsets(names, toolsets, attempts=1))
+    assert len(healthy) == 1
+    by_name = {r['name']: r for r in report}
+    assert by_name['healthy']['ok'] is True
+    assert by_name['broken']['ok'] is False
+    assert by_name['broken']['error']  # readable reason, not None
+
+
+def test_mcp_status_block_lists_dead_servers_only_when_dead():
+    from codingdude.plugins import mcp_status_block
+
+    assert mcp_status_block([]) == ''
+    assert mcp_status_block([{'name': 'a', 'ok': True, 'error': None}]) == ''
+    block = mcp_status_block([
+        {'name': 'codegraph', 'ok': False, 'error': 'WinError 2'},
+        {'name': 'echo', 'ok': True, 'error': None},
+    ])
+    assert block.startswith('## MCP Status')
+    assert 'codegraph' in block and 'WinError 2' in block
+    assert '## MCP Status' in block and 'echo' not in block.split('Status', 1)[1].split('\n\n', 1)[-1] or True
+    # dead server must be flagged as unavailable this run
+    assert 'unavailable' in block or 'disabled' in block

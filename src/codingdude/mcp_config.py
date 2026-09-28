@@ -169,16 +169,24 @@ def _find_list_tools(obj, depth: int = 0):
     return None
 
 
-async def verify_mcp_toolsets(names: list[str], toolsets: list, attempts: int = 2) -> list:
+async def verify_mcp_toolsets(
+    names: list[str], toolsets: list, attempts: int = 2,
+) -> tuple[list, list[dict]]:
     """Pre-flight every MCP server: connect, list tools, retry once.
 
     A server that can't initialize is dropped for this run with a warning
     instead of raising mid-run — before this, one flaky codegraph spawn
     killed the whole run before the agent could do anything about it.
+
+    Returns (healthy_toolsets, report) where report is a per-server
+    [{name, ok, error}] list — the raw material for the MCP_STATUS trace
+    event and the agent's `## MCP Status` instructions block, so a
+    mandated-but-dead server is visible to the agent, not just server logs.
     """
     import logging
 
     healthy: list = []
+    report: list[dict] = []
     for name, toolset in zip(names, toolsets, strict=False):
         inner = _find_list_tools(toolset)
         ok = False
@@ -194,6 +202,11 @@ async def verify_mcp_toolsets(names: list[str], toolsets: list, attempts: int = 
                 break
             except Exception as exc:  # noqa: BLE001 — spawn failures are expected flakiness
                 last_exc = exc
+        report.append({
+            'name': name,
+            'ok': ok,
+            'error': None if ok else str(last_exc),
+        })
         if ok:
             healthy.append(toolset)
         else:
@@ -201,7 +214,7 @@ async def verify_mcp_toolsets(names: list[str], toolsets: list, attempts: int = 
                 'MCP server %s failed to initialize (%s); disabled for this run',
                 name, last_exc,
             )
-    return healthy
+    return healthy, report
 
 
 def merged_mcp_server_names(home: Path, workdir: Path) -> list[str]:

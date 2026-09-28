@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from pydantic_ai.models import Model
@@ -73,6 +73,31 @@ class PluginContext:
     on_edit: Callable | None = None
     capture: Callable | None = None
     emitter: Callable | None = None
+    # Per-server MCP pre-flight results, populated by build_all: the raw
+    # material for the engine's `## MCP Status` instructions block.
+    mcp_health: list[dict] = field(default_factory=list)
+
+
+def mcp_status_block(health: list[dict]) -> str:
+    """Instructions block naming MCP servers that are down this run.
+
+    Empty when everything is healthy — the agent only hears about MCP when
+    a mandated capability is degraded, so it can adapt instead of silently
+    no-op-ing directives like 'always use codegraph'.
+    """
+    dead = [r for r in health if not r.get('ok')]
+    if not dead:
+        return ''
+    lines = [
+        '## MCP Status',
+        'These configured MCP servers are unavailable this run'
+        ' (initialization failed); do not rely on their tools:',
+    ]
+    lines.extend(
+        f"- {r['name']}: {r.get('error') or 'failed to initialize'}"
+        for r in dead
+    )
+    return '\n'.join(lines)
 
 
 async def build_all(ctx: PluginContext) -> list[AbstractToolset]:
@@ -158,7 +183,11 @@ async def build_all(ctx: PluginContext) -> list[AbstractToolset]:
         mcp_toolsets = load_merged_mcp_toolsets(ctx.home, ctx.workdir)
         # Pre-flight: a flaky MCP spawn must degrade to "no MCP this run",
         # not kill the run mid-flight (agent can't fix itself otherwise).
-        toolsets.extend(await verify_mcp_toolsets(names, mcp_toolsets))
+        healthy, report = await verify_mcp_toolsets(names, mcp_toolsets)
+        toolsets.extend(healthy)
+        ctx.mcp_health = report
+        if ctx.emitter is not None and any(not r['ok'] for r in report):
+            ctx.emitter({'type': 'MCP_STATUS', 'servers': report})
     except Exception as exc:
         # MCP is optional: config/spawn problems degrade the run, they never
         # kill it — but they are never silent (self-review M7).

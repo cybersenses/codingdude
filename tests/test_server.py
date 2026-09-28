@@ -627,3 +627,20 @@ def test_session_runs_endpoint_lists_recent_runs(server, tmp_path):
     assert [x['run_id'] for x in runs] == ['runX']
     assert runs[0]['status'] == 'running'
     assert runs[0]['worker_pid'] == 7
+
+
+def test_terminal_status_always_in_db_check_set():
+    """Regression: _terminal_status returned 'cancelled' for RUN_CANCELLED,
+    but the runs CHECK constraint only allows running/completed/failed/
+    gate_aborted/interrupted — so every user-cancelled run crashed the
+    reaper with 'CHECK constraint failed' (other-system startup defect)."""
+    from types import SimpleNamespace
+
+    from codingdude.server import _terminal_status
+
+    allowed = {'running', 'completed', 'failed', 'gate_aborted', 'interrupted'}
+    for terminal in TERMINAL_EVENTS:
+        channel = SimpleNamespace(history=[{'type': terminal}])
+        assert _terminal_status(channel) in allowed, (
+            f'{terminal} maps to a status outside the runs CHECK set'
+        )

@@ -314,3 +314,28 @@
 - **Note**: post-push reviewer echo was corrupted (described unstarted work);
   verified directly, no findings. Distro copy G:\Ai-Dev\CodingDude was
   refreshed to 38aa38b earlier; needs re-sync for f069503.
+
+## Session 2026-09-28 (evening) — startup-defect fixes from other-system report
+
+Other codingdude's startup contract review surfaced two real engine bugs in
+current HEAD; both fixed TDD:
+
+- **Reaper CHECK violation**: `_terminal_status` returned 'cancelled' for
+  RUN_CANCELLED, but the runs CHECK constraint allows only
+  running/completed/failed/gate_aborted/interrupted -> record_run_end
+  threw on every user-cancelled run (the recurring server.log task-exception
+  / 'DB locked' symptom). Now maps to 'interrupted' (decision #88).
+- **MCP degradation now visible**: verify_mcp_toolsets returns
+  (healthy, report); build_all stores ctx.mcp_health, emits MCP_STATUS trace
+  event when anything is dead, and engine appends a `## MCP Status`
+  instructions block naming dead servers + errors. No more silent no-op of
+  directives like 'always use codegraph'.
+- **Skill fix** (~/.codingdude/skills): research SKILL.md said 'delegate with
+  the task tool' - no such tool; now names `delegate`.
+
+Not engine bugs (target-machine config, documented in the report): MCP
+binaries missing (codegraph.CMD, npx.CMD, github-mcp-server.exe) and cmd /c
+printing 'Active code page: 65001' to stdout, breaking the JSON-RPC handshake
+- fix by invoking real executables directly, no cmd wrapper.
+
+Verification: 678 passed / 1 skipped; ruff + mypy clean (68 files).

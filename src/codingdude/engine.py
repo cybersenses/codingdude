@@ -584,6 +584,12 @@ class Engine:
             emitter=traced,
         )
         toolsets = await build_all(plugin_ctx)
+        # Surface dead MCP servers to the agent: a mandated-but-unavailable
+        # capability (e.g. 'always use codegraph') must be visible, not a
+        # silent degradation (startup-contract defect, other-system report).
+        from .plugins import mcp_status_block
+
+        mcp_block = mcp_status_block(plugin_ctx.mcp_health)
         # R25: tool runtime errors feed back to the model as retries
         # instead of killing the run (3 strikes in PromptAssembler.agent).
         from .tool_errors import error_feedback_toolset
@@ -598,6 +604,8 @@ class Engine:
         instructions = self._prompts.instructions(
             self._services, workdir, prompt, registry, store, self.embedder
         )
+        if mcp_block:
+            instructions += '\n\n' + mcp_block
         from .codegraph_boot import boot_hint
 
         hint = boot_hint(
