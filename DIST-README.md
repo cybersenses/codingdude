@@ -43,6 +43,19 @@ folder in this distribution is the pristine template.
 | `setup-codingdude.bat` | one-time installer |
 | `start-codingdude.bat` | launcher |
 
+## Quality gates
+
+ruff, mypy, pytest, pip-audit etc. are installed **inside the project venv**
+by `uv sync` (the `[dependency-groups]` in pyproject.toml) - they are not on
+global PATH, so bare `ruff` in another shell will say "not recognized". Run
+them via uv from the project folder:
+
+    uv run ruff check src tests
+    uv run mypy
+    uv run pytest -q
+
+or just: `gates.bat` (runs all three; pass pytest paths to scope it).
+
 ## MCP servers
 
 `setup-codingdude.bat` installs everything the MCP layer needs:
