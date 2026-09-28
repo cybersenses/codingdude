@@ -347,6 +347,37 @@ def _ts_symbol_replacement(
     return after_bytes.decode('utf-8'), summary
 
 
+def changed_line_numbers(before: str, after: str) -> set[int]:
+    """1-based line numbers in `after` touched by the before→after edit.
+
+    difflib opcodes → every line an insert/replace touched. Empty `before`
+    (new file) marks all lines changed, so the whole file stays gated.
+    """
+    import difflib
+
+    changed: set[int] = set()
+    sm = difflib.SequenceMatcher(None, before.splitlines(), after.splitlines())
+    for tag, _i1, _i2, j1, j2 in sm.get_opcodes():
+        if tag in ('insert', 'replace'):
+            changed.update(range(j1 + 1, j2 + 1))
+    return changed
+
+
+def partition_findings(
+    findings: list[dict], changed: set[int]
+) -> tuple[list[dict], list[dict]]:
+    """Split gate findings into (blocking, pre-existing).
+
+    Findings on lines the edit touched (or line 0 / unattributed) block;
+    findings elsewhere existed before the edit and are reported as warnings —
+    they can never be fixed by retrying, and blocking on them exhausted the
+    retry budget on files that were already flagged (gate diff-scope fix).
+    """
+    blocking = [f for f in findings if f['line'] == 0 or f['line'] in changed]
+    preexisting = [f for f in findings if f['line'] != 0 and f['line'] not in changed]
+    return blocking, preexisting
+
+
 def build_toolset(
     workdir: Path,
     on_edit: EditEmitter | None = None,
@@ -385,9 +416,14 @@ def build_toolset(
             return
         st = target.stat()
         if (st.st_mtime_ns, st.st_size) != rec:
+            # Gate diff-scope: hand the model the fresh bytes in the same
+            # retry, so the re-read round-trip is not paid (a live concurrent
+            # writer used to burn the whole retry budget on this race).
+            fresh = _read_verbatim(target)[:6000]
             raise ModelRetry(
-                f'{rel} changed since it was last read — re-read it before '
-                'editing (concurrent change; refusing to overwrite blind).'
+                f'{rel} changed since it was last read — re-edit using THIS '
+                'current content (concurrent change; refusing to overwrite '
+                f'blind):\n\n{fresh}'
             )
 
     def list_dir(path: str = '.') -> str:
@@ -466,14 +502,35 @@ def build_toolset(
         if not approvals.yolo:
             raise GateRequired(f'edit {path}')
 
-    def _security_gate(path: str, content: str, suffix: str) -> None:
-        """R47 #155: scan content before it hits disk; findings block the write."""
+    def _security_gate(
+        path: str, content: str, suffix: str, before: str = ''
+    ) -> str:
+        """R47 #155: scan content before it hits disk; findings block the write.
+
+        Gate diff-scope: only findings on lines this edit touched block the
+        write. Pre-existing findings elsewhere come back as a warning string
+        for the tool result — retrying cannot fix them.
+        """
         import tempfile
 
         with tempfile.TemporaryDirectory() as td:
             findings = scan_source(path, content, suffix, Path(td))
-        if findings:
-            raise ModelRetry(format_findings(path, findings))
+        if not findings:
+            return ''
+        blocking, preexisting = partition_findings(
+            findings, changed_line_numbers(before, content)
+        )
+        if blocking:
+            raise ModelRetry(format_findings(path, blocking))
+        if not preexisting:
+            return ''
+        lines = [f'security gate: pre-existing findings in {path} '
+                 '(not introduced by this edit, not blocking):']
+        lines.extend(
+            f'  - :{f["line"]} [{f["severity"]}] {f["id"]}: {f["message"]}'
+            for f in preexisting
+        )
+        return '\n'.join(lines)
 
     def edit_file(path: str, old_text: str, new_text: str) -> str:
         """Replace `old_text` with `new_text` — the match must be unique."""
@@ -512,7 +569,7 @@ def build_toolset(
                     msg += f'\nDid you mean to match these lines?\n\n{hint}\n'
                 raise ModelRetry(msg)
             after = replaced
-        _security_gate(path, after, target.suffix)
+        warn = _security_gate(path, after, target.suffix, before)
         _atomic_write(target, after)
         # Verify + rollback (R12 #3): the file on disk must equal what we
         # meant to write, or the original bytes go back.
@@ -530,7 +587,9 @@ def build_toolset(
             describe_ast_change(before, after) if target.suffix == '.py' else ''
         )
         emit_edit(path, before, after)
-        return f'edited {path}' + (f'\n{summary}' if summary else '')
+        return f'edited {path}' + (f'\n{summary}' if summary else '') + (
+            f'\n{warn}' if warn else ''
+        )
 
     def _parse_module(target: Path, text: str):
         try:
@@ -580,7 +639,7 @@ def build_toolset(
             after, summary = _ts_symbol_replacement(
                 before, path, symbol, new_body, spec
             )
-            _security_gate(path, after, target.suffix)
+            warn = _security_gate(path, after, target.suffix, before)
             _atomic_write(target, after)
             written = _read_verbatim(target)
             if written != after:
@@ -591,7 +650,9 @@ def build_toolset(
                 )
             observe(path, target)
             emit_edit(path, before, after)
-            result = f'edited {path}: replaced {symbol}'
+            result = f'edited {path}: replaced {symbol}' + (
+                f'\n{warn}' if warn else ''
+            )
             if summary:
                 result += f'\n{summary}'
             return result
@@ -661,7 +722,7 @@ def build_toolset(
             )
         replacement = body + eol
         after = ''.join(lines[: start - 1]) + replacement + ''.join(lines[end:])
-        _security_gate(path, after, target.suffix)
+        warn = _security_gate(path, after, target.suffix, before)
         _atomic_write(target, after)
         written = _read_verbatim(target)
         if written != after:
@@ -673,7 +734,9 @@ def build_toolset(
         observe(path, target)
         summary = describe_ast_change(before, after)
         emit_edit(path, before, after)
-        result = f'edited {path}: replaced {symbol}'
+        result = f'edited {path}: replaced {symbol}' + (
+            f'\n{warn}' if warn else ''
+        )
         if summary:
             result += f'\n{summary}'
         return result
@@ -702,11 +765,11 @@ def build_toolset(
                 f'{path} already exists and is not empty — use edit_file to change it.'
             )
         target.parent.mkdir(parents=True, exist_ok=True)
-        _security_gate(path, content, target.suffix)
+        warn = _security_gate(path, content, target.suffix)
         _atomic_write(target, content)
         observe(path, target)
         emit_edit(path, existed, content)
-        return f'wrote {path}'
+        return f'wrote {path}' + (f'\n{warn}' if warn else '')
 
     tools: list[Callable] = [list_dir, read_file, grep, glob]
     if not read_only:

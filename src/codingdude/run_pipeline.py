@@ -193,12 +193,15 @@ class PromptAssembler:
         return model_settings
 
     def agent(self, resolved: Model, instructions: str, toolsets, settings=None,
-              retries: int = 3) -> Agent:
+              retries: int = 5) -> Agent:
         """The run's Agent: model + instructions + toolsets + settings.
 
-        R25: default 3 tool retries — errors are fed back to the model
-        (see codingdude.tool_errors) and only stop the run on the 3rd
-        consecutive failure of the same tool.
+        R25: tool retries — errors are fed back to the model (see
+        codingdude.tool_errors) and only stop the run when the consecutive
+        failure budget is spent. Default raised 3 -> 5 (gate diff-scope):
+        deterministic edit failures (gate findings, staleness races with a
+        concurrent writer) were exhausting the old budget before the model
+        could re-read and adapt.
         """
         return Agent(
             model=resolved, instructions=instructions, toolsets=toolsets,

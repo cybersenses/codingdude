@@ -81,10 +81,14 @@ async def test_model_retry_counts_against_budget():
         await agent.run('go')
 
 
-def test_agent_default_retries_is_three():
-    """The engine's agent gives tools 3 tries before the run stops."""
+def test_agent_default_retries_is_five():
+    """The engine's agent gives tools 5 tries before the run stops.
+
+    Raised 3 -> 5 with the gate diff-scope fix: deterministic edit failures
+    (pre-existing gate findings, staleness races) exhausted the old budget.
+    """
     from codingdude.run_pipeline import PromptAssembler
 
     assembler = PromptAssembler()
     agent = assembler.agent(TestModel(), 'instructions', [])
-    assert agent._max_tool_retries == 3
+    assert agent._max_tool_retries == 5

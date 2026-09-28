@@ -113,6 +113,20 @@ def test_edit_symbol_reuses_staleness_check(tmp_path):
     assert 'return 999' in f.read_text()  # external change intact
 
 
+def test_stale_retry_includes_fresh_content(tmp_path):
+    """Gate diff-scope: the staleness retry carries the fresh bytes so the
+    model can re-edit in one attempt instead of a separate read round-trip."""
+    from codingdude.tools import build_toolset
+
+    f = tmp_path / 'x.py'
+    f.write_text('def a():\n    return 1\n')
+    ts = build_toolset(tmp_path)
+    ts.tools['read_file'].function('x.py')  # observe
+    f.write_text('def a():\n    return FRESH_MARK\n')  # external writer
+    with pytest.raises(ModelRetry, match='FRESH_MARK'):
+        ts.tools['edit_file'].function('x.py', 'return 1', 'return 2\n')
+
+
 def test_edit_symbol_strips_common_indentation(tmp_path):
     """New body pasted with extra indentation is dedented to column 0."""
     f = tmp_path / 'mod.py'
