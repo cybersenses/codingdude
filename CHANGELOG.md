@@ -17,6 +17,9 @@ Analysis hardening (R47) + codebase hygiene sweep.
 - `utc_now_iso` is the single canonical timestamp helper (was duplicated in 6 modules)
 - Dead `next_target`/`body_tail` parameters removed from the CFG builder
 
+### Fixed
+- UI version badge showed 0.3.0 after the bump: the frontend bakes `__APP_VERSION__ = package.json version` into the bundle at build time (vite `define`). Release rule: after bumping the version, run `npm run build` and ship the rebuilt `dist/` — a stale bundle keeps reporting the old version. Backend `__version__` is now derived from installed package metadata, pinned by `tests/test_version.py` (single source: pyproject.toml)
+
 ## 0.3.0 — 2026-09-09
 
 Modernization completion (WS-C/E/F/G/H remainder).

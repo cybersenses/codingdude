@@ -286,3 +286,8 @@
 - **BOUNCE NEEDED** for janitor to go live (also still serving pre-#147 dist).
 - Process note: another edit_file ghost edit (import cleanup reported success,
   didn't persist — caught by ruff). Recurring seam, stay suspicious.
+
+## Versioning / release gotcha (v0.4.0)
+- Version lives in exactly two files: `pyproject.toml` (backend, `__version__` derived from metadata, drift test `tests/test_version.py`) and `frontend/package.json` (baked into the JS bundle at build time via vite `define`).
+- Release rule: bump both in the same commit → `npm run build` → ship the rebuilt `dist/`. A stale bundle silently reports the old version (bit us: UI showed 0.3.0 for two bounces).
+- `frontend/dist/` and `.venv/` are gitignored; on a fresh copy run `setup-codingdude.bat` (installs uv, deps, Semgrep CLI, Node check, builds frontend). Both .bat scripts use `%~dp0` — no hardcoded drive letters anywhere in the repo (verified 2026-09-22).
