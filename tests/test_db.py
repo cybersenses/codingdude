@@ -181,17 +181,91 @@ def test_delete_session_cascades_all_session_scoped_tables(home, workdir):
     db.delete_session(sid)
 
     orphaned = []
-    for table in (
-        'messages', 'approvals', 'usage', 'plans', 'session_notes',
-        'renders', 'artifacts', 'ticket_execution',
-    ):
-        n = db._conn.execute(
-            f'SELECT COUNT(*) FROM {table} WHERE session_id = ?', (sid,)
-        ).fetchone()[0]
+    counters = {
+        'messages': 'SELECT COUNT(*) FROM messages WHERE session_id = ?',
+        'approvals': 'SELECT COUNT(*) FROM approvals WHERE session_id = ?',
+        'usage': 'SELECT COUNT(*) FROM usage WHERE session_id = ?',
+        'plans': 'SELECT COUNT(*) FROM plans WHERE session_id = ?',
+        'session_notes': 'SELECT COUNT(*) FROM session_notes WHERE session_id = ?',
+        'renders': 'SELECT COUNT(*) FROM renders WHERE session_id = ?',
+        'artifacts': 'SELECT COUNT(*) FROM artifacts WHERE session_id = ?',
+        'ticket_execution': 'SELECT COUNT(*) FROM ticket_execution WHERE session_id = ?',
+    }
+    for table, query in counters.items():
+        n = db._conn.execute(query, (sid,)).fetchone()[0]
         if n:
             orphaned.append(f'{table}={n}')
     assert not orphaned, f'orphaned rows after delete_session: {orphaned}'
     assert db.list_sessions(workdir) == []
+
+
+def test_busy_timeout_is_15s(home):
+    """SQLITE_BUSY contention between server/worker processes gets a 15s
+    grace window before raising (intermittent 'database is locked')."""
+    db = Database.connect(home)
+    timeout = db._conn.execute('PRAGMA busy_timeout').fetchone()[0]
+    assert timeout == 15_000
+
+
+def _flaky_conn(real, fail_times, calls):
+    """Proxy exposing the seam Database writes go through (execute/commit)."""
+    import sqlite3 as _sq
+
+    class FlakyConn:
+        def execute(self, sql, params=()):
+            return real.execute(sql, params)
+
+        def executescript(self, script):
+            return real.executescript(script)
+
+        def commit(self):
+            calls['n'] += 1
+            if calls['n'] <= fail_times:
+                raise _sq.OperationalError('database is locked')
+            real.commit()
+
+        def __getattr__(self, name):
+            return getattr(real, name)
+
+    return FlakyConn()
+
+
+def test_commit_retries_on_database_locked(home, workdir, monkeypatch):
+    """A transient SQLITE_BUSY during commit is retried with backoff
+    instead of surfacing as 'database is locked' to the run."""
+    import time as _time
+
+    db = Database.connect(home)
+    sid = db.create_session(workdir)
+    calls = {'n': 0}
+    sleeps: list[float] = []
+
+    db._conn = _flaky_conn(db._conn, fail_times=2, calls=calls)
+    monkeypatch.setattr(db, '_BACKOFF_BASE', 0.001)
+    monkeypatch.setattr(_time, 'sleep', sleeps.append)
+
+    db.add_session_note(sid, 'written despite lock contention')
+
+    assert calls['n'] == 3  # two retries then success
+    assert sleeps == [0.001, 0.002]
+
+
+def test_commit_gives_up_after_max_retries(home, workdir, monkeypatch):
+    """A lock held beyond the retry budget still raises — fails loudly,
+    never silently drops the write."""
+    import sqlite3 as _sq
+
+    db = Database.connect(home)
+    sid = db.create_session(workdir)
+    calls = {'n': 0}
+
+    db._conn = _flaky_conn(db._conn, fail_times=999, calls=calls)
+    monkeypatch.setattr(db, '_BACKOFF_BASE', 0.001)
+    monkeypatch.setattr('codingdude.db.time.sleep', lambda _s: None)
+
+    with pytest.raises(_sq.OperationalError, match='database is locked'):
+        db.add_session_note(sid, 'lost write')
+    assert calls['n'] == 4  # initial attempt + 3 retries
 
 
 def test_run_lifecycle_start_then_end(home, workdir):
@@ -228,6 +302,24 @@ def test_reconcile_marks_orphaned_running_runs_interrupted(home, workdir):
     assert db.get_run('runLive')['status'] == 'interrupted'
     assert db.get_run('runDone')['status'] == 'completed'
     assert db.reconcile_interrupted_runs() == 0  # idempotent
+
+
+def test_reconcile_dead_processes_marks_orphaned_running_rows(home, workdir, monkeypatch):
+    """#148 follow-up: process rows stuck at 'running' whose pid no longer
+    exists get a durable 'exited (no capture)' end state at server boot —
+    not just lazily when list_processes happens to be called."""
+    db = Database.connect(home)
+    sid = db.create_session(workdir)
+    db.record_process(sid, pid=4242, command='gone', started_at='t', status='running')
+    db.record_process(sid, pid=1, command='alive', started_at='t', status='running')
+    monkeypatch.setattr(
+        'codingdude.processes._pid_alive', lambda pid: pid != 4242)
+
+    assert db.reconcile_dead_processes() == 1
+    rows = {r['pid']: r for r in db.list_processes(sid)}
+    assert rows[4242]['status'] == 'exited (no capture)'
+    assert rows[1]['status'] == 'running'
+    assert db.reconcile_dead_processes() == 0  # idempotent
 
 
 def test_list_runs_newest_first_scoped_to_session(home, workdir):

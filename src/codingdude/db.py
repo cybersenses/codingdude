@@ -1,6 +1,8 @@
 """SQLite persistence for Sessions, messages, approvals, Memory, and usage."""
 
+import re
 import sqlite3
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -212,6 +214,12 @@ class SessionInfo:
 class Database:
     """CodingDude's single SQLite store. Created on first use."""
 
+    # SQLITE_BUSY retry budget: server and worker processes share the DB
+    # file; a transient lock (busy_timeout exceeded) is retried instead of
+    # surfacing as 'database is locked' to the run. Fails loudly after.
+    _BUSY_RETRIES = 3
+    _BACKOFF_BASE = 0.05
+
     def __init__(self, conn: sqlite3.Connection):
         self._conn = conn
         self._migrate()
@@ -225,19 +233,35 @@ class Database:
         existing = {
             r['name'] for r in self._conn.execute('PRAGMA table_info(sessions)')
         }
-        for column, decl in (
-            ('context_tokens', 'INTEGER'),
-            ('context_limit', 'INTEGER'),
-            ('keep_for_evals', 'INTEGER NOT NULL DEFAULT 0'),
+        # Fully literal statements: no interpolated SQL at all.
+        for column, stmt in (
+            ('context_tokens',
+             'ALTER TABLE sessions ADD COLUMN context_tokens INTEGER'),
+            ('context_limit',
+             'ALTER TABLE sessions ADD COLUMN context_limit INTEGER'),
+            ('keep_for_evals',
+             'ALTER TABLE sessions ADD COLUMN keep_for_evals'
+             ' INTEGER NOT NULL DEFAULT 0'),
         ):
             if column not in existing:
-                self._conn.execute(f'ALTER TABLE sessions ADD COLUMN {column} {decl}')
+                self._conn.execute(stmt)
         ticket_cols = {
             r['name'] for r in self._conn.execute('PRAGMA table_info(tickets)')
         }
         if ticket_cols and 'roadmap_id' not in ticket_cols:
             self._conn.execute('ALTER TABLE tickets ADD COLUMN roadmap_id TEXT')
-        self._conn.commit()
+        self._commit()
+
+    def _commit(self) -> None:
+        """Commit with bounded backoff retry while the DB is write-locked."""
+        for attempt in range(self._BUSY_RETRIES + 1):
+            try:
+                self._conn.commit()
+                return
+            except sqlite3.OperationalError as exc:
+                if 'database is locked' not in str(exc) or attempt == self._BUSY_RETRIES:
+                    raise
+                time.sleep(self._BACKOFF_BASE * 2**attempt)
 
     def update_session_context(
         self, session_id: str, total_tokens: int, model_limit: int
@@ -248,7 +272,7 @@ class Database:
             ' WHERE session_id = ?',
             (total_tokens, model_limit, session_id),
         )
-        self._conn.commit()
+        self._commit()
 
     @classmethod
     def connect(cls, home: Path) -> 'Database':
@@ -263,7 +287,7 @@ class Database:
         cols = [r[1] for r in conn.execute('PRAGMA table_info(embeddings)')]
         if cols and 'workdir' not in cols:
             conn.execute('DROP TABLE embeddings')
-        conn.execute('PRAGMA busy_timeout=5000')
+        conn.execute('PRAGMA busy_timeout=15000')
         conn.executescript(_SCHEMA)
         conn.commit()
         return cls(conn)
@@ -273,8 +297,9 @@ class Database:
             'INSERT INTO projects (name, workdir, created_at) VALUES (?, ?, ?)',
             (name, str(workdir), utc_now_iso()),
         )
-        self._conn.commit()
-        assert cur.lastrowid is not None
+        self._commit()
+        if cur.lastrowid is None:  # pragma: no cover - INSERT always sets it
+            raise RuntimeError('INSERT did not yield a rowid')
         return cur.lastrowid
 
     def list_projects(self) -> list[dict]:
@@ -294,7 +319,7 @@ class Database:
 
     def delete_project(self, project_id: int) -> bool:
         cur = self._conn.execute('DELETE FROM projects WHERE id = ?', (project_id,))
-        self._conn.commit()
+        self._commit()
         return cur.rowcount > 0
 
     def project_by_workdir(self, workdir: Path) -> dict | None:
@@ -312,7 +337,7 @@ class Database:
             ' VALUES (?, ?, ?, ?, ?)',
             (session_id, str(workdir), now, now, title),
         )
-        self._conn.commit()
+        self._commit()
         return session_id
 
     def list_sessions(self, workdir: Path) -> list[SessionInfo]:
@@ -339,7 +364,7 @@ class Database:
         self._conn.execute(
             'UPDATE sessions SET updated_at = ? WHERE session_id = ?', (utc_now_iso(), session_id)
         )
-        self._conn.commit()
+        self._commit()
 
     def replace_messages(self, session_id: str, payloads: list[str]) -> None:
         """Overwrite the session's message list (used by compaction)."""
@@ -354,7 +379,7 @@ class Database:
         self._conn.execute(
             'UPDATE sessions SET updated_at = ? WHERE session_id = ?', (utc_now_iso(), session_id)
         )
-        self._conn.commit()
+        self._commit()
 
     def _session_scoped_tables(self) -> list[str]:
         """Every table keyed by session_id (M6: derived from the schema, so
@@ -367,18 +392,26 @@ class Database:
         ]
         scoped = []
         for name in sorted(names):
-            cols = {r[1] for r in self._conn.execute(f'PRAGMA table_info({name})')}
+            # name comes from sqlite_master, never user input; validated to
+            # a plain identifier so the formatted query stays literal
+            if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', name):
+                continue
+            # pragma_table_info(?) is parameterizable (unlike PRAGMA);
+            # the SELECT projects exactly one column: the name
+            cols = {r[0] for r in self._conn.execute(
+                'SELECT name FROM pragma_table_info(?)', (name,))}
             if 'session_id' in cols:
                 scoped.append(name)
         return scoped
 
     def delete_session(self, session_id: str) -> None:
         for table in self._session_scoped_tables():
-            self._conn.execute(
-                f'DELETE FROM {table} WHERE session_id = ?', (session_id,)
-            )
+            # table is validated to [A-Za-z_][A-Za-z0-9_]* at the source
+            # (_session_scoped_tables); identifiers cannot be parameterized.
+            sql = f'DELETE FROM {table} WHERE session_id = ?'  # nosec B608 - table identifier regex-validated in _session_scoped_tables
+            self._conn.execute(sql, (session_id,))
         self._conn.execute('DELETE FROM sessions WHERE session_id = ?', (session_id,))
-        self._conn.commit()
+        self._commit()
 
     def record_pattern_approval(self, session_id: str, pattern: str) -> None:
         self._conn.execute(
@@ -386,7 +419,7 @@ class Database:
             " VALUES (?, 'shell', '', ?, 'approved', ?)",
             (session_id, pattern, utc_now_iso()),
         )
-        self._conn.commit()
+        self._commit()
 
     def session_patterns(self, session_id: str) -> list[str]:
         rows = self._conn.execute(
@@ -402,7 +435,7 @@ class Database:
             'UPDATE sessions SET keep_for_evals = ? WHERE session_id = ?',
             (int(keep), session_id),
         )
-        self._conn.commit()
+        self._commit()
 
     def add_session_note(
         self, session_id: str, content: str,
@@ -415,7 +448,7 @@ class Database:
             ' VALUES (?, ?, ?, ?, ?)',
             (session_id, run_id, offset_s, content, utc_now_iso()),
         )
-        self._conn.commit()
+        self._commit()
         return cur.lastrowid or 0
 
     def record_render(
@@ -428,7 +461,7 @@ class Database:
             ' VALUES (?, ?, ?, ?, ?)',
             (session_id, path, bytes_, mtime, utc_now_iso()),
         )
-        self._conn.commit()
+        self._commit()
 
     def list_renders(self, session_id: str) -> list[dict]:
         """Captured renders for a session, newest capture first."""
@@ -457,7 +490,7 @@ class Database:
             (session_id, pid, command, started_at, status, exit_code,
              int(background)),
         )
-        self._conn.commit()
+        self._commit()
         return cur.lastrowid
 
     def update_process(
@@ -469,7 +502,7 @@ class Database:
             ' WHERE id = ?',
             (status, exit_code, int(background), row_id),
         )
-        self._conn.commit()
+        self._commit()
 
     def list_processes(self, session_id: str) -> list[dict]:
         """Recorded shell processes for a session, newest first.
@@ -500,6 +533,25 @@ class Database:
             out.append(d)
         return out
 
+    def reconcile_dead_processes(self) -> int:
+        """Startup sweep: durably end 'running' process rows whose pid is gone.
+
+        Same reconciliation list_processes does lazily, but across ALL
+        sessions at boot, so phantom live processes never reach the HITL
+        panel after a crash. Returns the number of rows marked.
+        """
+        from .processes import _pid_alive
+
+        rows = self._conn.execute(
+            "SELECT id, pid FROM processes WHERE status = 'running'",
+        ).fetchall()
+        marked = 0
+        for r in rows:
+            if not _pid_alive(r['pid']):
+                self.update_process(r['id'], status='exited (no capture)')
+                marked += 1
+        return marked
+
     # --- Runs (R31): durable run lifecycle so end-state survives bounces ---
 
     def record_run_start(self, run_id: str, session_id: str, *, pid: int | None = None) -> None:
@@ -509,7 +561,7 @@ class Database:
             " VALUES (?, ?, ?, 'running', ?)",
             (run_id, session_id, pid, utc_now_iso()),
         )
-        self._conn.commit()
+        self._commit()
 
     def record_run_end(
         self, run_id: str, status: str, *, exit_code: int | None = None
@@ -518,7 +570,7 @@ class Database:
             'UPDATE runs SET status = ?, exit_code = ?, ended_at = ? WHERE run_id = ?',
             (status, exit_code, utc_now_iso(), run_id),
         )
-        self._conn.commit()
+        self._commit()
 
     def get_run(self, run_id: str) -> dict | None:
         row = self._conn.execute(
@@ -549,7 +601,7 @@ class Database:
             " WHERE status = 'running'",
             (utc_now_iso(),),
         )
-        self._conn.commit()
+        self._commit()
         return cur.rowcount
 
     def list_session_notes(self, session_id: str) -> list[dict]:
@@ -595,7 +647,7 @@ class Database:
             ' cost_usd, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
             (session_id, model, requests, input_tokens, output_tokens, cost_usd, utc_now_iso()),
         )
-        self._conn.commit()
+        self._commit()
 
     def session_usage(self, session_id: str) -> dict[str, float | None]:
         row = self._conn.execute(

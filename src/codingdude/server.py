@@ -258,6 +258,12 @@ def create_app(
     if interrupted:
         logging.getLogger('codingdude.server').info(
             'RUNS_RECONCILED interrupted=%s', interrupted)
+    # #148 follow-up: process rows stuck at 'running' whose pid died with a
+    # previous server life get a durable 'exited (no capture)' end state too.
+    orphaned = db.reconcile_dead_processes()
+    if orphaned:
+        logging.getLogger('codingdude.server').info(
+            'PROCESSES_RECONCILED orphaned=%s', orphaned)
     channels: dict[str, RunChannel] = {}
 
     @app.on_event('startup')
