@@ -93,7 +93,9 @@ class RunServices:
                 cost_usd=float(cost) if cost is not None else None,
             )
         except Exception:  # noqa: BLE001 - accounting must never fail a run
-            pass
+            logger.warning(
+                'usage recording failed for session %s', session_id, exc_info=True
+            )
 
     def usage_limits(self):
         """Per-run request cap (config `models.request_limit`, default 500).
