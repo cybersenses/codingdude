@@ -291,3 +291,26 @@
 - Version lives in exactly two files: `pyproject.toml` (backend, `__version__` derived from metadata, drift test `tests/test_version.py`) and `frontend/package.json` (baked into the JS bundle at build time via vite `define`).
 - Release rule: bump both in the same commit → `npm run build` → ship the rebuilt `dist/`. A stale bundle silently reports the old version (bit us: UI showed 0.3.0 for two bounces).
 - `frontend/dist/` and `.venv/` are gitignored; on a fresh copy run `setup-codingdude.bat` (installs uv, deps, Semgrep CLI, Node check, builds frontend). Both .bat scripts use `%~dp0` — no hardcoded drive letters anywhere in the repo (verified 2026-09-22).
+
+## Session 2026-09-28 (afternoon) — R48 project onboarding (f069503, pushed)
+
+- **Problem**: agent taking over a project (other system, dbdqreviewer) never
+  logged roadmap/tickets — no engine step discovers where work is tracked;
+  memory is passive; no ticket obligation; two competing trackers.
+- **Shipped**: `onboarding.py` (onboarded = workdir Memory entry starting
+  'Project conventions:'); PromptAssembler injects discovery directive until
+  record exists; engine adds `onboarding: true` to CODEGRAPH_BOOT; built-in
+  directive layer in directives.py (global < built-in < project, later wins):
+  tracked item before non-trivial work.
+- **Test fix**: lifecycle compaction test asserted a raw char-count proxy;
+  persisted rows embed run instructions (pydantic-ai), so instruction growth
+  crossed the 5000-char threshold spuriously. Now asserts retention property
+  (exactly one big message kept verbatim + compaction summary present).
+- **Verification**: 675 passed / 1 skipped; ruff + mypy clean.
+- **Gotcha**: edit_file/edit_symbol stale-read guard misfired repeatedly
+  (refused fresh files with full-content dumps); workaround = patch scripts in
+  .scratch with ast.parse + anchor-count checks, no heredocs (they mangle 
+).
+- **Note**: post-push reviewer echo was corrupted (described unstarted work);
+  verified directly, no findings. Distro copy G:\Ai-Dev\CodingDude was
+  refreshed to 38aa38b earlier; needs re-sync for f069503.
