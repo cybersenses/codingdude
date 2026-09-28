@@ -179,6 +179,10 @@ class PromptAssembler:
                 '\n\nMemory (durable facts from earlier sessions; respect them):\n'
                 + lines
             )
+        from .onboarding import onboarding_block, onboarding_needed
+
+        if onboarding_needed(store, workdir):
+            instructions += '\n\n' + onboarding_block()
         return instructions
 
     def model_settings(

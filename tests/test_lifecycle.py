@@ -106,7 +106,13 @@ async def test_compaction_triggers_on_token_limit_from_config(home, workdir):
         prompt='continue', workdir=workdir, session_id=session_id,
         model=scripted(echo_count),
     )
-    # Without token-based compaction the 5 big messages (~5000 chars) survive
-    # in storage; a compaction replaces them with a short summary.
+    # Without token-based compaction the 5 big messages survive in storage;
+    # a compaction summarizes them, retaining only the most recent verbatim
+    # (plan_compaction keep-recent). Assert that property directly rather
+    # than a raw char-count proxy — persisted rows embed the run's
+    # instructions (pydantic-ai), so unrelated instruction text shifts the
+    # byte total and crossed the old 5000-char threshold spuriously.
     stored = db.load_messages(session_id)
-    assert sum(len(p) for p in stored) < 5 * 1000
+    joined = '\n'.join(stored)
+    assert joined.count('x' * 600) == 1, 'expected only the recent message kept verbatim'
+    assert 'Earlier conversation, compacted' in joined

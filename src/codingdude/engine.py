@@ -479,6 +479,13 @@ class Engine:
             boot_event['scaffold_created'] = scaffold['created']
         if scaffold['errors']:
             logger.warning('project scaffold incomplete: %s', scaffold['errors'])
+        # Project onboarding (first-run): surface it in the trace so the UI
+        # and post-run analysis can see why the onboarding directive fired.
+        from .memory import MemoryStore
+        from .onboarding import onboarding_needed
+
+        if onboarding_needed(MemoryStore(self._db), workdir):
+            boot_event['onboarding'] = True
         return boot_event
 
     async def _prepare_history(

@@ -5,6 +5,8 @@ Two sources, later layers win on conflict:
    test policy, style rules).
 2. Project: `<workdir>/AGENT.md` — already the Project Context; included here
    as the project directive layer.
+3. Built-in: standing process rules shipped with the engine (tracked-item
+   obligation) — always present; user files only add to it.
 
 Budget-capped: the global layer truncates first so project rules always
 survive. Truncation is always marked, never silent.
@@ -15,6 +17,12 @@ from pathlib import Path
 DIRECTIVES_FILENAME = 'DIRECTIVES.md'
 DIRECTIVES_BUDGET = 4000
 _GLOBAL_BUDGET = 3000
+
+_BUILTIN_PROCESS = """\
+- Before non-trivial work, open (or confirm) the tracked item for it in the
+  surface this project declares for tracking — see the project's convention
+  record in Memory; default: a ROADMAP.md ticket — and log completion
+  against it when the work is done."""
 
 
 def _read(path: Path) -> str:
@@ -30,6 +38,10 @@ def build_directive_layers(home: Path, workdir: Path) -> str:
         if len(global_text) > _GLOBAL_BUDGET:
             global_text = global_text[:_GLOBAL_BUDGET]
         parts.append(f'## Global directives (user-level rules)\n\n{global_text}')
+
+    # Built-in sits between global and project: later layers win on conflict,
+    # so user-level and project rules always outrank engine defaults.
+    parts.append(f'## Built-in process rules\n\n{_BUILTIN_PROCESS}')
 
     project_text = _read(workdir / 'AGENT.md')
     if project_text:
