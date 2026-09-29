@@ -136,3 +136,17 @@ def test_add_project_scaffolds_and_reports_codegraph(client, tmp_path, monkeypat
     assert (proj / 'CONTEXT.md').exists()
     # failure is reported, never raised
     assert body['scaffold']['errors'] == []
+
+
+def test_project_codegraph_boot_reports_and_never_raises(tmp_path):
+    """The helper's own contract: failure → {'status': 'failed', ...}, never raised."""
+    from codingdude.server import _project_codegraph_boot
+
+    def boom(workdir, timeout=300):
+        raise RuntimeError('no cli')
+
+    out = _project_codegraph_boot(tmp_path, boot=boom)
+    assert out == {'status': 'failed', 'reason': 'RuntimeError: no cli'}
+
+    ok = _project_codegraph_boot(tmp_path, boot=lambda wd, timeout=300: {'status': 'ok', 'reason': None})
+    assert ok['status'] == 'ok'

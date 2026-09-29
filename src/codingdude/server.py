@@ -246,13 +246,17 @@ async def _run_janitor(channels: dict, db: Database) -> None:
 
 def _project_codegraph_boot(workdir: Path, boot=None) -> dict:
     """Boot the codegraph index for a project (module-level so tests can
-    stub it); best-effort — a failure is reported, never raised."""
+    stub it); best-effort — a failure is reported and logged, never raised."""
     if boot is None:
         from .codegraph_boot import boot_codegraph
         boot = boot_codegraph
     try:
-        return boot(workdir)
+        # Bounded at 120s: this runs in the POST /projects request path.
+        return boot(workdir, timeout=120)
     except Exception as exc:  # noqa: BLE001 -- project creation must not fail on indexing
+        logging.getLogger(__name__).warning(
+            'PROJECT_CODEGRAPH_BOOT_FAILED workdir=%s: %s: %s',
+            workdir, type(exc).__name__, exc)
         return {'status': 'failed', 'reason': f'{type(exc).__name__}: {exc}'}
 
 

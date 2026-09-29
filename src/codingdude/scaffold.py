@@ -34,9 +34,14 @@ def _bundled_checklists() -> list[tuple[str, str]]:
 
     root = importlib.resources.files('codingdude') / 'data' / 'checklists'
     out: list[tuple[str, str]] = []
-    for res in sorted(root.iterdir(), key=lambda r: r.name):
-        if res.name.endswith('.md'):
-            out.append((res.name, res.read_text(encoding='utf-8')))
+    try:
+        for res in sorted(root.iterdir(), key=lambda r: r.name):
+            if res.name.endswith('.md'):
+                out.append((res.name, res.read_text(encoding='utf-8')))
+    except OSError as exc:
+        # The contract is "scaffold never raises" — a missing wheel payload
+        # must surface as an error entry, not break project creation.
+        logger.warning('bundled checklists unavailable: %s', exc)
     return out
 
 
