@@ -260,7 +260,11 @@ function ToolTimeline({ events }) {
           {events.map((e, i) => (
             <div key={i} className="rounded bg-canvas p-1.5 font-mono text-[11px]">
               <div className="text-accent">{e.tool_name || e.type}</div>
-              {e.result && <pre className="whitespace-pre-wrap text-ink-muted">{e.result}</pre>}
+              {e.result != null && (
+                <pre className="whitespace-pre-wrap text-ink-muted">
+                  {typeof e.result === 'string' ? e.result : JSON.stringify(e.result, null, 2)}
+                </pre>
+              )}
             </div>
           ))}
         </div>
