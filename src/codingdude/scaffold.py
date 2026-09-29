@@ -64,6 +64,7 @@ def ensure_project_scaffold(workdir: Path) -> dict:
             logger.warning('scaffold could not create %s: %s', target, exc)
 
     _want('reference', lambda p: p.mkdir(parents=True))
+    _want('reference/research', lambda p: p.mkdir(parents=True))
     _want('ROADMAP.md', lambda p: p.write_text(_ROADMAP_TEMPLATE, encoding='utf-8'))
     _want('CONTEXT.md', lambda p: p.write_text(_CONTEXT_TEMPLATE, encoding='utf-8'))
 

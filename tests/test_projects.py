@@ -113,3 +113,26 @@ def test_session_with_nonexistent_workdir_rejected(client, tmp_path):
     r = c.post('/sessions', json={'workdir': str(tmp_path / 'missing')}, headers=h)
     assert r.status_code == 422
     assert 'no such directory' in r.json()['detail']
+
+
+def test_add_project_scaffolds_and_reports_codegraph(client, tmp_path, monkeypatch):
+    """Adding a project must set up the base structure immediately — not on
+    the first run — and surface whether the codegraph index booted."""
+    import codingdude.server as server_mod
+
+    c, token = client
+    h = {'Authorization': f'Bearer {token}'}
+    proj = tmp_path / 'bravo'
+    proj.mkdir()
+    monkeypatch.setattr(
+        server_mod, '_project_codegraph_boot', lambda wd: {'status': 'failed', 'reason': 'no cli'})
+    r = c.post('/projects', json={'name': 'Bravo', 'workdir': str(proj)}, headers=h)
+    assert r.status_code == 200
+    body = r.json()
+    assert body['codegraph'] == {'status': 'failed', 'reason': 'no cli'}
+    assert (proj / 'reference' / 'checklists').is_dir()
+    assert (proj / 'reference' / 'research').is_dir()
+    assert (proj / 'ROADMAP.md').exists()
+    assert (proj / 'CONTEXT.md').exists()
+    # failure is reported, never raised
+    assert body['scaffold']['errors'] == []

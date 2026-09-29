@@ -244,6 +244,18 @@ async def _run_janitor(channels: dict, db: Database) -> None:
                 worker.terminate()
 
 
+def _project_codegraph_boot(workdir: Path, boot=None) -> dict:
+    """Boot the codegraph index for a project (module-level so tests can
+    stub it); best-effort — a failure is reported, never raised."""
+    if boot is None:
+        from .codegraph_boot import boot_codegraph
+        boot = boot_codegraph
+    try:
+        return boot(workdir)
+    except Exception as exc:  # noqa: BLE001 -- project creation must not fail on indexing
+        return {'status': 'failed', 'reason': f'{type(exc).__name__}: {exc}'}
+
+
 def create_app(
     home: Path | None = None, token: str | None = None, allow_testclient: bool = False
 ) -> FastAPI:
@@ -1029,7 +1041,19 @@ def create_app(
             if p['workdir'] == workdir:
                 raise HTTPException(status_code=409, detail='a project with this workdir already exists')
         pid = db.create_project(body.name, Path(workdir))
-        return {'id': pid, 'name': body.name, 'workdir': workdir}
+        # Project creation IS setup time: the base structure and the codegraph
+        # index must exist before the first run, and failures must be visible
+        # in the response (they used to be silent — live symptom: a fresh
+        # project with no reference/ and no index).
+        from .scaffold import ensure_project_scaffold
+
+        wd = Path(workdir)
+        scaffold = ensure_project_scaffold(wd)
+        codegraph = _project_codegraph_boot(wd)
+        return {
+            'id': pid, 'name': body.name, 'workdir': workdir,
+            'scaffold': scaffold, 'codegraph': codegraph,
+        }
 
     @app.delete('/projects/{project_id}')
     def remove_project(project_id: int, _: None = Depends(authorize)) -> dict:
