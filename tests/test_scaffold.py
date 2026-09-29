@@ -10,15 +10,18 @@ from codingdude.scaffold import ensure_project_scaffold
 def test_creates_missing_pieces_in_empty_workdir(tmp_path: Path) -> None:
     out = ensure_project_scaffold(tmp_path)
     assert (tmp_path / 'reference').is_dir()
+    assert (tmp_path / 'reference' / 'research').is_dir()
     assert (tmp_path / 'ROADMAP.md').exists()
     assert (tmp_path / 'CONTEXT.md').exists()
     checklist_creates = [c for c in out['created'] if c.startswith('reference/checklists/')]
-    assert set(out['created']) - set(checklist_creates) == {'reference', 'ROADMAP.md', 'CONTEXT.md'}
+    assert set(out['created']) - set(checklist_creates) == {
+        'reference', 'reference/research', 'ROADMAP.md', 'CONTEXT.md'}
     assert out['created']  # something happened
 
 
 def test_idempotent_when_everything_exists(tmp_path: Path) -> None:
     (tmp_path / 'reference').mkdir()
+    (tmp_path / 'reference' / 'research').mkdir()
     (tmp_path / 'ROADMAP.md').write_text('# Roadmap\n\n## R1 — Existing\n', encoding='utf-8')
     (tmp_path / 'CONTEXT.md').write_text('# Context\n', encoding='utf-8')
     out = ensure_project_scaffold(tmp_path)
@@ -31,7 +34,7 @@ def test_creates_only_the_missing_pieces(tmp_path: Path) -> None:
     (tmp_path / 'CONTEXT.md').write_text('# Context\n', encoding='utf-8')
     out = ensure_project_scaffold(tmp_path)
     base = [c for c in out['created'] if not c.startswith('reference/checklists/')]
-    assert set(base) == {'reference', 'ROADMAP.md'}
+    assert set(base) == {'reference', 'reference/research', 'ROADMAP.md'}
     assert (tmp_path / 'CONTEXT.md').read_text(encoding='utf-8') == '# Context\n'
     assert (tmp_path / 'reference' / 'checklists' / 'qa-testing.md').exists()  # checklists still seeded
 
@@ -47,8 +50,11 @@ def test_roadmap_template_is_parseable() -> None:
     assert items == []  # valid header, zero items
 
 
-def test_never_raises_on_unwritable_workdir() -> None:
-    out = ensure_project_scaffold(Path('Z:\\definitely\\not\\a\\dir'))
+def test_never_raises_on_unwritable_workdir(tmp_path: Path) -> None:
+    # a FILE used as a parent dir: mkdir can never succeed here
+    blocked = tmp_path / 'blocker'
+    blocked.write_text('x', encoding='utf-8')
+    out = ensure_project_scaffold(blocked / 'sub')
     assert out['created'] == []
     assert out['errors']  # failure reported, not raised
 
