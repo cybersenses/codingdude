@@ -9,6 +9,7 @@ Python is included so callers can branch on capability instead of hardcoding
 suffix sets; Python-specific AST work keeps its stdlib-ast path at call sites.
 """
 
+import logging
 from dataclasses import dataclass, field
 from functools import cache
 
@@ -338,16 +339,42 @@ def pack_language_name(suffix: str) -> str | None:
     return name if name and has_language(name) else None
 
 
+_eager_langs: frozenset[str] | None = None
+
+_PROBE_LOG = logging.getLogger(__name__)
+
+
+def lazy_languages() -> frozenset[str]:
+    """Pack languages that actually load via get_parser (cached — the eager
+    available_languages() list is a strict subset; grammars load lazily)."""
+    global _eager_langs
+    if _eager_langs is None:
+        from tree_sitter_language_pack import (
+            available_languages,
+            get_parser,
+            manifest_languages,
+        )
+
+        lazy_ok = set()
+        for name in sorted(set(manifest_languages()) - set(available_languages())):
+            try:
+                get_parser(name)
+                lazy_ok.add(name)
+            except Exception as exc:  # pragma: no cover - defensive probe
+                _PROBE_LOG.warning('grammar %s failed to load: %s', name, exc)
+        _eager_langs = frozenset(available_languages()) | lazy_ok
+    return _eager_langs
+
+
 def supported_languages() -> dict[str, object]:
     """Capability summary: full-support pinned suffixes, navigation-only
-    pinned suffixes, and the pack's language names (locally available +
-    downloadable manifest total)."""
-    from tree_sitter_language_pack import available_languages, manifest_languages
+    pinned suffixes, and the pack's language names (locally loadable)."""
+    from tree_sitter_language_pack import manifest_languages
 
     return {
         'full': sorted(PINNED_FULL_SUFFIXES),
         'navigation_only': sorted(PINNED_NAV_SUFFIXES),
-        'pack_languages': sorted(available_languages()),
+        'pack_languages': sorted(lazy_languages()),
         'pack_manifest_total': len(manifest_languages()),
     }
 
