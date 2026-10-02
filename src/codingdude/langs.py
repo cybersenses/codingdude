@@ -14,7 +14,11 @@ from functools import cache
 
 from tree_sitter import Language
 
-__all__ = ['NAV_SUFFIXES', 'LanguageSpec', 'language_for', 'spec_for']
+__all__ = [
+    'NAV_SUFFIXES', 'PINNED_FULL_SUFFIXES', 'PINNED_NAV_SUFFIXES',
+    'LanguageSpec', 'language_for', 'pack_language_name', 'spec_for',
+    'supported_languages',
+]
 
 
 @dataclass(frozen=True)
@@ -303,11 +307,49 @@ def spec_for(suffix: str) -> LanguageSpec | None:
     return _pack_spec(suffix)
 
 
-# Suffixes with navigation-only registry support (HTML/CSS tier 2 plus the
-# config languages JSON/YAML/TOML).
-NAV_SUFFIXES = frozenset(
+# Suffixes with pinned full-support entries (symbol tools) vs navigation-only
+# pinned entries; everything else falls through to the pack.
+PINNED_FULL_SUFFIXES = frozenset(
+    {
+        '.ts', '.tsx', '.js', '.jsx', '.mjs', '.py',
+        '.c', '.h', '.cpp', '.cc', '.cxx', '.hpp', '.hh',
+        '.cs', '.rs', '.go', '.kt', '.kts', '.java',
+        '.php', '.phtml', '.sh', '.bash',
+    }
+)
+PINNED_NAV_SUFFIXES = frozenset(
     {'.html', '.htm', '.css', '.json', '.yaml', '.yml', '.toml'}
 )
+
+# Suffixes with navigation-only registry support (HTML/CSS tier 2 plus the
+# config languages JSON/YAML/TOML).
+NAV_SUFFIXES = PINNED_NAV_SUFFIXES
+
+
+def pack_language_name(suffix: str) -> str | None:
+    """tree-sitter-language-pack name for a suffix, or None if unsupported."""
+    from tree_sitter_language_pack import (
+        detect_language_from_extension,
+        has_language,
+    )
+
+
+    name = detect_language_from_extension(suffix.lower().lstrip('.'))
+    return name if name and has_language(name) else None
+
+
+def supported_languages() -> dict[str, object]:
+    """Capability summary: full-support pinned suffixes, navigation-only
+    pinned suffixes, and the pack's language names (locally available +
+    downloadable manifest total)."""
+    from tree_sitter_language_pack import available_languages, manifest_languages
+
+    return {
+        'full': sorted(PINNED_FULL_SUFFIXES),
+        'navigation_only': sorted(PINNED_NAV_SUFFIXES),
+        'pack_languages': sorted(available_languages()),
+        'pack_manifest_total': len(manifest_languages()),
+    }
 
 
 def language_for(suffix: str) -> Language:

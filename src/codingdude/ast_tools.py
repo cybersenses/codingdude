@@ -241,4 +241,28 @@ def build_ast_toolset(workdir: Path) -> FunctionToolset:
                 break
         return '\n'.join(results) or f'(no references to {symbol!r} found)'
 
-    return FunctionToolset([find_definition, find_references])
+    def list_languages() -> str:
+        """List supported languages: full AST tool support vs navigation-only,
+        plus the tree-sitter-language-pack coverage."""
+        from codingdude.langs import (
+            PINNED_FULL_SUFFIXES,
+            PINNED_NAV_SUFFIXES,
+            supported_languages,
+        )
+
+        info = supported_languages()
+        pack = sorted(str(x) for x in info['pack_languages'])  # type: ignore[union-attr,attr-defined]
+        total = int(info['pack_manifest_total'])  # type: ignore[arg-type,call-overload]
+        lines = [
+            'Full support (find_definition/find_references/edits): '
+            + ', '.join(sorted(PINNED_FULL_SUFFIXES)),
+            'Navigation-only (find_definition on symbols/keys): '
+            + ', '.join(sorted(PINNED_NAV_SUFFIXES)),
+            f'tree-sitter-language-pack: {len(pack)} locally available of '
+            f'{total} in the manifest '
+            + ', '.join(pack)
+            + ' — parse/navigation only, tools degrade gracefully.',
+        ]
+        return '\n'.join(lines)
+
+    return FunctionToolset([find_definition, find_references, list_languages])
