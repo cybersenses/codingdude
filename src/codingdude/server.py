@@ -267,8 +267,10 @@ def create_app(
     home = home or config_home()
     token = token or secrets.token_urlsafe(16)
     from .mcp_config import ensure_default_mcp
+    from .seed import seed_config_home
 
     ensure_default_mcp(home)
+    seed_config_home(home)
     app = FastAPI()
     db = Database.connect(home)
     # R31: runs still marked 'running' from a previous server life can never

@@ -1,0 +1,78 @@
+{"name": "styleseed", "description": "Route a StyleSeed request to exactly one first workflow after resolving the current artifact boundary. Use when the user asks generally for StyleSeed help rather than invoking one specific ss-* skill.", "triggers": ["styleseed"]}
+
+# StyleSeed router
+## Registry-first artifact boundary
+
+**Artifact boundary (CodingDude):** a project's compiled method lives in `.styleseed/`. If `.styleseed/project.json` exists, the artifact is `default` (or the registry's single artifact): read `.styleseed/bundles/default.md` and keep `.styleseed/manifests/default.json` as provenance. Otherwise read the legacy pair `.styleseed/effective-rules.md` + `.styleseed/manifest.json`. Never mix the two.
+
+This router chooses exactly one first workflow. It is the primary entry skill when a user asks for
+StyleSeed help in general terms.
+
+## First principles
+
+- Resolve the current artifact first when `.styleseed/project.json` and `.styleseed/artifacts/index.json`
+  exist.
+- Never fan out to “run every StyleSeed skill.”
+- Never copy the full design handbook into this router. Route to the maintained skill that already
+  owns the workflow.
+- Learning is an optional extension, not part of the core install. Only after an explicit capture
+  request such as “remember this lesson” may the router check whether `ss-learn` is separately
+  installed. If absent, state the dependency precisely; never auto-install it.
+- If the request is ambiguous, ask one bounded clarification question that decides the first workflow.
+
+## Registry-first artifact boundary
+
+If the project uses the artifact registry:
+
+- read the current artifact context first;
+- when one artifact is clearly in scope, route with that artifact;
+- when multiple artifacts exist and the user did not name one, ask one bounded artifact question;
+- do not resolve all artifacts unless the user explicitly asks for all artifacts.
+
+## One-workflow routing table
+
+Choose exactly one first workflow:
+
+- `ss-setup` for first-time method setup, missing lock/setup, or “set up StyleSeed for this project.”
+- `ss-build` for implementing or redesigning a concrete screen/component/page when the direction is already known.
+- `ss-reference` for compiling supplied references that are not already represented by a maintained grammar.
+- `ss-studio` for creative direction, exploration, concept generation, or multi-direction concept work.
+- `ss-audit` for critique, heuristic review, UX issue finding, or “what is wrong with this screen.”
+- `ss-score` for code/design quality scoring or gate-floor measurement.
+- `ss-verify` for rendered pixel inspection, screenshot review, or visual verification.
+- `ss-update` for refreshing an installed StyleSeed payload or checking whether it is current.
+- `ss-resolve` and its read-only `scripts/styleseed-doctor.mjs` for local installation integrity,
+  configuration, compiled-rule drift, or missing/stale evidence diagnosis. Do not substitute
+  an update, recompilation, or visual inspection for a status-only request.
+- separately installed `ss-learn` only for explicit learning capture requests; otherwise report that
+  the optional learning extension is unavailable.
+
+## Bounded clarification rules
+
+Ask one bounded clarification question only when needed to choose the first workflow:
+
+- setup vs build: “Should I set up the design method first, or build the screen with the current method?”
+- build vs reference: “Should I build from the current method, or compile the supplied reference into a project-local grammar first?”
+- build vs studio: “Do you want one concrete implementation path, or three creative directions first?”
+- audit vs score vs verify: “Do you want UX critique, code-score gating, or pixel verification first?”
+- multi-artifact registry: “Which artifact should I resolve first: `<id-a>` or `<id-b>`?”
+
+After one bounded question is answered, route to exactly one first workflow.
+
+## Direct invocation compatibility
+
+Granular `ss-*` skills remain backward compatible. If the user explicitly invokes `ss-setup`,
+`ss-build`, `ss-reference`, `ss-studio`, `ss-audit`, `ss-score`, `ss-verify`, `ss-update`, or
+`ss-learn`, use that direct skill instead of rerouting.
+
+
+## CodingDude notes
+
+## Validation requests, explicitly
+
+When the user asks for a "StyleSeed validation", "StyleSeed check", or to "validate with StyleSeed":
+1. If the project has no `.styleseed/` directory and no `STYLESEED.md`, there is nothing to validate yet — say so plainly and route to `ss-setup` (one question at a time).
+2. If a lock or registry exists, route to `ss-score` (code gate) and then `ss-verify` (pixel gate) — in that order — and report both results honestly, including skipped gates.
+Do not improvise your own inspection procedure: load the routed skill and follow it.
+
+Not installed in CodingDude (route elsewhere): `ss-reference` (compile references into a grammar), `ss-studio` (multi-direction concepts), `ss-audit` (use `ss-score` + `ss-verify` instead), `ss-update`, `ss-learn`. If a request maps only to a missing skill, say so plainly and pick the nearest installed workflow.
