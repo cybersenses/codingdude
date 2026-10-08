@@ -194,9 +194,12 @@ def _finalize(fn: _Fn, entry_id: int) -> dict:
     fn.blocks = kept
     for x in fn.blocks:
         x.id = renumber[x.id]
+    # Edges anchored to pruned blocks (empty + unreachable joins) die with
+    # them — otherwise renumbering raises KeyError downstream of the prune.
     fn.edges = [
         {"src": renumber[e["src"]], "dst": renumber[e["dst"]], "kind": e["kind"]}
         for e in fn.edges
+        if e["src"] in renumber and e["dst"] in renumber
     ]
     for blk in fn.blocks:
         blk.reachable = blk.id in {renumber[i] for i in reach}
@@ -310,6 +313,22 @@ def _ts_stmts(node) -> list:
     if node.type in _TS_BLOCK_TYPES:
         return _ts_child_fields(node)
     return [node]
+
+
+def _ts_fn_body(fn_node):
+    """A function's statement container: 'body' field where the grammar has
+    one, else the first block-ish descendant (Odin nests the block inside a
+    `procedure` wrapper node)."""
+    body = fn_node.child_by_field_name('body')
+    if body is not None:
+        return body
+    stack = list(fn_node.named_children)
+    while stack:
+        n = stack.pop(0)
+        if n.type in _TS_BLOCK_TYPES:
+            return n
+        stack.extend(n.named_children)
+    return fn_node
 
 
 class _TSBuilder:
@@ -475,6 +494,11 @@ def ts_fn_name(node, spec) -> str | None:
         if declarator is not None:
             name_node = declarator.child_by_field_name('declarator')
     if name_node is None or not name_node.text:
+        # Odin-style `name :: proc...`: first `identifier` named child.
+        from codingdude.tsedit import _name_node
+
+        name_node = _name_node(node, spec)
+    if name_node is None or not name_node.text:
         return None
     return name_node.text.decode('utf-8', 'replace')
 
@@ -508,7 +532,7 @@ def ts_build_cfg(source: bytes, spec, function: str | None = None) -> dict:
     b = _TSBuilder(lines)
     b.fn.name = fn_name
     entry = b._new_block()
-    body = b._field(fn_node, 'body') or fn_node
+    body = _ts_fn_body(fn_node)
     b.emit(_ts_stmts(body), break_target=None, continue_target=None, cur=entry)
     return _finalize(b.fn, entry.id)
 

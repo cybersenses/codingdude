@@ -77,15 +77,13 @@ def _ts_dead_code(workdir: Path, path: str, min_confidence: int) -> str:
         # Definition-name identifiers are the definition site, not usages —
         # exclude them by byte range (fresh node objects defeat identity).
         name_ranges: set[tuple[int, int]] = set()
+        from codingdude.tsedit import _name_node
+
         stack = [tree.root_node]
         while stack:
             node = stack.pop()
             if node.type in def_nodes:
-                name_node = node.child_by_field_name(spec.name_field)
-                if name_node is None:
-                    declarator = node.child_by_field_name('declarator')
-                    if declarator is not None:
-                        name_node = declarator.child_by_field_name('declarator')
+                name_node = _name_node(node, spec)
                 if name_node is not None and name_node.text is not None:
                     name_ranges.add((name_node.start_byte, name_node.end_byte))
                     name = name_node.text.decode('utf-8', 'replace')

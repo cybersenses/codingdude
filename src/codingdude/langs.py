@@ -65,6 +65,21 @@ def _ts_spec(suffix: str) -> LanguageSpec:
     )
 
 
+# R48: Odin — grammar ships in the tree-sitter-language-pack (no pinned pip
+# package); names are `Name :: ...` declarations, so the first `identifier`
+# child is the symbol name (handled by tsedit/cfg fallbacks).
+def _odin_spec() -> LanguageSpec:
+    from tree_sitter_language_pack import get_language
+
+    return LanguageSpec(
+        grammar=get_language('odin'),
+        function_nodes=frozenset({'procedure_declaration'}),
+        class_nodes=frozenset(
+            {'struct_declaration', 'enum_declaration', 'union_declaration'}
+        ),
+    )
+
+
 def _python_spec() -> LanguageSpec:
     import tree_sitter_python as tsp
 
@@ -273,6 +288,8 @@ def spec_for(suffix: str) -> LanguageSpec | None:
             return _ts_spec(suffix)
         if suffix in ('.js', '.jsx', '.mjs'):
             return _js_spec(suffix)
+        if suffix == '.odin':
+            return _odin_spec()
         if suffix == '.py':
             return _python_spec()
         if suffix in ('.c', '.h'):
@@ -315,7 +332,7 @@ PINNED_FULL_SUFFIXES = frozenset(
         '.ts', '.tsx', '.js', '.jsx', '.mjs', '.py',
         '.c', '.h', '.cpp', '.cc', '.cxx', '.hpp', '.hh',
         '.cs', '.rs', '.go', '.kt', '.kts', '.java',
-        '.php', '.phtml', '.sh', '.bash',
+        '.php', '.phtml', '.sh', '.bash', '.odin',
     }
 )
 PINNED_NAV_SUFFIXES = frozenset(
