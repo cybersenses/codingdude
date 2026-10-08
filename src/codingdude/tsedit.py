@@ -73,10 +73,11 @@ def _is_symbol(node, spec: LanguageSpec) -> bool:
     return node.type in spec.function_nodes or node.type in spec.class_nodes
 
 
-def _node_name(node, spec: LanguageSpec) -> str | None:
+def _name_node(node, spec):
+    """The node holding the symbol's name, per grammar conventions."""
     field = node.child_by_field_name(spec.name_field)
     if field is not None:
-        return field.text.decode('utf-8', 'replace')
+        return field
     # C/C++ function_definition: the name sits at the end of a declarator
     # chain (declarator -> function_declarator/pointer_declarator -> name).
     # Must run before the 'type' fallback — C/C++ use 'type' for the return
@@ -84,13 +85,26 @@ def _node_name(node, spec: LanguageSpec) -> str | None:
     declarator = node.child_by_field_name('declarator')
     while declarator is not None:
         if declarator.type in ('identifier', 'field_identifier'):
-            return declarator.text.decode('utf-8', 'replace')
+            return declarator
         declarator = declarator.child_by_field_name('declarator')
     # Rust impl_item: the type lives in the 'type' field.
     type_field = node.child_by_field_name('type')
     if type_field is not None:
-        return type_field.text.decode('utf-8', 'replace')
+        return type_field
+    # Odin-style declarations (`name :: proc...`, `name :: struct...`): the
+    # symbol name is the first `identifier` named child (after optional
+    # attributes). Runs last so fielded grammars are unaffected.
+    for child in node.named_children:
+        if child.type == 'identifier':
+            return child
     return None
+
+
+def _node_name(node, spec: LanguageSpec) -> str | None:
+    name = _name_node(node, spec)
+    if name is None or name.text is None:
+        return None
+    return name.text.decode('utf-8', 'replace')
 
 
 def _collect(source: bytes, spec: LanguageSpec) -> dict[str, SymbolInfo]:
