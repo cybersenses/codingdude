@@ -65,7 +65,7 @@ def _ts_spec(suffix: str) -> LanguageSpec:
     )
 
 
-# R48: Odin — grammar ships in the tree-sitter-language-pack (no pinned pip
+# Odin — grammar ships in the tree-sitter-language-pack (no pinned pip
 # package); names are `Name :: ...` declarations, so the first `identifier`
 # child is the symbol name (handled by tsedit/cfg fallbacks).
 def _odin_spec() -> LanguageSpec:
@@ -289,7 +289,10 @@ def spec_for(suffix: str) -> LanguageSpec | None:
         if suffix in ('.js', '.jsx', '.mjs'):
             return _js_spec(suffix)
         if suffix == '.odin':
-            return _odin_spec()
+            try:
+                return _odin_spec()
+            except Exception:  # noqa: BLE001 — grammar missing from the pack
+                _PROBE_LOG.warning('pinned odin grammar failed to load; using pack fallback')
         if suffix == '.py':
             return _python_spec()
         if suffix in ('.c', '.h'):

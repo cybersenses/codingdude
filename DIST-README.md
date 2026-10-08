@@ -11,7 +11,8 @@ onto any Windows machine.
    - `uv sync` — installs Python 3.12 + all dependencies into `.venv\`
    - rebuilds the web UI if npm/Node is present (otherwise the bundled
      `frontend/dist` is used as-is)
-   - seeds `~\.codingdude` (skills, prompts, DIRECTIVES.md, sample config) if
+   - seeds `~\.codingdude` (skills, DIRECTIVES.md) from `.codingdude-seed\`
+     on first boot if absent — never overwrites files you already own
      the machine has no CodingDude home yet — never overwrites an existing one
 
 ## Run

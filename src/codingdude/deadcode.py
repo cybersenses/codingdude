@@ -49,7 +49,7 @@ async def _vulture_python(workdir: Path, path: str, min_confidence: int) -> str:
     return cap.stdout.strip() if cap else ''
 
 
-def _ts_dead_code(workdir: Path, path: str, min_confidence: int) -> str:
+def _ts_dead_code(workdir: Path, path: str) -> str:
     """Tree-sitter scan of every registered non-Python language:
     defined-but-never-referenced functions/classes."""
     from tree_sitter import Parser
@@ -143,7 +143,7 @@ def build_deadcode_toolset(workdir: Path) -> FunctionToolset:
         if py:
             sections.append(f'Python (vulture):\n{py}')
 
-        ts = _ts_dead_code(Path(workdir), path, min_confidence)
+        ts = _ts_dead_code(Path(workdir), path)
         if ts:
             sections.append(f'Other languages (tree-sitter):\n{ts}')
 

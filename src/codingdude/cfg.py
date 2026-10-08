@@ -68,8 +68,7 @@ class _Builder:
         entry_block: _Block | None = None,
     ) -> _Block:
         """Emit a statement list; returns the block where control exits
-        or a block that has already terminated.
-        already terminated."""
+        or a block that has already terminated."""
         cur = entry_block if entry_block is not None else self._new_block()
         for idx, stmt in enumerate(stmts):
             last = idx == len(stmts) - 1
