@@ -37,6 +37,17 @@ def test_never_overwrites_existing(seed_src: Path, tmp_path: Path) -> None:
     assert (home / 'skills' / 'tdd' / 'SKILL.md').read_text(encoding='utf-8') == '# mine\n'
 
 
+def test_partial_seed_backfills_missing_items(seed_src: Path, tmp_path: Path) -> None:
+    """Skills already owned but DIRECTIVES.md missing: only the missing one is copied."""
+    home = tmp_path / 'partial-home'
+    (home / 'skills' / 'tdd').mkdir(parents=True)
+    (home / 'skills' / 'tdd' / 'SKILL.md').write_text('# mine\n', encoding='utf-8')
+    seeded = seed_config_home(home)
+    assert set(seeded) == {'DIRECTIVES.md'}
+    assert (home / 'skills' / 'tdd' / 'SKILL.md').read_text(encoding='utf-8') == '# mine\n'
+    assert (home / 'DIRECTIVES.md').read_text(encoding='utf-8') == '# directives\n'
+
+
 def test_noop_without_seed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('CODINGDUDE_SEED', str(tmp_path / 'missing'))
     assert seed_config_home(tmp_path / 'home') == {}

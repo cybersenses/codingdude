@@ -183,7 +183,7 @@ def test_ts_dead_code_finds_unused_c_function(tmp_path):
         'int used(void) { return 1; }\n'
         'int unused(void) { return 2; }\n'
     )
-    out = _ts_dead_code(tmp_path, '.', 60)
+    out = _ts_dead_code(tmp_path, '.')
     # Identifier-level scan: neither symbol is ever referenced.
     assert 'm.c:2: unused' in out
     assert 'm.c:1: used' in out
@@ -195,5 +195,5 @@ def test_ts_dead_code_finds_unused_c_function(tmp_path):
 def test_ts_dead_code_ignores_python_and_nav(tmp_path):
     (tmp_path / 'm.py').write_text('def orphan():\n    pass\n')
     (tmp_path / 's.json').write_text('{"key": 1}')
-    out = _ts_dead_code(tmp_path, '.', 60)
+    out = _ts_dead_code(tmp_path, '.')
     assert out == ''

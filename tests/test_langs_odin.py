@@ -1,4 +1,4 @@
-"""Odin language support (R48): pinned full-support spec, symbol tools,
+"""Odin language support: pinned full-support spec, symbol tools,
 generic CFG, and dead-code detection over `Name :: ...` declarations."""
 
 from textwrap import dedent
@@ -103,7 +103,7 @@ def test_odin_dead_code(tmp_path):
         'used :: proc() -> int { return 1 }\n'
         'unused :: proc() -> int { return 2 }\n'
     )
-    out = _ts_dead_code(tmp_path, '.', 60)
+    out = _ts_dead_code(tmp_path, '.')
     assert 'm.odin:2: unused' in out
 
 
