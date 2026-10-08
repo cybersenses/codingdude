@@ -105,3 +105,45 @@ def test_odin_dead_code(tmp_path):
     )
     out = _ts_dead_code(tmp_path, '.', 60)
     assert 'm.odin:2: unused' in out
+
+
+def test_odin_cfg_loop_inside_if_is_reachable():
+    """Regression: a loop directly inside an if-branch used to be flagged
+    unreachable — the branch emitted its true edge to the body's exit block
+    instead of its entry. Observed on real stdlib code (core/bytes
+    index_byte, 15 false-dead blocks)."""
+    cfg = ts_build_cfg(
+        dedent("""            f :: proc(s: []byte) -> int {
+                if len(s) > 0 {
+                    for i in 0 ..< len(s) {
+                        if s[i] == 0 { return i }
+                    }
+                }
+                return -1
+            }
+            """).encode(),
+        spec_for('.odin'),
+        'f',
+    )
+    dead = [b for b in cfg['blocks'] if not b.get('reachable')]
+    assert dead == []
+
+
+def test_odin_cfg_cstyle_loop_inside_if_is_reachable():
+    cfg = ts_build_cfg(
+        dedent("""            f :: proc(s: []byte, c: byte) -> int {
+                i, l := 0, len(s)
+                if l < 16 {
+                    for /**/; i < l; i += 1 {
+                        if s[i] == c { return i }
+                    }
+                    return -1
+                }
+                return -2
+            }
+            """).encode(),
+        spec_for('.odin'),
+        'f',
+    )
+    dead = [b for b in cfg['blocks'] if not b.get('reachable')]
+    assert dead == []
