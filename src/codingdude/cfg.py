@@ -340,6 +340,7 @@ class _TSBuilder:
         self.fn = _Fn(name="")
         self._breaks: list[int] = []
         self._terminated: set[int] = set()
+        self._entry_hint: int | None = None  # entry block of last cur=None emit
 
     def _new_block(self) -> _Block:
         b = _Block(id=len(self.fn.blocks))
@@ -373,7 +374,11 @@ class _TSBuilder:
 
     def emit(self, stmts: list, *, break_target: int | None,
              continue_target: int | None, cur: _Block | None = None) -> _Block:
-        cur = cur if cur is not None else self._new_block()
+        outer_hint = self._entry_hint
+        own_entry: int | None = None
+        if cur is None:
+            cur = self._new_block()
+            own_entry = cur.id
         for idx, stmt in enumerate(stmts):
             last = idx == len(stmts) - 1
             role = _TS_ROLES.get(stmt.type)
@@ -405,7 +410,10 @@ class _TSBuilder:
                         _ts_stmts(then_node), break_target=break_target,
                         continue_target=continue_target,
                     )
-                    self._edge(cur.id, then_b.id, "true")
+                    # then_b is the body's EXIT; a body that allocates its
+                    # own blocks (loop/if) is entered at the hinted entry.
+                    entry = self._entry_hint
+                    self._edge(cur.id, entry if entry is not None else then_b.id, "true")
                     self._close_branch(then_b, join)
                 else:
                     self._edge(cur.id, join.id, "true")
@@ -423,15 +431,25 @@ class _TSBuilder:
                         _ts_stmts(else_node), break_target=break_target,
                         continue_target=continue_target,
                     )
-                    self._edge(cur.id, else_b.id, "false")
+                    entry = self._entry_hint
+                    self._edge(cur.id, entry if entry is not None else else_b.id, "false")
                     self._close_branch(else_b, join)
                 else:
                     self._edge(cur.id, join.id, "false")
                 cur = join
             elif role == 'loop':
-                head = self._new_block()
-                head.lines.append(self._src(stmt, max_lines=1)[0])
-                self._edge(cur.id, head.id, "flow")
+                # A branch body's fresh entry block (cur empty, nothing
+                # points at it yet) can serve as the loop head directly —
+                # allocating a new one leaves both unreachable from entry.
+                if not cur.lines and not any(
+                    e["dst"] == cur.id for e in self.fn.edges
+                ):
+                    head = cur
+                    head.lines.append(self._src(stmt, max_lines=1)[0])
+                else:
+                    head = self._new_block()
+                    head.lines.append(self._src(stmt, max_lines=1)[0])
+                    self._edge(cur.id, head.id, "flow")
                 body_node = self._branch_body(stmt, 'body')
                 after = self._new_block()
                 if body_node is not None:
@@ -455,6 +473,9 @@ class _TSBuilder:
                             _ts_stmts(child), break_target=break_target,
                             continue_target=continue_target, cur=cur,
                         )
+        # Restore the hint so an enclosing branch reads ITS entry, not one
+        # allocated by a nested cur=None emit.
+        self._entry_hint = own_entry if own_entry is not None else outer_hint
         return cur
 
     def _close_branch(self, tail: _Block, join: _Block, back: bool = False) -> None:
