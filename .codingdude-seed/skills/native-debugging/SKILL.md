@@ -62,3 +62,7 @@ prefer the latter.
 - Never claim "fixed" without re-running the debug build under the debugger.
 - LLDB on Windows needs a `python3.dll` on PATH; the shipped `lldb.cmd` shim
   handles it. If moved machines lack it, point PATH at any CPython 3.x dir.
+
+## Bundled helper
+
+`.codingdude-seed/tools/native_debug.py` (seeded to `~/.codingdude/tools/`) automates this: `python native_debug.py full --lang odin <src>` builds with symbols and runs the batch debugger, printing the backtrace. Recipes: odin/c/cpp/rust; debugger: lldb, then gdb.
