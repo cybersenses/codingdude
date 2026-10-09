@@ -46,6 +46,11 @@ def seed_config_home(home: Path) -> dict[str, str]:
         home.mkdir(parents=True, exist_ok=True)
         shutil.copy2(directives_src, home / 'DIRECTIVES.md')
         seeded['DIRECTIVES.md'] = str(home / 'DIRECTIVES.md')
+    tools_src = seed / 'tools'
+    if tools_src.is_dir() and not (home / 'tools').exists():
+        home.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(tools_src, home / 'tools')
+        seeded['tools'] = str(home / 'tools')
     if seeded:
         logger.info('seeded config home from %s: %s', seed, sorted(seeded))
     return seeded
