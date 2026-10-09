@@ -47,7 +47,8 @@ def test_partial_seed_backfills_missing_items(seed_src: Path, tmp_path: Path) ->
     (home / 'skills' / 'tdd').mkdir(parents=True)
     (home / 'skills' / 'tdd' / 'SKILL.md').write_text('# mine\n', encoding='utf-8')
     seeded = seed_config_home(home)
-    assert set(seeded) == {'DIRECTIVES.md'}
+    assert set(seeded) == {'DIRECTIVES.md', 'tools'}
+    assert (home / 'tools' / 'native_debug.py').read_text(encoding='utf-8') == '# tool\n'
     assert (home / 'skills' / 'tdd' / 'SKILL.md').read_text(encoding='utf-8') == '# mine\n'
     assert (home / 'DIRECTIVES.md').read_text(encoding='utf-8') == '# directives\n'
 
