@@ -131,3 +131,34 @@ async def test_completing_all_steps_triggers_review(home, workdir):
     assert findings_events
     assert 'docstring' in findings_events[0]['findings']
     assert 'Address these findings' in outcome.output
+
+
+async def test_review_diff_with_non_cp1252_bytes(home, tmp_path):
+    """Regression: git diff output with bytes undecodable in the platform
+    ANSI codepage (e.g. 0x90) crashed the review with
+    TypeError: 'NoneType' object is not subscriptable (cp1252 reader-thread
+    death left stdout=None). Review must survive any diff bytes."""
+    import subprocess
+
+    from codingdude.planning import _review_impl
+
+    repo = tmp_path / 'repo'
+    repo.mkdir()
+
+    def git(*args, **kw):
+        subprocess.run(['git', *args], cwd=repo, check=True,
+                       capture_output=True, **kw)
+
+    git('init', '-q')
+    git('config', 'user.email', 't@t')
+    git('config', 'user.name', 't')
+    (repo / 'a.txt').write_bytes(b'caf\xe9 old\n\x90\n')
+    git('add', '.')
+    git('commit', '-qm', 'init')
+    (repo / 'a.txt').write_bytes(b'caf\xe9 new\n\x91\n')
+
+    db = Database.connect(home)
+    sid = db.create_session(repo)
+    model = scripted(lambda m, i: ModelResponse(parts=[TextPart(content='CLEAN')]))
+    findings = await _review_impl(db, sid, model, checklist='', plan=None)
+    assert findings == ''
