@@ -180,10 +180,14 @@ async def _review_impl(db, session_id: str, review_model, checklist: str, plan, 
     workdir = db.session_workdir(session_id)
     diff = ''
     if workdir:
+        # encoding + errors: diffs may contain bytes invalid in the platform
+        # ANSI codepage; a cp1252 decode failure kills the reader thread and
+        # leaves stdout=None (crashed the review with TypeError).
         diff_process = subprocess.run(
-            ['git', 'diff', 'HEAD'], cwd=workdir, capture_output=True, text=True, timeout=30
+            ['git', 'diff', 'HEAD'], cwd=workdir, capture_output=True,
+            encoding='utf-8', errors='replace', timeout=30,
         )
-        diff = diff_process.stdout
+        diff = diff_process.stdout or ''
 
     from pydantic_ai.settings import ModelSettings
 
