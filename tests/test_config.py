@@ -83,3 +83,36 @@ def test_context_limit_round_trip(home):
         'subagent = "deepseek:deepseek-flash"\nfallback = "zai:glm-5.3-flash"\n'
     )
     assert load_config().models.context_limit is None
+
+
+def test_save_models_preserves_other_sections(home):
+    """A models save must never lose shell/providers/delegation (key-loss incident)."""
+    from codingdude.config import save_models
+
+    home.mkdir(parents=True, exist_ok=True)
+    (home / 'config.toml').write_text(
+        '[models]\nmain = "deepseek:deepseek-flash"\n'
+        '[shell]\ndefault = "bash"\n'
+        '[providers]\nzai = "real-secret-key"\n'
+        '[delegation]\nmax_cost_usd = 5.0\n',
+        encoding='utf-8',
+    )
+    save_models(home, {'thinking': 'medium'})
+    text = (home / 'config.toml').read_text(encoding='utf-8')
+    assert 'real-secret-key' in text
+    assert 'default = "bash"' in text
+    assert 'max_cost_usd = 5.0' in text
+    assert 'thinking = "medium"' in text
+
+
+def test_save_models_refuses_corrupt_config(home):
+    """An unparseable config must block the save, not be replaced by a models-only file."""
+    import pytest
+
+    from codingdude.config import save_models
+
+    home.mkdir(parents=True, exist_ok=True)
+    (home / 'config.toml').write_text('not valid toml [[[', encoding='utf-8')
+    with pytest.raises(ValueError, match='refusing to overwrite'):
+        save_models(home, {'thinking': 'low'})
+    assert (home / 'config.toml').read_text(encoding='utf-8') == 'not valid toml [[['
