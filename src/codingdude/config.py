@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal, cast
 
@@ -502,7 +502,12 @@ def apply_provider_keys(config: Config) -> None:
 
 
 def load_project_config(workdir: Path) -> dict:
-    """Per-project overrides from `.codingdude.toml` in the Workdir (currently: shell)."""
+    """Per-project overrides from `.codingdude.toml` in the Workdir.
+
+    Currently: shell (str or table) and the `[models]` table (#210). The
+    models dict is returned raw — validation lives in
+    apply_project_models, which merges it over the global lineup.
+    """
     path = workdir / '.codingdude.toml'
     if not path.exists():
         return {}
@@ -517,4 +522,62 @@ def load_project_config(workdir: Path) -> dict:
         value = shell.get('default') or shell.get('shell')
         if value:
             out['shell'] = value
+    models = raw.get('models')
+    if isinstance(models, dict):
+        out['models'] = models
     return out
+
+
+def apply_project_models(config: Config, workdir: Path) -> Config:
+    """Overlay the project's `[models]` overrides onto the global lineup (#210).
+
+    Field-wise merge: only keys present in `.codingdude.toml` win; everything
+    else keeps the global config.toml value. The merged result is validated
+    (ModelLineupIn) before use — an invalid project override logs a warning
+    and leaves the global lineup in place, mirroring load_config's
+    fail-safe handling of a broken global config.toml.
+    """
+    project_models = load_project_config(workdir).get('models')
+    if not project_models:
+        return config
+    unknown = set(project_models) - set(ModelLineupIn.model_fields)
+    if unknown:
+        logging.getLogger(__name__).warning(
+            'project .codingdude.toml [models]: unknown keys %s ignored',
+            sorted(unknown))
+        project_models = {
+            k: v for k, v in project_models.items() if k in ModelLineupIn.model_fields}
+    if not project_models:
+        return config
+    current = {
+        'main': config.models.main,
+        'subagent': config.models.subagent,
+        'fallback': config.models.fallback,
+        'fallback_base_url': config.models.fallback_base_url,
+        'vision': config.models.vision,
+        'thinking': config.models.thinking,
+        'max_tokens': config.models.max_tokens,
+        'context_limit': config.models.context_limit,
+        'request_limit': config.models.request_limit,
+        'pricing': config.models.pricing,
+    }
+    merged = {k: v for k, v in {**current, **project_models}.items() if v is not None}
+    try:
+        validated = ModelLineupIn(**merged)
+    except ValidationError as exc:
+        logging.getLogger(__name__).warning(
+            'project .codingdude.toml [models] invalid (%s); using global lineup', exc)
+        return config
+    new_models = ModelLineup(
+        main=validated.main,
+        subagent=validated.subagent,
+        fallback=validated.fallback,
+        fallback_base_url=validated.fallback_base_url,
+        vision=validated.vision,
+        thinking=validated.thinking,
+        max_tokens=validated.max_tokens,
+        context_limit=validated.context_limit,
+        request_limit=validated.request_limit,
+        pricing=validated.pricing,
+    )
+    return replace(config, models=new_models)
