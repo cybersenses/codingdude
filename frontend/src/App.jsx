@@ -25,6 +25,7 @@ import { ACTIONS, buildActionPrompt } from './aiActions'
 import { groupEventsByRun, pickRunId } from './runs'
 import { pickPending } from './pending'
 import { buildAnswers, clearPendingPrompts } from './askUser'
+import { pendingArtifacts } from './artifacts'
 import { buildSpans } from './waterfall'
 import { buildTour } from './tour'
 import { buildDesignDocPrompt } from './designdoc'
@@ -403,6 +404,57 @@ function AskUserCard({ ask, runId }) {
           onClick={submit}
           disabled={sending}
         >{sending ? 'Sending…' : 'Send answers'}</button>
+      </div>
+    </div>
+  )
+}
+
+function PendingArtifactCard({ items, onResponded }) {
+  // #189: choice cards / spec blocks surface here in the chat so the user
+  // actually sees them mid-run (the Artifacts tab alone hid them).
+  const [draft, setDraft] = useState('')
+  const [err, setErr] = useState('')
+  if (!items.length) return null
+  const respond = (body) => {
+    const item = items[0]
+    call(`/artifacts/${item.id}/respond`, { method: 'POST', body: JSON.stringify(body) })
+      .then(onResponded)
+      .catch((e) => setErr(String(e)))
+  }
+  const item = items[0]
+  return (
+    <div className="my-2 overflow-hidden rounded-lg border border-brand-400/50 bg-surface">
+      <div className="border-b border-line bg-brand-400/10 px-3 py-2 text-xs font-semibold text-brand-300">
+        The agent is waiting on you — {items.length} pending card{items.length > 1 ? 's' : ''}
+        <span className="ml-2 font-mono text-[9px] font-normal uppercase text-ink-muted">{item.kind}</span>
+      </div>
+      <div className="space-y-2 px-3 py-2">
+        <div className="text-xs text-ink">{item.title}</div>
+        {item.kind === 'choice' ? (
+          <div className="flex flex-wrap gap-1">
+            {(item.payload.options || []).map((opt) => (
+              <button
+                key={opt}
+                className="rounded bg-neutral-800 px-2 py-0.5 text-[10px] text-neutral-200 hover:bg-brand-700 hover:text-brand-fg"
+                onClick={() => respond({ pick: opt })}
+              >{opt}</button>
+            ))}
+          </div>
+        ) : (
+          <div>
+            <textarea
+              className="h-24 w-full rounded bg-neutral-950 p-1 font-mono text-[10px] text-neutral-300"
+              value={draft}
+              placeholder={(item.payload.markdown || '')}
+              onChange={(e) => setDraft(e.target.value)}
+            />
+            <button
+              className="mt-1 rounded bg-brand px-2 py-0.5 text-[10px] text-brand-fg"
+              onClick={() => respond({ content: draft || item.payload.markdown || '' })}
+            >save</button>
+          </div>
+        )}
+        {err && <div className="text-[10px] text-danger">{err}</div>}
       </div>
     </div>
   )
@@ -1409,7 +1461,7 @@ function Planning({ workdir }) {
 
 // R35 #72: bottom dock — VS Code panel position. Processes comes in as a
 // prop (App polls it); it used to be a bare-identifier crash in this scope.
-function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, height, onResizeHeight, focusDiff = 0, activePath = '', onAsk }) {
+function DockPanel({ sessionId, refreshKey, diffBadge, artifactsPending = 0, workdir, processes, height, onResizeHeight, focusDiff = 0, activePath = '', onAsk }) {
   const [repoQuestion, setRepoQuestion] = useState('')
   const tabs = ['Diff', 'Graph', 'Planning', 'Artifacts', 'Notes', 'Renders', 'Terminal', 'Output', 'Waterfall', 'Trace', 'Cost', 'Memory', 'MCP', 'Config', 'Standards']
   const [tab, setTab] = useState('Diff')
@@ -2186,6 +2238,9 @@ function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, heigh
             {t === 'Diff' && diffBadge && tab !== 'Diff' && (
               <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-brand-400" />
             )}
+            {t === 'Artifacts' && artifactsPending > 0 && tab !== 'Artifacts' && (
+              <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-warning" title={`${artifactsPending} artifact(s) waiting for you`} />
+            )}
           </button>
         ))}
       </div>
@@ -2442,6 +2497,8 @@ export default function App() {
   const [error, setError] = useState('')
   const [refreshKey, setRefreshKey] = useState(0)
   const [diffBadge, setDiffBadge] = useState(false)
+  // #189: pending choice/spec artifacts surface in the chat, not just the dock.
+  const [artifactsAll, setArtifactsAll] = useState([])
   const [focusDiffTab, setFocusDiffTab] = useState(0)
   const [status, setStatus] = useState('idle')
   const [srv, setSrv] = useState(null)
@@ -2791,6 +2848,27 @@ export default function App() {
     }
   }, [activeSession])
 
+  // #189: poll artifacts for the active session so pending cards surface in
+  // the chat (the run SSE has no artifact event; the Artifacts tab alone hid them).
+  useEffect(() => {
+    if (!activeSession) {
+      setArtifactsAll([])
+      return
+    }
+    let alive = true
+    const load = () =>
+      call(`/sessions/${activeSession}/artifacts`)
+        .then((rows) => { if (alive) setArtifactsAll(rows || []) })
+        .catch(() => {}) // transient; next poll retries
+    load()
+    const t = setInterval(load, 3000)
+    return () => {
+      alive = false
+      clearInterval(t)
+    }
+  }, [activeSession])
+  const pending = pendingArtifacts(artifactsAll)
+
   // Watchdog (R2): a live run that emits nothing for a while must not look
   // dead — surface "still working…" with the quiet duration.
   useEffect(() => {
@@ -3047,6 +3125,12 @@ export default function App() {
             notify={notify}
             toggleNotify={toggleNotify}
           />
+          <PendingArtifactCard
+            items={pending}
+            onResponded={() => {
+              call(`/sessions/${activeSession}/artifacts`).then(setArtifactsAll).catch(() => {})
+            }}
+          />
           <Chat messages={messages} streaming={streaming} onStop={stop} onDecide={decide} sessionId={activeSession} suggestMode={suggestMode} onEditRevert={onEditRevert} runId={runRef.current} />
         </aside>
       </div>
@@ -3054,6 +3138,7 @@ export default function App() {
         sessionId={activeSession}
         refreshKey={refreshKey}
         diffBadge={diffBadge}
+        artifactsPending={pending.length}
         workdir={workdir}
         processes={processes}
         height={dockHeight}
