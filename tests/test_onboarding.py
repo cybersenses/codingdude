@@ -1,4 +1,4 @@
-# CodingDude — a personal coding agent.
+﻿# CodingDude — a personal coding agent.
 # Copyright (C) 2025 Cyberflex (https://www.cyberflex.io)
 #
 # This program is free software: you can redistribute it and/or modify
@@ -109,3 +109,37 @@ def _empty_registry():
         def matching(self, prompt):
             return []
     return _R()
+
+# --- R48: deterministic convention scan ---------------------------------------
+
+def test_detect_conventions_uv_project(tmp_path):
+    from codingdude.onboarding import detect_conventions
+
+    (tmp_path / "pyproject.toml").write_text("[tool.uv]\n", encoding="utf-8")
+    (tmp_path / "uv.lock").write_text("", encoding="utf-8")
+    (tmp_path / "app.py").write_bytes(b"x = 1\n")
+    c = detect_conventions(tmp_path)
+    assert c["python"]["runner"] == "uv run"
+    assert c["python"]["tests"] == "uv run pytest"
+    assert c["languages"]["python"] == 1
+    assert c["line_endings"] == "lf"
+
+
+def test_detect_conventions_npm_project(tmp_path):
+    from codingdude.onboarding import detect_conventions
+
+    (tmp_path / "package.json").write_text('{"scripts": {"test": "vitest run"}}', encoding="utf-8")
+    (tmp_path / "pnpm-lock.yaml").write_text("", encoding="utf-8")
+    (tmp_path / "index.js").write_bytes(b"a;\r\n")
+    c = detect_conventions(tmp_path)
+    assert c["javascript"]["pm"] == "pnpm"
+    assert c["javascript"]["test"] == "vitest run"
+    assert c["line_endings"] == "crlf"
+
+
+def test_detect_conventions_empty_dir_is_safe(tmp_path):
+    from codingdude.onboarding import detect_conventions
+
+    c = detect_conventions(tmp_path)
+    assert c["python"] is None and c["javascript"] is None
+    assert c["languages"] == {}
