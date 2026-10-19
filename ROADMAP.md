@@ -802,16 +802,16 @@ with the user, and bank a durable memory record. Standing built-in directive:
 open a tracked item before non-trivial work. Tests: tests/test_onboarding.py.
 
 ## R49 — R49: Referential solutions memory
-**Status:** open
+**Status:** done
 
 Referential memory: structured problem→solution records (kind='solution' in the memory table), a record_solution/lookup_solutions tool pair, and forced recall — solutions are always injected into session instructions (bounded), not left to RAG chance. Motivated by repeated identical mistakes across SkyborneRealms sessions.
 
 ## R50 — User-managed LLM configuration
-**Status:** in_progress
+**Status:** done
 
 Expose model/provider configuration as a managed, validated resource: GET/PUT /config/models, GET /config/providers (key presence only, never values), validated atomic writes with pre-save model construction, plus a frontend Settings page.
 
 ## R51 — R51 — Open-source release: AGPL-3.0 + dual licence + CLA + trademark
-**Status:** open
+**Status:** done
 
 Open-source release under AGPL-3.0 with dual commercial licensing, trademark protection, CLA, and generated-code-ownership terms. Plan id 40.

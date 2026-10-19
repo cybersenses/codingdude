@@ -150,7 +150,7 @@ def test_index_is_stale_when_source_newer(tmp_path):
     import os
     import time
 
-    from codingdude.codegraph_boot import boot_codegraph, index_is_stale
+    from codingdude.codegraph_boot import index_is_stale
 
     (tmp_path / ".codegraph").mkdir()
     (tmp_path / ".codegraph" / "index.bin").write_bytes(b"x")
