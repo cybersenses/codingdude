@@ -10,12 +10,10 @@ from codingdude.server import create_app
 TEST_TOKEN = "cd-" + "integration"
 
 
-def client(tmp_path, monkeypatch=None):
+def client(tmp_path):
     import os
-    if monkeypatch is not None:
-        monkeypatch.setenv('CODEDUDE_HOME', str(tmp_path / 'home'))
-    else:
-        os.environ['CODEDUDE_HOME'] = str(tmp_path / 'home')
+
+    os.environ["CODEDUDE_HOME"] = str(tmp_path / "home")
     app = create_app(home=tmp_path / "home", token=TEST_TOKEN, allow_testclient=True)
     return TestClient(app, headers={"Authorization": f"Bearer {TEST_TOKEN}"})
 
@@ -41,7 +39,7 @@ def test_get_never_leaks_provider_keys(tmp_path, monkeypatch):
     assert "sk-secret-value" not in raw
 
 
-def test_put_roundtrip_writes_valid_toml(tmp_path, monkeypatch):
+def test_put_roundtrip_writes_valid_toml(tmp_path):
     c = client(tmp_path)
     lineup = c.get("/config/models").json()["models"]
     lineup["main"] = "zai:glm-5.3"
@@ -65,10 +63,10 @@ def test_put_preserves_other_sections(tmp_path):
     c = client(tmp_path)
     cfg = config_home() / "config.toml"
     cfg.write_text(
-        "[models]\nmain = \"deepseek:deepseek-v4-pro\"\n"
-        "[shell]\ndefault = \"powershell\"\n"
-        "[delegation]\nmax_cost_usd = 5.0\n"
-        "[providers]\nzai = \"stored-key\"\n",
+        '[models]\nmain = "deepseek:deepseek-v4-pro"\n'
+        '[shell]\ndefault = "powershell"\n'
+        '[delegation]\nmax_cost_usd = 5.0\n'
+        '[providers]\nzai = "stored-key"\n',
         encoding="utf-8",
     )
     lineup = c.get("/config/models").json()["models"]
