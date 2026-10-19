@@ -1,5 +1,6 @@
 """Engine seam: Memory — remember/forget tools, retrieval injection, extraction."""
 
+import pytest
 from helpers import scripted
 from pydantic_ai.messages import (
     ModelMessage,
@@ -9,7 +10,8 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 
-from codingdude.memory import MemoryStore
+from codingdude.db import Database
+from codingdude.memory import MemoryStore, build_memory_toolset
 
 
 def call_then_answer(tool_name: str, args: dict, check):
@@ -305,3 +307,97 @@ async def test_post_run_phase_events_are_emitted(home, db, workdir):
     assert 'MEMORY_EXTRACTING' in types
     assert types.index('MEMORY_EXTRACTING') > types.index('RUN_USAGE')
     assert 'MEMORY_EXTRACTED' in types
+
+
+async def test_solution_dedup_is_scope_aware(db, workdir):
+    """A solution scoped to another workdir must not absorb (be overwritten
+    by) a near-duplicate recorded from this workdir (R49 review)."""
+    from codingdude.memory import MemoryStore
+
+    store = MemoryStore(db)
+    other_id = store.add(
+        'Problem: z drive hangs the shell\nSolution: use uv run python',
+        scope='workdir', workdir='G:/other', kind='solution',
+    )
+    tools = {name: t.function for name, t in build_memory_toolset(store, str(workdir)).tools.items()}
+    outcome = tools['record_solution']('z-drive hangs shell', 'power shell probe')
+    assert 'recorded solution' in outcome
+    sols = store.solutions(str(workdir))
+    assert len(sols) == 1
+    other = store._db._conn.execute(
+        'SELECT content FROM memory WHERE id = ?', (other_id,)
+    ).fetchone()
+    assert 'uv run python' in other['content']  # untouched
+
+
+async def engine_run_record(store, workdir, problem, solution) -> str:
+    from codingdude.memory import build_memory_toolset
+
+    tools = {name: t.function for name, t in build_memory_toolset(store, str(workdir)).tools.items()}
+    return tools['record_solution'](problem, solution)
+
+
+def test_lookup_solutions_short_token_query(db, workdir):
+    """A query of only short tokens (<=2 chars) must still match content
+    instead of falsely reporting 'no matching solutions' (R49 review)."""
+    store = MemoryStore(db)
+    store.add('Problem: uv pip lock\nSolution: uv sync', scope='workdir',
+              workdir=str(workdir), kind='solution')
+    tools = {name: t.function for name, t in build_memory_toolset(store, str(workdir)).tools.items()}
+    assert 'uv sync' in tools['lookup_solutions']('uv pip')
+
+
+def test_retrieve_kind_and_require_hit(db, workdir):
+    store = MemoryStore(db)
+    store.add('odin build flags', scope='workdir', workdir=str(workdir), kind='fact')
+    store.add('Problem: odin crash\nSolution: -debug', scope='workdir',
+              workdir=str(workdir), kind='solution')
+    facts = store.retrieve(str(workdir), 'odin build', kind='fact')
+    assert facts and all(e['kind'] == 'fact' for e in facts)
+    # require_hit=True suppresses zero-hit recency noise
+    assert store.retrieve(str(workdir), 'kubernetes', require_hit=True) == []
+
+
+def test_solutions_rag_exclusion_boundary(db, workdir):
+    """>25 solutions: only the newest 25 are force-injected, and even the
+    older ones never leak into the Memory/facts block (R49 review)."""
+    from codingdude.memory import MemoryStore
+
+    store = MemoryStore(db)
+    for i in range(30):
+        store.add(f'Problem: issue {i:02d}\nSolution: fix {i:02d}',
+                  scope='workdir', workdir=str(workdir), kind='solution')
+    sols = store.solutions(str(workdir))
+    assert len(sols) == 25
+    ids = {s['id'] for s in sols}
+    facts = store.retrieve(str(workdir), 'issue', kind='fact')
+    assert not any(e['id'] in ids for e in facts)
+
+
+def test_migrated_db_gains_kind_column_with_check(home):
+    """A legacy DB (memory table without `kind`) migrates in place: kind
+    defaults to 'fact' and the CHECK constraint is present (R49 review)."""
+    import sqlite3
+
+    from codingdude.db import utc_now_iso
+
+    home.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(home / 'codingdude.db')
+    conn.execute('CREATE TABLE memory (id INTEGER PRIMARY KEY, scope TEXT,'
+                 ' workdir TEXT, content TEXT, created_at TEXT)')
+    conn.execute('INSERT INTO memory (scope, workdir, content, created_at)'
+                 " VALUES ('global', NULL, 'old fact', ?)", (utc_now_iso(),))
+    conn.commit()
+    conn.close()
+
+    db = Database.connect(home)
+    store = MemoryStore(db)
+    assert store.all_entries()[0]['kind'] == 'fact'
+    with pytest.raises(Exception, match='kind must be'):
+        store.add('bad', kind='typo')
+    with pytest.raises(sqlite3.IntegrityError):
+        db._conn.execute(
+            "INSERT INTO memory (scope, workdir, content, kind, created_at)"
+            " VALUES ('global', NULL, 'raw row', 'typo', '2026-01-01')"
+        )
+        db._conn.commit()
