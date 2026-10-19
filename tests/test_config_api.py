@@ -116,3 +116,57 @@ def test_put_rejects_unknown_fields(tmp_path):
     c = client(tmp_path)
     r = c.put("/config/models", json={"models": {"main": "zai:g", "bogus": 1}})
     assert r.status_code == 422
+
+
+CODING_PLAN_URL = "https://api.z.ai/api/coding/paas/v4"
+
+
+def seed_coding_plan(cfg_path):
+    cfg_path.write_text(
+        '[models]\nmain = "deepseek:deepseek-v4-pro"\n'
+        'fallback = "zai:glm-5.3"\n'
+        f'fallback_base_url = "{CODING_PLAN_URL}"\n'
+        'thinking = "low"\n',
+        encoding="utf-8",
+    )
+
+
+def test_put_partial_save_keeps_coding_plan_endpoint(tmp_path):
+    """Regression: a save that omits a field must not delete its stored value.
+
+    The UI posts only what it renders; replacing the whole [models] table on
+    every save silently erased the GLM coding-plan endpoint, dropping z.ai
+    back to the standard API (wrong plan / rejected key).
+    """
+    c = client(tmp_path)
+    cfg = config_home() / "config.toml"
+    seed_coding_plan(cfg)
+    r = c.put("/config/models", json={"models": {"main": "deepseek:deepseek-v4-pro"}})
+    assert r.status_code == 200, r.text
+    raw = tomllib.loads(cfg.read_text(encoding="utf-8"))
+    assert raw["models"]["fallback_base_url"] == CODING_PLAN_URL
+    assert raw["models"]["thinking"] == "low"
+    assert raw["models"]["fallback"] == "zai:glm-5.3"
+    assert r.json()["effective"]["models"]["fallback_base_url"] == CODING_PLAN_URL
+
+
+def test_put_null_clears_only_that_field(tmp_path):
+    c = client(tmp_path)
+    cfg = config_home() / "config.toml"
+    seed_coding_plan(cfg)
+    r = c.put("/config/models", json={"models": {"fallback_base_url": None}})
+    assert r.status_code == 200, r.text
+    raw = tomllib.loads(cfg.read_text(encoding="utf-8"))
+    assert "fallback_base_url" not in raw["models"]
+    assert raw["models"]["fallback"] == "zai:glm-5.3"  # untouched by the clear
+
+
+def test_get_warns_when_zai_fallback_lacks_coding_plan_endpoint(tmp_path):
+    c = client(tmp_path)
+    cfg = config_home() / "config.toml"
+    cfg.write_text('[models]\nfallback = "zai:glm-5.3"\n', encoding="utf-8")
+    body = c.get("/config/models").json()
+    assert any("coding" in w.lower() for w in body["warnings"])
+
+    c.put("/config/models", json={"models": {"fallback_base_url": CODING_PLAN_URL}})
+    assert c.get("/config/models").json()["warnings"] == []
