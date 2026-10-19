@@ -27,6 +27,8 @@ Best-effort by design: onboarding nudges, it never blocks a run.
 
 from __future__ import annotations
 
+import json
+import logging
 import typing
 from pathlib import Path
 
@@ -134,8 +136,8 @@ def detect_conventions(workdir: Path) -> dict:
                 crlf += 1
             elif b'\n' in data:
                 lf += 1
-    except OSError:
-        pass
+    except OSError as exc:
+        logging.getLogger(__name__).warning('line-ending scan failed: %s', exc)
     out['line_endings'] = 'mixed' if crlf and lf else 'crlf' if crlf else 'lf' if lf else None
     return out
 
@@ -149,9 +151,24 @@ def onboarding_needed(store: MemoryStore, workdir: str | Path) -> bool:
     )
 
 
-def onboarding_block() -> str:
-    """The directive text injected into a not-yet-onboarded run's instructions."""
-    return _ONBOARDING_BLOCK
+def onboarding_block(workdir: str | Path | None = None) -> str:
+    """The directive text injected into a not-yet-onboarded run's instructions.
+
+    With a workdir, the deterministic first-pass scan (`detect_conventions`)
+    is appended so the model starts from facts, not guesses.
+    """
+    block = _ONBOARDING_BLOCK
+    if workdir is not None:
+        try:
+            block += (
+                '\nFirst-pass convention scan (deterministic, verify before '
+                'relying on it):\n```json\n'
+                + json.dumps(detect_conventions(Path(workdir)), indent=2)
+                + '\n```'
+            )
+        except OSError as exc:
+            logging.getLogger(__name__).warning('convention scan failed: %s', exc)
+    return block
 
 
 def mark_onboarded(store: MemoryStore, workdir: str | Path, summary: str) -> int:

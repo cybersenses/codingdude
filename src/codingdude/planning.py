@@ -218,7 +218,7 @@ async def _review_impl(db, session_id: str, review_model, checklist: str, plan, 
             + '\n\n'
         )
     prompt = (
-        f'PLAN:\n{plan_section}'
+        f'{plan_section}'
         f'DIRECTIVES:\n{checklist[:2000]}\n\nDIFF:\n{diff[:8000]}'
     )
     try:

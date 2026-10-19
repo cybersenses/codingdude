@@ -27,8 +27,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
-# LocalAppData is the standard install location on Windows; resolve it
-# from the environment so no user-specific path is baked into the source.
+# LocalAppData is the standard install location on Windows; resolve it from
+# the user's home directory so no user-specific path is baked into the source.
 _FALLBACK_CMD = (
     Path.home() / 'AppData' / 'Local' / 'codegraph' / 'current' / 'bin' / 'codegraph.CMD'
 )
