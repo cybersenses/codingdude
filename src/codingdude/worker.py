@@ -346,11 +346,14 @@ def wire_interactions(policy, args, engine, loop, on_event, pending_gate, pendin
 async def run(args) -> int:
     """Worker entry: run one agent turn for a session and persist the trace."""
     from codingdude.approvals import ApprovalPolicy
-    from codingdude.config import load_config
+    from codingdude.config import apply_project_models, load_config
     from codingdude.db import Database
     from codingdude.engine import Engine
 
     config = load_config()
+    # #210: per-project [models] overrides from the workdir's .codingdude.toml.
+    if args.workdir:
+        config = apply_project_models(config, Path(args.workdir).resolve())
     engine = Engine(
         config=config,
         db=Database.connect(config_home()),
