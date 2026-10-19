@@ -18,3 +18,9 @@ frontend/dist/
 reference/
 pydantic-ai-main/
 .scratch/
+
+# sqlite probe strays / windows redirect artifact
+*.db
+*.db-shm
+*.db-wal
+nul
