@@ -1001,8 +1001,14 @@ function Artifacts({ sessionId }) {
 // shows the server's validation error verbatim (it is the source of truth).
 function ModelsConfig({ data, setData }) {
   const cfg = data.config
+  // Hooks must run unconditionally — the early returns below (error/loading)
+  // used to come before the keys/verify state, changing the hook count
+  // between renders and crashing React (#310).
   const [draft, setDraft] = useState(null)
   const [msg, setMsg] = useState(null)
+  const [keys, setKeys] = useState(null) // {provider: sentinel|value|''}
+  const [verify, setVerify] = useState(null)
+  const [verifying, setVerifying] = useState(false)
 
   if (data.configError) {
     return <div className="rounded border border-danger/40 bg-danger/10 p-3 text-xs text-danger">{data.configError}</div>
@@ -1014,12 +1020,9 @@ function ModelsConfig({ data, setData }) {
   const model = draft ?? JSON.parse(JSON.stringify(cfg.models))
   const set = (k, v) => setDraft({ ...model, [k]: v })
 
-  const [keys, setKeys] = useState(null) // {provider: sentinel|value|''}
   const keyDraft = keys ?? Object.fromEntries(
     Object.entries(cfg.providers || {}).map(([n, v]) => [n, v || '']))
   const setKey = (n, v) => setKeys({ ...keyDraft, [n]: v })
-  const [verify, setVerify] = useState(null)
-  const [verifying, setVerifying] = useState(false)
 
   const save = async () => {
     setMsg(null)
