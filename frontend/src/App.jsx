@@ -1014,20 +1014,48 @@ function ModelsConfig({ data, setData }) {
   const model = draft ?? JSON.parse(JSON.stringify(cfg.models))
   const set = (k, v) => setDraft({ ...model, [k]: v })
 
+  const [keys, setKeys] = useState(null) // {provider: sentinel|value|''}
+  const keyDraft = keys ?? Object.fromEntries(
+    Object.entries(cfg.providers || {}).map(([n, v]) => [n, v || '']))
+  const setKey = (n, v) => setKeys({ ...keyDraft, [n]: v })
+  const [verify, setVerify] = useState(null)
+  const [verifying, setVerifying] = useState(false)
+
   const save = async () => {
     setMsg(null)
     try {
+      const body = {}
+      if (draft) body.models = model
+      if (keys) {
+        body.providers = {}
+        for (const [n, v] of Object.entries(keyDraft)) {
+          // untouched field stays the sentinel (or empty) — never resend a stored key
+          if (v && v !== (cfg.providers?.[n] || '')) body.providers[n] = v
+          else if (keys && v === '' && cfg.providers?.[n]) body.providers[n] = null
+        }
+      }
       const r = await call('/config/models', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ models: model }),
+        body: JSON.stringify(body),
       })
       setData((d) => ({ ...d, config: r.effective }))
       setDraft(null)
+      setKeys(null)
       setMsg({ ok: true, text: 'Saved — applies from the next run.' })
     } catch (err) {
       setMsg({ ok: false, text: String(err instanceof Error ? err.message : err) })
     }
+  }
+
+  const testKeys = async () => {
+    setVerifying(true); setVerify(null); setMsg(null)
+    try {
+      const r = await call('/config/verify')
+      setVerify(r.providers)
+    } catch (err) {
+      setMsg({ ok: false, text: String(err instanceof Error ? err.message : err) })
+    } finally { setVerifying(false) }
   }
 
   const TextField = ({ label, k, placeholder }) => (
@@ -1056,7 +1084,7 @@ function ModelsConfig({ data, setData }) {
   return (
     <div className="flex h-full flex-col gap-3 overflow-auto p-1 text-ink">
       <div className="text-[10px] text-neutral-500">
-        ~/.codingdude/config.toml — provider keys come from the environment and are never shown here.
+        ~/.codingdude/config.toml — provider keys are stored there, masked in this UI.
       </div>
       {(cfg.warnings || []).length > 0 && (
         <div className="rounded border border-warning/40 bg-warning/10 px-2 py-1 text-[11px] text-warning">
@@ -1098,13 +1126,34 @@ function ModelsConfig({ data, setData }) {
         <NumField label="request limit" k="request_limit" />
       </div>
 
-      <div className="flex items-center gap-3 rounded border border-line bg-surface p-3 text-[11px]">
-        <span className="text-[10px] uppercase tracking-wide text-ink-muted">provider keys</span>
+      <div className="space-y-1.5 rounded border border-line bg-surface p-3">
+        <div className="text-[10px] uppercase tracking-wide text-ink-muted">Provider keys</div>
+        <div className="text-[10px] text-neutral-500">
+          Stored in ~/.codingdude/config.toml, never displayed. Leave a set key untouched to keep it; empty + save clears it.
+        </div>
         {Object.entries(cfg.providers || {}).map(([name, present]) => (
-          <span key={name} className={present ? 'text-success' : 'text-neutral-600'}>
-            {present ? '●' : '○'} {name}
-          </span>
+          <label key={name} className="flex items-center gap-2 text-[11px]">
+            <span className="w-32 shrink-0 text-neutral-500">{name}</span>
+            <input
+              type="password"
+              className="min-w-0 flex-1 rounded border border-line bg-surface px-2 py-0.5 font-mono text-[11px] text-ink"
+              value={keyDraft[name] || ''}
+              placeholder={present ? '● set — leave blank to keep' : 'not set'}
+              onChange={(e) => setKey(name, e.target.value)}
+            />
+            {verify && name in verify && (
+              <span className={verify[name].ok ? 'text-success' : 'text-danger'}>
+                {verify[name].ok ? '✓ auth ok' : `✗ ${verify[name].status || ''} ${verify[name].detail || 'failed'}`.slice(0, 60)}
+              </span>
+            )}
+          </label>
         ))}
+        <button
+          type="button"
+          className="rounded border border-line px-2 py-0.5 text-[11px] text-neutral-400 hover:text-ink disabled:opacity-40"
+          disabled={verifying}
+          onClick={testKeys}
+        >{verifying ? 'Testing…' : 'Test keys'}</button>
       </div>
 
       {msg && (
@@ -1115,13 +1164,13 @@ function ModelsConfig({ data, setData }) {
       <div className="flex gap-2">
         <button
           className="rounded bg-brand-600 px-3 py-1 text-[11px] text-white hover:bg-brand-500 disabled:opacity-40"
-          disabled={!draft}
+          disabled={!draft && !keys}
           onClick={save}
         >Save</button>
         <button
           className="rounded border border-line px-3 py-1 text-[11px] text-neutral-400 hover:text-ink disabled:opacity-40"
-          disabled={!draft}
-          onClick={() => { setDraft(null); setMsg(null) }}
+          disabled={!draft && !keys}
+          onClick={() => { setDraft(null); setKeys(null); setMsg(null); setVerify(null) }}
         >Revert</button>
       </div>
     </div>

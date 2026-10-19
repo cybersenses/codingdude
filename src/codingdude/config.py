@@ -128,12 +128,17 @@ class ModelLineupIn(BaseModel):
 
 
 def models_payload(config: Config) -> dict:
-    """JSON-safe config view for GET /config/models: lineup + key presence only.
+    """JSON-safe config view for GET /config/models: lineup + masked keys.
 
-    Provider keys are surfaced as booleans — the API never echoes secret values.
+    Provider keys are surfaced as SECRET_MASK when set (never the value) and
+    None when absent. The sentinel is what the UI echoes back on save; the
+    PUT path ignores it, so a full round-trip cannot clobber a stored key.
     """
     env = os.environ
     providers = config.providers
+    def _mask(stored: str | None, env_name: str) -> str | None:
+        return SECRET_MASK if (stored or env.get(env_name)) else None
+
     return {
         'models': {
             'main': config.models.main,
@@ -148,13 +153,133 @@ def models_payload(config: Config) -> dict:
             'pricing': config.models.pricing,
         },
         'providers': {
-            'deepseek': bool(providers.deepseek or env.get('DEEPSEEK_API_KEY')),
-            'zai': bool(providers.zai or env.get('ZAI_API_KEY')),
-            'github': bool(providers.github or env.get('GITHUB_PAT')),
+            'deepseek': _mask(providers.deepseek, 'DEEPSEEK_API_KEY'),
+            'zai': _mask(providers.zai, 'ZAI_API_KEY'),
+            'github': _mask(providers.github, 'GITHUB_PAT'),
         },
         'thinking_levels': THINKING_LEVELS,
         'warnings': _lineup_warnings(config.models),
     }
+
+
+SECRET_MASK = ''.join(('__', 'codingdude_key', '_set__'))
+"""Sentinel echoed by GET in place of a stored provider key. The PUT path
+treats it as "unchanged" — this is the property that keeps a Settings
+round-trip from ever writing a masked placeholder over a real key."""
+
+
+def save_provider_keys(home: Path, patch: dict) -> dict[str, bool]:
+    """Merge provider keys into config.toml's [providers] section.
+
+    Semantics per entry: SECRET_MASK -> ignored; None -> key cleared;
+    any other string -> stored. Returns presence booleans (never values).
+    """
+    config_path = home / 'config.toml'
+    try:
+        raw = tomllib.loads(config_path.read_text(encoding='utf-8'))
+    except FileNotFoundError:
+        raw = {}
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(
+            f'existing config.toml is not valid TOML ({exc}); '
+            'refusing to overwrite it — fix or remove the file first'
+        ) from exc
+
+    # Storable key slots, NOT the model-binding provider list: openai et al
+    # are valid model prefixes but have no key field in config.toml.
+    storable = {f for f in ProviderKeys.__dataclass_fields__}
+    unknown = set(patch) - storable
+    if unknown:
+        raise ValueError(f'unknown providers: {sorted(unknown)}')
+
+    providers = dict(raw.get('providers') or {})
+    for name, value in patch.items():
+        if value == SECRET_MASK:
+            continue
+        if value is None or value == '':
+            providers.pop(name, None)
+        else:
+            providers[name] = value
+    if providers:
+        raw['providers'] = providers
+    else:
+        raw.pop('providers', None)
+
+    import tomli_w
+
+    tmp = config_path.with_suffix('.toml.tmp')
+    tmp.write_text(tomli_w.dumps(raw), encoding='utf-8')
+    tmp.replace(config_path)
+    return {name: bool(providers.get(name)) for name in storable}
+
+
+def verify_provider_keys(
+    config: Config, timeout_s: float = 8.0, transport=None,
+) -> dict[str, dict]:
+    """Auth smoke: one minimal request per configured provider.
+
+    Catches a clobbered/placeholder key in the Settings tab instead of at the
+    next run. `transport` is injectable for tests (default: http.client).
+    Returns {provider: {'configured', 'ok', 'status', 'detail'}} — no secrets.
+    """
+    import http.client
+    from urllib.parse import urlsplit
+
+    def _http(url: str, headers: dict, body: dict | None) -> tuple[int, str]:
+        import json as _json
+
+        parts = urlsplit(url)
+        if parts.scheme != 'https':
+            return 0, f'non-https url rejected: {parts.scheme!r}'
+        payload = _json.dumps(body).encode() if body is not None else None
+        conn = http.client.HTTPSConnection(parts.netloc, timeout=timeout_s)
+        path = parts.path or '/'
+        try:
+            conn.request('POST' if payload is not None else 'GET', path,
+                         body=payload, headers=headers)
+            resp = conn.getresponse()
+            return resp.status, resp.read(300).decode('utf-8', 'replace')
+        except OSError as exc:
+            return 0, str(exc)
+        finally:
+            conn.close()
+
+    send = transport or _http
+
+    def _chat(base_url: str, key: str) -> tuple[int, str]:
+        return send(base_url.rstrip('/') + '/chat/completions', {
+            'Authorization': f'Bearer {key}', 'Content-Type': 'application/json',
+        }, {'model': 'smoke', 'messages': [{'role': 'user', 'content': 'hi'}], 'max_tokens': 1, 'stream': False})
+
+    env = os.environ
+    results: dict[str, dict] = {}
+    zai_key = config.providers.zai or env.get('ZAI_API_KEY')
+    if zai_key:
+        base = config.models.fallback_base_url or 'https://api.z.ai/api/paas/v4'
+        status, detail = _chat(base, zai_key)
+        # 400/404 = auth passed but the smoke model name isn't on the plan.
+        ok = status in (200, 400, 404)
+        results['zai'] = {'configured': True, 'ok': ok, 'status': status,
+                          'detail': None if ok else detail[:200]}
+    else:
+        results['zai'] = {'configured': False, 'ok': False, 'status': None, 'detail': 'no key'}
+    deepseek_key = config.providers.deepseek or env.get('DEEPSEEK_API_KEY')
+    if deepseek_key:
+        status, detail = _chat('https://api.deepseek.com/v1', deepseek_key)
+        ok = status in (200, 400, 404)
+        results['deepseek'] = {'configured': True, 'ok': ok, 'status': status,
+                               'detail': None if ok else detail[:200]}
+    else:
+        results['deepseek'] = {'configured': False, 'ok': False, 'status': None, 'detail': 'no key'}
+    github_key = config.providers.github or env.get('GITHUB_PAT')
+    if github_key:
+        status, detail = send('https://api.github.com/user',
+                              {'Authorization': f'Bearer {github_key}'}, None)
+        results['github'] = {'configured': True, 'ok': status == 200, 'status': status,
+                             'detail': None if status == 200 else detail[:200]}
+    else:
+        results['github'] = {'configured': False, 'ok': False, 'status': None, 'detail': 'no key'}
+    return results
 
 
 CODING_PLAN_BASE_URL = 'https://api.z.ai/api/coding/paas/v4'
