@@ -174,6 +174,110 @@ async def test_retrieval_drops_zero_hit_noise(db, workdir):
     assert hits == ['the project uses uv and ruff']
 
 
+async def test_solution_kind_and_solutions_accessor(db, workdir):
+    """kind defaults to 'fact'; solutions() returns only kind='solution' rows
+    scoped global+workdir, newest first."""
+    store = MemoryStore(db)
+    store.add('an ordinary fact', scope='workdir', workdir=str(workdir))
+    store.add(
+        'Problem: edit races on tmp file\nSolution: unique tmp names + retry',
+        scope='workdir', workdir=str(workdir), kind='solution',
+    )
+    store.add('global solution fact', scope='global', kind='solution')
+
+    sols = store.solutions(str(workdir))
+    contents = [s['content'] for s in sols]
+    assert 'Problem: edit races on tmp file\nSolution: unique tmp names + retry' in contents
+    assert 'global solution fact' in contents
+    assert 'an ordinary fact' not in contents
+    assert all(s['kind'] == 'solution' for s in sols)
+
+
+async def test_record_solution_tool_updates_paraphrase_duplicate(engine, db, workdir):
+    """Re-recording the same problem updates the existing entry instead of
+    duplicating it (annotate-on-solve discipline)."""
+    outcome = await engine.run(
+        prompt='log the fix',
+        workdir=workdir,
+        model=call_then_answer(
+            'record_solution',
+            {'problem': 'atomic write tmp collision', 'solution': 'unique uuid tmp names'},
+            lambda r: 'ok' if 'recorded solution' in r else 'no',
+        ),
+    )
+    assert outcome.output == 'ok'
+    store = MemoryStore(db)
+    assert len(store.solutions(str(workdir))) == 1
+
+    outcome = await engine.run(
+        prompt='log the better fix',
+        workdir=workdir,
+        model=call_then_answer(
+            'record_solution',
+            {'problem': 'atomic-write tmp name collision',
+             'solution': 'unique uuid tmp names + bounded os.replace retry'},
+            lambda r: 'ok' if 'updated solution' in r else 'no',
+        ),
+    )
+    assert outcome.output == 'ok'
+    sols = store.solutions(str(workdir))
+    assert len(sols) == 1
+    assert 'os.replace retry' in sols[0]['content']
+
+
+async def test_lookup_solutions_tool(engine, db, workdir):
+    await engine.run(
+        prompt='log the fix',
+        workdir=workdir,
+        model=call_then_answer(
+            'record_solution',
+            {'problem': 'cp1252 decode crash on git diff', 'solution': 'utf-8 + errors=replace'},
+            lambda r: 'ok',
+        ),
+    )
+    outcome = await engine.run(
+        prompt='have I fixed this before?',
+        workdir=workdir,
+        model=call_then_answer(
+            'lookup_solutions', {'query': 'git diff decode crash'},
+            lambda r: 'found' if 'cp1252' in r and 'utf-8' in r else 'no',
+        ),
+    )
+    assert outcome.output == 'found'
+
+    outcome = await engine.run(
+        prompt='anything about kubernetes?',
+        workdir=workdir,
+        model=call_then_answer(
+            'lookup_solutions', {'query': 'kubernetes ingress'},
+            lambda r: 'empty' if 'no matching solutions' in r else 'no',
+        ),
+    )
+    assert outcome.output == 'empty'
+
+
+async def test_solutions_forced_into_instructions_once(engine, db, workdir):
+    """Forced recall: solutions are injected every session (not RAG-gated),
+    and appear exactly once (no double-inject via the Memory block)."""
+    MemoryStore(db).add(
+        'Problem: z drive hangs the shell\nSolution: probe with PowerShell Test-Path',
+        scope='workdir', workdir=str(workdir), kind='solution',
+    )
+
+    def echo_context(messages, info):
+        text = ''.join(
+            str(p.content) for m in messages for p in m.parts if hasattr(p, 'content')
+        )
+        text += getattr(info, 'instructions', '') or ''
+        return ModelResponse(parts=[TextPart(content=text[-6000:])])
+
+    outcome = await engine.run(
+        prompt='hello', workdir=workdir, model=scripted(echo_context)
+    )
+    assert 'Referential solutions' in outcome.output
+    assert outcome.output.count('z drive hangs the shell') == 1
+
+
 async def test_post_run_phase_events_are_emitted(home, db, workdir):
     """Regression: the post-run tail (memory extraction / claim check) must
     emit trace events so the UI never shows a silent multi-minute RUN_USAGE

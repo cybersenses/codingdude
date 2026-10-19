@@ -162,16 +162,28 @@ class PromptAssembler:
                     'now. Call load_skill only for a companion file or a different '
                     'skill from the index.\n\n' + preloaded
                 )
+        # R49 referential solutions: always injected (forced recall), bounded;
+        # excluded from the RAG Memory block below so nothing double-injects.
+        solutions = store.solutions(str(workdir))
+        solution_ids = {s['id'] for s in solutions}
+        if solutions:
+            lines = '\n'.join(f'- {s["content"]}' for s in solutions)
+            instructions += (
+                '\n\n## Referential solutions (solved problems; consult these '
+                'before re-diagnosing a known issue, and record_solution when '
+                'you solve something new):\n' + lines
+            )
         if embedder is not None:
             relevant = [
                 content
                 for content, _score in store.retrieve_semantic(
-                    embedder, str(workdir), query=prompt
+                    embedder, str(workdir), query=prompt, kind='fact'
                 )
             ]
         else:
             relevant = [
                 e['content'] for e in store.retrieve(str(workdir), query=prompt)
+                if e['id'] not in solution_ids
             ]
         if relevant:
             lines = '\n'.join(f'- {c}' for c in relevant)
