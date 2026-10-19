@@ -41,3 +41,11 @@ export ZAI_API_KEY=...        # failover model
 | `shell.default` | `bash` (Git Bash) or `powershell` |
 
 API keys come from the environment: `DEEPSEEK_API_KEY`, `ZAI_API_KEY`.
+
+The same settings are editable in the UI's **Config** tab (`GET`/`PUT /config/models`).
+The PUT is a **merge**, not a replacement: send only the fields you are changing;
+send `null` to clear one. Omitted fields keep their stored value — so a partial
+save can never wipe `fallback_base_url` (which silently moves z.ai onto the
+standard API, where coding-plan keys are rejected). `GET` reports the lineup,
+provider-key *presence* only (never values), and an advisory `warnings` list.
+

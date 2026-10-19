@@ -1058,12 +1058,26 @@ function ModelsConfig({ data, setData }) {
       <div className="text-[10px] text-neutral-500">
         ~/.codingdude/config.toml — provider keys come from the environment and are never shown here.
       </div>
+      {(cfg.warnings || []).length > 0 && (
+        <div className="rounded border border-warning/40 bg-warning/10 px-2 py-1 text-[11px] text-warning">
+          {(cfg.warnings || []).map((w) => <div key={w}>{w}</div>)}
+        </div>
+      )}
       <div className="space-y-1.5 rounded border border-line bg-surface p-3">
         <div className="text-[10px] uppercase tracking-wide text-ink-muted">Model lineup (provider:model)</div>
         <TextField label="main" k="main" />
         <TextField label="subagent" k="subagent" />
         <TextField label="fallback" k="fallback" />
         <TextField label="fallback base url" k="fallback_base_url" placeholder="optional endpoint override" />
+        <div className="text-[10px] text-neutral-500">
+          Z.AI has two plans with different endpoints. GLM Coding Plan keys are rejected by the
+          standard API —{' '}
+          <button
+            type="button"
+            className="text-accent underline hover:opacity-80"
+            onClick={() => set('fallback_base_url', 'https://api.z.ai/api/coding/paas/v4')}
+          >set the coding-plan endpoint</button>
+        </div>
         <TextField label="vision" k="vision" placeholder="e.g. zai:glm-5v (optional)" />
         <label className="flex items-center gap-2 text-[11px]">
           <span className="w-32 shrink-0 text-neutral-500">thinking</span>

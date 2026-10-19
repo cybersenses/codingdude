@@ -153,28 +153,70 @@ def models_payload(config: Config) -> dict:
             'github': bool(providers.github or env.get('GITHUB_PAT')),
         },
         'thinking_levels': THINKING_LEVELS,
+        'warnings': _lineup_warnings(config.models),
     }
 
 
-def save_models(home: Path, payload: dict) -> dict:
-    """Validate and persist the model lineup; returns the saved lineup dict.
+CODING_PLAN_BASE_URL = 'https://api.z.ai/api/coding/paas/v4'
 
-    Read-modify-write: every other section of config.toml (shell, providers,
-    delegation) is preserved byte-for-byte in structure. Validation happens
-    before any write, so a bad payload cannot brick the next boot.
+
+def _lineup_warnings(lineup: ModelLineup) -> list[str]:
+    """Advisories about a lineup that will likely misbehave.
+
+    Z.AI has two subscription plans with different endpoints: coding-plan keys
+    are rejected by the standard API, so a zai fallback without an explicit
+    base url will fail (or bill the wrong plan) as soon as it is used.
     """
-    try:
-        lineup_in = ModelLineupIn(**payload)
-    except ValidationError as exc:
-        raise ValueError(str(exc)) from exc
-    data = lineup_in.model_dump(exclude_none=True)
+    out: list[str] = []
+    if lineup.fallback.startswith('zai:') and not lineup.fallback_base_url:
+        out.append(
+            f'fallback is {lineup.fallback} but fallback_base_url is unset — '
+            f'GLM Coding Plan keys require {CODING_PLAN_BASE_URL}'
+        )
+    return out
 
+
+def save_models(home: Path, payload: dict) -> dict:
+    """Validate and persist the model lineup; returns the merged lineup dict.
+
+    Merge semantics, not replacement: only the fields present in the payload
+    change. An explicit null clears a field; an omitted field keeps its stored
+    value. Clients post whatever they render, so a replacing write silently
+    erased settings the UI never showed — notably `fallback_base_url`, the
+    GLM coding-plan endpoint, which drops z.ai back onto the standard API
+    (coding-plan keys are rejected there).
+
+    The merged result is what gets validated (not the fragment), so a partial
+    save is checked against the lineup it produces. Every other config.toml
+    section (shell, providers, delegation) is left untouched, and validation
+    happens before any write, so a bad payload cannot brick the next boot.
+    """
     config_path = home / 'config.toml'
     try:
         raw = tomllib.loads(config_path.read_text(encoding='utf-8'))
     except (tomllib.TOMLDecodeError, OSError):
         raw = {}
-    raw['models'] = data
+
+    patch = dict(payload or {})
+    unknown = set(patch) - set(ModelLineupIn.model_fields)
+    if unknown:
+        raise ValueError(f'unknown model settings: {sorted(unknown)}')
+
+    merged = dict(raw.get('models') or {})
+    known = {k: v for k, v in merged.items() if k in ModelLineupIn.model_fields}
+    known.update(patch)
+    try:
+        validated = ModelLineupIn(**{**_default_lineup_dict(), **known})
+    except ValidationError as exc:
+        raise ValueError(str(exc)) from exc
+
+    for name in patch:
+        value = getattr(validated, name)
+        if value is None:
+            merged.pop(name, None)
+        else:
+            merged[name] = value
+    raw['models'] = merged
 
     import tomli_w
 
@@ -182,7 +224,14 @@ def save_models(home: Path, payload: dict) -> dict:
     tmp = config_path.with_suffix('.toml.tmp')
     tmp.write_text(text, encoding='utf-8')
     tmp.replace(config_path)
-    return data
+    return merged
+
+
+def _default_lineup_dict() -> dict:
+    """Default lineup as a plain dict — fills required fields a patch omits."""
+    from dataclasses import asdict
+
+    return {k: v for k, v in asdict(Config.defaults().models).items() if v is not None}
 
 
 THINKING_LEVELS = ('minimal', 'low', 'medium', 'high', 'xhigh')

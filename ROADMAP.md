@@ -807,6 +807,6 @@ open a tracked item before non-trivial work. Tests: tests/test_onboarding.py.
 Referential memory: structured problem→solution records (kind='solution' in the memory table), a record_solution/lookup_solutions tool pair, and forced recall — solutions are always injected into session instructions (bounded), not left to RAG chance. Motivated by repeated identical mistakes across SkyborneRealms sessions.
 
 ## R50 — User-managed LLM configuration
-**Status:** open
+**Status:** in_progress
 
 Expose model/provider configuration as a managed, validated resource: GET/PUT /config/models, GET /config/providers (key presence only, never values), validated atomic writes with pre-save model construction, plus a frontend Settings page.
