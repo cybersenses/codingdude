@@ -1007,7 +1007,7 @@ function ModelsConfig({ data, setData }) {
   const [draft, setDraft] = useState(null)
   const [msg, setMsg] = useState(null)
   const [keys, setKeys] = useState(null) // {provider: {key, base_url, env_var, clear, del}}
-  const [newProv, setNewProv] = useState({ name: '', key: '', base_url: '' })
+  const [newProv, setNewProv] = useState({ name: '', key: '', base_url: '', env_var: '' })
   const [verify, setVerify] = useState(null)
   const [verifying, setVerifying] = useState(false)
 
@@ -1034,12 +1034,13 @@ function ModelsConfig({ data, setData }) {
   )
   const setKey = (n, patch) => setKeys({ ...keyDraft, [n]: { ...keyDraft[n], ...patch } })
 
+  const newProvDirty = !!(newProv.name || newProv.key || newProv.base_url)
   const save = async () => {
     setMsg(null)
     try {
       const body = {}
       if (draft) body.models = model
-      if (keys) {
+      if (keys !== null || newProvDirty) {
         body.providers = {}
         for (const [n, e] of Object.entries(keyDraft)) {
           if (e.del) { body.providers[n] = null; continue }
@@ -1056,6 +1057,7 @@ function ModelsConfig({ data, setData }) {
           body.providers[newProv.name.trim()] = {
             api_key: newProv.key || null,
             base_url: newProv.base_url || null,
+            env_var: newProv.env_var || null,
           }
         }
       }
@@ -1067,7 +1069,7 @@ function ModelsConfig({ data, setData }) {
       setData((d) => ({ ...d, config: r.effective }))
       setDraft(null)
       setKeys(null)
-      setNewProv({ name: '', key: '', base_url: '' })
+      setNewProv({ name: '', key: '', base_url: '', env_var: '' })
       setMsg({ ok: true, text: 'Saved — applies from the next run.' })
     } catch (err) {
       setMsg({ ok: false, text: String(err instanceof Error ? err.message : err) })
@@ -1209,7 +1211,7 @@ function ModelsConfig({ data, setData }) {
           <input
             className="w-28 min-w-0 rounded border border-line bg-surface px-2 py-0.5 font-mono text-[11px] text-ink"
             placeholder="name" value={newProv.name}
-            onChange={(e) => setNewProv({ ...newProv, name: e.target.value.replace(/[^A-Za-z0-9_-]/g, '') })}
+            onChange={(e) => setNewProv({ ...newProv, name: e.target.value.replace(/[^A-Za-z0-9_-]/g, '').replace(/^[^A-Za-z0-9]+/, '') })}
           />
           <input
             type="password"
@@ -1221,6 +1223,11 @@ function ModelsConfig({ data, setData }) {
             className="w-48 min-w-0 flex-1 rounded border border-line bg-surface px-2 py-0.5 font-mono text-[11px] text-ink"
             placeholder="base URL (https://…/v1)" value={newProv.base_url}
             onChange={(e) => setNewProv({ ...newProv, base_url: e.target.value })}
+          />
+          <input
+            className="w-32 min-w-0 rounded border border-line bg-surface px-2 py-0.5 font-mono text-[11px] text-ink"
+            placeholder="env var (optional)" value={newProv.env_var || ''}
+            onChange={(e) => setNewProv({ ...newProv, env_var: e.target.value })}
           />
         </div>
         <button
@@ -1239,7 +1246,7 @@ function ModelsConfig({ data, setData }) {
       <div className="flex gap-2">
         <button
           className="rounded bg-brand-600 px-3 py-1 text-[11px] text-white hover:bg-brand-500 disabled:opacity-40"
-          disabled={!draft && !keys}
+          disabled={!draft && keys === null && !newProvDirty}
           onClick={save}
         >Save</button>
         <button

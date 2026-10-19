@@ -199,24 +199,24 @@ class Engine:
         fallback_name = fallback or self._config.models.fallback
         base_url = self._config.models.fallback_base_url
         providers = self._config.providers
+        # The fallback is a safety net: build the primary first (its failure
+        # is a real error), then the fallback — a fallback that cannot be
+        # constructed is dropped with a warning, keeping the primary run.
+        primary_model = (
+            primary if isinstance(primary, Model)
+            else _model_from_name(primary, base_url, providers)
+        )
         try:
-            primary_model = (
-                primary if isinstance(primary, Model)
-                else _model_from_name(primary, base_url, providers)
-            )
             fallback_model = (
                 fallback_name
                 if isinstance(fallback_name, Model)
                 else _model_from_name(fallback_name, base_url, providers)
             )
             return FallbackModel(primary_model, fallback_model)
-        except Exception as exc:  # noqa: BLE001 — any provider-construction failure
-            logger.warning('fallback model unavailable (%s); running without failover', exc)
-            if isinstance(primary, Model):
-                return primary
-            from pydantic_ai.models import infer_model
-
-            return infer_model(primary)
+        except Exception as exc:  # noqa: BLE001 — any fallback-construction failure
+            logger.warning(
+                'fallback model unavailable (%s); running without failover', exc)
+            return primary_model
 
     @property
     def extraction_model(self) -> Model | None:
@@ -237,11 +237,17 @@ class Engine:
         return findings or 'CLEAN — no findings'
 
     def _build_subagent_model(self) -> Model | None:
-        """The cheap model Subagents run on; None if its provider isn't configured."""
-        try:
-            from pydantic_ai.models import infer_model
+        """The cheap model Subagents run on; None if its provider isn't configured.
 
-            return infer_model(self._config.models.subagent)
+        Uses _model_from_name (#212) so user-defined providers resolve for
+        the subagent/extraction slots exactly as they do for the main run.
+        """
+        try:
+            return _model_from_name(
+                self._config.models.subagent,
+                self._config.models.fallback_base_url,
+                self._config.providers,
+            )
         except Exception as exc:  # noqa: BLE001 — missing credentials etc.
             logger.warning('subagent model unavailable (%s); delegation disabled', exc)
             return None

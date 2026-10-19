@@ -191,6 +191,30 @@ _PROVIDER_NAME_OK = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_-]*$')
 _PROVIDER_FIELDS = ('api_key', 'base_url', 'env_var')
 
 
+def _sync_env_keys(names: set, old_providers: dict, new_providers: dict) -> None:
+    """Keep the running process's env in sync with a provider save (#212).
+
+    apply_provider_keys setdefault-ed stored keys into os.environ; without
+    this, updating or clearing a key in the UI leaves the OLD value winning
+    (env beats stored) until the process restarts. For every touched
+    provider, an env value that a stored key injected is retracted and the
+    new stored key re-applied. A genuine user-set env var that differs from
+    any stored key is never touched (and keeps winning, by design).
+    """
+    old_defs = _parse_providers(old_providers)
+    new_defs = _parse_providers(new_providers)
+    for name in names:
+        for d in (old_defs.get(name), new_defs.get(name)):
+            if d and d.api_key:
+                var = d.env_var or provider_env_var(name)
+                if os.environ.get(var) == d.api_key:
+                    os.environ.pop(var, None)
+        new = new_defs.get(name)
+        if new and new.api_key:
+            os.environ.setdefault(
+                new.env_var or provider_env_var(name), new.api_key)
+
+
 def save_provider_keys(home: Path, patch: dict) -> dict[str, bool]:
     """Merge provider definitions into config.toml's [providers] section.
 
@@ -215,6 +239,7 @@ def save_provider_keys(home: Path, patch: dict) -> dict[str, bool]:
         ) from exc
 
     providers = dict(raw.get('providers') or {})
+    old_providers = dict(providers)
     for name, value in patch.items():
         if not _PROVIDER_NAME_OK.match(name or ''):
             raise ValueError(
@@ -259,6 +284,7 @@ def save_provider_keys(home: Path, patch: dict) -> dict[str, bool]:
     tmp = config_path.with_suffix('.toml.tmp')
     tmp.write_text(tomli_w.dumps(raw), encoding='utf-8')
     tmp.replace(config_path)
+    _sync_env_keys(set(patch), old_providers, providers)
     return {name: bool(providers.get(name)) for name in sorted(set(patch))}
 
 
@@ -307,17 +333,26 @@ def verify_provider_keys(
     base_url (or the built-in default endpoint for the legacy trio); a
     provider with no known endpoint is reported configured but untested.
     """
-    import http.client
     from urllib.parse import urlsplit
 
     def _http(url: str, headers: dict, body: dict | None) -> tuple[int, str]:
+        import http.client
         import json as _json
 
         parts = urlsplit(url)
-        if parts.scheme != 'https':
-            return 0, f'non-https url rejected: {parts.scheme!r}'
+        host = parts.hostname or ''
+        loopback = host in ('localhost', '127.0.0.1', '::1')
+        if parts.scheme not in ('https', 'http'):
+            return 0, f'unsupported url scheme: {parts.scheme!r}'
+        if parts.scheme == 'http' and not loopback:
+            # Local OpenAI-compatible endpoints (Ollama, LM Studio) are the
+            # common http case; anything else must be https.
+            return 0, 'non-https url rejected (http allowed only on localhost)'
         payload = _json.dumps(body).encode() if body is not None else None
-        conn = http.client.HTTPSConnection(parts.netloc, timeout=timeout_s)
+        conn_cls = (
+            http.client.HTTPSConnection if parts.scheme == 'https'
+            else http.client.HTTPConnection)
+        conn = conn_cls(parts.netloc, timeout=timeout_s)
         path = parts.path or '/'
         try:
             conn.request('POST' if payload is not None else 'GET', path,

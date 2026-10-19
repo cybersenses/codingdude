@@ -5,7 +5,7 @@ import asyncio
 import sys
 from pathlib import Path
 
-from pydantic_ai.models import Model, infer_model
+from pydantic_ai.models import Model
 
 from . import __version__
 from .config import config_home, load_config
@@ -149,12 +149,17 @@ def main(argv: list[str] | None = None) -> int:
         budget_cap_usd=args.budget,
     )
     from .approvals import ApprovalPolicy
+    from .engine import _model_from_name
 
     return run_headless(
         engine,
         args.workdir.resolve(),
         args.prompt,
-        model=infer_model(args.model) if args.model else None,
+        model=(
+            _model_from_name(
+                args.model, config.models.fallback_base_url, config.providers)
+            if args.model else None
+        ),
         approvals=ApprovalPolicy(yolo=args.yolo),
         fix_loop=args.fix_loop,
     )

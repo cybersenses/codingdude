@@ -189,3 +189,74 @@ def test_verify_skips_provider_without_base_url(monkeypatch):
     assert results['mystery']['configured'] is True
     assert results['mystery']['ok'] is None
     assert 'base_url' in results['mystery']['detail']
+
+
+def test_build_model_keeps_primary_when_fallback_unavailable(monkeypatch):
+    """Fallback construction failure must degrade to the (custom-provider)
+    primary, not discard it via infer_model (post-push review finding #3)."""
+    import tempfile
+
+    from codingdude.db import Database
+    from codingdude.engine import Engine, _model_from_name
+
+    monkeypatch.setenv('CODEDUDE_HOME', tempfile.mkdtemp())
+    from dataclasses import replace
+
+    cfg = replace(Config.defaults(), providers={
+        'openrouter': ProviderDef(base_url=OR_URL)})
+    cfg = replace(cfg, models=replace(cfg.models, fallback='bogus-provider:x'))
+    engine = Engine(config=cfg, db=Database.connect(Path(os.environ['CODEDUDE_HOME'])))
+    model = engine.build_model(main='openrouter:qwen-3')
+    expected = _model_from_name('openrouter:qwen-3', None, cfg.providers)
+    assert model.model_name == expected.model_name  # primary survived
+
+
+def test_subagent_model_resolves_custom_provider(monkeypatch):
+    """The subagent/extraction slot routes through _model_from_name (#212)."""
+    from dataclasses import replace
+
+    from pydantic_ai.models.openai import OpenAIChatModel
+
+    from codingdude.engine import Engine
+
+    cfg = Config.defaults()
+    cfg = replace(cfg, models=replace(cfg.models, subagent='openrouter:cheap'))
+    cfg = replace(cfg, providers={'openrouter': ProviderDef(base_url=OR_URL)})
+    engine = Engine(config=cfg, db=None)  # type: ignore[arg-type]
+    model = engine._build_subagent_model()
+    assert isinstance(model, OpenAIChatModel)
+    assert model.model_name == 'cheap'
+
+
+def test_save_provider_clear_retracts_injected_env(tmp_path, monkeypatch):
+    """Clearing/updating a stored key must not leave the old value winning
+    in os.environ until restart (post-push review finding #9)."""
+    home = tmp_path / 'home'
+    home.mkdir(parents=True)
+    (home / 'config.toml').write_text('', encoding='utf-8')
+    monkeypatch.delenv('OPENROUTER_API_KEY', raising=False)
+    save_provider_keys(home, {'openrouter': {'api_key': OR_KEY}})
+    # load_config injects it (apply_provider_keys setdefault)
+    load_config(home)
+    assert os.environ['OPENROUTER_API_KEY'] == OR_KEY
+    # clear the stored key -> the injected env value is retracted
+    save_provider_keys(home, {'openrouter': {'api_key': None}})
+    assert 'OPENROUTER_API_KEY' not in os.environ
+    # update the key -> the new stored value applies without a restart
+    new_key = 'rotated-' + OR_KEY
+    save_provider_keys(home, {'openrouter': {'api_key': new_key}})
+    assert os.environ['OPENROUTER_API_KEY'] == new_key
+
+
+def test_verify_allows_http_on_localhost(monkeypatch):
+    """Local OpenAI-compatible endpoints (Ollama, LM Studio) must be smoke-
+    testable, not blanket-rejected as non-https (post-push review #8)."""
+    for n in ('ZAI_API_KEY', 'DEEPSEEK_API_KEY', 'GITHUB_PAT'):
+        monkeypatch.delenv(n, raising=False)
+    from dataclasses import replace
+
+    config = replace(Config.defaults(), providers={
+        'ollama': ProviderDef(api_key=OR_KEY, base_url='http://127.0.0.1:11434/v1')})
+    results = verify_provider_keys(config, timeout_s=1.0)
+    # No server listening: a connection error, NOT the scheme rejection.
+    assert 'non-https' not in (results['ollama']['detail'] or '')
