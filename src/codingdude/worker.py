@@ -116,7 +116,9 @@ async def drain_after_terminal(engine) -> None:
     await engine.drain_post_run(timeout=_DRAIN_BEFORE_TERMINAL_S)
 
 
-async def _resolve_model(name: str | None, base_url: str | None = None):
+async def _resolve_model(
+    name: str | None, base_url: str | None = None, providers: dict | None = None,
+):
     if not name:
         return None
     # Test hook: deterministic scripted models so subprocess tests need no keys.
@@ -197,7 +199,14 @@ async def _resolve_model(name: str | None, base_url: str | None = None):
     if name.startswith('zai:') and base_url:
         from codingdude.engine import _model_from_name
 
-        return _model_from_name(name, base_url)
+        return _model_from_name(name, base_url, providers)
+    if providers:
+        prefix = name.split(':', 1)[0]
+        d = providers.get(prefix)
+        if d is not None and getattr(d, 'base_url', None):
+            from codingdude.engine import _model_from_name
+
+            return _model_from_name(name, None, providers)
     from pydantic_ai.models import infer_model
 
     return infer_model(name)
@@ -217,7 +226,8 @@ async def review(args) -> int:
     config = load_config()
     engine = Engine(config=config, db=Database.connect(config_home()))
     try:
-        engine.extraction_model = await _resolve_model(config.models.subagent)
+        engine.extraction_model = await _resolve_model(
+            config.models.subagent, providers=config.providers)
     except Exception:  # noqa: BLE001 — Engine falls back to its own resolution
         pass
     findings = await engine.review(args.review)
@@ -362,15 +372,18 @@ async def run(args) -> int:
     )
     # Memory extraction runs on the cheap subagent model when configured.
     try:
-        engine.extraction_model = await _resolve_model(config.models.subagent)
+        engine.extraction_model = await _resolve_model(
+            config.models.subagent, providers=config.providers)
     except Exception:  # noqa: BLE001 — extraction is best-effort
         pass
-    model = await _resolve_model(args.model, config.models.fallback_base_url)
+    model = await _resolve_model(
+        args.model, config.models.fallback_base_url, config.providers)
     vision_model = None
     if config.models.vision:
         try:
             vision_model = await _resolve_model(
-                config.models.vision, config.models.fallback_base_url
+                config.models.vision, config.models.fallback_base_url,
+                config.providers,
             )
         except Exception:  # noqa: BLE001 — image input is best-effort
             vision_model = None

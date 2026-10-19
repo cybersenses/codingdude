@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import tomllib
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -64,11 +65,21 @@ class ModelLineup:
     pricing: dict[str, dict[str, float]] | None = None
 
 
-# Providers the UI may bind models to; the prefix before ':' in "provider:model".
+# Providers the UI may suggest for model binding; the prefix before ':' in
+# "provider:model". Any OTHER prefix is valid too when the user has defined a
+# matching [providers.<name>] entry (#212) — this list is native pydantic-ai
+# support plus the built-in trio, used for suggestions and error messages.
 KNOWN_PROVIDERS = (
     'deepseek', 'zai', 'openai', 'anthropic', 'google', 'github',
     'groq', 'mistral', 'ollama', 'bedrock',
 )
+
+# Built-in providers keep their historical env-var names; custom providers
+# default to <NAME>_API_KEY unless their [providers.<name>] table overrides
+# `env_var`.
+_LEGACY_ENV_VARS = {
+    'zai': 'ZAI_API_KEY', 'deepseek': 'DEEPSEEK_API_KEY', 'github': 'GITHUB_PAT',
+}
 
 _THINKING_OFF_WORDS = ('off', 'none', 'false', 'disabled')
 
@@ -99,7 +110,8 @@ class ModelLineupIn(BaseModel):
         if v and ':' not in v:
             raise ValueError(
                 f'{v!r} is not a provider-bound model — use "provider:model" '
-                f'(e.g. "zai:glm-5.3"); known providers: {KNOWN_PROVIDERS}'
+                f'(e.g. "zai:glm-5.3"); built-in providers: {KNOWN_PROVIDERS}, '
+                'or any name you have defined under [providers.<name>]'
             )
         return v
 
@@ -133,11 +145,20 @@ def models_payload(config: Config) -> dict:
     Provider keys are surfaced as SECRET_MASK when set (never the value) and
     None when absent. The sentinel is what the UI echoes back on save; the
     PUT path ignores it, so a full round-trip cannot clobber a stored key.
+
+    #212: providers are user-defined. `provider_defs` carries the non-secret
+    definition fields (base_url, env_var) so the UI can edit them;
+    `provider_prefixes` is the suggestion list for model bindings (built-in
+    providers plus every configured custom one).
     """
-    env = os.environ
-    providers = config.providers
-    def _mask(stored: str | None, env_name: str) -> str | None:
-        return SECRET_MASK if (stored or env.get(env_name)) else None
+    providers: dict[str, str | None] = {}
+    provider_defs: dict[str, dict] = {}
+    for name, d in config.providers.items():
+        providers[name] = SECRET_MASK if provider_effective_key(name, d) else None
+        defs = {k: getattr(d, k) for k in ('base_url', 'env_var')
+                if getattr(d, k)}
+        if defs:
+            provider_defs[name] = defs
 
     return {
         'models': {
@@ -152,11 +173,9 @@ def models_payload(config: Config) -> dict:
             'request_limit': config.models.request_limit,
             'pricing': config.models.pricing,
         },
-        'providers': {
-            'deepseek': _mask(providers.deepseek, 'DEEPSEEK_API_KEY'),
-            'zai': _mask(providers.zai, 'ZAI_API_KEY'),
-            'github': _mask(providers.github, 'GITHUB_PAT'),
-        },
+        'providers': providers,
+        'provider_defs': provider_defs,
+        'provider_prefixes': sorted(set(KNOWN_PROVIDERS) | set(config.providers)),
         'thinking_levels': THINKING_LEVELS,
         'warnings': _lineup_warnings(config.models),
     }
@@ -168,11 +187,21 @@ treats it as "unchanged" — this is the property that keeps a Settings
 round-trip from ever writing a masked placeholder over a real key."""
 
 
-def save_provider_keys(home: Path, patch: dict) -> dict[str, bool]:
-    """Merge provider keys into config.toml's [providers] section.
+_PROVIDER_NAME_OK = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_-]*$')
+_PROVIDER_FIELDS = ('api_key', 'base_url', 'env_var')
 
-    Semantics per entry: SECRET_MASK -> ignored; None -> key cleared;
-    any other string -> stored. Returns presence booleans (never values).
+
+def save_provider_keys(home: Path, patch: dict) -> dict[str, bool]:
+    """Merge provider definitions into config.toml's [providers] section.
+
+    Per-entry semantics (#212):
+    - str: SECRET_MASK -> ignored; ''/None -> key cleared; other -> key stored
+      (existing base_url/env_var preserved).
+    - dict: {api_key?, base_url?, env_var?} merged; SECRET_MASK api_key is
+      ignored; null/'' fields are cleared; an empty result deletes the entry.
+    - None: the whole provider entry is deleted.
+
+    Returns presence booleans for every touched provider (never values).
     """
     config_path = home / 'config.toml'
     try:
@@ -185,21 +214,41 @@ def save_provider_keys(home: Path, patch: dict) -> dict[str, bool]:
             'refusing to overwrite it — fix or remove the file first'
         ) from exc
 
-    # Storable key slots, NOT the model-binding provider list: openai et al
-    # are valid model prefixes but have no key field in config.toml.
-    storable = {f for f in ProviderKeys.__dataclass_fields__}
-    unknown = set(patch) - storable
-    if unknown:
-        raise ValueError(f'unknown providers: {sorted(unknown)}')
-
     providers = dict(raw.get('providers') or {})
     for name, value in patch.items():
-        if value == SECRET_MASK:
-            continue
-        if value is None or value == '':
+        if not _PROVIDER_NAME_OK.match(name or ''):
+            raise ValueError(
+                f'invalid provider name {name!r}: use letters, digits, - or _')
+        if value is None:
             providers.pop(name, None)
+        elif isinstance(value, str):
+            if value == SECRET_MASK:
+                continue
+            if value == '':
+                _clear_provider_key(providers, name)
+            else:
+                _set_provider_key(providers, name, value)
+        elif isinstance(value, dict):
+            unknown = set(value) - set(_PROVIDER_FIELDS)
+            if unknown:
+                raise ValueError(
+                    f'provider {name}: unknown fields {sorted(unknown)}')
+            existing = _as_table(providers.get(name))
+            merged = dict(existing)
+            for field, v in value.items():
+                if field == 'api_key' and v == SECRET_MASK:
+                    continue
+                if v is None or v == '':
+                    merged.pop(field, None)
+                else:
+                    merged[field] = v
+            if merged:
+                providers[name] = merged
+            else:
+                providers.pop(name, None)
         else:
-            providers[name] = value
+            raise ValueError(f'provider {name}: expected string, table or null')
+
     if providers:
         raw['providers'] = providers
     else:
@@ -210,7 +259,39 @@ def save_provider_keys(home: Path, patch: dict) -> dict[str, bool]:
     tmp = config_path.with_suffix('.toml.tmp')
     tmp.write_text(tomli_w.dumps(raw), encoding='utf-8')
     tmp.replace(config_path)
-    return {name: bool(providers.get(name)) for name in storable}
+    return {name: bool(providers.get(name)) for name in sorted(set(patch))}
+
+
+def _as_table(entry) -> dict:
+    """Normalize a stored provider entry (string shorthand or table) to a dict."""
+    if isinstance(entry, dict):
+        return {k: v for k, v in entry.items() if k in _PROVIDER_FIELDS}
+    if isinstance(entry, str) and entry:
+        return {'api_key': entry}
+    return {}
+
+
+def _set_provider_key(providers: dict, name: str, value: str) -> None:
+    table = _as_table(providers.get(name))
+    table['api_key'] = value
+    providers[name] = table if len(table) > 1 else value  # keep shorthand form
+
+
+def _clear_provider_key(providers: dict, name: str) -> None:
+    table = _as_table(providers.get(name))
+    table.pop('api_key', None)
+    if table:
+        providers[name] = table  # keep the definition, drop the key
+    else:
+        providers.pop(name, None)
+
+
+# Default smoke endpoints for the built-in trio (custom providers must
+# declare base_url to be testable).
+_LEGACY_SMOKE_URLS = {
+    'zai': 'https://api.z.ai/api/paas/v4',
+    'deepseek': 'https://api.deepseek.com/v1',
+}
 
 
 def verify_provider_keys(
@@ -221,6 +302,10 @@ def verify_provider_keys(
     Catches a clobbered/placeholder key in the Settings tab instead of at the
     next run. `transport` is injectable for tests (default: http.client).
     Returns {provider: {'configured', 'ok', 'status', 'detail'}} — no secrets.
+
+    #212: providers are user-defined. Each entry is tested against its
+    base_url (or the built-in default endpoint for the legacy trio); a
+    provider with no known endpoint is reported configured but untested.
     """
     import http.client
     from urllib.parse import urlsplit
@@ -251,35 +336,37 @@ def verify_provider_keys(
             'Authorization': f'Bearer {key}', 'Content-Type': 'application/json',
         }, {'model': 'smoke', 'messages': [{'role': 'user', 'content': 'hi'}], 'max_tokens': 1, 'stream': False})
 
-    env = os.environ
-    results: dict[str, dict] = {}
-    zai_key = config.providers.zai or env.get('ZAI_API_KEY')
-    if zai_key:
-        base = config.models.fallback_base_url or 'https://api.z.ai/api/paas/v4'
-        status, detail = _chat(base, zai_key)
+    def _result(name: str, key: str | None) -> dict:
+        if not key:
+            return {'configured': False, 'ok': False, 'status': None,
+                    'detail': 'no key'}
+        d = config.providers.get(name, ProviderDef())
+        base = d.base_url
+        if name == 'zai' and not d.base_url:
+            base = config.models.fallback_base_url or _LEGACY_SMOKE_URLS['zai']
+        base = base or _LEGACY_SMOKE_URLS.get(name)
+        if name == 'github' and not d.base_url:
+            status, detail = send('https://api.github.com/user',
+                                  {'Authorization': f'Bearer {key}'}, None)
+            return {'configured': True, 'ok': status == 200, 'status': status,
+                    'detail': None if status == 200 else detail[:200]}
+        if not base:
+            return {'configured': True, 'ok': None, 'status': None,
+                    'detail': 'no base_url configured — not tested'}
+        status, detail = _chat(base, key)
         # 400/404 = auth passed but the smoke model name isn't on the plan.
         ok = status in (200, 400, 404)
-        results['zai'] = {'configured': True, 'ok': ok, 'status': status,
-                          'detail': None if ok else detail[:200]}
-    else:
-        results['zai'] = {'configured': False, 'ok': False, 'status': None, 'detail': 'no key'}
-    deepseek_key = config.providers.deepseek or env.get('DEEPSEEK_API_KEY')
-    if deepseek_key:
-        status, detail = _chat('https://api.deepseek.com/v1', deepseek_key)
-        ok = status in (200, 400, 404)
-        results['deepseek'] = {'configured': True, 'ok': ok, 'status': status,
-                               'detail': None if ok else detail[:200]}
-    else:
-        results['deepseek'] = {'configured': False, 'ok': False, 'status': None, 'detail': 'no key'}
-    github_key = config.providers.github or env.get('GITHUB_PAT')
-    if github_key:
-        status, detail = send('https://api.github.com/user',
-                              {'Authorization': f'Bearer {github_key}'}, None)
-        results['github'] = {'configured': True, 'ok': status == 200, 'status': status,
-                             'detail': None if status == 200 else detail[:200]}
-    else:
-        results['github'] = {'configured': False, 'ok': False, 'status': None, 'detail': 'no key'}
-    return results
+        return {'configured': True, 'ok': ok, 'status': status,
+                'detail': None if ok else detail[:200]}
+
+    # Configured providers, plus legacy ones whose env key alone is set.
+    names = dict(config.providers)
+    env = os.environ
+    for legacy, env_name in _LEGACY_ENV_VARS.items():
+        if legacy not in names and env.get(env_name):
+            names[legacy] = ProviderDef()
+    return {name: _result(name, provider_effective_key(name, d))
+            for name, d in sorted(names.items())}
 
 
 CODING_PLAN_BASE_URL = 'https://api.z.ai/api/coding/paas/v4'
@@ -399,11 +486,30 @@ class ShellConfig:
 
 
 @dataclass(frozen=True)
-class ProviderKeys:
-    """API keys per provider, read from the environment at load time."""
-    deepseek: str | None = None
-    zai: str | None = None
-    github: str | None = None
+class ProviderDef:
+    """One user-defined provider (#212): an OpenAI-compatible endpoint.
+
+    `api_key` is the config-stored key (env var wins at resolution time —
+    see provider_effective_key); `base_url` routes `name:model` bindings to
+    this endpoint; `env_var` overrides the default <NAME>_API_KEY name.
+    """
+    api_key: str | None = None
+    base_url: str | None = None
+    env_var: str | None = None
+
+
+def provider_env_var(name: str) -> str:
+    """Env var holding this provider's key: legacy names for the built-in
+    trio, <NAME>_API_KEY (sanitized) for user-defined providers."""
+    if name in _LEGACY_ENV_VARS:
+        return _LEGACY_ENV_VARS[name]
+    sanitized = re.sub(r'[^A-Z0-9]+', '_', name.upper()).strip('_')
+    return f'{sanitized}_API_KEY'
+
+
+def provider_effective_key(name: str, d: ProviderDef) -> str | None:
+    """The key actually used: env var wins over the stored value."""
+    return os.environ.get(d.env_var or provider_env_var(name)) or d.api_key
 
 
 @dataclass(frozen=True)
@@ -411,7 +517,7 @@ class Config:
     """Top-level CodingDude configuration assembled from config home + environment."""
     models: ModelLineup
     shell: ShellConfig
-    providers: ProviderKeys = field(default_factory=ProviderKeys)
+    providers: dict[str, ProviderDef] = field(default_factory=dict)
     delegation: DelegationConfig = field(default_factory=DelegationConfig)
 
     @classmethod
@@ -423,7 +529,7 @@ class Config:
                 fallback='zai:glm-5.3',
             ),
             shell=ShellConfig(default='bash'),
-            providers=ProviderKeys(),
+            providers={},
         )
 
 
@@ -480,25 +586,42 @@ def load_config(home: Path | None = None) -> Config:
             pricing=models.get('pricing', defaults.models.pricing),
         ),
         shell=ShellConfig(default=shell.get('default', defaults.shell.default)),
-        providers=ProviderKeys(
-            deepseek=providers.get('deepseek'),
-            zai=providers.get('zai'),
-            github=providers.get('github'),
-        ),
+        providers=_parse_providers(providers),
         delegation=delegation,
     )
     apply_provider_keys(config)
     return config
 
 
+def _parse_providers(raw: dict) -> dict[str, ProviderDef]:
+    """[providers] table -> ProviderDef map (#212).
+
+    Accepts the legacy string shorthand (`zai = "key"`) and full tables
+    (`[providers.openrouter] api_key/base_url/env_var`).
+    """
+    out: dict[str, ProviderDef] = {}
+    for name, value in (raw or {}).items():
+        if isinstance(value, str):
+            if value:
+                out[name] = ProviderDef(api_key=value)
+        elif isinstance(value, dict):
+            out[name] = ProviderDef(
+                api_key=value.get('api_key'),
+                base_url=value.get('base_url'),
+                env_var=value.get('env_var'),
+            )
+        else:
+            logging.getLogger(__name__).warning(
+                'config.toml [providers].%s: unsupported shape %s; ignored',
+                name, type(value).__name__)
+    return out
+
+
 def apply_provider_keys(config: Config) -> None:
     """Config-stored keys are the low-precedence fallback; env vars win."""
-    if config.providers.deepseek:
-        os.environ.setdefault('DEEPSEEK_API_KEY', config.providers.deepseek)
-    if config.providers.zai:
-        os.environ.setdefault('ZAI_API_KEY', config.providers.zai)
-    if config.providers.github:
-        os.environ.setdefault('GITHUB_PAT', config.providers.github)
+    for name, d in config.providers.items():
+        if d.api_key:
+            os.environ.setdefault(d.env_var or provider_env_var(name), d.api_key)
 
 
 def load_project_config(workdir: Path) -> dict:

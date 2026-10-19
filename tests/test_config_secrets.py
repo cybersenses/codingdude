@@ -56,14 +56,15 @@ def test_put_provider_null_clears_and_value_sets(tmp_path):
     assert raw["providers"] == {"github": "ghp_x"}
 
 
-def test_put_provider_rejects_unknown_and_preserves_models(tmp_path):
+def test_put_provider_accepts_any_name_and_preserves_models(tmp_path):
     c = client(tmp_path)
     cfg = config_home() / "config.toml"
     seed_coding_plan(cfg)
-    r = c.put("/config/models", json={"providers": {"openai": "sk-x"}})
-    assert r.status_code == 422
-    assert "unknown providers" in r.json()["detail"]
+    # #212: any provider name is storable — users define their own providers.
+    r = c.put("/config/models", json={"providers": {"openrouter": "stored-or"}})
+    assert r.status_code == 200, r.text
     raw = tomllib.loads(cfg.read_text(encoding="utf-8"))
+    assert raw["providers"]["openrouter"] == "stored-or"
     assert raw["models"]["fallback_base_url"] == CODING_PLAN_URL  # untouched
 
 
@@ -90,7 +91,8 @@ def test_verify_reports_auth_failure_without_leaking_key(tmp_path, monkeypatch):
         "configured": True, "ok": False, "status": 401,
         "detail": '{"error":"token expired or incorrect"}',
     }
-    assert results["deepseek"] == {"configured": False, "ok": False, "status": None, "detail": "no key"}
+    # unconfigured providers are simply absent (#212)
+    assert "deepseek" not in results
     # smoke hits the standard endpoint when no base url is configured
     assert calls[0][0].startswith("https://api.z.ai/api/paas/v4/chat/completions")
     assert "sk-clobbered" not in json.dumps(results)

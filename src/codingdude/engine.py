@@ -56,16 +56,41 @@ def _strip_provider_prefix(model: str) -> str:
     return model.split(':', 1)[1] if ':' in model else model
 
 
-def _model_from_name(name: str, base_url: str | None) -> Model:
+def _custom_provider_model(
+    model_name: str, name: str, d,
+) -> Model:
+    """Any OpenAI-compatible endpoint: model on the provider's base_url."""
+    from openai import AsyncOpenAI
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    from .config import provider_effective_key
+
+    client = AsyncOpenAI(
+        api_key=provider_effective_key(name, d) or 'not-set',
+        base_url=d.base_url,
+    )
+    return OpenAIChatModel(model_name, provider=OpenAIProvider(openai_client=client))
+
+
+def _model_from_name(
+    name: str, base_url: str | None, providers: dict | None = None,
+) -> Model:
     """A model from a `provider:name` string.
 
-    A Z.AI model must use the configured endpoint: the coding-plan endpoint
-    (`fallback_base_url`) rejects keys/requests sent to the standard one with
-    `code 1113` (insufficient balance). Previously the custom endpoint applied
-    only to the configured fallback, so a zai `main` or a run/selector override
-    fell through to the standard endpoint and failed.
+    Resolution order (#212):
+    1. A user-defined provider with a base_url -> OpenAI-compatible model on
+       that endpoint (any provider, any endpoint).
+    2. A Z.AI model with the configured endpoint: the coding-plan endpoint
+       (`fallback_base_url`) rejects keys/requests sent to the standard one
+       with `code 1113` (insufficient balance).
+    3. pydantic-ai's infer_model (all natively supported providers).
     """
-    if name.startswith('zai:') and base_url:
+    prefix, _, model_name = name.partition(':')
+    d = (providers or {}).get(prefix)
+    if d is not None and getattr(d, 'base_url', None):
+        return _custom_provider_model(model_name or name, prefix, d)
+    if prefix == 'zai' and base_url:
         return _zai_fallback(_strip_provider_prefix(name), base_url)
     from pydantic_ai.models import infer_model
 
@@ -173,14 +198,16 @@ class Engine:
         primary = main or self._config.models.main
         fallback_name = fallback or self._config.models.fallback
         base_url = self._config.models.fallback_base_url
+        providers = self._config.providers
         try:
             primary_model = (
-                primary if isinstance(primary, Model) else _model_from_name(primary, base_url)
+                primary if isinstance(primary, Model)
+                else _model_from_name(primary, base_url, providers)
             )
             fallback_model = (
                 fallback_name
                 if isinstance(fallback_name, Model)
-                else _model_from_name(fallback_name, base_url)
+                else _model_from_name(fallback_name, base_url, providers)
             )
             return FallbackModel(primary_model, fallback_model)
         except Exception as exc:  # noqa: BLE001 — any provider-construction failure

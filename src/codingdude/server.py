@@ -1485,11 +1485,13 @@ def create_app(
     @app.get('/models')
     def list_models(_: None = Depends(authorize)) -> dict:
         """The configured model lineup, for the UI's model selector."""
-        from .config import load_config
+        from .config import KNOWN_PROVIDERS, load_config
 
         cfg = load_config()
         return {
             'default': 'main',
+            # #212: configured custom providers are valid runtime choices too
+            'provider_prefixes': sorted(set(KNOWN_PROVIDERS) | set(cfg.providers)),
             'models': {
                 'main': cfg.models.main,
                 'subagent': cfg.models.subagent,

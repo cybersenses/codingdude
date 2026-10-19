@@ -1006,7 +1006,8 @@ function ModelsConfig({ data, setData }) {
   // between renders and crashing React (#310).
   const [draft, setDraft] = useState(null)
   const [msg, setMsg] = useState(null)
-  const [keys, setKeys] = useState(null) // {provider: sentinel|value|''}
+  const [keys, setKeys] = useState(null) // {provider: {key, base_url, env_var, clear, del}}
+  const [newProv, setNewProv] = useState({ name: '', key: '', base_url: '' })
   const [verify, setVerify] = useState(null)
   const [verifying, setVerifying] = useState(false)
 
@@ -1020,9 +1021,18 @@ function ModelsConfig({ data, setData }) {
   const model = draft ?? JSON.parse(JSON.stringify(cfg.models))
   const set = (k, v) => setDraft({ ...model, [k]: v })
 
+  // #212: providers are user-defined — the draft edits name/base_url/key per
+  // provider; blank key keeps the stored one, the clear flag removes it.
   const keyDraft = keys ?? Object.fromEntries(
-    Object.entries(cfg.providers || {}).map(([n, v]) => [n, v || '']))
-  const setKey = (n, v) => setKeys({ ...keyDraft, [n]: v })
+    Object.entries(cfg.providers || {}).map(([n]) => [n, {
+      key: '',
+      base_url: cfg.provider_defs?.[n]?.base_url || '',
+      env_var: cfg.provider_defs?.[n]?.env_var || '',
+      clear: false,
+      del: false,
+    }])
+  )
+  const setKey = (n, patch) => setKeys({ ...keyDraft, [n]: { ...keyDraft[n], ...patch } })
 
   const save = async () => {
     setMsg(null)
@@ -1031,10 +1041,22 @@ function ModelsConfig({ data, setData }) {
       if (draft) body.models = model
       if (keys) {
         body.providers = {}
-        for (const [n, v] of Object.entries(keyDraft)) {
-          // untouched field stays the sentinel (or empty) — never resend a stored key
-          if (v && v !== (cfg.providers?.[n] || '')) body.providers[n] = v
-          else if (keys && v === '' && cfg.providers?.[n]) body.providers[n] = null
+        for (const [n, e] of Object.entries(keyDraft)) {
+          if (e.del) { body.providers[n] = null; continue }
+          const def = {}
+          if (e.clear) def.api_key = null // drop the stored key on save
+          else if (e.key) def.api_key = e.key
+          if ((e.base_url || '') !== (cfg.provider_defs?.[n]?.base_url || ''))
+            def.base_url = e.base_url || null
+          if ((e.env_var || '') !== (cfg.provider_defs?.[n]?.env_var || ''))
+            def.env_var = e.env_var || null
+          if (Object.keys(def).length) body.providers[n] = def
+        }
+        if (newProv.name && (newProv.key || newProv.base_url)) {
+          body.providers[newProv.name.trim()] = {
+            api_key: newProv.key || null,
+            base_url: newProv.base_url || null,
+          }
         }
       }
       const r = await call('/config/models', {
@@ -1045,6 +1067,7 @@ function ModelsConfig({ data, setData }) {
       setData((d) => ({ ...d, config: r.effective }))
       setDraft(null)
       setKeys(null)
+      setNewProv({ name: '', key: '', base_url: '' })
       setMsg({ ok: true, text: 'Saved — applies from the next run.' })
     } catch (err) {
       setMsg({ ok: false, text: String(err instanceof Error ? err.message : err) })
@@ -1068,6 +1091,7 @@ function ModelsConfig({ data, setData }) {
         className="min-w-0 flex-1 rounded border border-line bg-surface px-2 py-0.5 font-mono text-[11px] text-ink"
         value={model[k] ?? ''}
         placeholder={placeholder || ''}
+        list="provider-model-suggest"
         onChange={(e) => set(k, e.target.value || null)}
       />
     </label>
@@ -1130,27 +1154,75 @@ function ModelsConfig({ data, setData }) {
       </div>
 
       <div className="space-y-1.5 rounded border border-line bg-surface p-3">
-        <div className="text-[10px] uppercase tracking-wide text-ink-muted">Provider keys</div>
+        <div className="text-[10px] uppercase tracking-wide text-ink-muted">Providers</div>
         <div className="text-[10px] text-neutral-500">
-          Stored in ~/.codingdude/config.toml, never displayed. Leave a set key untouched to keep it; empty + save clears it.
+          User-defined OpenAI-compatible providers. A name with a base URL makes
+          `name:model` bindings work everywhere. Keys stored in
+          ~/.codingdude/config.toml, never displayed; blank keeps a set key.
         </div>
-        {Object.entries(cfg.providers || {}).map(([name, present]) => (
-          <label key={name} className="flex items-center gap-2 text-[11px]">
-            <span className="w-32 shrink-0 text-neutral-500">{name}</span>
+        <datalist id="provider-model-suggest">
+          {(cfg.provider_prefixes || []).map((p) => (
+            <option key={p} value={`${p}:`} />
+          ))}
+        </datalist>
+        {Object.entries(keyDraft).map(([name, e]) => e.del ? null : (
+          <div key={name} className="flex flex-wrap items-center gap-2 text-[11px]">
+            <span className="w-28 shrink-0 font-mono text-neutral-500">{name}</span>
             <input
               type="password"
-              className="min-w-0 flex-1 rounded border border-line bg-surface px-2 py-0.5 font-mono text-[11px] text-ink"
-              value={keyDraft[name] || ''}
-              placeholder={present ? '● set — leave blank to keep' : 'not set'}
-              onChange={(e) => setKey(name, e.target.value)}
+              className="w-40 min-w-0 flex-1 rounded border border-line bg-surface px-2 py-0.5 font-mono text-[11px] text-ink"
+              value={e.key}
+              placeholder={e.clear ? 'cleared on save' : (cfg.providers?.[name] ? '● set — leave blank to keep' : 'api key')}
+              onChange={(ev) => setKey(name, { key: ev.target.value, clear: false })}
             />
+            <input
+              className="w-48 min-w-0 flex-1 rounded border border-line bg-surface px-2 py-0.5 font-mono text-[11px] text-ink"
+              value={e.base_url}
+              placeholder="base URL (https://…/v1)"
+              onChange={(ev) => setKey(name, { base_url: ev.target.value })}
+            />
+            <input
+              className="w-32 min-w-0 rounded border border-line bg-surface px-2 py-0.5 font-mono text-[11px] text-ink"
+              value={e.env_var}
+              placeholder="env var (optional)"
+              onChange={(ev) => setKey(name, { env_var: ev.target.value })}
+            />
+            {cfg.providers?.[name] && (
+              <button type="button" title={e.clear ? 'undo clear' : 'clear stored key on save'}
+                className="rounded border border-line px-1.5 py-0.5 text-[10px] text-neutral-400 hover:text-danger"
+                onClick={() => setKey(name, { clear: !e.clear, key: '' })}
+              >{e.clear ? 'undo' : 'clear'}</button>
+            )}
+            <button type="button" title="delete this provider"
+              className="rounded border border-line px-1.5 py-0.5 text-[10px] text-neutral-400 hover:text-danger"
+              onClick={() => setKey(name, { del: true })}
+            >remove</button>
             {verify && name in verify && (
               <span className={verify[name].ok ? 'text-success' : 'text-danger'}>
                 {verify[name].ok ? '✓ auth ok' : `✗ ${verify[name].status || ''} ${verify[name].detail || 'failed'}`.slice(0, 60)}
               </span>
             )}
-          </label>
+          </div>
         ))}
+        <div className="flex flex-wrap items-center gap-2 text-[11px]">
+          <span className="w-28 shrink-0 text-[10px] uppercase text-neutral-500">add</span>
+          <input
+            className="w-28 min-w-0 rounded border border-line bg-surface px-2 py-0.5 font-mono text-[11px] text-ink"
+            placeholder="name" value={newProv.name}
+            onChange={(e) => setNewProv({ ...newProv, name: e.target.value.replace(/[^A-Za-z0-9_-]/g, '') })}
+          />
+          <input
+            type="password"
+            className="w-40 min-w-0 flex-1 rounded border border-line bg-surface px-2 py-0.5 font-mono text-[11px] text-ink"
+            placeholder="api key" value={newProv.key}
+            onChange={(e) => setNewProv({ ...newProv, key: e.target.value })}
+          />
+          <input
+            className="w-48 min-w-0 flex-1 rounded border border-line bg-surface px-2 py-0.5 font-mono text-[11px] text-ink"
+            placeholder="base URL (https://…/v1)" value={newProv.base_url}
+            onChange={(e) => setNewProv({ ...newProv, base_url: e.target.value })}
+          />
+        </div>
         <button
           type="button"
           className="rounded border border-line px-2 py-0.5 text-[11px] text-neutral-400 hover:text-ink disabled:opacity-40"
