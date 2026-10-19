@@ -996,6 +996,124 @@ function Artifacts({ sessionId }) {
   )
 }
 
+// R50 #209: user-managed LLM configuration editor.
+// Field-level edits stay in a local draft; Save PUTs the whole lineup and
+// shows the server's validation error verbatim (it is the source of truth).
+function ModelsConfig({ data, setData }) {
+  const cfg = data.config
+  const [draft, setDraft] = useState(null)
+  const [msg, setMsg] = useState(null)
+
+  if (data.configError) {
+    return <div className="rounded border border-danger/40 bg-danger/10 p-3 text-xs text-danger">{data.configError}</div>
+  }
+  if (!cfg) {
+    return <div className="rounded border border-line bg-surface p-4 text-xs text-ink-muted">Loading model configuration…</div>
+  }
+
+  const model = draft ?? JSON.parse(JSON.stringify(cfg.models))
+  const set = (k, v) => setDraft({ ...model, [k]: v })
+
+  const save = async () => {
+    setMsg(null)
+    try {
+      const r = await call('/config/models', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ models: model }),
+      })
+      setData((d) => ({ ...d, config: r.effective }))
+      setDraft(null)
+      setMsg({ ok: true, text: 'Saved — applies from the next run.' })
+    } catch (err) {
+      setMsg({ ok: false, text: String(err instanceof Error ? err.message : err) })
+    }
+  }
+
+  const TextField = ({ label, k, placeholder }) => (
+    <label className="flex items-center gap-2 text-[11px]">
+      <span className="w-32 shrink-0 text-neutral-500">{label}</span>
+      <input
+        className="min-w-0 flex-1 rounded border border-line bg-surface px-2 py-0.5 font-mono text-[11px] text-ink"
+        value={model[k] ?? ''}
+        placeholder={placeholder || ''}
+        onChange={(e) => set(k, e.target.value || null)}
+      />
+    </label>
+  )
+  const NumField = ({ label, k }) => (
+    <label className="flex items-center gap-2 text-[11px]">
+      <span className="w-32 shrink-0 text-neutral-500">{label}</span>
+      <input
+        type="number"
+        className="min-w-0 flex-1 rounded border border-line bg-surface px-2 py-0.5 font-mono text-[11px] text-ink"
+        value={model[k] ?? ''}
+        onChange={(e) => set(k, e.target.value === '' ? null : Number(e.target.value))}
+      />
+    </label>
+  )
+
+  return (
+    <div className="flex h-full flex-col gap-3 overflow-auto p-1 text-ink">
+      <div className="text-[10px] text-neutral-500">
+        ~/.codingdude/config.toml — provider keys come from the environment and are never shown here.
+      </div>
+      <div className="space-y-1.5 rounded border border-line bg-surface p-3">
+        <div className="text-[10px] uppercase tracking-wide text-ink-muted">Model lineup (provider:model)</div>
+        <TextField label="main" k="main" />
+        <TextField label="subagent" k="subagent" />
+        <TextField label="fallback" k="fallback" />
+        <TextField label="fallback base url" k="fallback_base_url" placeholder="optional endpoint override" />
+        <TextField label="vision" k="vision" placeholder="e.g. zai:glm-5v (optional)" />
+        <label className="flex items-center gap-2 text-[11px]">
+          <span className="w-32 shrink-0 text-neutral-500">thinking</span>
+          <select
+            className="min-w-0 flex-1 rounded border border-line bg-surface px-1 py-0.5 font-mono text-[11px] text-ink"
+            value={model.thinking ?? ''}
+            onChange={(e) => set('thinking', e.target.value || null)}
+          >
+            <option value="">(provider default)</option>
+            <option value="off">off</option>
+            {(cfg.thinking_levels || []).map((lvl) => (
+              <option key={lvl} value={lvl}>{lvl}</option>
+            ))}
+          </select>
+        </label>
+        <NumField label="max tokens" k="max_tokens" />
+        <NumField label="context limit" k="context_limit" />
+        <NumField label="request limit" k="request_limit" />
+      </div>
+
+      <div className="flex items-center gap-3 rounded border border-line bg-surface p-3 text-[11px]">
+        <span className="text-[10px] uppercase tracking-wide text-ink-muted">provider keys</span>
+        {Object.entries(cfg.providers || {}).map(([name, present]) => (
+          <span key={name} className={present ? 'text-success' : 'text-neutral-600'}>
+            {present ? '●' : '○'} {name}
+          </span>
+        ))}
+      </div>
+
+      {msg && (
+        <div className={`rounded px-2 py-1 text-[11px] ${msg.ok ? 'bg-success/15 text-brand-300' : 'bg-danger/15 text-danger'}`}>
+          {msg.text}
+        </div>
+      )}
+      <div className="flex gap-2">
+        <button
+          className="rounded bg-brand-600 px-3 py-1 text-[11px] text-white hover:bg-brand-500 disabled:opacity-40"
+          disabled={!draft}
+          onClick={save}
+        >Save</button>
+        <button
+          className="rounded border border-line px-3 py-1 text-[11px] text-neutral-400 hover:text-ink disabled:opacity-40"
+          disabled={!draft}
+          onClick={() => { setDraft(null); setMsg(null) }}
+        >Revert</button>
+      </div>
+    </div>
+  )
+}
+
 function Planning({ workdir }) {
   const [data, setData] = useState(null)
   const [err, setErr] = useState('')
@@ -1133,7 +1251,7 @@ function Planning({ workdir }) {
 // prop (App polls it); it used to be a bare-identifier crash in this scope.
 function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, height, onResizeHeight, focusDiff = 0, activePath = '', onAsk }) {
   const [repoQuestion, setRepoQuestion] = useState('')
-  const tabs = ['Diff', 'Graph', 'Planning', 'Artifacts', 'Notes', 'Renders', 'Terminal', 'Output', 'Waterfall', 'Trace', 'Cost', 'Memory', 'MCP', 'Standards']
+  const tabs = ['Diff', 'Graph', 'Planning', 'Artifacts', 'Notes', 'Renders', 'Terminal', 'Output', 'Waterfall', 'Trace', 'Cost', 'Memory', 'MCP', 'Config', 'Standards']
   const [tab, setTab] = useState('Diff')
   const [data, setData] = useState({})
 
@@ -1143,6 +1261,18 @@ function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, heigh
   }, [focusDiff])
 
   useEffect(() => {
+    // R50: model config is session-independent — load it without a session.
+    if (tab === 'Config' && !sessionId) {
+      ;(async () => {
+        try {
+          const r = await call('/config/models')
+          setData((d) => ({ ...d, config: r, configError: undefined }))
+        } catch (err) {
+          setData((d) => ({ ...d, configError: String(err instanceof Error ? err.message : err) }))
+        }
+      })()
+      return
+    }
     if (!sessionId || tab === 'Standards' || tab === 'Terminal' || tab === 'Planning') return
     let stop = false
     async function poll() {
@@ -1181,6 +1311,7 @@ function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, heigh
           const tr = await call(`/sessions/${sessionId}/trace?limit=300`)
           setData((d) => ({ ...d, runs, runEvents: tr }))
         }
+        if (tab === 'Config') { const r = await call('/config/models'); setData((d) => ({ ...d, config: r, configError: undefined })) }
         if (tab === 'Memory') { const m = await call('/memory'); setData((d) => ({ ...d, memory: m })) }
         if (tab === 'MCP') { const m = await api.listMcp(sessionId); setData((d) => ({ ...d, mcp: m })) }
         if (tab === 'Trace') {
@@ -1542,6 +1673,8 @@ function DockPanel({ sessionId, refreshKey, diffBadge, workdir, processes, heigh
     )
   } else if (tab === 'Planning') {
     body = <Planning workdir={workdir} />
+  } else if (tab === 'Config') {
+    body = <ModelsConfig data={data} setData={setData} />
   } else if (tab === 'Artifacts') {
     body = <Artifacts sessionId={sessionId} />
   } else if (tab === 'Notes') {
