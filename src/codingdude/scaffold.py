@@ -42,6 +42,15 @@ Domain vocabulary and architecture notes for this project. Update as
 the codebase evolves — the agent reads this before every run.
 """
 
+_HANDOFF_TEMPLATE = """\
+# HANDOFF.md
+
+Continuity notes between agent sessions on this project. At each handoff,
+replace stale content with the current state: what shipped (commit), what
+is in progress, environment facts, and next steps. Keep it concise and
+free of personal data (no user paths, keys, or private hostnames).
+"""
+
 
 def _bundled_checklists() -> list[tuple[str, str]]:
     """(filename, content) for the distilled checklists shipped with the package."""
@@ -87,6 +96,7 @@ def ensure_project_scaffold(workdir: Path) -> dict:
     _want('reference/research', lambda p: p.mkdir(parents=True))
     _want('ROADMAP.md', lambda p: p.write_text(_ROADMAP_TEMPLATE, encoding='utf-8'))
     _want('CONTEXT.md', lambda p: p.write_text(_CONTEXT_TEMPLATE, encoding='utf-8'))
+    _want('HANDOFF.md', lambda p: p.write_text(_HANDOFF_TEMPLATE, encoding='utf-8'))
 
     for name, content in _bundled_checklists():
         _want(
