@@ -558,3 +558,58 @@ surfaces it.
   Never raw taskkill on the server PID, never touch `~/.codingdude`.
 - If a step breaks the suite and can't be fixed within the step: `git checkout -- <files>`,
   log it deferred, move on. Never leave `main` red.
+
+---
+
+## Handback from external reviewer #2 (2026-10-19, ZCode)
+
+Second external pass after your R49/R50 rounds. Your work since the last handback was solid:
+memory referential solutions, scope-aware dedup, the Settings Config tab, the models-save merge
+semantics (`4ce54cb`), and the pytest `norecursedirs` fix for `.scratch` — all noted and kept.
+One production incident happened in this window; it is fixed, and one guardrail was added.
+
+### The incident: every run 401'd ("token expired or incorrect" on glm-5.3)
+
+Your Settings save path (pre-`4ce54cb` replacement version) rewrote `config.toml` from a partial
+template. A masked/placeholder value (`"stored-key"`) was written over the real `zai` provider key,
+and `deepseek`'s key was lost in the same pass. Every run then died at the fallback model
+(`glm-5.3`) with a ZAI auth 401 before the agent could speak — the same deadlock class as the MCP
+incident: the failure kills the run before self-fix is possible.
+
+**What the external agent did:**
+
+- **`11c3963` — `save_models` refuses to write over an unparseable config.** The old code fell
+  back to `raw = {}` on a TOML parse error and then rewrote the whole file — models-only, every
+  other section (provider keys included) gone. It now raises `ValueError('refusing to overwrite…')`
+  and the file is left untouched.
+- **Restored both provider keys** from the pre-self-fix backup (`G:\backups\codingdude-pre-self-fix\data\config.toml`)
+  into the live `config.toml`; live auth against the ZAI coding-plan endpoint verified with
+  `glm-5.3` (HTTP 200). Everything else in your config (deepseek-v4-pro main, glm-5.3 fallback,
+  powershell shell, thinking=low, delegation budget) was left as-is.
+- **Two preservation tests** added (`tests/test_config.py`): a models save must preserve
+  `[providers]`/`[shell]`/`[delegation]`; a corrupt config blocks the save with the file unchanged.
+
+### Current state
+
+- `main` @ `11c3963`, pushed. **731 tests green**, ruff clean, mypy clean. Server restarted on
+  v0.4.0 (`4ce54cb` code + restored config). Working tree clean.
+
+### New item for your backlog (add to cdissues.md)
+
+- **Settings UI secret round-trip**: GET must mask provider keys with a **code-defined sentinel**
+  that `save_models`/PUT explicitly ignores (today the "don't echo secrets" property is enforced
+  nowhere, which is exactly how `"stored-key"` became the stored key). Also surface a
+  post-save auth smoke (a 1-token request per configured provider) so a clobbered key is caught
+  in the Settings tab, not at the next run.
+
+### Rules that still bind (unchanged)
+
+- One finding per step, test-first, commit per step with the finding id, verification line with
+  the exact command and observed output.
+- Frontend: `npm run lint` clean + `npm run build` before any UI commit (eslint jsx-no-undef gate).
+- Restart only via the gated `codingdude restart`; never raw taskkill; never touch `~/.codingdude`
+  — with one explicit exception: `src/codingdude/config.py`-driven writes to
+  `~/.codingdude/config.toml` through the Settings API are fine (that is the feature you were
+  building), but they must pass the preservation rules above.
+- If a step breaks the suite and can't be fixed within the step: `git checkout -- <files>`,
+  log it deferred, move on. Never leave `main` red.
