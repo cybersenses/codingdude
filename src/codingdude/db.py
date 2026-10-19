@@ -258,6 +258,7 @@ class Database:
             # R49: solutions memory — existing rows are plain facts.
             self._conn.execute(
                 "ALTER TABLE memory ADD COLUMN kind TEXT NOT NULL DEFAULT 'fact'"
+            " CHECK (kind IN ('fact', 'solution'))"
             )
         self._commit()
 

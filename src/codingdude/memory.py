@@ -1,8 +1,10 @@
-"""Cross-session Memory: a durable fact bank scoped globally or per Workdir.
+"""Cross-session Memory: durable facts plus referential solutions (R49),
+scoped globally or per Workdir.
 
-No hidden state: entries live in the `memory` table, are keyword+recency
-retrieved at Session start, and are inspectable/deletable (UI panel reads
-list/delete directly).
+No hidden state: entries live in the `memory` table with a `kind` of 'fact'
+or 'solution'; facts are keyword+recency retrieved at Session start,
+solutions are force-recalled (top 25) and strictly look-upable. Entries are
+inspectable/deletable (UI panel reads list/delete directly).
 """
 
 import re
@@ -19,7 +21,7 @@ def _tokens(text: str) -> frozenset[str]:
 
 
 def _similar(a: frozenset[str], b: frozenset[str]) -> bool:
-    """Near-duplicate detection: paraphrases of the same fact share most tokens."""
+    """Near-duplicate detection: paraphrases share most tokens."""
     if not a or not b:
         return False
     if a == b:
@@ -32,14 +34,18 @@ class MemoryStore:
     def __init__(self, db):
         self._db = db
 
-    def duplicate_ids(self, content: str, kind: str = 'fact') -> list[int]:
+    def duplicate_ids(self, content: str, kind: str = 'fact',
+                      workdir: str | None = None) -> list[int]:
         """Ids of existing entries of `kind` that duplicate `content`
-        (paraphrase-tolerant). For solutions only the problem section is
-        compared — the Solution half is expected to differ (R49)."""
+        (paraphrase-tolerant). Scope-aware: only global entries or entries
+        in `workdir` can be duplicates. For solutions only the problem
+        section is compared — the Solution half is expected to differ (R49)."""
         tokens = _tokens(content)
         out = []
         for r in self.all_entries():
             if r['kind'] != kind:
+                continue
+            if r['scope'] != 'global' and r['workdir'] != workdir:
                 continue
             text = r['content']
             if kind == 'solution':
@@ -50,8 +56,12 @@ class MemoryStore:
                 out.append(r['id'])
         return out
 
+    _KINDS = ('fact', 'solution')
+
     def add(self, content: str, scope: str = 'global', workdir: str | None = None,
             kind: str = 'fact') -> int:
+        if kind not in self._KINDS:
+            raise ValueError(f"kind must be one of {self._KINDS}, got {kind!r}")
         cur = self._db._conn.execute(
             'INSERT INTO memory (scope, workdir, content, kind, created_at)'
             ' VALUES (?, ?, ?, ?, ?)',
@@ -79,10 +89,13 @@ class MemoryStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
-    def delete_substring(self, substring: str) -> int:
-        cur = self._db._conn.execute(
-            'DELETE FROM memory WHERE content LIKE ?', (f'%{substring}%',)
-        )
+    def delete_substring(self, substring: str, kind: str | None = None) -> int:
+        sql = 'DELETE FROM memory WHERE content LIKE ?'
+        args: list = [f'%{substring}%']
+        if kind is not None:
+            sql += ' AND kind = ?'
+            args.append(kind)
+        cur = self._db._conn.execute(sql, args)
         self._db._conn.commit()
         return cur.rowcount
 
@@ -114,6 +127,10 @@ class MemoryStore:
         if kind is not None:
             rows = [r for r in rows if r['kind'] == kind]
         terms = [t.lower() for t in query.split() if len(t) > 2]
+        if not terms and query.strip():
+            # All tokens were short (e.g. 'uv pip') — match the raw query so
+            # strict lookups don't falsely report no matches (R49 review).
+            terms = [query.strip().lower()]
 
         def score(row) -> tuple[int, str]:
             content = row['content'].lower()
@@ -163,8 +180,10 @@ def build_memory_toolset(store: MemoryStore, workdir: str) -> FunctionToolset:
         """Bank a solved problem (R49): paraphrase-duplicates update in place."""
         if scope not in ('global', 'workdir'):
             return "scope must be 'global' or 'workdir'"
+        if not problem.strip() or not solution.strip():
+            return 'both problem and solution are required'
         content = f'Problem: {problem.strip()}\nSolution: {solution.strip()}'
-        dupes = store.duplicate_ids(problem, kind='solution')
+        dupes = store.duplicate_ids(problem, kind='solution', workdir=workdir)
         if dupes:
             store.update_content(dupes[0], content)
             return f'updated solution #{dupes[0]}: {content}'

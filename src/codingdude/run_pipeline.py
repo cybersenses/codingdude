@@ -165,9 +165,8 @@ class PromptAssembler:
         # R49 referential solutions: always injected (forced recall), bounded;
         # excluded from the RAG Memory block below so nothing double-injects.
         solutions = store.solutions(str(workdir))
-        solution_ids = {s['id'] for s in solutions}
         if solutions:
-            lines = '\n'.join(f'- {s["content"]}' for s in solutions)
+            lines = '\n'.join(f'- {s["content"][:500]}' for s in solutions)[:6000]
             instructions += (
                 '\n\n## Referential solutions (solved problems; consult these '
                 'before re-diagnosing a known issue, and record_solution when '
@@ -182,8 +181,9 @@ class PromptAssembler:
             ]
         else:
             relevant = [
-                e['content'] for e in store.retrieve(str(workdir), query=prompt)
-                if e['id'] not in solution_ids
+                e['content'] for e in store.retrieve(
+                    str(workdir), query=prompt, kind='fact'
+                )
             ]
         if relevant:
             lines = '\n'.join(f'- {c}' for c in relevant)
