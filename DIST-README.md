@@ -40,7 +40,7 @@ folder in this distribution is the pristine template.
 | `reference/research/` | curated research documents |
 | `docs/` | project docs |
 | `.codingdude-seed/` | template for a fresh `~\.codingdude` home |
-| `tools/github-mcp/` | vendored GitHub MCP server binary (MIT; copied to `%USERPROFILE%	ools\github-mcp` by setup) |
+| `tools/github-mcp/` | vendored GitHub MCP server binary (MIT; copied to `%USERPROFILE%\tools\github-mcp` by setup) |
 | `setup-codingdude.bat` | one-time installer |
 | `start-codingdude.bat` | launcher |
 
@@ -63,7 +63,7 @@ or just: `gates.bat` (runs all three; pass pytest paths to scope it).
 
 - **codegraph** - `npm i -g @colbymchenry/codegraph` (needs Node)
 - **github-mcp-server** - vendored binary in `tools/github-mcp/`, copied to
-  `%USERPROFILE%	ools\github-mcp\` (skipped if already present)
+  `%USERPROFILE%\tools\github-mcp\` (skipped if already present)
 - **zai-vision** - runs via `npx -y @z_ai/mcp-server` at boot (needs Node and
   `ZAI_API_KEY` in the environment)
 - **gh** - GitHub CLI, installed via winget if missing

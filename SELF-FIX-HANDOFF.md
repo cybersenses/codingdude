@@ -38,7 +38,7 @@ Fix the issues catalogued in `cdissues.md` (1 Critical, 9 High, 14 Medium,
 
 ## Environment facts
 
-- Repo: `cybersenses/codingdude`, branch `main`.
+- Repo: `<repository>`, branch `main`.
 - Toolchain: `uv run ruff check .`, `uv run mypy`, `uv run pytest -q`.
 - `gh` CLI is **not** installed; GitHub ops use MCP tools + plain `git`.
 - Baseline (before any fix): `main` @ `b049b29`; gate = ruff clean, mypy clean,
@@ -582,7 +582,7 @@ incident: the failure kills the run before self-fix is possible.
   back to `raw = {}` on a TOML parse error and then rewrote the whole file — models-only, every
   other section (provider keys included) gone. It now raises `ValueError('refusing to overwrite…')`
   and the file is left untouched.
-- **Restored both provider keys** from the pre-self-fix backup (`G:\backups\codingdude-pre-self-fix\data\config.toml`)
+- **Restored both provider keys** from the pre-self-fix backup (`the pre-self-fix config backup`)
   into the live `config.toml`; live auth against the ZAI coding-plan endpoint verified with
   `glm-5.3` (HTTP 200). Everything else in your config (deepseek-v4-pro main, glm-5.3 fallback,
   powershell shell, thinking=low, delegation budget) was left as-is.

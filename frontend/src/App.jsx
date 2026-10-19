@@ -412,50 +412,53 @@ function AskUserCard({ ask, runId }) {
 function PendingArtifactCard({ items, onResponded }) {
   // #189: choice cards / spec blocks surface here in the chat so the user
   // actually sees them mid-run (the Artifacts tab alone hid them).
-  const [draft, setDraft] = useState('')
-  const [err, setErr] = useState('')
+  // Every pending card is answerable — one shared header, one body each.
+  const [drafts, setDrafts] = useState({})
+  const [errs, setErrs] = useState({})
   if (!items.length) return null
-  const respond = (body) => {
-    const item = items[0]
+  const respond = (item, body) => {
     call(`/artifacts/${item.id}/respond`, { method: 'POST', body: JSON.stringify(body) })
       .then(onResponded)
-      .catch((e) => setErr(String(e)))
+      .catch((e) => setErrs((m) => ({ ...m, [item.id]: String(e) })))
   }
-  const item = items[0]
   return (
     <div className="my-2 overflow-hidden rounded-lg border border-brand-400/50 bg-surface">
       <div className="border-b border-line bg-brand-400/10 px-3 py-2 text-xs font-semibold text-brand-300">
         The agent is waiting on you — {items.length} pending card{items.length > 1 ? 's' : ''}
-        <span className="ml-2 font-mono text-[9px] font-normal uppercase text-ink-muted">{item.kind}</span>
       </div>
-      <div className="space-y-2 px-3 py-2">
-        <div className="text-xs text-ink">{item.title}</div>
-        {item.kind === 'choice' ? (
-          <div className="flex flex-wrap gap-1">
-            {(item.payload.options || []).map((opt) => (
+      {items.map((item) => (
+        <div key={item.id} className="space-y-2 border-b border-line px-3 py-2 last:border-b-0">
+          <div className="flex items-center gap-2 text-xs text-ink">
+            {item.title}
+            <span className="font-mono text-[9px] font-normal uppercase text-ink-muted">{item.kind}</span>
+          </div>
+          {item.kind === 'choice' ? (
+            <div className="flex flex-wrap gap-1">
+              {(item.payload.options || []).map((opt) => (
+                <button
+                  key={opt}
+                  className="rounded bg-neutral-800 px-2 py-0.5 text-[10px] text-neutral-200 hover:bg-brand-700 hover:text-brand-fg"
+                  onClick={() => respond(item, { pick: opt })}
+                >{opt}</button>
+              ))}
+            </div>
+          ) : (
+            <div>
+              <textarea
+                className="h-24 w-full rounded bg-neutral-950 p-1 font-mono text-[10px] text-neutral-300"
+                value={drafts[item.id] ?? ''}
+                placeholder={(item.payload.markdown || '')}
+                onChange={(e) => setDrafts((d) => ({ ...d, [item.id]: e.target.value }))}
+              />
               <button
-                key={opt}
-                className="rounded bg-neutral-800 px-2 py-0.5 text-[10px] text-neutral-200 hover:bg-brand-700 hover:text-brand-fg"
-                onClick={() => respond({ pick: opt })}
-              >{opt}</button>
-            ))}
-          </div>
-        ) : (
-          <div>
-            <textarea
-              className="h-24 w-full rounded bg-neutral-950 p-1 font-mono text-[10px] text-neutral-300"
-              value={draft}
-              placeholder={(item.payload.markdown || '')}
-              onChange={(e) => setDraft(e.target.value)}
-            />
-            <button
-              className="mt-1 rounded bg-brand px-2 py-0.5 text-[10px] text-brand-fg"
-              onClick={() => respond({ content: draft || item.payload.markdown || '' })}
-            >save</button>
-          </div>
-        )}
-        {err && <div className="text-[10px] text-danger">{err}</div>}
-      </div>
+                className="mt-1 rounded bg-brand px-2 py-0.5 text-[10px] text-brand-fg"
+                onClick={() => respond(item, { content: drafts[item.id] || item.payload.markdown || '' })}
+              >save</button>
+            </div>
+          )}
+          {errs[item.id] && <div className="text-[10px] text-danger">{errs[item.id]}</div>}
+        </div>
+      ))}
     </div>
   )
 }

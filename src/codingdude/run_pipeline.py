@@ -209,7 +209,7 @@ class PromptAssembler:
         from .onboarding import onboarding_block, onboarding_needed
 
         if onboarding_needed(store, workdir):
-            instructions += '\n\n' + onboarding_block()
+            instructions += '\n\n' + onboarding_block(workdir)
         return instructions
 
     def model_settings(

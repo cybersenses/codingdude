@@ -15,8 +15,8 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 // #189: pure seam — which artifacts still need the user's attention?
 // Choice cards and spec blocks are actionable (pick / edit); html, qa and
-// decision artifacts are passive. Newest first, capped so a chatty run
-// cannot flood the chat column.
+// decision artifacts are passive. Server order (newest first), capped so a
+// chatty run cannot flood the chat column.
 export interface Artifact {
   id: string
   kind: string
