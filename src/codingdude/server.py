@@ -1498,6 +1498,28 @@ def create_app(
             },
         }
 
+    # ---- user-managed LLM configuration (R50, #208) ----
+
+    @app.get('/config/models')
+    def get_config_models(_: None = Depends(authorize)) -> dict:
+        """Full lineup + provider key presence; secret values are never echoed."""
+        from .config import load_config, models_payload
+
+        return models_payload(load_config(home))
+
+    class ConfigModelsIn(BaseModel):
+        models: dict
+
+    @app.put('/config/models')
+    def put_config_models(body: ConfigModelsIn, _: None = Depends(authorize)) -> dict:
+        from .config import load_config, models_payload, save_models
+
+        try:
+            saved = save_models(home, body.models)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {'saved': saved, 'effective': models_payload(load_config(home))}
+
     class ExecIn(BaseModel):
         command: str
 
