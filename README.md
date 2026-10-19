@@ -40,7 +40,30 @@ export ZAI_API_KEY=...        # failover model
 | `models.fallback_base_url` | *(unset)* — set to `https://api.z.ai/api/coding/paas/v4` for GLM coding-plan keys |
 | `shell.default` | `bash` (Git Bash) or `powershell` |
 
-API keys come from the environment: `DEEPSEEK_API_KEY`, `ZAI_API_KEY`.
+API keys come from the environment (`DEEPSEEK_API_KEY`, `ZAI_API_KEY`) or from
+config.toml (env wins).
+
+### Custom providers (#212)
+
+Any OpenAI-compatible provider can be added — define a table and bind models
+with `name:model`:
+
+```toml
+[providers.openrouter]
+api_key = "…"
+base_url = "https://openrouter.ai/api/v1"
+# env_var = "OPENROUTER_API_KEY"   # optional; default <NAME>_API_KEY
+
+[models]
+main = "openrouter:anthropic/claude-sonnet-4"
+```
+
+A provider with a `base_url` routes every `name:model` binding to that
+endpoint; without one, the built-in names (`zai`, `deepseek`, `openai`,
+`anthropic`, `google`, `groq`, `mistral`, …) resolve via pydantic-ai. The
+legacy shorthand (`[providers] zai = "key"`) still works. Providers are
+managed in the Config tab (add/remove/edit + key test); the run composer's
+model selector accepts any configured provider's models.
 
 The same settings are editable in the UI's **Config** tab (`GET`/`PUT /config/models`).
 The PUT is a **merge**, not a replacement: send only the fields you are changing;

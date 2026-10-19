@@ -27,8 +27,9 @@ def test_get_returns_lineup_and_provider_presence(tmp_path, monkeypatch):
     assert body["models"]["main"]  # defaults present
     assert body["models"]["request_limit"] >= 1
     assert body["thinking_levels"] == ["minimal", "low", "medium", "high", "xhigh"]
-    # providers: SECRET_MASK sentinel or None only - never values
-    assert set(body["providers"]) == {"deepseek", "zai", "github"}
+    # providers: SECRET_MASK sentinel or None only - never values; only
+    # configured providers appear (#212); built-in trio stays suggested
+    assert set(body["provider_prefixes"]) >= {"deepseek", "zai", "github"}
     assert all(v in (None, "__codingdude_key_set__") for v in body["providers"].values())
 
 
