@@ -22,6 +22,7 @@ must never block a run.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -31,6 +32,41 @@ from pathlib import Path
 _FALLBACK_CMD = (
     Path.home() / 'AppData' / 'Local' / 'codegraph' / 'current' / 'bin' / 'codegraph.CMD'
 )
+
+
+_SKIP_DIRS = {
+    '.git', '.venv', 'node_modules', '__pycache__', '.mypy_cache',
+    '.pytest_cache', '.codegraph', '.codingdude', 'dist',
+}
+
+
+def index_is_stale(workdir: Path) -> bool:
+    """#203: is the codegraph index older than the newest source file?
+
+    A wedged/long-lived daemon keeps serving whatever index it booted with;
+    if any project source file is newer than the newest index file, the
+    graph is stale and `codegraph init` should re-run before the agent
+    navigates with it. Cheap directory scan, no subprocess.
+    """
+    workdir = Path(workdir)
+    index_dir = workdir / '.codegraph'
+    if not index_dir.exists() or not any(index_dir.iterdir()):
+        return False  # missing/empty is boot_codegraph's problem, not staleness
+    try:
+        index_newest = max(f.stat().st_mtime for f in index_dir.rglob('*') if f.is_file())
+    except OSError:
+        return True  # unreadable index — assume stale so boot re-inits
+    for dirpath, dirnames, filenames in os.walk(workdir):
+        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
+        for name in filenames:
+            if not name.endswith(('.py', '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.go', '.rs', '.java', '.rb', '.php', '.cs', '.c', '.cpp', '.h')):
+                continue
+            try:
+                if os.stat(os.path.join(dirpath, name)).st_mtime > index_newest:
+                    return True
+            except OSError:
+                continue
+    return False
 
 
 def find_codegraph_cli() -> str | None:
@@ -84,6 +120,13 @@ def boot_codegraph(
     instead of leaving it to blind-retry broken tools (#33).
     """
     if _has_healthy_index(workdir):
+        # #203: a present-but-stale index (sources newer than the index)
+        # self-heals here — the daemon would otherwise serve a stale graph.
+        if index_is_stale(workdir):
+            ok, detail = _run_codegraph_init(workdir, runner, cli_path, timeout)
+            if ok:
+                return {'status': 'ok', 'reason': 'index was stale; re-initialized'}
+            return {'status': 'failed', 'reason': f'stale index refresh failed: {detail}'}
         return {'status': 'skipped', 'reason': None}
     ok, detail = _run_codegraph_init(workdir, runner, cli_path, timeout)
     if ok:
