@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS memory (
     scope TEXT NOT NULL CHECK (scope IN ('global', 'workdir')),
     workdir TEXT,
     content TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'fact' CHECK (kind IN ('fact', 'solution')),
     created_at TEXT NOT NULL,
     last_used_at TEXT
 );
@@ -250,6 +251,14 @@ class Database:
         }
         if ticket_cols and 'roadmap_id' not in ticket_cols:
             self._conn.execute('ALTER TABLE tickets ADD COLUMN roadmap_id TEXT')
+        memory_cols = {
+            r['name'] for r in self._conn.execute('PRAGMA table_info(memory)')
+        }
+        if memory_cols and 'kind' not in memory_cols:
+            # R49: solutions memory — existing rows are plain facts.
+            self._conn.execute(
+                "ALTER TABLE memory ADD COLUMN kind TEXT NOT NULL DEFAULT 'fact'"
+            )
         self._commit()
 
     def _commit(self) -> None:
