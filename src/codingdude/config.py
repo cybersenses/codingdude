@@ -194,8 +194,15 @@ def save_models(home: Path, payload: dict) -> dict:
     config_path = home / 'config.toml'
     try:
         raw = tomllib.loads(config_path.read_text(encoding='utf-8'))
-    except (tomllib.TOMLDecodeError, OSError):
+    except FileNotFoundError:
         raw = {}
+    except tomllib.TOMLDecodeError as exc:
+        # Writing from an empty dict here once replaced the user's ENTIRE
+        # config — provider API keys included — with a models-only file.
+        raise ValueError(
+            f'existing config.toml is not valid TOML ({exc}); '
+            'refusing to overwrite it — fix or remove the file first'
+        ) from exc
 
     patch = dict(payload or {})
     unknown = set(patch) - set(ModelLineupIn.model_fields)
