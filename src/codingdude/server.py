@@ -1487,7 +1487,7 @@ def create_app(
         """The configured model lineup, for the UI's model selector."""
         from .config import KNOWN_PROVIDERS, load_config
 
-        cfg = load_config()
+        cfg = load_config(home)
         return {
             'default': 'main',
             # #212: configured custom providers are valid runtime choices too

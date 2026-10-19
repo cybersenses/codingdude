@@ -196,17 +196,12 @@ async def _resolve_model(
                 yield gated_response(messages).parts[0].content
 
         return FunctionModel(gated, stream_function=gated_stream, model_name='test-gated')
-    if name.startswith('zai:') and base_url:
+    if providers or base_url:
+        # #212: route through the engine's single resolution seam so the
+        # worker, CLI, and engine can never disagree on provider routing.
         from codingdude.engine import _model_from_name
 
         return _model_from_name(name, base_url, providers)
-    if providers:
-        prefix = name.split(':', 1)[0]
-        d = providers.get(prefix)
-        if d is not None and getattr(d, 'base_url', None):
-            from codingdude.engine import _model_from_name
-
-            return _model_from_name(name, None, providers)
     from pydantic_ai.models import infer_model
 
     return infer_model(name)
@@ -375,7 +370,9 @@ async def run(args) -> int:
         engine.extraction_model = await _resolve_model(
             config.models.subagent, providers=config.providers)
     except Exception:  # noqa: BLE001 — extraction is best-effort
-        pass
+        logging.getLogger('codingdude.worker').warning(
+            'extraction model unavailable; memory extraction disabled',
+            exc_info=True)
     model = await _resolve_model(
         args.model, config.models.fallback_base_url, config.providers)
     vision_model = None

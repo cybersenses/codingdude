@@ -28,6 +28,7 @@ export interface UsageTotals {
 export interface ModelsInfo {
   default: string
   models: Record<string, string | null>
+  provider_prefixes?: string[]
 }
 
 export interface Project {
