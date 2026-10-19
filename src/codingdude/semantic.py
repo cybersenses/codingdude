@@ -53,7 +53,7 @@ class FakeEmbedder:
         text = text.lower()
         for i in range(len(text) - 2):
             gram = text[i:i + 3]
-            h = int(hashlib.md5(gram.encode()).hexdigest(), 16)
+            h = int(hashlib.md5(gram.encode(), usedforsecurity=False).hexdigest(), 16)
             vec[h % self.dimension] += 1.0
         norm = math.sqrt(sum(v * v for v in vec)) or 1.0
         return [v / norm for v in vec]
