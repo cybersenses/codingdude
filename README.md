@@ -81,7 +81,7 @@ provider-key *presence* only (never values), and an advisory `warnings` list.
 CodingDude is free software: you can redistribute it and/or modify it under
 the terms of the [GNU Affero General Public License v3.0 or later](LICENSE).
 If you run a modified version as a network service, you must offer its
-source code to its users (AGPL §13). Private, internal use and modification
+source code to its users (AGPL Â§13). Private, internal use and modification
 require no publication.
 
 ### Your code is yours
@@ -100,7 +100,7 @@ replace our trademarks (the Firefox/Iceweasel rule).
 
 ### Commercial licensing
 
-AGPL permits commercial use, including reselling hosted instances — provided
+AGPL permits commercial use, including reselling hosted instances â€” provided
 you comply with its terms (notably network source disclosure). If AGPL terms
 don't fit your use case (embedding in a closed product, redistribution
 without source obligations), a commercial licence with an AGPL exemption is

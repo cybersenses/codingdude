@@ -5,7 +5,7 @@ description = "CodingDude — a personal coding agent built with pydantic-ai"
 readme = "README.md"
 license = "AGPL-3.0-or-later"
 license-files = ["LICENSE"]
-authors = [{ name = "Cyberflex", homepage = "https://www.cyberflex.io" }]
+authors = [{ name = "Cyberflex (https://www.cyberflex.io)" }]
 classifiers = [
     "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
 ]

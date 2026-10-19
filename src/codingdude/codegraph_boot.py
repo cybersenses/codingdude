@@ -26,7 +26,11 @@ import shutil
 import subprocess
 from pathlib import Path
 
-_FALLBACK_CMD = Path(r'C:\Users\norma\AppData\Local\codegraph\current\bin\codegraph.CMD')
+# LocalAppData is the standard install location on Windows; resolve it
+# from the environment so no user-specific path is baked into the source.
+_FALLBACK_CMD = (
+    Path.home() / 'AppData' / 'Local' / 'codegraph' / 'current' / 'bin' / 'codegraph.CMD'
+)
 
 
 def find_codegraph_cli() -> str | None:
