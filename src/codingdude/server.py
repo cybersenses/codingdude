@@ -1508,17 +1508,30 @@ def create_app(
         return models_payload(load_config(home))
 
     class ConfigModelsIn(BaseModel):
-        models: dict
+        models: dict | None = None
+        providers: dict | None = None
 
     @app.put('/config/models')
     def put_config_models(body: ConfigModelsIn, _: None = Depends(authorize)) -> dict:
-        from .config import load_config, models_payload, save_models
+        from .config import load_config, models_payload, save_models, save_provider_keys
 
+        saved: dict = {}
         try:
-            saved = save_models(home, body.models)
+            if body.providers is not None:
+                saved['providers'] = save_provider_keys(home, body.providers)
+            if body.models is not None:
+                saved.update(save_models(home, body.models))
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {'saved': saved, 'effective': models_payload(load_config(home))}
+
+    @app.get('/config/verify')
+    def get_config_verify(_: None = Depends(authorize)) -> dict:
+        """Auth smoke for every configured provider (catches a clobbered
+        key here instead of at the next run). Never returns key values."""
+        from .config import load_config, verify_provider_keys
+
+        return {'providers': verify_provider_keys(load_config(home))}
 
     class ExecIn(BaseModel):
         command: str
