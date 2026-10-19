@@ -142,3 +142,90 @@ async def test_run_injects_hint_into_instructions_on_failure(engine, workdir, mo
     outcome = await engine.run(prompt='hint check', workdir=workdir, model=helpers.scripted(fn))
     assert outcome.output == 'ok'
     assert captured['seen'] is True
+
+
+# --- #203: stale-index self-heal --------------------------------------------
+
+def test_index_is_stale_when_source_newer(tmp_path):
+    import os
+    import time
+
+    from codingdude.codegraph_boot import boot_codegraph, index_is_stale
+
+    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".codegraph" / "index.bin").write_bytes(b"x")
+    (tmp_path / "app.py").write_text("x = 1", encoding="utf-8")
+    now = time.time()
+    os.utime(tmp_path / ".codegraph" / "index.bin", (now - 100, now - 100))
+    os.utime(tmp_path / "app.py", (now, now))
+    assert index_is_stale(tmp_path) is True
+
+
+def test_index_fresh_when_no_newer_sources(tmp_path):
+    import os
+    import time
+
+    from codingdude.codegraph_boot import index_is_stale
+
+    (tmp_path / ".codegraph").mkdir()
+    idx = tmp_path / ".codegraph" / "index.bin"
+    idx.write_bytes(b"x")
+    (tmp_path / "app.py").write_text("x = 1", encoding="utf-8")
+    now = time.time()
+    os.utime(tmp_path / "app.py", (now - 100, now - 100))
+    os.utime(idx, (now, now))
+    assert index_is_stale(tmp_path) is False
+
+
+def test_index_staleness_ignores_skipped_dirs(tmp_path):
+    import os
+    import time
+
+    from codingdude.codegraph_boot import index_is_stale
+
+    (tmp_path / ".codegraph").mkdir()
+    idx = tmp_path / ".codegraph" / "index.bin"
+    idx.write_bytes(b"x")
+    junk = tmp_path / "node_modules" / "dep.js"
+    junk.parent.mkdir()
+    junk.write_text("x", encoding="utf-8")
+    now = time.time()
+    os.utime(idx, (now - 100, now - 100))
+    os.utime(junk, (now, now))
+    assert index_is_stale(tmp_path) is False
+
+
+def test_boot_refreshes_stale_index(tmp_path):
+    import os
+    import time
+
+    from codingdude.codegraph_boot import boot_codegraph
+
+    (tmp_path / ".codegraph").mkdir()
+    idx = tmp_path / ".codegraph" / "index.bin"
+    idx.write_bytes(b"x")
+    (tmp_path / "app.py").write_text("x = 1", encoding="utf-8")
+    now = time.time()
+    os.utime(idx, (now - 100, now - 100))
+    os.utime(tmp_path / "app.py", (now, now))
+    status = boot_codegraph(tmp_path, runner=_runner(), cli_path="/fake")
+    assert status["status"] == "ok"
+    assert "stale" in status["reason"]
+
+
+def test_boot_skips_when_index_fresh(tmp_path):
+    import os
+    import time
+
+    from codingdude.codegraph_boot import boot_codegraph
+
+    (tmp_path / ".codegraph").mkdir()
+    idx = tmp_path / ".codegraph" / "index.bin"
+    idx.write_bytes(b"x")
+    (tmp_path / "app.py").write_text("x = 1", encoding="utf-8")
+    now = time.time()
+    os.utime(tmp_path / "app.py", (now - 100, now - 100))
+    os.utime(idx, (now, now))
+    status = boot_codegraph(tmp_path, runner=_runner(), cli_path="/fake")
+    assert status == {"status": "skipped", "reason": None}
+
