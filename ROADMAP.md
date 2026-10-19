@@ -791,7 +791,7 @@ Control-flow graph analysis exposed both ways: agent tool (dead-code detection d
 Security + verification gates from the local-agent tooling research. Adopt: T1 security gate on edits (Bandit + gitleaks), T2 mutation testing into trustreport (mutmut), T3 conditional Semgrep custom rules, T4 parked perf smoke (cProfile tool). Rejected: Zoekt/SCIP, Joern/CodeQL CPG, symbolic execution, Docker sandbox (per existing design decision), local LLM.
 ## R48 — Project onboarding: convention discovery on first run
 
-**Status**: done
+**Status:** done
 
 An agent taking over a project (from another agent or fresh checkout) had no
 enforced step to discover where work is tracked, so work went unlogged.
