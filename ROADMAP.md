@@ -810,3 +810,8 @@ Referential memory: structured problem→solution records (kind='solution' in th
 **Status:** in_progress
 
 Expose model/provider configuration as a managed, validated resource: GET/PUT /config/models, GET /config/providers (key presence only, never values), validated atomic writes with pre-save model construction, plus a frontend Settings page.
+
+## R51 — R51 — Open-source release: AGPL-3.0 + dual licence + CLA + trademark
+**Status:** open
+
+Open-source release under AGPL-3.0 with dual commercial licensing, trademark protection, CLA, and generated-code-ownership terms. Plan id 40.
