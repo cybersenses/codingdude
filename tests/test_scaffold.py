@@ -1,4 +1,4 @@
-# CodingDude — a personal coding agent.
+﻿# CodingDude — a personal coding agent.
 # Copyright (C) 2025 Cyberflex (https://www.cyberflex.io)
 #
 # This program is free software: you can redistribute it and/or modify
@@ -28,9 +28,10 @@ def test_creates_missing_pieces_in_empty_workdir(tmp_path: Path) -> None:
     assert (tmp_path / 'reference' / 'research').is_dir()
     assert (tmp_path / 'ROADMAP.md').exists()
     assert (tmp_path / 'CONTEXT.md').exists()
+    assert (tmp_path / 'HANDOFF.md').exists()
     checklist_creates = [c for c in out['created'] if c.startswith('reference/checklists/')]
     assert set(out['created']) - set(checklist_creates) == {
-        'reference', 'reference/research', 'ROADMAP.md', 'CONTEXT.md'}
+        'reference', 'reference/research', 'ROADMAP.md', 'CONTEXT.md', 'HANDOFF.md'}
     assert out['created']  # something happened
 
 
@@ -39,6 +40,7 @@ def test_idempotent_when_everything_exists(tmp_path: Path) -> None:
     (tmp_path / 'reference' / 'research').mkdir()
     (tmp_path / 'ROADMAP.md').write_text('# Roadmap\n\n## R1 — Existing\n', encoding='utf-8')
     (tmp_path / 'CONTEXT.md').write_text('# Context\n', encoding='utf-8')
+    (tmp_path / 'HANDOFF.md').write_text('# Handoff\n', encoding='utf-8')
     out = ensure_project_scaffold(tmp_path)
     # base pieces skipped; only checklists may be seeded
     assert [c for c in out['created'] if not c.startswith('reference/checklists/')] == []
@@ -49,7 +51,7 @@ def test_creates_only_the_missing_pieces(tmp_path: Path) -> None:
     (tmp_path / 'CONTEXT.md').write_text('# Context\n', encoding='utf-8')
     out = ensure_project_scaffold(tmp_path)
     base = [c for c in out['created'] if not c.startswith('reference/checklists/')]
-    assert set(base) == {'reference', 'reference/research', 'ROADMAP.md'}
+    assert set(base) == {'reference', 'reference/research', 'ROADMAP.md', 'HANDOFF.md'}
     assert (tmp_path / 'CONTEXT.md').read_text(encoding='utf-8') == '# Context\n'
     assert (tmp_path / 'reference' / 'checklists' / 'qa-testing.md').exists()  # checklists still seeded
 
