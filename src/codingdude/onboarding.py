@@ -27,11 +27,10 @@ Best-effort by design: onboarding nudges, it never blocks a run.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import typing
+from pathlib import Path
 
-if TYPE_CHECKING:
-    from pathlib import Path
-
+if typing.TYPE_CHECKING:
     from .memory import MemoryStore
 
 MARKER = 'Project conventions:'
@@ -44,7 +43,8 @@ requested work:
 1. Discover the project's conventions: where work is tracked (GitHub
    Issues via `gh`, ROADMAP.md, docs/agents, other), the test/lint/
    type-check commands, and the key process docs (CLAUDE.md, AGENT.md,
-   docs/adr).
+   docs/adr). Run the `detect_conventions` seam for a marker-file
+   first pass (runner, test command, line endings) and verify it.
 2. Confirm your findings with the user via ask_user before relying on them.
 3. Bank the record durably: call remember() with one entry starting
    exactly 'Project conventions: ' (scope 'workdir') covering tracker,
@@ -52,6 +52,92 @@ requested work:
 Until the record exists, open a tracked item in the declared surface
 before starting non-trivial work in this project.
 """
+
+
+_SUFFIXES = {
+    '.py': 'python', '.ts': 'typescript', '.tsx': 'typescript', '.js': 'javascript',
+    '.jsx': 'javascript', '.mjs': 'javascript', '.go': 'go', '.rs': 'rust',
+    '.java': 'java', '.cs': 'csharp', '.php': 'php', '.rb': 'ruby',
+}
+_SKIP_DIRS = {'.git', '.venv', 'node_modules', '__pycache__', '.codegraph', 'dist'}
+
+
+def detect_conventions(workdir: Path) -> dict:
+    """Deterministic first-pass convention scan from marker files.
+
+    Feeds step 1 of onboarding: the agent gets a head start (runner,
+    test/lint commands, line endings, language mix) instead of guessing,
+    then verifies with the user before banking the record. Never raises.
+    """
+    workdir = Path(workdir)
+    out: dict = {'languages': {}, 'python': None, 'javascript': None, 'line_endings': None}
+
+    def has(name: str) -> bool:
+        return (workdir / name).exists()
+
+    try:
+        counts: dict[str, int] = {}
+        for p in workdir.rglob('*'):
+            if any(part in _SKIP_DIRS for part in p.relative_to(workdir).parts):
+                continue
+            if p.is_file():
+                lang = _SUFFIXES.get(p.suffix.lower())
+                if lang:
+                    counts[lang] = counts.get(lang, 0) + 1
+        out['languages'] = dict(sorted(counts.items(), key=lambda kv: -kv[1]))
+    except OSError:
+        pass
+
+    if has('pyproject.toml'):
+        try:
+            pyproject = (workdir / 'pyproject.toml').read_text(encoding='utf-8', errors='replace')
+        except OSError:
+            pyproject = ''
+        if '[tool.uv]' in pyproject or has('uv.lock'):
+            runner = 'uv run'
+        elif has('poetry.lock'):
+            runner = 'poetry run'
+        else:
+            runner = 'python -m'
+        out['python'] = {'runner': runner, 'tests': f'{runner} pytest'}
+
+    if has('package.json'):
+        try:
+            import json
+
+            scripts = json.loads(
+                (workdir / 'package.json').read_text(encoding='utf-8')
+            ).get('scripts', {})
+        except (ValueError, OSError):
+            scripts = {}
+        out['javascript'] = {
+            'pm': 'pnpm' if has('pnpm-lock.yaml') else 'yarn' if has('yarn.lock') else 'npm',
+            'test': scripts.get('test'),
+            'build': scripts.get('build'),
+        }
+
+    crlf = lf = 0
+    try:
+        sampled = 0
+        for p in sorted(workdir.rglob('*')):
+            if sampled >= 30:
+                break
+            if p.suffix.lower() not in _SUFFIXES or not p.is_file():
+                continue
+            if any(part in _SKIP_DIRS for part in p.relative_to(workdir).parts):
+                continue
+            data = p.read_bytes()[:20_000]
+            if not data:
+                continue
+            sampled += 1
+            if b'\r\n' in data:
+                crlf += 1
+            elif b'\n' in data:
+                lf += 1
+    except OSError:
+        pass
+    out['line_endings'] = 'mixed' if crlf and lf else 'crlf' if crlf else 'lf' if lf else None
+    return out
 
 
 def onboarding_needed(store: MemoryStore, workdir: str | Path) -> bool:
