@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, cast
 
+from pydantic import BaseModel, Field, ValidationError, field_validator
+
 
 def _default_config_toml(lineup: ModelLineup) -> str:
     return (
@@ -60,6 +62,127 @@ class ModelLineup:
     # e.g. pricing = { deepseek-v4-pro = { input = 0.27, output = 1.1 } }
     # Models without an entry are 'unpriced' (tokens-only accounting).
     pricing: dict[str, dict[str, float]] | None = None
+
+
+# Providers the UI may bind models to; the prefix before ':' in "provider:model".
+KNOWN_PROVIDERS = (
+    'deepseek', 'zai', 'openai', 'anthropic', 'google', 'github',
+    'groq', 'mistral', 'ollama', 'bedrock',
+)
+
+_THINKING_OFF_WORDS = ('off', 'none', 'false', 'disabled')
+
+
+class ModelLineupIn(BaseModel):
+    """Validated model-lineup payload for PUT /config/models (R50).
+
+    Boundary validation: every field is checked here so an invalid save can
+    never reach config.toml and brick the next boot.
+    """
+
+    model_config = {'extra': 'forbid'}
+
+    main: str
+    subagent: str
+    fallback: str
+    fallback_base_url: str | None = None
+    vision: str | None = None
+    thinking: str | None = None
+    max_tokens: int | None = Field(default=None, ge=1)
+    context_limit: int | None = Field(default=None, ge=1)
+    request_limit: int = Field(default=500, ge=1)
+    pricing: dict[str, dict[str, float]] | None = None
+
+    @field_validator('main', 'subagent', 'fallback', 'vision')
+    @classmethod
+    def _check_model_ref(cls, v: str | None) -> str | None:
+        if v and ':' not in v:
+            raise ValueError(
+                f'{v!r} is not a provider-bound model — use "provider:model" '
+                f'(e.g. "zai:glm-5.3"); known providers: {KNOWN_PROVIDERS}'
+            )
+        return v
+
+    @field_validator('thinking')
+    @classmethod
+    def _check_thinking(cls, v: str | None) -> str | None:
+        if v is None or v == '':
+            return None
+        val = v.strip().lower()
+        if val not in THINKING_LEVELS and val not in _THINKING_OFF_WORDS:
+            raise ValueError(
+                f'invalid thinking level {v!r}; use one of {THINKING_LEVELS} or off'
+            )
+        return val
+
+    @field_validator('pricing')
+    @classmethod
+    def _check_pricing(cls, v: dict[str, dict[str, float]] | None):
+        if v is None:
+            return None
+        for model, rates in v.items():
+            unknown = set(rates) - {'input', 'output'}
+            if unknown:
+                raise ValueError(f'pricing[{model}]: unknown keys {sorted(unknown)}')
+        return v
+
+
+def models_payload(config: Config) -> dict:
+    """JSON-safe config view for GET /config/models: lineup + key presence only.
+
+    Provider keys are surfaced as booleans — the API never echoes secret values.
+    """
+    env = os.environ
+    providers = config.providers
+    return {
+        'models': {
+            'main': config.models.main,
+            'subagent': config.models.subagent,
+            'fallback': config.models.fallback,
+            'fallback_base_url': config.models.fallback_base_url,
+            'vision': config.models.vision,
+            'thinking': config.models.thinking,
+            'max_tokens': config.models.max_tokens,
+            'context_limit': config.models.context_limit,
+            'request_limit': config.models.request_limit,
+            'pricing': config.models.pricing,
+        },
+        'providers': {
+            'deepseek': bool(providers.deepseek or env.get('DEEPSEEK_API_KEY')),
+            'zai': bool(providers.zai or env.get('ZAI_API_KEY')),
+            'github': bool(providers.github or env.get('GITHUB_PAT')),
+        },
+        'thinking_levels': THINKING_LEVELS,
+    }
+
+
+def save_models(home: Path, payload: dict) -> dict:
+    """Validate and persist the model lineup; returns the saved lineup dict.
+
+    Read-modify-write: every other section of config.toml (shell, providers,
+    delegation) is preserved byte-for-byte in structure. Validation happens
+    before any write, so a bad payload cannot brick the next boot.
+    """
+    try:
+        lineup_in = ModelLineupIn(**payload)
+    except ValidationError as exc:
+        raise ValueError(str(exc)) from exc
+    data = lineup_in.model_dump(exclude_none=True)
+
+    config_path = home / 'config.toml'
+    try:
+        raw = tomllib.loads(config_path.read_text(encoding='utf-8'))
+    except (tomllib.TOMLDecodeError, OSError):
+        raw = {}
+    raw['models'] = data
+
+    import tomli_w
+
+    text = tomli_w.dumps(raw)
+    tmp = config_path.with_suffix('.toml.tmp')
+    tmp.write_text(text, encoding='utf-8')
+    tmp.replace(config_path)
+    return data
 
 
 THINKING_LEVELS = ('minimal', 'low', 'medium', 'high', 'xhigh')

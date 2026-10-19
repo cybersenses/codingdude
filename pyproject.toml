@@ -33,6 +33,7 @@ dependencies = [
     # R32 #65: fallback grammar source for suffixes without a pin above.
     "tree-sitter-language-pack>=1.0.0",
     "bandit>=1.9.4",
+    "tomli-w>=1.2.0",
 ]
 
 [project.scripts]
