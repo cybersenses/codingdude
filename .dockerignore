@@ -11,3 +11,8 @@ frontend/dist
 **/*.log
 .codingdude-worktrees/
 dist/
+.codegraph/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+reference/
