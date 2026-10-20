@@ -854,3 +854,10 @@ Run ids from `secrets.token_urlsafe` can start with '-'; argv `--run-id -x...`
 then fails argparse parsing (exit 2) before the worker logs a single line —
 surfacing as "worker exited unexpectedly (code 2) without finishing the run".
 Fix: regenerate run ids until option-safe, plus a regression test.
+
+## R56 — Docker smoke-test of setup/install path
+**Status:** done
+
+Verified in python:3.12-slim Docker container. uv sync works (needs full source incl. README — no pre-sync layer split possible). ruff clean; mypy reports 2 Linux typeshed false positives (restart.py Windows creation flags, code correctly os.name-guarded). pytest: 765 passed, 9 failed, 7 skipped — all 9 failures platform-specific (need docker CLI, gh stub path, Windows process-tree semantics). Server boots, seeds ~/.codingdude, /health OK (v0.4.0), serves freshly built UI incl. compressed logo. Windows-only steps (winget gh, github-mcp.exe, codegraph npm -g) don't apply on Linux by design. Artifacts: .dockerignore committed; Dockerfile at .scratch/Dockerfile.verify.
+
+Validate the install path end-to-end on a bare Linux environment via Docker: uv sync, gates, frontend build/serve, server /health boot. Document Windows-only steps that don't apply.

@@ -1,0 +1,27 @@
+# Bare-machine verification of CodingDude's install path (Linux equivalent).
+# Mirrors setup-codingdude.bat steps that are platform-independent.
+FROM python:3.12-slim
+
+# uv (step 1) + Node for frontend build (step 4)
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends nodejs npm ca-certificates git \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+# Install dependencies first for layer caching
+COPY . .
+RUN uv sync --frozen
+
+# Gates run interactively after build (see .scratch verification notes):
+# pytest OOM-kills the default docker build, so we don't bake them in.
+
+# Frontend build (step 7)
+WORKDIR /app/frontend
+RUN npm ci && npm run build
+
+# Boot the server (step: start-codingdude.bat equivalent)
+WORKDIR /app
+ENV CODINGDUDE_HOME=/root/.codingdude
+EXPOSE 8765
+CMD ["uv", "run", "python", "-m", "codingdude.cli", "serve", "--port", "8765"]
