@@ -13,15 +13,19 @@ WORKDIR /app
 COPY . .
 RUN uv sync --frozen
 
-# Gates run interactively after build (see .scratch verification notes):
+# Gates run interactively after build (see ROADMAP.md R56 / code-design.md):
 # pytest OOM-kills the default docker build, so we don't bake them in.
 
 # Frontend build (step 7)
 WORKDIR /app/frontend
 RUN npm ci && npm run build
 
-# Boot the server (step: start-codingdude.bat equivalent)
+# Boot the server (step: start-codingdude.bat equivalent).
+# Server binds 127.0.0.1 only (server.py HOST) — check from inside:
+#   docker build -t codingdude-verify -f docker/Dockerfile.verify .
+#   docker run -d --name cdv codingdude-verify
+#   docker exec cdv curl -sf http://127.0.0.1:8765/health
 WORKDIR /app
-ENV CODINGDUDE_HOME=/root/.codingdude
+ENV CODEDUDE_HOME=/root/.codingdude
 EXPOSE 8765
 CMD ["uv", "run", "python", "-m", "codingdude.cli", "serve", "--port", "8765"]
