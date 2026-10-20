@@ -12,8 +12,7 @@ onto any Windows machine.
    - rebuilds the web UI if npm/Node is present (otherwise the bundled
      `frontend/dist` is used as-is)
    - seeds `~\.codingdude` (skills, DIRECTIVES.md) from `.codingdude-seed\`
-     on first boot if absent — never overwrites files you already own
-     the machine has no CodingDude home yet — never overwrites an existing one
+     on first boot if absent — never overwrites an existing home
 
 ## Run
 

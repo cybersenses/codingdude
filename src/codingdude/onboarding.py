@@ -87,13 +87,14 @@ def detect_conventions(workdir: Path) -> dict:
                 if lang:
                     counts[lang] = counts.get(lang, 0) + 1
         out['languages'] = dict(sorted(counts.items(), key=lambda kv: -kv[1]))
-    except OSError:
-        pass
+    except OSError as exc:
+        logging.getLogger(__name__).warning('language census failed: %s', exc)
 
     if has('pyproject.toml'):
         try:
             pyproject = (workdir / 'pyproject.toml').read_text(encoding='utf-8', errors='replace')
-        except OSError:
+        except OSError as exc:
+            logging.getLogger(__name__).warning('pyproject.toml unreadable: %s', exc)
             pyproject = ''
         if '[tool.uv]' in pyproject or has('uv.lock'):
             runner = 'uv run'

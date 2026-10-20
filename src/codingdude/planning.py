@@ -155,7 +155,7 @@ def build_planning_toolset(
             'text': updated['steps'][index]['text'],
         })
         if updated['status'] == 'done' and review_model is not None:
-            findings = await _run_review(db, session_id, review_model, plan)
+            findings = await _run_review(db, session_id, review_model, plan, thinking=thinking)
             if findings:
                 emit({'type': 'REVIEW_FINDINGS', 'findings': findings})
                 return (
