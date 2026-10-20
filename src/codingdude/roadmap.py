@@ -36,6 +36,8 @@ logger = logging.getLogger(__name__)
 
 ROADMAP_STATUSES = ('open', 'in_progress', 'done')
 TICKET_STATUSES = ('todo', 'in_progress', 'done')
+PRD_STATUSES = ('draft', 'active', 'sunset')
+DESIGN_STATUSES = ('draft', 'approved', 'superseded')
 
 
 # ---- ROADMAP.md bridge -----------------------------------------------------
@@ -251,6 +253,69 @@ class RoadmapStore:
     def delete_decision(self, workdir: str, decision_id: int) -> bool:
         return self._delete('design_decisions', workdir, decision_id)
 
+    # ---- product requirements documents (PRDs) ----
+
+    def list_prds(self, workdir: str) -> list[dict]:
+        rows = self.db._conn.execute(
+            'SELECT * FROM prds WHERE workdir = ?'
+            " ORDER BY CASE status WHEN 'draft' THEN 0 WHEN 'active' THEN 1"
+            " ELSE 2 END, id",
+            (workdir,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def create_prd(
+        self, workdir: str, title: str, body: str = '', status: str = 'draft',
+    ) -> int:
+        now = _now()
+        cur = self.db._conn.execute(
+            'INSERT INTO prds (workdir, title, status, body, created_at, updated_at)'
+            ' VALUES (?, ?, ?, ?, ?, ?)',
+            (workdir, title, status, body, now, now),
+        )
+        self.db._conn.commit()
+        if cur.lastrowid is None:  # pragma: no cover - INSERT always sets it
+            raise RuntimeError('INSERT did not yield a rowid')
+        return cur.lastrowid
+
+    def update_prd(self, workdir: str, prd_id: int, **fields: str) -> bool:
+        return self._update('prds', workdir, prd_id, fields)
+
+    def delete_prd(self, workdir: str, prd_id: int) -> bool:
+        return self._delete('prds', workdir, prd_id)
+
+    # ---- technical design documents ----
+
+    def list_designs(self, workdir: str) -> list[dict]:
+        rows = self.db._conn.execute(
+            'SELECT * FROM tech_designs WHERE workdir = ?'
+            " ORDER BY CASE status WHEN 'draft' THEN 0 WHEN 'approved' THEN 1"
+            " ELSE 2 END, id",
+            (workdir,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def create_design(
+        self, workdir: str, title: str, body: str = '',
+        prd_id: int | None = None, status: str = 'draft',
+    ) -> int:
+        now = _now()
+        cur = self.db._conn.execute(
+            'INSERT INTO tech_designs (workdir, title, status, body, prd_id,'
+            ' created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            (workdir, title, status, body, prd_id, now, now),
+        )
+        self.db._conn.commit()
+        if cur.lastrowid is None:  # pragma: no cover - INSERT always sets it
+            raise RuntimeError('INSERT did not yield a rowid')
+        return cur.lastrowid
+
+    def update_design(self, workdir: str, design_id: int, **fields: str) -> bool:
+        return self._update('tech_designs', workdir, design_id, fields)
+
+    def delete_design(self, workdir: str, design_id: int) -> bool:
+        return self._delete('tech_designs', workdir, design_id)
+
     # ---- shared helpers ----
 
     def _update(self, table: str, workdir: str, row_id: int, fields: dict) -> bool:
@@ -288,9 +353,15 @@ def build_roadmap_toolset(
         road = parse_roadmap_md(md) if md.is_file() else store.list_roadmap(workdir)
         tickets = store.list_tickets(workdir)
         decisions = store.list_decisions(workdir)
-        if not (road or tickets or decisions):
+        prds = store.list_prds(workdir)
+        designs = store.list_designs(workdir)
+        if not (road or tickets or decisions or prds or designs):
             return 'No planning data recorded for this project yet.'
-        lines = ['# Roadmap']
+        lines = ['# PRDs']
+        lines += [
+            f"- [{p['status']}] #{p['id']} {p['title']}" for p in prds
+        ] or ['- (empty)']
+        lines.append('# Roadmap')
         lines += [
             f"- [{r['status']}] #{r['id']} {r['title']}" for r in road
         ] or ['- (empty)']
@@ -302,6 +373,12 @@ def build_roadmap_toolset(
         ] or ['- (empty)']
         lines.append('# Design decisions')
         lines += [f"- #{d['id']} {d['title']}" for d in decisions[:10]] or ['- (empty)']
+        lines.append('# Tech designs')
+        lines += [
+            f"- [{d['status']}] #{d['id']} {d['title']}"
+            + (f" (PRD #{d['prd_id']})" if d['prd_id'] else '')
+            for d in designs
+        ] or ['- (empty)']
         return '\n'.join(lines)
 
     async def update_roadmap_item(item_id: str | int, status: str, body: str | None = None) -> str:
@@ -381,6 +458,59 @@ def build_roadmap_toolset(
                 pass
         return f'design decision #{did} recorded: {title}'
 
+    async def create_prd(title: str, body: str = '') -> str:
+        """Create a product requirements document (PRD): the WHAT and WHY of a product or epic - problem, users, goals/non-goals, numbered requirements (REQ-<n>), success metrics, open questions. Load the 'prd' skill for the section skeleton. A PRD is the parent of roadmap items and tech designs."""
+        pid = store.create_prd(workdir, title, body)
+        return f'PRD #{pid} created: {title}'
+
+    async def update_prd(prd_id: int, status: str | None = None, body: str | None = None) -> str:
+        """Update a PRD ('draft'|'active'|'sunset') and/or its full body. Read it first via list_planning + read_prd so you merge, not clobber, the body."""
+        fields: dict = {}
+        if status is not None:
+            if status not in PRD_STATUSES:
+                raise ValueError(f'status must be one of {PRD_STATUSES}')
+            fields['status'] = status
+        if body is not None:
+            fields['body'] = body
+        if not store.update_prd(workdir, prd_id, **fields):
+            return f'PRD #{prd_id} not found'
+        return f'PRD #{prd_id} updated'
+
+    async def read_prd(prd_id: int) -> str:
+        """Read one PRD's full body (requirements, metrics, open questions)."""
+        for p in store.list_prds(workdir):
+            if p['id'] == prd_id:
+                return f"# PRD #{prd_id}: {p['title']} [{p['status']}]\n\n{p['body']}"
+        return f'PRD #{prd_id} not found'
+
+    async def create_tech_design(title: str, body: str = '', prd_id: int | None = None) -> str:
+        """Create a technical design document (TDD): HOW a system meets PRD requirements - context, requirements traceability (REQ-<n> to design elements), architecture, data/API contracts, alternatives considered, risks. Load the 'tech-design' skill for the section skeleton. prd_id links it to the PRD it implements."""
+        did = store.create_design(workdir, title, body, prd_id=prd_id)
+        link = f' under PRD #{prd_id}' if prd_id else ''
+        return f'tech design #{did} created{link}: {title}'
+
+    async def update_tech_design(design_id: int, status: str | None = None, body: str | None = None) -> str:
+        """Update a tech design ('draft'|'approved'|'superseded') and/or its body. Supersede rather than rewrite an approved design."""
+        fields: dict = {}
+        if status is not None:
+            if status not in DESIGN_STATUSES:
+                raise ValueError(f'status must be one of {DESIGN_STATUSES}')
+            fields['status'] = status
+        if body is not None:
+            fields['body'] = body
+        if not store.update_design(workdir, design_id, **fields):
+            return f'tech design #{design_id} not found'
+        return f'tech design #{design_id} updated'
+
+    async def read_tech_design(design_id: int) -> str:
+        """Read one tech design's full body."""
+        for d in store.list_designs(workdir):
+            if d['id'] == design_id:
+                link = f" (implements PRD #{d['prd_id']})" if d['prd_id'] else ''
+                return (f"# Tech design #{design_id}: {d['title']}"
+                        f" [{d['status']}]{link}\n\n{d['body']}")
+        return f'tech design #{design_id} not found'
+
     return FunctionToolset([
         list_planning,
         create_roadmap_item,
@@ -388,4 +518,10 @@ def build_roadmap_toolset(
         create_ticket,
         update_ticket,
         record_decision,
+        create_prd,
+        read_prd,
+        update_prd,
+        create_tech_design,
+        read_tech_design,
+        update_tech_design,
     ])

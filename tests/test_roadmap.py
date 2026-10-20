@@ -251,10 +251,102 @@ def test_planning_endpoints_flow(client, tmp_path):
     assert c.delete(f'/planning/roadmap/{rid}', params={'workdir': wd}, headers=h).json()['deleted']
     assert c.delete(f'/planning/decisions/{did}', params={'workdir': wd}, headers=h).json()['deleted']
     assert c.get('/planning', params={'workdir': wd}, headers=h).json() == {
-        'roadmap': [], 'tickets': [], 'decisions': [],
+        'roadmap': [], 'tickets': [], 'decisions': [], 'prds': [], 'designs': [],
     }
 
 
 def test_planning_requires_auth(client, tmp_path):
     c, _ = client
     assert c.get('/planning', params={'workdir': str(tmp_path)}).status_code == 401
+
+
+def test_prd_store_crud(store, tmp_path):
+    wd = str(tmp_path / 'p')
+    pid = store.create_prd(wd, 'Editor revamp', 'REQ-1 dark mode')
+    assert store.list_prds(wd)[0]['status'] == 'draft'
+    assert store.update_prd(wd, pid, status='active', body='REQ-1..3') is True
+    row = store.list_prds(wd)[0]
+    assert row['status'] == 'active' and row['body'] == 'REQ-1..3'
+    # Cross-project isolation
+    assert store.update_prd(str(tmp_path / 'other'), pid, status='sunset') is False
+    assert store.delete_prd(wd, pid) is True
+    assert store.list_prds(wd) == []
+
+
+def test_design_store_crud_and_prd_link(store, tmp_path):
+    wd = str(tmp_path / 'd')
+    pid = store.create_prd(wd, 'PRD', 'REQ-1')
+    did = store.create_design(wd, 'TDD: rendering pipeline', 'trace REQ-1', prd_id=pid)
+    row = store.list_designs(wd)[0]
+    assert row['prd_id'] == pid and row['status'] == 'draft'
+    assert store.update_design(wd, did, status='approved') is True
+    assert store.list_designs(wd)[0]['status'] == 'approved'
+    assert store.delete_design(wd, did) is True
+
+
+@pytest.mark.asyncio
+async def test_prd_and_design_agent_tools(store, tmp_path):
+    wd = str(tmp_path / 'tools')
+    tools = build_roadmap_toolset(store, wd).tools
+    assert {'create_prd', 'read_prd', 'update_prd',
+            'create_tech_design', 'read_tech_design', 'update_tech_design'} <= set(tools)
+
+    msg = await tools['create_prd'].function('Editor revamp', 'REQ-1 dark mode')
+    assert 'PRD #1' in msg
+
+    body = await tools['read_prd'].function(1)
+    assert 'REQ-1 dark mode' in body and '[draft]' in body
+    assert await tools['read_prd'].function(99) == 'PRD #99 not found'
+
+    await tools['update_prd'].function(1, status='active', body='REQ-1..3')
+    assert '[active]' in await tools['read_prd'].function(1)
+    assert 'not found' in await tools['update_prd'].function(99, status='sunset')
+
+    with pytest.raises(ValueError):
+        await tools['update_prd'].function(1, status='bogus')
+
+    msg = await tools['create_tech_design'].function('TDD: pipeline', 'how', prd_id=1)
+    assert '#1' in msg and 'PRD #1' in msg
+    body = await tools['read_tech_design'].function(1)
+    assert 'implements PRD #1' in body
+    await tools['update_tech_design'].function(1, status='approved')
+    assert '[approved]' in await tools['read_tech_design'].function(1)
+
+    overview = await tools['list_planning'].function()
+    assert '# PRDs' in overview and 'Editor revamp' in overview
+    assert '# Tech designs' in overview and 'TDD: pipeline' in overview
+
+
+def test_prd_design_endpoints_flow(client, tmp_path):
+    c, token = client
+    h = {'Authorization': f'Bearer {token}'}
+    wd = tmp_path / 'proj'
+    wd.mkdir()
+    wd = str(wd)
+
+    pid = c.post('/planning/prds', params={'workdir': wd},
+                 json={'title': 'PRD', 'body': 'REQ-1'}, headers=h).json()['id']
+    did = c.post('/planning/designs', params={'workdir': wd},
+                 json={'title': 'TDD', 'body': 'how', 'prd_id': pid}, headers=h).json()['id']
+
+    assert c.put(f'/planning/prds/{pid}', params={'workdir': wd},
+                 json={'status': 'active'}, headers=h).status_code == 200
+    assert c.put(f'/planning/designs/{did}', params={'workdir': wd},
+                 json={'status': 'approved'}, headers=h).status_code == 200
+
+    data = c.get('/planning', params={'workdir': wd}, headers=h).json()
+    assert data['prds'][0]['status'] == 'active'
+    assert data['designs'][0]['status'] == 'approved'
+    assert data['designs'][0]['prd_id'] == pid
+
+    # Validation + 404s
+    assert c.post('/planning/prds', params={'workdir': wd},
+                  json={'title': 'x', 'status': 'nope'}, headers=h).status_code == 422
+    assert c.put('/planning/prds/999', params={'workdir': wd},
+                 json={'status': 'active'}, headers=h).status_code == 404
+    assert c.put('/planning/designs/999', params={'workdir': wd},
+                 json={'status': 'approved'}, headers=h).status_code == 404
+
+    assert c.delete(f'/planning/designs/{did}', params={'workdir': wd}, headers=h).json()['deleted']
+    assert c.delete(f'/planning/prds/{pid}', params={'workdir': wd}, headers=h).json()['deleted']
+    assert c.get('/planning', params={'workdir': wd}, headers=h).json()['prds'] == []

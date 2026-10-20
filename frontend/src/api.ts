@@ -91,10 +91,29 @@ export interface DesignDecision {
   updated_at: string
 }
 
+export interface Prd {
+  id: number
+  title: string
+  status: 'draft' | 'active' | 'sunset'
+  body: string
+  updated_at: string
+}
+
+export interface TechDesign {
+  id: number
+  title: string
+  status: 'draft' | 'approved' | 'superseded'
+  body: string
+  prd_id: number | null
+  updated_at: string
+}
+
 export interface PlanningData {
   roadmap: RoadmapItem[]
   tickets: Ticket[]
   decisions: DesignDecision[]
+  prds: Prd[]
+  designs: TechDesign[]
 }
 
 export type ApprovalDecision = 'approve' | 'pattern' | 'deny'
@@ -210,4 +229,20 @@ export const api = {
     call(`/planning/decisions?workdir=${encodeURIComponent(workdir)}`, {
       method: 'POST', body: JSON.stringify({ title, body }),
     }) as Promise<{ id: number }>,
+  addPrd: (workdir: string, title: string, body = ''): Promise<{ id: number }> =>
+    call(`/planning/prds?workdir=${encodeURIComponent(workdir)}`, {
+      method: 'POST', body: JSON.stringify({ title, body }),
+    }) as Promise<{ id: number }>,
+  setPrdStatus: (workdir: string, id: number, status: string): Promise<unknown> =>
+    call(`/planning/prds/${id}?workdir=${encodeURIComponent(workdir)}`, {
+      method: 'PUT', body: JSON.stringify({ status }),
+    }),
+  addDesign: (workdir: string, title: string, body = '', prdId: number | null = null): Promise<{ id: number }> =>
+    call(`/planning/designs?workdir=${encodeURIComponent(workdir)}`, {
+      method: 'POST', body: JSON.stringify({ title, body, prd_id: prdId }),
+    }) as Promise<{ id: number }>,
+  setDesignStatus: (workdir: string, id: number, status: string): Promise<unknown> =>
+    call(`/planning/designs/${id}?workdir=${encodeURIComponent(workdir)}`, {
+      method: 'PUT', body: JSON.stringify({ status }),
+    }),
 }
