@@ -280,17 +280,6 @@ class RoadmapStore:
                 self.db._conn.commit()
             self._mirror_close(workdir, 'ticket', str(ticket_id))
         return changed
-        closing = fields.get('status') == 'done'
-        changed = self._update('tickets', workdir, ticket_id, fields)
-        # Traceability: closing a ticket stamps the commit that closed it.
-        if changed and closing:
-            sha = _head_sha(workdir)
-            if sha:
-                self.db._conn.execute(
-                    'UPDATE tickets SET commit_sha = ? WHERE id = ?', (sha, ticket_id)
-                )
-                self.db._conn.commit()
-        return changed
 
     def delete_ticket(self, workdir: str, ticket_id: int) -> bool:
         return self._delete('tickets', workdir, ticket_id)
