@@ -67,3 +67,30 @@ from conversation straight to tickets.
 **Impact:** additive schema (CREATE TABLE IF NOT EXISTS — no migration
 needed); /planning response gains two keys (frontend tolerates absence via
 optional chaining); no existing tool signatures changed.
+
+## GitHub issue auto-mirror (R53) — convention enforced in code
+
+**Problem:** the dual-logging convention (local planning item first, then a
+mirrored GitHub issue) lived only in agent memory/skills; sessions drifted
+and backfills were needed repeatedly.
+
+**Design:** enforcement moved into the store, not agent discipline.
+- `gh_mirror.py` (new): `GitHubMirror` — best-effort `gh` CLI boundary.
+  Availability probed once per process per workdir (gh on PATH, github.com
+  origin remote, gh auth ok), cached at class level. `create_issue` parses
+  the issue number from the returned URL; `close_done` closes as completed
+  and applies the green `done` label (label ensured once). Every failure
+  logs one line and returns None/False — never raises, never blocks.
+- `db.py`: additive `gh_mirror` mapping table (workdir, kind
+  ticket|roadmap, local_id, issue_number) so closes reach the right issue.
+- `roadmap.py`: `RoadmapStore(db, mirror=None)` — create_ticket and
+  create_roadmap_item (DB rows) mirror on create; update_ticket/update_
+  roadmap_item mirror-close on `done`. The agent toolset md-path
+  (ROADMAP.md items) mirrors too, keyed by R-id. Single choke point covers
+  agent tools, server endpoints, and execution.py ticket closes.
+- `config.py`: `[planning] github_mirror` (default true) disables the
+  mirror entirely.
+
+**Impact:** additive schema + new module; no existing tool signatures
+changed; local writes unaffected when gh/GitHub is unavailable (skips with
+one log line). Tests mock the gh boundary (FakeMirror) — no network.
