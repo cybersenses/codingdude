@@ -31,6 +31,24 @@ This product includes software developed by third parties:
   or substantial portions of the Software. Full text:
   https://github.com/mattpocock/skills/blob/main/LICENSE
 
+## Ponytail
+
+- https://github.com/dietrichgebert/ponytail — MIT License,
+  Copyright (c) 2026 DietrichGebert
+- The `ponytail`, `ponytail-audit`, `ponytail-debt`, `ponytail-gain`,
+  `ponytail-help`, and `ponytail-review` skills in `.codingdude-seed/skills/`
+  are adapted from that repository.
+- Full text: https://github.com/dietrichgebert/ponytail/blob/main/LICENSE
+
+## StyleSeed
+
+- https://github.com/bitjaru/styleseed — MIT License,
+  Copyright (c) 2026 StyleSeed Contributors
+- The `ss-*` skills (styleseed, ss-build, ss-lint, ss-resolve, ss-score,
+  ss-setup, ss-tokens, ss-verify) and their scripts in
+  `.codingdude-seed/skills/` are adapted from that repository.
+- Full text: https://github.com/bitjaru/styleseed/blob/main/LICENSE
+
 ## Pydantic AI
 
 - https://github.com/pydantic/pydantic-ai — MIT License
