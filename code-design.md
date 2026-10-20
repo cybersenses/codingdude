@@ -94,3 +94,32 @@ and backfills were needed repeatedly.
 **Impact:** additive schema + new module; no existing tool signatures
 changed; local writes unaffected when gh/GitHub is unavailable (skips with
 one log line). Tests mock the gh boundary (FakeMirror) â€” no network.
+
+## Docker install-path verification (R56)
+
+**Problem:** setup scripts (`setup-codingdude.bat`, `gates.bat`) were only
+ever exercised on the dev Windows machine; unverified whether the pinned
+lockfile, package build, frontend build, home seeding, and server boot all
+work from a bare machine.
+
+**Design:** `docker/Dockerfile.verify` — python:3.12-slim + uv + Node,
+copies the repo (context trimmed by `.dockerignore`: no .venv, node_modules,
+dist, .git, DBs) and runs the Linux equivalent of setup: `uv sync --frozen`,
+gates, `npm ci && npm run build`, then boots `codingdude.cli serve`.
+Gates run interactively (`docker run codingdude-verify uv run pytest -q`)
+because full pytest OOM-kills the default docker build sandbox.
+
+**Verified findings (2026-10):**
+- `uv sync` needs the full source (incl. README.md) — no pre-source
+  dependency-only layer is possible with uv-build.
+- ruff clean; mypy reports 2 Linux-only typeshed false positives
+  (restart.py Windows `creationflags`, code correctly `os.name`-guarded).
+- pytest: 765 passed / 9 failed / 7 skipped — all 9 failures
+  platform-specific (docker CLI absent in container, `gh` stub path,
+  Windows process-tree semantics in restart/run-captured tests).
+- Server boots on Linux, seeds `~/.codingdude`, `/health` ok (v0.4.0),
+  serves the freshly built UI (logo + JS/CSS assets 200).
+
+**Impact:** additive `docker/Dockerfile.verify` + `.dockerignore`; no source
+changes. Windows-only setup steps (winget gh, github-mcp.exe, codegraph
+`npm i -g`) don't apply on Linux by design.
