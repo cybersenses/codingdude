@@ -102,24 +102,31 @@ ever exercised on the dev Windows machine; unverified whether the pinned
 lockfile, package build, frontend build, home seeding, and server boot all
 work from a bare machine.
 
-**Design:** `docker/Dockerfile.verify` — python:3.12-slim + uv + Node,
-copies the repo (context trimmed by `.dockerignore`: no .venv, node_modules,
-dist, .git, DBs) and runs the Linux equivalent of setup: `uv sync --frozen`,
-gates, `npm ci && npm run build`, then boots `codingdude.cli serve`.
-Gates run interactively (`docker run codingdude-verify uv run pytest -q`)
-because full pytest OOM-kills the default docker build sandbox.
+**Design:** `docker/Dockerfile.verify` â€” python:3.12-slim + uv + Node.
+Build: `docker build -t codingdude-verify -f docker/Dockerfile.verify .`
+(context trimmed by `.dockerignore`: no .venv, node_modules, dist, .git,
+DBs). Runs the Linux equivalent of setup: `uv sync --frozen`, ruff, then
+`npm ci && npm run build`; boots `codingdude.cli serve`. Gates run
+interactively (`docker run codingdude-verify uv run pytest -q`) because
+full pytest OOM-kills the default docker build sandbox. Semgrep is not
+installed in the image, so the in-container security gate runs in its
+degraded bandit/regex mode (as setup-codingdude.bat warns when semgrep
+is absent).
 
 **Verified findings (2026-10):**
-- `uv sync` needs the full source (incl. README.md) — no pre-source
-  dependency-only layer is possible with uv-build.
+- `uv sync` needs the full source (incl. README.md) â€” no pre-source
+  dependency-only layer is possible with the uv-build backend.
 - ruff clean; mypy reports 2 Linux-only typeshed false positives
   (restart.py Windows `creationflags`, code correctly `os.name`-guarded).
-- pytest: 765 passed / 9 failed / 7 skipped — all 9 failures
+- pytest: 765 passed / 9 failed / 7 skipped â€” all 9 failures
   platform-specific (docker CLI absent in container, `gh` stub path,
   Windows process-tree semantics in restart/run-captured tests).
 - Server boots on Linux, seeds `~/.codingdude`, `/health` ok (v0.4.0),
-  serves the freshly built UI (logo + JS/CSS assets 200).
+  serves the freshly built UI (logo + JS/CSS assets 200). Server binds
+  127.0.0.1 by design, so health is checked via
+  `docker exec <name> curl -sf http://127.0.0.1:8765/health`.
 
 **Impact:** additive `docker/Dockerfile.verify` + `.dockerignore`; no source
-changes. Windows-only setup steps (winget gh, github-mcp.exe, codegraph
-`npm i -g`) don't apply on Linux by design.
+changes. Genuinely Windows-only setup steps (winget gh, github-mcp.exe)
+don't apply on Linux by design; codegraph (`npm i -g`) is
+platform-independent but was not installed in the verify image.
