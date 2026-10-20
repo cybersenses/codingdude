@@ -1112,14 +1112,17 @@ def create_app(
 
     @app.post('/planning/roadmap')
     def add_roadmap_item(workdir: str, body: RoadmapIn, _: None = Depends(authorize)) -> dict:
-        from .roadmap import RoadmapStore, upsert_roadmap_md
+        from .roadmap import RoadmapStore, parse_roadmap_md, upsert_roadmap_md
 
         resolved = _workdir_or_404(workdir)
         md = Path(resolved) / 'ROADMAP.md'
         if md.is_file():
             upsert_roadmap_md(md, None, title=body.title, body=body.body,
                               status=body.status)
-            return {'id': 'new'}
+            rid = parse_roadmap_md(md)[-1]['id']
+            RoadmapStore(db)._mirror_create(resolved, 'roadmap', rid,
+                                            body.title, body.body)
+            return {'id': rid}
         item_id = RoadmapStore(db).create_roadmap_item(resolved, body.title, body.body)
         return {'id': item_id}
 

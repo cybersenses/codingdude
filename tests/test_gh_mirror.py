@@ -158,3 +158,41 @@ def test_no_gh_binary_means_unavailable(monkeypatch, tmp_path):
     monkeypatch.setattr(GitHubMirror, '_available', {})
     monkeypatch.setattr('shutil.which', lambda name: None)
     assert m.available(str(tmp_path)) is False
+
+
+class _RecordingGh(GitHubMirror):
+    """Probe-path regression: gh must never be asked for `remote` (no such
+    subcommand); the origin URL comes from git (monkeypatched here)."""
+
+    def __init__(self):
+        super().__init__()
+        self.calls: list[list[str]] = []
+
+    def _gh_path(self):
+        return 'gh'
+
+    def _gh(self, workdir, args):
+        self.calls.append(list(args))
+        import subprocess as sp
+        return sp.CompletedProcess(args, 0, stdout='Logged in', stderr='')
+
+
+def test_probe_uses_git_for_origin_not_gh(tmp_path, monkeypatch):
+    (tmp_path / '.git').mkdir()
+    mirror = _RecordingGh()
+    GitHubMirror._available.pop(str(tmp_path), None)
+    monkeypatch.setattr(GitHubMirror, '_git_origin',
+                        staticmethod(lambda wd: 'https://github.com/o/r.git'))
+    assert mirror.available(str(tmp_path)) is True
+    assert not any('remote' in c for c in mirror.calls)
+    assert ['auth', 'status'] in mirror.calls
+    GitHubMirror._available.pop(str(tmp_path), None)
+
+
+def test_probe_false_when_origin_not_github(tmp_path, monkeypatch):
+    monkeypatch.setattr(GitHubMirror, '_gh_path', staticmethod(lambda: 'gh'))
+    monkeypatch.setattr(GitHubMirror, '_git_origin',
+                        staticmethod(lambda wd: 'https://gitlab.com/o/r.git'))
+    GitHubMirror._available.pop(str(tmp_path), None)
+    assert GitHubMirror().available(str(tmp_path)) is False
+    GitHubMirror._available.pop(str(tmp_path), None)
