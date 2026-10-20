@@ -346,7 +346,27 @@ def test_prd_design_endpoints_flow(client, tmp_path):
                  json={'status': 'active'}, headers=h).status_code == 404
     assert c.put('/planning/designs/999', params={'workdir': wd},
                  json={'status': 'approved'}, headers=h).status_code == 404
+    # Empty PUT is a 422, not a bogus 404 for a row that exists.
+    assert c.put(f'/planning/prds/{pid}', params={'workdir': wd},
+                 json={}, headers=h).status_code == 422
+    assert c.put(f'/planning/designs/{did}', params={'workdir': wd},
+                 json={}, headers=h).status_code == 422
+    # PUT can (re)link the traceability prd_id.
+    assert c.put(f'/planning/designs/{did}', params={'workdir': wd},
+                 json={'prd_id': pid}, headers=h).status_code == 200
+    # Unknown id on DELETE is a 404.
+    assert c.delete('/planning/prds/999', params={'workdir': wd},
+                    headers=h).status_code == 404
 
-    assert c.delete(f'/planning/designs/{did}', params={'workdir': wd}, headers=h).json()['deleted']
-    assert c.delete(f'/planning/prds/{pid}', params={'workdir': wd}, headers=h).json()['deleted']
+    # Deleting a PRD severs — not dangles — linked designs' prd_id.
+    did2 = c.post('/planning/designs', params={'workdir': wd},
+                  json={'title': 'TDD2', 'prd_id': pid}, headers=h).json()['id']
+    assert c.delete(f'/planning/prds/{pid}', params={'workdir': wd},
+                    headers=h).json()['deleted'] is True
+    data = c.get('/planning', params={'workdir': wd}, headers=h).json()
+    assert all(d['prd_id'] is None for d in data['designs'])
+    assert c.delete(f'/planning/designs/{did}', params={'workdir': wd},
+                    headers=h).json()['deleted'] is True
+    assert c.delete(f'/planning/designs/{did2}', params={'workdir': wd},
+                    headers=h).json()['deleted'] is True
     assert c.get('/planning', params={'workdir': wd}, headers=h).json()['prds'] == []

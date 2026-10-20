@@ -14,7 +14,7 @@ system as built; each claim cites the code that implements it. ADRs record
  Browser (React/Vite SPA)
     │ SSE (events) + HTTP JSON (auth, config, sessions)
     ▼
- Server (server.py, asyncio HTTP) ── SQLite store (store.py)
+ Server (server.py, asyncio HTTP) ── SQLite store (db.py)
     │ spawns per-run, bridges WebSocket ⇄ SSE
     ▼
  Worker subprocess (worker.py) ── Engine (engine.py, pydantic-ai)
@@ -41,7 +41,7 @@ loop, shared by worker and headless).
 | Tools | `src/codingdude/tools.py`, `analysis.py`, `planning.py`, `delegation.py`, `research.py`, `vision.py`, … | All agent tools; file ops are Workdir-contained; analysis tools (AST/CFG/coverage/mutation/benchmark/fuzz) resolve paths via `resolve_workdir_file` |
 | Codegraph | `src/codingdude/codegraph_boot.py` + codegraph MCP | Tree-sitter symbol index per project; navigation via explicit `projectPath` |
 | Skills/directives | `~/.codingdude/skills/`, `DIRECTIVES.md` | Progressive-disclosure procedures (`load_skill`), always-injected user rules |
-| Memory | `store.py` (MemoryStore) + engine | Keyword+semantic retrieval, RAG summaries; solutions (`record_solution`) referenced at session start |
+| Memory | `memory.py` (MemoryStore) + engine | Keyword+semantic retrieval, RAG summaries; solutions (`record_solution`) referenced at session start |
 | Frontend | `frontend/src/` (React/Vite/Tailwind, `api.ts` typed layer) | Chat, Approval/plan/artifact cards, Diff/Files/Trace/Renders/Memory/MCP/Config tabs, Monaco editor, run composer with provider-aware model selector |
 
 ## 3. Run lifecycle (web)

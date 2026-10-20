@@ -37,7 +37,7 @@ Config loads per run â€” provider changes apply from the next run, no bounce.
 validated before any write; `provider_effective_key` falls back to
 `'not-set'` key so construction errors surface at run time, not boot.
 
-## PRDs & Tech Designs — general planning docs (DB-backed, UI-surfaced)
+## PRDs & Tech Designs â€” general planning docs (DB-backed, UI-surfaced)
 
 **Problem:** planning surface had roadmap/tickets/decisions but no
 requirements (WHAT/WHY) or technical-design (HOW) artifacts; agents jumped
@@ -64,6 +64,6 @@ from conversation straight to tickets.
   supersedes-not-rewrites, hard trade-offs still go to record_decision).
   Positioned explicitly against to-spec/grilling/grill-with-docs.
 
-**Impact:** additive schema (CREATE TABLE IF NOT EXISTS — no migration
+**Impact:** additive schema (CREATE TABLE IF NOT EXISTS â€” no migration
 needed); /planning response gains two keys (frontend tolerates absence via
 optional chaining); no existing tool signatures changed.
