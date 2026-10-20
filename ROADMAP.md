@@ -817,6 +817,13 @@ Expose model/provider configuration as a managed, validated resource: GET/PUT /c
 Open-source release under AGPL-3.0 with dual commercial licensing, trademark protection, CLA, and generated-code-ownership terms. Plan id 40.
 
 ## R52 — Product requirements & technical design docs
-**Status:** open
+**Status:** done
 
-Gap: repo has per-feature specs and ADRs but no PRD (what the product is, for whom, non-goals) or technical design doc (system architecture, dataflow, seams). Add docs/PRD.md and docs/TECH-DESIGN.md, wire doc hierarchy (PRD → TECH-DESIGN → ADRs → specs → ROADMAP), link from README and ROADMAP.
+Gap: repo had per-feature specs and ADRs but no product-level PRD or technical
+design doc — and no general tooling for either. Closed by: PRDs and tech designs
+as first-class planning artifacts (mirroring R4 roadmaps/tickets) — `prds` and
+`tech_designs` SQLite tables, CRUD endpoints under `/planning/prds` and
+`/planning/designs`, six agent tools (`create_prd`/`read_prd`/`update_prd`,
+`create_tech_design`/`read_tech_design`/`update_tech_design`), Planning-tab UI
+sections, and `prd` + `tech-design` skills shipped to every project via
+`.codingdude-seed/skills/`. Mirrored to GitHub issue #14.
