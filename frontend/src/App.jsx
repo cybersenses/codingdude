@@ -1069,6 +1069,38 @@ function Artifacts({ sessionId }) {
 // R50 #209: user-managed LLM configuration editor.
 // Field-level edits stay in a local draft; Save PUTs the whole lineup and
 // shows the server's validation error verbatim (it is the source of truth).
+// Config fields must be stable module-level components: defining them inside
+// ModelsConfig gave them a new identity on every render (the dock's 4s config
+// poll re-renders constantly), remounting the inputs and stealing focus.
+function CfgTextField({ label, value, onChange, placeholder }) {
+  return (
+    <label className="flex items-center gap-2 text-[11px]">
+      <span className="w-32 shrink-0 text-neutral-500">{label}</span>
+      <input
+        className="min-w-0 flex-1 rounded border border-line bg-surface px-2 py-0.5 font-mono text-[11px] text-ink"
+        value={value ?? ''}
+        placeholder={placeholder || ''}
+        list="provider-model-suggest"
+        onChange={(e) => onChange(e.target.value || null)}
+      />
+    </label>
+  )
+}
+
+function CfgNumField({ label, value, onChange }) {
+  return (
+    <label className="flex items-center gap-2 text-[11px]">
+      <span className="w-32 shrink-0 text-neutral-500">{label}</span>
+      <input
+        type="number"
+        className="min-w-0 flex-1 rounded border border-line bg-surface px-2 py-0.5 font-mono text-[11px] text-ink"
+        value={value ?? ''}
+        onChange={(e) => onChange(e.target.value === '' ? null : Number(e.target.value))}
+      />
+    </label>
+  )
+}
+
 function ModelsConfig({ data, setData }) {
   const cfg = data.config
   // Hooks must run unconditionally — the early returns below (error/loading)
@@ -1156,28 +1188,11 @@ function ModelsConfig({ data, setData }) {
     } finally { setVerifying(false) }
   }
 
-  const TextField = ({ label, k, placeholder }) => (
-    <label className="flex items-center gap-2 text-[11px]">
-      <span className="w-32 shrink-0 text-neutral-500">{label}</span>
-      <input
-        className="min-w-0 flex-1 rounded border border-line bg-surface px-2 py-0.5 font-mono text-[11px] text-ink"
-        value={model[k] ?? ''}
-        placeholder={placeholder || ''}
-        list="provider-model-suggest"
-        onChange={(e) => set(k, e.target.value || null)}
-      />
-    </label>
+  const field = (label, k, placeholder) => (
+    <CfgTextField key={k} label={label} value={model[k]} placeholder={placeholder} onChange={(v) => set(k, v)} />
   )
-  const NumField = ({ label, k }) => (
-    <label className="flex items-center gap-2 text-[11px]">
-      <span className="w-32 shrink-0 text-neutral-500">{label}</span>
-      <input
-        type="number"
-        className="min-w-0 flex-1 rounded border border-line bg-surface px-2 py-0.5 font-mono text-[11px] text-ink"
-        value={model[k] ?? ''}
-        onChange={(e) => set(k, e.target.value === '' ? null : Number(e.target.value))}
-      />
-    </label>
+  const numField = (label, k) => (
+    <CfgNumField key={k} label={label} value={model[k]} onChange={(v) => set(k, v)} />
   )
 
   return (
@@ -1192,10 +1207,10 @@ function ModelsConfig({ data, setData }) {
       )}
       <div className="space-y-1.5 rounded border border-line bg-surface p-3">
         <div className="text-[10px] uppercase tracking-wide text-ink-muted">Model lineup (provider:model)</div>
-        <TextField label="main" k="main" />
-        <TextField label="subagent" k="subagent" />
-        <TextField label="fallback" k="fallback" />
-        <TextField label="fallback base url" k="fallback_base_url" placeholder="optional endpoint override" />
+        {field('main', 'main')}
+        {field('subagent', 'subagent')}
+        {field('fallback', 'fallback')}
+        {field('fallback base url', 'fallback_base_url', 'optional endpoint override')}
         <div className="text-[10px] text-neutral-500">
           Z.AI has two plans with different endpoints. GLM Coding Plan keys are rejected by the
           standard API —{' '}
@@ -1205,7 +1220,7 @@ function ModelsConfig({ data, setData }) {
             onClick={() => set('fallback_base_url', 'https://api.z.ai/api/coding/paas/v4')}
           >set the coding-plan endpoint</button>
         </div>
-        <TextField label="vision" k="vision" placeholder="e.g. zai:glm-5v (optional)" />
+        {field('vision', 'vision', 'e.g. zai:glm-5v (optional)')}
         <label className="flex items-center gap-2 text-[11px]">
           <span className="w-32 shrink-0 text-neutral-500">thinking</span>
           <select
@@ -1220,9 +1235,9 @@ function ModelsConfig({ data, setData }) {
             ))}
           </select>
         </label>
-        <NumField label="max tokens" k="max_tokens" />
-        <NumField label="context limit" k="context_limit" />
-        <NumField label="request limit" k="request_limit" />
+        {numField('max tokens', 'max_tokens')}
+        {numField('context limit', 'context_limit')}
+        {numField('request limit', 'request_limit')}
       </div>
 
       <div className="space-y-1.5 rounded border border-line bg-surface p-3">
