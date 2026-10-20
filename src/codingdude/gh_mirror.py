@@ -152,7 +152,7 @@ class GitHubMirror:
         if self._gh(workdir, ['label', 'create', 'done',
                               '--color', '0e8a16',
                               '--force']) is not None:
-            self._label_ensured = True
+            GitHubMirror._label_ensured = True
 
     def _gh(self, workdir: str, args: list[str]) -> subprocess.CompletedProcess | None:
         path = self._gh_path()

@@ -1144,6 +1144,8 @@ def create_app(
                 upsert_roadmap_md(md, item_id, status=body.status, body=body.body)
             except ValueError as exc:
                 raise HTTPException(status_code=404, detail='no such roadmap item') from exc
+            if body.status == 'done':
+                RoadmapStore(db)._mirror_close(resolved, 'roadmap', item_id)
             return {'updated': item_id}
         fields: dict = {'status': body.status}
         if body.body is not None:

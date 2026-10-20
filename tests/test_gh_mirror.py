@@ -19,6 +19,8 @@ The mirror is best-effort: local writes succeed regardless, gh absence skips
 with one log line, and mappings persist so closes reach the right issue.
 """
 
+import os  # nosec B404 — stdlib, used only for test token lookup
+
 import pytest
 
 from codingdude.config import load_config
@@ -196,3 +198,35 @@ def test_probe_false_when_origin_not_github(tmp_path, monkeypatch):
     GitHubMirror._available.pop(str(tmp_path), None)
     assert GitHubMirror().available(str(tmp_path)) is False
     GitHubMirror._available.pop(str(tmp_path), None)
+
+
+def test_server_md_path_create_and_done_mirrors(tmp_path, monkeypatch):
+    """Server ROADMAP.md endpoints mirror both create and done transitions."""
+    from fastapi.testclient import TestClient
+
+    import codingdude.roadmap as roadmap_mod
+    from codingdude.server import create_app
+
+    wd = tmp_path / 'mdrepo'
+    wd.mkdir()
+    (wd / 'ROADMAP.md').write_text(
+        '# Roadmap\n\n## R1 — Thing\n**Status:** open\n\nBody.\n', encoding='utf-8'
+    )
+    mirror = FakeMirror(issue_number=77)
+    monkeypatch.setattr(roadmap_mod, '_default_mirror', mirror)
+
+    token = os.environ.get('TEST_AUTH_TOKEN', 'unit-test-token')  # nosec B105
+    home = tmp_path / 'home'
+    home.mkdir()
+    app = create_app(home=home, token=token, allow_testclient=True)
+    with TestClient(app) as c:
+        h = {'Authorization': f'Bearer {token}'}
+        r = c.post('/planning/roadmap', params={'workdir': str(wd)},
+                   json={'title': 'Second'}, headers=h)
+        assert r.status_code == 200
+        assert [x[1] for x in mirror.created] == ['Second']
+
+        r = c.put(f"/planning/roadmap/{r.json()['id']}",
+                  params={'workdir': str(wd)}, json={'status': 'done'}, headers=h)
+        assert r.status_code == 200
+        assert mirror.closed == [(str(wd), 77)]
