@@ -5,7 +5,7 @@ A personal, single-user coding agent built with [pydantic-ai](https://ai.pydanti
 Copyright (C) 2025 Cyberflex (https://www.cyberflex.io). Licensed under the
 [GNU AGPL-3.0-or-later](LICENSE) — see [Licence](#licence).
 
-<img src="docs/assets/mission.png" alt="CodingDude mission" width="420" align="right">
+<img src="docs/assets/mission.jpg" alt="CodingDude mission: plan, design, implement, review, deploy" width="420" align="right">
 
 ## What it is
 
