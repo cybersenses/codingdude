@@ -17,9 +17,11 @@
 
 import ast
 import asyncio
+import functools
 import os
 import re
 import shutil
+import threading
 import time
 import uuid
 from collections.abc import Callable, Sequence
@@ -786,9 +788,31 @@ def build_toolset(
         emit_edit(path, existed, content)
         return f'wrote {path}' + (f'\n{warn}' if warn else '')
 
+    # Lost-update guard: parallel tool calls in one block run concurrently;
+    # two edits to the same file both read the same `before`, then the later
+    # atomic write clobbered the earlier one. Serialize the whole
+    # read-modify-write-observe critical section per resolved path.
+    _path_locks: dict[str, threading.Lock] = {}
+    _locks_guard = threading.Lock()
+
+    def _path_lock(target: Path) -> threading.Lock:
+        with _locks_guard:
+            return _path_locks.setdefault(str(target), threading.Lock())
+
+    def _locked_edit(fn):
+        @functools.wraps(fn)
+        def wrapper(path: str, *args, **kwargs):
+            with _path_lock(resolve(path)):
+                return fn(path, *args, **kwargs)
+        return wrapper
+
     tools: list[Callable] = [list_dir, read_file, grep, glob]
     if not read_only:
-        tools += [edit_file, write_file, edit_symbol]
+        tools += [
+            _locked_edit(edit_file),
+            _locked_edit(write_file),
+            _locked_edit(edit_symbol),
+        ]
     return FunctionToolset(tools)
 
 

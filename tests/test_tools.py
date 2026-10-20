@@ -343,3 +343,36 @@ def test_shell_argv_windows_resolves_git_bash_not_wsl_stub():
     exe = argv[0].lower()
     assert 'system32' not in exe, f'WSL stub selected: {argv[0]}'
     assert exe.endswith('bash.exe') or exe.endswith('bash'), argv[0]
+
+
+def test_parallel_same_file_edits_both_survive(tmp_path):
+    """Two concurrent edit_file calls on one file must not lose an update.
+
+    Regression: parallel tool calls in one block used to both read the same
+    `before`, and the second atomic write clobbered the first edit while
+    both reported success. The per-path lock serializes the
+    read-modify-write-observe critical section.
+    """
+    import threading
+
+    f = tmp_path / 'race.py'
+    f.write_bytes(b'line A\nline B\nline C\n')
+    edit = _tool(tmp_path, 'edit_file')
+    barrier = threading.Barrier(2)
+    errors: list[Exception] = []
+
+    def edit_async(old, new):
+        try:
+            barrier.wait()
+            edit('race.py', old, new)
+        except Exception as exc:  # noqa: BLE001 - recorded and asserted below
+            errors.append(exc)
+
+    t1 = threading.Thread(target=edit_async, args=('line A', 'line A-1'))
+    t2 = threading.Thread(target=edit_async, args=('line C', 'line C-2'))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+    assert not errors, errors
+    assert f.read_text() == 'line A-1\nline B\nline C-2\n'
