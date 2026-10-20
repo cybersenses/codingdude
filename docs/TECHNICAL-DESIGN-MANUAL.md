@@ -233,8 +233,10 @@ Summary of ADR-0004 posture, as implemented:
   render/file endpoints use the same containment.
 - Known limits: the shell tier check is a heuristic, not a sandbox; approved
   commands run with full user permissions; web fetch permits localhost
-  probing. Deferred: job-object/container isolation, per-command env
-  allowlists.
+  probing. Prototype sandboxes (`sandbox.py`) offer a container tier
+  (`docker run` + `python:3.12-alpine`, with worktree+venv fallback), but
+  ordinary approved shell commands are **not** run inside them. Deferred:
+  job-object isolation for the shell tool, per-command env allowlists.
 
 ## 8. Extension points
 
