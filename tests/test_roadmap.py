@@ -305,6 +305,10 @@ async def test_prd_and_design_agent_tools(store, tmp_path):
     with pytest.raises(ValueError):
         await tools['update_prd'].function(1, status='bogus')
 
+    # No fields → guidance, not a bogus 'not found' for an existing row.
+    assert 'nothing to update' in await tools['update_prd'].function(1)
+    assert 'nothing to update' in await tools['update_tech_design'].function(1)
+
     msg = await tools['create_tech_design'].function('TDD: pipeline', 'how', prd_id=1)
     assert '#1' in msg and 'PRD #1' in msg
     body = await tools['read_tech_design'].function(1)

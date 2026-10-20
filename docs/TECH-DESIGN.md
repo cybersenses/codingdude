@@ -36,7 +36,7 @@ loop, shared by worker and headless).
 | Engine | `src/codingdude/engine.py` | Agent loop, model lineup resolution (`_model_from_name`), toolset construction, approvals, budget enforcement, failover |
 | Server | `src/codingdude/server.py` | HTTP+SSE, login (`/auth/local` browser attestation, bearer for local clients), run lifecycle endpoints, config API, static dist serving |
 | Worker | `src/codingdude/worker.py` | Per-run subprocess; connects back over WebSocket; applies project `[models]` overrides; streams trace events; memory extraction tail |
-| Store | `src/codingdude/store.py` | SQLite persistence: sessions, messages, traces (JSONL), memory entries, tickets/roadmap, artifacts |
+| Store | `src/codingdude/db.py` | SQLite persistence: sessions, messages, traces (JSONL), memory entries, tickets/roadmap, artifacts |
 | Config | `src/codingdude/config.py` | `~/.codingdude/config.toml` (`CODEDUDE_HOME` override): model lineup, user-defined `ProviderDef` providers, shell, per-project `[models]` overlay (`apply_project_models`) |
 | Tools | `src/codingdude/tools.py`, `analysis.py`, `planning.py`, `delegation.py`, `research.py`, `vision.py`, … | All agent tools; file ops are Workdir-contained; analysis tools (AST/CFG/coverage/mutation/benchmark/fuzz) resolve paths via `resolve_workdir_file` |
 | Codegraph | `src/codingdude/codegraph_boot.py` + codegraph MCP | Tree-sitter symbol index per project; navigation via explicit `projectPath` |
