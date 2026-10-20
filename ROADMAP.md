@@ -846,3 +846,11 @@ auth, or a GitHub remote is absent. Mirrored to GitHub issue #55.
 **Status:** done
 
 Root cause of recurring "edit reported success but didn't persist": parallel tool calls in one block run concurrently; two edits to the same file both read the same `before`, and the second atomic write clobbered the first (lost update) while both reported success. Reproduced deterministically with a two-thread probe. Fix: per-path `threading.Lock` serializing the whole read→write→observe critical section in build_toolset (wrapper on edit_file/write_file/edit_symbol). Regression test test_parallel_same_file_edits_both_survive (red pre-fix, green post-fix). Gates: 779 passed/1 skipped, ruff+mypy clean.
+
+## R55 — Fix worker exit code 2: dash-leading run_id breaks argparse
+**Status:** open
+
+Run ids from `secrets.token_urlsafe` can start with '-'; argv `--run-id -x...`
+then fails argparse parsing (exit 2) before the worker logs a single line —
+surfacing as "worker exited unexpectedly (code 2) without finishing the run".
+Fix: regenerate run ids until option-safe, plus a regression test.
