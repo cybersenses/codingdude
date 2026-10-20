@@ -1352,7 +1352,10 @@ function Planning({ workdir }) {
     const title = newTitle.trim()
     if (!title) return
     const fn = kind === 'ticket' ? api.addTicket
-      : kind === 'roadmap' ? api.addRoadmapItem : api.addDecision
+      : kind === 'roadmap' ? api.addRoadmapItem
+      : kind === 'prd' ? (wd) => api.addPrd(wd, title)
+      : kind === 'design' ? (wd) => api.addDesign(wd, title)
+      : api.addDecision
     try {
       await fn(workdir, title, '')
       setNewTitle('')
@@ -1394,6 +1397,8 @@ function Planning({ workdir }) {
           <option value="ticket">ticket</option>
           <option value="roadmap">roadmap</option>
           <option value="decision">decision</option>
+          <option value="prd">PRD</option>
+          <option value="design">tech design</option>
         </select>
         <input
           className="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-900 px-2 py-0.5 text-xs text-ink"
@@ -1403,6 +1408,56 @@ function Planning({ workdir }) {
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add() } }}
         />
         <button className="rounded bg-brand-700 px-2 py-0.5 text-[10px] text-brand-fg" onClick={add}>add</button>
+      </div>
+
+      <div>
+        <div className="text-[10px] uppercase tracking-wide text-ink-muted">PRDs</div>
+        {data.prds?.length === 0 && <div className="text-neutral-600">empty</div>}
+        {data.prds?.map((p) => (
+          <div key={p.id} className="flex items-center gap-1 rounded bg-neutral-900 p-1">
+            <span
+              className={`min-w-0 flex-1 truncate text-xs ${p.status === 'active' ? 'text-success' : p.status === 'draft' ? 'text-warning' : 'text-ink-muted'}`}
+              title={p.body}
+            >
+              #{p.id} {p.title}
+            </span>
+            <select
+              className="rounded border border-neutral-700 bg-neutral-900 px-1 text-[10px] text-ink"
+              value={p.status}
+              onChange={(e) => setStatus(api.setPrdStatus, p.id, e.target.value)}
+              aria-label={`PRD status for ${p.title}`}
+            >
+              <option value="draft">draft</option>
+              <option value="active">active</option>
+              <option value="sunset">sunset</option>
+            </select>
+          </div>
+        ))}
+      </div>
+
+      <div>
+        <div className="text-[10px] uppercase tracking-wide text-ink-muted">Tech designs</div>
+        {data.designs?.length === 0 && <div className="text-neutral-600">empty</div>}
+        {data.designs?.map((d) => (
+          <div key={d.id} className="flex items-center gap-1 rounded bg-neutral-900 p-1">
+            <span
+              className={`min-w-0 flex-1 truncate text-xs ${d.status === 'approved' ? 'text-success' : d.status === 'draft' ? 'text-warning' : 'text-ink-muted'}`}
+              title={d.body}
+            >
+              #{d.id} {d.title}{d.prd_id && <span className="ml-1 text-[10px] text-neutral-500">PRD #{d.prd_id}</span>}
+            </span>
+            <select
+              className="rounded border border-neutral-700 bg-neutral-900 px-1 text-[10px] text-ink"
+              value={d.status}
+              onChange={(e) => setStatus(api.setDesignStatus, d.id, e.target.value)}
+              aria-label={`Design status for ${d.title}`}
+            >
+              <option value="draft">draft</option>
+              <option value="approved">approved</option>
+              <option value="superseded">superseded</option>
+            </select>
+          </div>
+        ))}
       </div>
 
       <div>

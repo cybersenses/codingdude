@@ -815,3 +815,8 @@ Expose model/provider configuration as a managed, validated resource: GET/PUT /c
 **Status:** done
 
 Open-source release under AGPL-3.0 with dual commercial licensing, trademark protection, CLA, and generated-code-ownership terms. Plan id 40.
+
+## R52 — Product requirements & technical design docs
+**Status:** open
+
+Gap: repo has per-feature specs and ADRs but no PRD (what the product is, for whom, non-goals) or technical design doc (system architecture, dataflow, seams). Add docs/PRD.md and docs/TECH-DESIGN.md, wire doc hierarchy (PRD → TECH-DESIGN → ADRs → specs → ROADMAP), link from README and ROADMAP.

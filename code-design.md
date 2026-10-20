@@ -36,3 +36,34 @@ Config loads per run â€” provider changes apply from the next run, no bounce.
 **Fail-safe:** unknown provider-table shapes warn+skip; bad PUT payloads are
 validated before any write; `provider_effective_key` falls back to
 `'not-set'` key so construction errors surface at run time, not boot.
+
+## PRDs & Tech Designs — general planning docs (DB-backed, UI-surfaced)
+
+**Problem:** planning surface had roadmap/tickets/decisions but no
+requirements (WHAT/WHY) or technical-design (HOW) artifacts; agents jumped
+from conversation straight to tickets.
+
+**Design (user-chosen: DB-backed like tickets, surfaced in web UI):**
+- Schema (db.py, additive): `prds` (status draft|active|sunset) and
+  `tech_designs` (status draft|approved|superseded, optional `prd_id` FK-ish
+  link for requirements traceability). Both workdir-scoped.
+- RoadmapStore: list/create/update/delete for prds + designs; constants
+  PRD_STATUSES / DESIGN_STATUSES.
+- Agent tools (build_roadmap_toolset): create_prd/read_prd/update_prd,
+  create_tech_design/read_tech_design/update_tech_design; list_planning now
+  shows PRDs and Tech designs sections. Approved designs are superseded,
+  never rewritten (tool docstring states this).
+- Server: GET /planning returns prds+designs; POST/PUT/DELETE
+  /planning/prds[/{id}] and /planning/designs[/{id}], mirroring decisions
+  endpoints (422 on bad status, 404 on unknown id).
+- Frontend: Prd/TechDesign types + api methods; Planning tab gets PRDs and
+  Tech designs sections with status selects and add-kind options.
+- Skills (general, in .codingdude-seed/skills): `prd` (WHAT/WHY doc,
+  REQ-<n> numbering, mandatory Non-Goals + Open Questions, feeds roadmap/
+  tickets) and `tech-design` (HOW doc, REQ traceability table, alternatives,
+  supersedes-not-rewrites, hard trade-offs still go to record_decision).
+  Positioned explicitly against to-spec/grilling/grill-with-docs.
+
+**Impact:** additive schema (CREATE TABLE IF NOT EXISTS — no migration
+needed); /planning response gains two keys (frontend tolerates absence via
+optional chaining); no existing tool signatures changed.

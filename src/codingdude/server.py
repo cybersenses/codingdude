@@ -1106,6 +1106,8 @@ def create_app(
             'roadmap': roadmap,
             'tickets': store.list_tickets(resolved),
             'decisions': store.list_decisions(resolved),
+            'prds': store.list_prds(resolved),
+            'designs': store.list_designs(resolved),
         }
 
     @app.post('/planning/roadmap')
@@ -1234,6 +1236,96 @@ def create_app(
         from .roadmap import RoadmapStore
 
         return {'deleted': RoadmapStore(db).delete_decision(_workdir_or_404(workdir), decision_id)}
+
+    # ---- PRDs and tech designs (general development docs) ----
+
+    class PrdIn(BaseModel):
+        title: str
+        body: str = ''
+        status: str = 'draft'
+
+    @app.post('/planning/prds')
+    def add_prd(workdir: str, body: PrdIn, _: None = Depends(authorize)) -> dict:
+        from .roadmap import PRD_STATUSES, RoadmapStore
+
+        if body.status not in PRD_STATUSES:
+            raise HTTPException(status_code=422, detail='bad status')
+        prd_id = RoadmapStore(db).create_prd(
+            _workdir_or_404(workdir), body.title, body.body, status=body.status)
+        return {'id': prd_id}
+
+    class PrdUpdate(BaseModel):
+        status: str | None = None
+        body: str | None = None
+
+    @app.put('/planning/prds/{prd_id}')
+    def change_prd(prd_id: int, workdir: str, body: PrdUpdate,
+                   _: None = Depends(authorize)) -> dict:
+        from .roadmap import PRD_STATUSES, RoadmapStore
+
+        fields: dict = {}
+        if body.status is not None:
+            if body.status not in PRD_STATUSES:
+                raise HTTPException(status_code=422, detail='bad status')
+            fields['status'] = body.status
+        if body.body is not None:
+            fields['body'] = body.body
+        changed = RoadmapStore(db).update_prd(_workdir_or_404(workdir), prd_id, **fields)
+        if not changed:
+            raise HTTPException(status_code=404, detail='no such PRD')
+        return {'updated': prd_id}
+
+    @app.delete('/planning/prds/{prd_id}')
+    def remove_prd(prd_id: int, workdir: str, _: None = Depends(authorize)) -> dict:
+        from .roadmap import RoadmapStore
+
+        return {'deleted': RoadmapStore(db).delete_prd(_workdir_or_404(workdir), prd_id)}
+
+    class DesignIn(BaseModel):
+        title: str
+        body: str = ''
+        prd_id: int | None = None
+        status: str = 'draft'
+
+    @app.post('/planning/designs')
+    def add_design(workdir: str, body: DesignIn, _: None = Depends(authorize)) -> dict:
+        from .roadmap import DESIGN_STATUSES, RoadmapStore
+
+        if body.status not in DESIGN_STATUSES:
+            raise HTTPException(status_code=422, detail='bad status')
+        design_id = RoadmapStore(db).create_design(
+            _workdir_or_404(workdir), body.title, body.body,
+            prd_id=body.prd_id, status=body.status)
+        return {'id': design_id}
+
+    class DesignUpdate(BaseModel):
+        status: str | None = None
+        body: str | None = None
+
+    @app.put('/planning/designs/{design_id}')
+    def change_design(design_id: int, workdir: str, body: DesignUpdate,
+                      _: None = Depends(authorize)) -> dict:
+        from .roadmap import DESIGN_STATUSES, RoadmapStore
+
+        fields: dict = {}
+        if body.status is not None:
+            if body.status not in DESIGN_STATUSES:
+                raise HTTPException(status_code=422, detail='bad status')
+            fields['status'] = body.status
+        if body.body is not None:
+            fields['body'] = body.body
+        changed = RoadmapStore(db).update_design(
+            _workdir_or_404(workdir), design_id, **fields)
+        if not changed:
+            raise HTTPException(status_code=404, detail='no such design')
+        return {'updated': design_id}
+
+    @app.delete('/planning/designs/{design_id}')
+    def remove_design(design_id: int, workdir: str, _: None = Depends(authorize)) -> dict:
+        from .roadmap import RoadmapStore
+
+        return {'deleted': RoadmapStore(db).delete_design(
+            _workdir_or_404(workdir), design_id)}
 
 
     @app.post('/sessions/{session_id}/review')

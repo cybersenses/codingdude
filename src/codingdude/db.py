@@ -205,6 +205,27 @@ CREATE TABLE IF NOT EXISTS design_decisions (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS prds (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workdir TEXT NOT NULL,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'draft'
+        CHECK (status IN ('draft', 'active', 'sunset')),
+    body TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS tech_designs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workdir TEXT NOT NULL,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'draft'
+        CHECK (status IN ('draft', 'approved', 'superseded')),
+    body TEXT NOT NULL DEFAULT '',
+    prd_id INTEGER,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 
