@@ -1270,6 +1270,8 @@ def create_app(
             fields['status'] = body.status
         if body.body is not None:
             fields['body'] = body.body
+        if not fields:
+            raise HTTPException(status_code=422, detail='nothing to update')
         changed = RoadmapStore(db).update_prd(_workdir_or_404(workdir), prd_id, **fields)
         if not changed:
             raise HTTPException(status_code=404, detail='no such PRD')
@@ -1279,7 +1281,9 @@ def create_app(
     def remove_prd(prd_id: int, workdir: str, _: None = Depends(authorize)) -> dict:
         from .roadmap import RoadmapStore
 
-        return {'deleted': RoadmapStore(db).delete_prd(_workdir_or_404(workdir), prd_id)}
+        if not RoadmapStore(db).delete_prd(_workdir_or_404(workdir), prd_id):
+            raise HTTPException(status_code=404, detail='no such PRD')
+        return {'deleted': True}
 
     class DesignIn(BaseModel):
         title: str
@@ -1301,6 +1305,7 @@ def create_app(
     class DesignUpdate(BaseModel):
         status: str | None = None
         body: str | None = None
+        prd_id: int | None = None
 
     @app.put('/planning/designs/{design_id}')
     def change_design(design_id: int, workdir: str, body: DesignUpdate,
@@ -1314,6 +1319,10 @@ def create_app(
             fields['status'] = body.status
         if body.body is not None:
             fields['body'] = body.body
+        if body.prd_id is not None:
+            fields['prd_id'] = body.prd_id
+        if not fields:
+            raise HTTPException(status_code=422, detail='nothing to update')
         changed = RoadmapStore(db).update_design(
             _workdir_or_404(workdir), design_id, **fields)
         if not changed:
@@ -1324,8 +1333,9 @@ def create_app(
     def remove_design(design_id: int, workdir: str, _: None = Depends(authorize)) -> dict:
         from .roadmap import RoadmapStore
 
-        return {'deleted': RoadmapStore(db).delete_design(
-            _workdir_or_404(workdir), design_id)}
+        if not RoadmapStore(db).delete_design(_workdir_or_404(workdir), design_id):
+            raise HTTPException(status_code=404, detail='no such design')
+        return {'deleted': True}
 
 
     @app.post('/sessions/{session_id}/review')

@@ -282,6 +282,11 @@ class RoadmapStore:
         return self._update('prds', workdir, prd_id, fields)
 
     def delete_prd(self, workdir: str, prd_id: int) -> bool:
+        # Traceability: designs keep their bodies; the link is severed, not dangled.
+        self.db._conn.execute(
+            'UPDATE tech_designs SET prd_id = NULL WHERE workdir = ? AND prd_id = ?',
+            (workdir, prd_id),
+        )
         return self._delete('prds', workdir, prd_id)
 
     # ---- technical design documents ----
