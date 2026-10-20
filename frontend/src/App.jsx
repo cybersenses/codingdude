@@ -35,6 +35,7 @@ import { cfgMermaid } from './cfgView'
 import { buildRepoQuestionPrompt } from './repoqa'
 import { checklistPrompt } from './checklists'
 import { structureRows } from './structure'
+import logoUrl from './assets/logo.png'
 
 // R6: render-only mermaid diagrams inside spec blocks. Renders each
 // ```mermaid fence to SVG; on failure the raw fence stays visible.
@@ -121,7 +122,10 @@ function Login({ onLoggedIn }) {
           }
         }}
       >
-        <h1 className="mb-4 text-center text-lg font-bold text-brand-400">CodingDude</h1>
+        <div className="mb-4 flex items-center justify-center gap-2">
+          <img src={logoUrl} alt="CodingDude logo" className="h-10 w-10 rounded" />
+          <h1 className="text-center text-lg font-bold text-brand-400">CodingDude</h1>
+        </div>
         <input
           type="password"
           className="mb-3 w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
@@ -143,7 +147,10 @@ function Sidebar({ workdir, setWorkdir, sessions, activeSession, onSelect, onNew
   const [newProjectName, setNewProjectName] = useState(null)
   return (
     <aside className="flex shrink-0 flex-col gap-3 border-r border-neutral-800 bg-neutral-950 p-3" style={{ width }}>
-      <h1 className="text-lg font-bold text-brand-400">CodingDude</h1>
+      <div className="flex items-center gap-2">
+        <img src={logoUrl} alt="CodingDude logo" className="h-6 w-6 rounded" />
+        <h1 className="text-lg font-bold text-brand-400">CodingDude</h1>
+      </div>
       <label className="text-xs text-neutral-400">
         Project
         <select
