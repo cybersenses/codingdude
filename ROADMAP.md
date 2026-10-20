@@ -861,3 +861,45 @@ Fix: regenerate run ids until option-safe, plus a regression test.
 Verified in python:3.12-slim Docker container. uv sync works (needs full source incl. README — no pre-sync layer split possible). ruff clean; mypy reports 2 Linux typeshed false positives (restart.py Windows creation flags, code correctly os.name-guarded). pytest: 765 passed, 9 failed, 7 skipped — all 9 failures platform-specific (need docker CLI, gh stub path, Windows process-tree semantics). Server boots, seeds ~/.codingdude, /health OK (v0.4.0), serves freshly built UI incl. compressed logo. Windows-only steps (winget gh, github-mcp.exe, codegraph npm -g) don't apply on Linux by design. Artifacts: docker/Dockerfile.verify + .dockerignore committed. Semgrep not installed in image (security gate degrades to bandit/regex mode there); codegraph npm -g is platform-independent but was not installed. /health checked via docker exec (server binds 127.0.0.1). Build: docker build -t codingdude-verify -f docker/Dockerfile.verify .
 
 Validate the install path end-to-end on a bare Linux environment via Docker: uv sync, gates, frontend build/serve, server /health boot. Document Windows-only steps that don't apply.
+
+## R57 — SQLite 'database is locked' lockup: shared connection, no write serialization
+**Status:** open
+
+## Problem
+Intermittent `sqlite3.OperationalError: database is locked` that hangs a run and the UI
+("completely locked up"). Recurring: first observed 2026-09-28 (`RUN_ERROR` in trace
+`G0SUN1seqSI`), still occurring 2026-10-20 during a docs edit + commit run.
+
+## Prior mitigation (R-not recorded, shipped ~Sep 28)
+`db.py`: `PRAGMA busy_timeout=15000` + `Database._commit()` retries 3× with 50/100/200 ms
+backoff. This only *widens the window*; it does not serialize writers.
+
+## Evidence (2026-10-20)
+- `~/.codingdude/codingdude.db` 28.6 MB, `codingdude.db-wal` **25.5 MB** and growing —
+  checkpoints are starved, i.e. a long-lived read snapshot or an orphaned transaction.
+- Only one server (pid 8808) and one worker (pid 23868) alive; no stale processes, so the
+  lock is transient contention, not a leaked handle.
+- Server stdout is not persisted (`server.log` holds only the banner) — the failure is
+  invisible after the fact. Diagnosability gap.
+
+## Suspected causes (ranked, unverified)
+1. One `sqlite3.Connection` per process shared across FastAPI threadpool workers
+   (`check_same_thread=False`, no `threading.Lock`). Interleaved implicit BEGIN/COMMIT —
+   `self._conn.execute(...)` in `artifacts.py`, `execution.py`, `memory.py`, `planning.py`,
+   `projectnotes.py`, `references.py`, `roadmap.py`, `semantic.py` — can leave a
+   transaction open, which holds the write lock.
+2. Lazy cursor iteration while other threads write (`references.py:177`) keeps a read
+   snapshot open → WAL can never be checkpointed (matches the 25 MB WAL).
+3. Retry budget is only ~350 ms of backoff after a 15 s wait, and `execute()` itself is
+   never retried — only `_commit()`.
+4. Three+ writers on one file (server, worker, cli, evals) with no checkpoint policy
+   (`wal_autocheckpoint` untouched, no explicit `wal_checkpoint`).
+
+## Acceptance
+- A repeatable stress harness that reproduces the lock red (concurrency ≥4 writers against
+  a temp DB) — the diagnosing-bugs feedback loop.
+- Single writer seam (connection-level lock or a write queue) so no two threads share an
+  in-flight transaction.
+- WAL bounded (autocheckpoint + explicit checkpoint on idle); documented ceiling.
+- Server errors persisted to `logs/server.log`, not just stdout.
+
