@@ -109,6 +109,16 @@ save can never wipe `fallback_base_url` (which silently moves z.ai onto the
 standard API, where coding-plan keys are rejected). `GET` reports the lineup,
 provider-key *presence* only (never values), and an advisory `warnings` list.
 
+## Community and support
+
+Questions, bug reports, and feature discussion happen on Discord:
+**https://discord.gg/UA73mmfb**
+
+- Setup / configuration problems — ask in the Discord.
+- Reproducible bugs — open an issue on
+  [GitHub](https://github.com/cybersenses/codingdude/issues).
+- Security issues — **do not** post publicly; follow `SECURITY.md`.
+
 ## Third-party notices
 
 CodingDude builds on and adapts third-party work under permissive licences —
