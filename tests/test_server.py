@@ -644,6 +644,41 @@ def test_session_runs_endpoint_lists_recent_runs(server, tmp_path):
     assert runs[0]['worker_pid'] == 7
 
 
+def test_run_id_never_leads_with_dash(server, tmp_path, monkeypatch):
+    """Regression (worker exit code 2): token_urlsafe can emit a leading '-',
+    making argv `--run-id -x...` an argparse usage error — the worker died
+    before its first log line, surfacing as 'worker exited unexpectedly
+    (code 2) without finishing the run'."""
+    import secrets as _secrets
+
+    from codingdude import server as server_mod
+
+    app, base = server
+    session_id = create_session(base, tmp_path / 'proj-dashid')
+    orig = _secrets.token_urlsafe
+    calls = {'n': 0}
+
+    def sometimes_dash(nbytes):
+        calls['n'] += 1
+        if calls['n'] <= 2:
+            return '-' + orig(nbytes - 1)  # always a leading dash first
+        return orig(nbytes)
+
+    monkeypatch.setattr(server_mod.secrets, 'token_urlsafe', sometimes_dash)
+    r = httpx.post(
+        f'{base}/sessions/{session_id}/runs',
+        json={'prompt': 'say hi', 'model': 'codingdude-test:echo'},
+        headers=auth(),
+        timeout=30,
+    )
+    assert r.status_code == 200, r.text
+    run_id = r.json()['run_id']
+    assert not run_id.startswith('-')
+    assert calls['n'] >= 3  # the dash ids were rejected and regenerated
+    events = collect_sse(base, run_id, timeout=30)
+    assert events[-1]['type'] == 'RUN_FINISHED'
+
+
 def test_terminal_status_always_in_db_check_set():
     """Regression: _terminal_status returned 'cancelled' for RUN_CANCELLED,
     but the runs CHECK constraint only allows running/completed/failed/

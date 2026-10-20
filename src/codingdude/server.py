@@ -476,7 +476,12 @@ def create_app(
                 existing.worker.terminate()
             existing.push({'type': 'RUN_CANCELLED'})
 
+        # A leading '-' would make argv `--run-id -x...` parse as an unknown
+        # option (argparse exit 2, worker dies before its first log line);
+        # regenerate until the id is option-safe.
         run_id = secrets.token_urlsafe(8)
+        while run_id.startswith('-'):
+            run_id = secrets.token_urlsafe(8)
         channel = RunChannel(run_id, session_id, channels)
         channels[run_id] = channel
         # R31: durable run record — survives a server bounce, unlike `channels`.
