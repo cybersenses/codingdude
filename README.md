@@ -5,9 +5,41 @@ A personal, single-user coding agent built with [pydantic-ai](https://ai.pydanti
 Copyright (C) 2025 Cyberflex (https://www.cyberflex.io). Licensed under the
 [GNU AGPL-3.0-or-later](LICENSE) — see [Licence](#licence).
 
-## Status
+## What it is
 
-**All 17 tickets + the uber-agent layer (tickets 18–22) complete** (87 tests, mypy clean). CodingDude: pydantic-ai engine with failover (DeepSeek → GLM coding-plan), file/search/edit/AST tools, tiered approvals with interactive cards, session lifecycle (AGENT.md, compaction), delegation, web tools, memory store, budget cap, git/gh tiered tools, MCP client, semantic search, planning mode (propose → approve → tracked steps → auto review), directives + skills (progressive disclosure), gold-task benchmark (`uv run python bench.py`), web server + per-run worker + SSE + React UI with login. Headless mode for scripting.
+CodingDude is an agentic coding assistant that works inside your repository:
+it reads and edits code, runs your gates (pytest/ruff/mypy, builds, tests),
+plans non-trivial work, tracks it on a roadmap, and reports back with evidence
+before claiming anything is done.
+
+Highlights:
+
+- **Agentic engine** — pydantic-ai with model failover (any OpenAI-compatible
+  provider via `[providers.*]` config), per-run workers, session compaction,
+  and a budget cap.
+- **Tiered approvals** — safe actions run automatically; risky ones (pushes,
+  installs, main-tree mutations) gate behind interactive cards in the UI.
+  A `--yolo` headless mode bypasses gates for scripting.
+- **File & code tools** — read/edit with AST-aware symbol rewrites, codegraph
+  semantic navigation, project-wide impact analysis, arch lint, mutation
+  testing, profiling, benchmarks, coverage.
+- **Planning** — PRDs, tech designs, roadmap items, and tracer-bullet tickets
+  with tracked plan steps, per-step evidence, and automatic post-push review.
+- **Memory & continuity** — durable facts, solved-problem bank, project notes,
+  ADR-style design decisions, and handover notes across sessions.
+- **Delegation & sandboxes** — parallel sub-agents for reviews and research,
+  plus worktree and container sandboxes for isolated experiments.
+- **Skills** — a library of procedural skills (TDD, diagnosis, code review,
+  StyleSeed design system, Ponytail audits, and more) loaded on demand via
+  progressive disclosure.
+- **Web UI** — React dashboard with per-run terminal, diff, trace, waterfall,
+  cost, planning, artifacts, memory, MCP, and config tabs; SSE streaming;
+  login-gated.
+- **Extensible** — MCP client (codegraph, GitHub, vision servers), web
+  search/fetch tools, and git/gh tooling with the same approval tiers.
+
+See `docs/USER-MANUAL.md` for the full manual and
+`docs/TECHNICAL-DESIGN-MANUAL.md` for the architecture.
 
 ## Run
 
@@ -27,9 +59,11 @@ export ZAI_API_KEY=...        # failover model
 ## Layout
 
 - `src/codingdude/` — engine, config, SQLite store, CLI
+- `frontend/` — React web UI
 - `tests/` — engine-seam tests (scripted FunctionModel runs against temp Workdirs)
+- `.codingdude-seed/skills/` — skill library seeded into new projects
 - `CONTEXT.md` — domain glossary
-- `docs/adr/` — architecture decisions
+- `docs/` — manuals, ADRs, reference checklists
 
 ## Configuration
 
@@ -75,6 +109,11 @@ save can never wipe `fallback_base_url` (which silently moves z.ai onto the
 standard API, where coding-plan keys are rejected). `GET` reports the lineup,
 provider-key *presence* only (never values), and an advisory `warnings` list.
 
+## Third-party notices
+
+CodingDude builds on and adapts third-party work under permissive licences —
+see [NOTICE.md](NOTICE.md) (pydantic-ai, github-mcp-server, and adapted skill
+libraries from Matt Pocock, Ponytail, and StyleSeed).
 
 ## Licence
 
