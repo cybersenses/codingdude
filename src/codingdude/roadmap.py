@@ -13,7 +13,7 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-"""First-class planning data (R4): roadmap items, tickets, design decisions.
+"""First-class planning data (R4): roadmap items, tickets, design decisions, PRDs, tech designs.
 
 Planning state lives in SQLite scoped by project workdir — not in markdown
 files the agent must remember to update. Exposes a store for the server's
@@ -352,7 +352,7 @@ def build_roadmap_toolset(
     remains the place where items are born (create_* stays server-side)."""
 
     async def list_planning() -> str:
-        """Read the project's planning data: roadmap items, open tickets, and recent design decisions."""
+        """Read the project's planning data: roadmap items, tickets, design decisions, PRDs, and tech designs."""
         md = Path(workdir) / 'ROADMAP.md'
         # ROADMAP.md is the canonical roadmap source; DB is the fallback.
         road = parse_roadmap_md(md) if md.is_file() else store.list_roadmap(workdir)
@@ -477,6 +477,8 @@ def build_roadmap_toolset(
             fields['status'] = status
         if body is not None:
             fields['body'] = body
+        if not fields:
+            return 'refused: nothing to update - pass status and/or body'
         if not store.update_prd(workdir, prd_id, **fields):
             return f'PRD #{prd_id} not found'
         return f'PRD #{prd_id} updated'
@@ -503,6 +505,8 @@ def build_roadmap_toolset(
             fields['status'] = status
         if body is not None:
             fields['body'] = body
+        if not fields:
+            return 'refused: nothing to update - pass status and/or body'
         if not store.update_design(workdir, design_id, **fields):
             return f'tech design #{design_id} not found'
         return f'tech design #{design_id} updated'
