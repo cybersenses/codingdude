@@ -116,7 +116,8 @@ provider-key *presence* only (never values), and an advisory `warnings` list.
 Questions, bug reports, and feature discussion happen on Discord:
 **https://discord.gg/UA73mmfb**
 
-- Setup / configuration problems — ask in the Discord.
+- Setup / configuration problems — ask in the Discord. See
+  `docs/COMMUNITY.md` for server channels and posting guidelines.
 - Reproducible bugs — open an issue on
   [GitHub](https://github.com/cybersenses/codingdude/issues).
 - Security issues — **do not** post publicly; follow `SECURITY.md`.
