@@ -44,6 +44,9 @@ def _default_config_toml(lineup: ModelLineup) -> str:
         '\n[shell]\n'
         '# "bash" (Git Bash) or "powershell"\n'
         'default = "bash"\n'
+        '\n[planning]\n'
+        '# Mirror tickets/roadmap items to GitHub issues via gh (best-effort)\n'
+        'github_mirror = true\n'
     )
 
 
@@ -536,6 +539,14 @@ class ShellConfig:
 
 
 @dataclass(frozen=True)
+class PlanningConfig:
+    """Planning-surface options (R53). `github_mirror` auto-mirrors tickets and
+    roadmap items to GitHub issues via the gh CLI (best-effort, never blocks
+    local writes; requires a github.com origin remote and gh auth)."""
+    github_mirror: bool = True
+
+
+@dataclass(frozen=True)
 class ProviderDef:
     """One user-defined provider (#212): an OpenAI-compatible endpoint.
 
@@ -569,6 +580,7 @@ class Config:
     shell: ShellConfig
     providers: dict[str, ProviderDef] = field(default_factory=dict)
     delegation: DelegationConfig = field(default_factory=DelegationConfig)
+    planning: PlanningConfig = field(default_factory=PlanningConfig)
 
     @classmethod
     def defaults(cls) -> Config:
@@ -622,6 +634,15 @@ def load_config(home: Path | None = None) -> Config:
         max_cost_usd=delegation_raw.get(
             'max_cost_usd', defaults.delegation.max_cost_usd),
     )
+    planning_raw = raw.get('planning', {})
+    if not isinstance(planning_raw, dict):
+        logging.getLogger(__name__).warning(
+            'config.toml [planning]: unsupported shape; ignored')
+        planning_raw = {}
+    planning = PlanningConfig(
+        github_mirror=bool(planning_raw.get(
+            'github_mirror', defaults.planning.github_mirror)),
+    )
     config = Config(
         models=ModelLineup(
             main=models.get('main', defaults.models.main),
@@ -638,6 +659,7 @@ def load_config(home: Path | None = None) -> Config:
         shell=ShellConfig(default=shell.get('default', defaults.shell.default)),
         providers=_parse_providers(providers),
         delegation=delegation,
+        planning=planning,
     )
     apply_provider_keys(config)
     return config

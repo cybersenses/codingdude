@@ -197,6 +197,14 @@ CREATE TABLE IF NOT EXISTS runs (
     ended_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_runs ON runs (session_id, started_at);
+CREATE TABLE IF NOT EXISTS gh_mirror (
+    workdir TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('ticket', 'roadmap')),
+    local_id TEXT NOT NULL,
+    issue_number INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (workdir, kind, local_id)
+);
 CREATE TABLE IF NOT EXISTS design_decisions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     workdir TEXT NOT NULL,

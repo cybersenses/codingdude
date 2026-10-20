@@ -31,6 +31,7 @@ from pydantic_ai.toolsets import FunctionToolset
 
 from .db import Database
 from .db import utc_now_iso as _now
+from .gh_mirror import GitHubMirror
 
 logger = logging.getLogger(__name__)
 
@@ -146,10 +147,51 @@ def _head_sha(workdir: str) -> str | None:
 
 
 class RoadmapStore:
-    """CRUD for roadmap_items, tickets, and design_decisions, scoped by workdir."""
+    """CRUD for roadmap_items, tickets, and design_decisions, scoped by workdir.
 
-    def __init__(self, db: Database):
+    R53: creates/done-transitions of tickets and roadmap items are mirrored to
+    GitHub issues (best-effort; the local write is the source of truth and is
+    never blocked by the mirror).
+    """
+
+    def __init__(self, db: Database, mirror: GitHubMirror | None = None):
         self.db = db
+        self.mirror = mirror if mirror is not None else GitHubMirror()
+
+    # ---- GitHub mirroring (R53) ----
+
+    def _mirror_create(self, workdir: str, kind: str, local_id: str,
+                       title: str, body: str) -> None:
+        try:
+            n = self.mirror.create_issue(workdir, title, body)
+            if n is not None:
+                self.db._conn.execute(
+                    'INSERT OR REPLACE INTO gh_mirror'
+                    ' (workdir, kind, local_id, issue_number, created_at)'
+                    ' VALUES (?, ?, ?, ?, ?)',
+                    (workdir, kind, local_id, n, _now()),
+                )
+                self.db._conn.commit()
+                logger.info('GitHub mirror: %s %s -> issue #%d', kind, local_id, n)
+        except Exception as exc:  # noqa: BLE001 -- mirror must never break writes
+            logger.warning('GitHub mirror create failed (%s %s): %s',
+                           kind, local_id, exc)
+
+    def _mirror_close(self, workdir: str, kind: str, local_id: str) -> None:
+        try:
+            row = self.db._conn.execute(
+                'SELECT issue_number FROM gh_mirror'
+                ' WHERE workdir = ? AND kind = ? AND local_id = ?',
+                (workdir, kind, str(local_id)),
+            ).fetchone()
+            if row is None:
+                return
+            if self.mirror.close_done(workdir, row['issue_number']):
+                logger.info('GitHub mirror: closed issue #%d for %s %s',
+                            row['issue_number'], kind, local_id)
+        except Exception as exc:  # noqa: BLE001 -- mirror must never break updates
+            logger.warning('GitHub mirror close failed (%s %s): %s',
+                           kind, local_id, exc)
 
     # ---- roadmap items ----
 
@@ -171,10 +213,14 @@ class RoadmapStore:
         )
         self.db._conn.commit()
         assert cur.lastrowid is not None
+        self._mirror_create(workdir, 'roadmap', f'R{cur.lastrowid}', title, body)
         return cur.lastrowid
 
     def update_roadmap_item(self, workdir: str, item_id: int, **fields: str) -> bool:
-        return self._update('roadmap_items', workdir, item_id, fields)
+        changed = self._update('roadmap_items', workdir, item_id, fields)
+        if changed and fields.get('status') == 'done':
+            self._mirror_close(workdir, 'roadmap', f'R{item_id}')
+        return changed
 
     def delete_roadmap_item(self, workdir: str, item_id: int) -> bool:
         return self._delete('roadmap_items', workdir, item_id)
@@ -209,9 +255,22 @@ class RoadmapStore:
         )
         self.db._conn.commit()
         assert cur.lastrowid is not None
+        self._mirror_create(workdir, 'ticket', str(cur.lastrowid), title, body)
         return cur.lastrowid
 
     def update_ticket(self, workdir: str, ticket_id: int, **fields: str) -> bool:
+        closing = fields.get('status') == 'done'
+        changed = self._update('tickets', workdir, ticket_id, fields)
+        # Traceability: closing a ticket stamps the commit that closed it.
+        if changed and closing:
+            sha = _head_sha(workdir)
+            if sha:
+                self.db._conn.execute(
+                    'UPDATE tickets SET commit_sha = ? WHERE id = ?', (sha, ticket_id)
+                )
+                self.db._conn.commit()
+            self._mirror_close(workdir, 'ticket', str(ticket_id))
+        return changed
         closing = fields.get('status') == 'done'
         changed = self._update('tickets', workdir, ticket_id, fields)
         # Traceability: closing a ticket stamps the commit that closed it.
@@ -398,6 +457,8 @@ def build_roadmap_toolset(
                 upsert_roadmap_md(md, rid, body=body, status=status)
             except ValueError:
                 return f'roadmap item {rid} not found in ROADMAP.md'
+            if status == 'done':
+                store._mirror_close(workdir, 'roadmap', rid)
             return f'roadmap item {rid} → {status}'
         fields: dict = {'status': status}
         if body is not None:
@@ -412,6 +473,7 @@ def build_roadmap_toolset(
         if md.is_file():
             upsert_roadmap_md(md, None, title=title, body=body)
             rid = parse_roadmap_md(md)[-1]['id']
+            store._mirror_create(workdir, 'roadmap', rid, title, body)
             return f'roadmap item {rid} created: {title}'
         did = store.create_roadmap_item(workdir, title, body)
         return f'roadmap item #{did} created: {title}'

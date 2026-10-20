@@ -827,3 +827,8 @@ as first-class planning artifacts (mirroring R4 roadmaps/tickets) — `prds` and
 `create_tech_design`/`read_tech_design`/`update_tech_design`), Planning-tab UI
 sections, and `prd` + `tech-design` skills shipped to every project via
 `.codingdude-seed/skills/`. Mirrored to GitHub issue #14.
+
+## R53 — R53 — Automatic GitHub issue mirroring for planning items
+**Status:** open
+
+
