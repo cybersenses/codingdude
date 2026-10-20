@@ -40,9 +40,9 @@ Subcommands (`codingdude --help`):
 
 | Command | Purpose |
 |---|---|
-| `run` | Headless one-shot run — no web UI. Options: `--workdir`, `--model`, `--yolo`, `--budget` (USD spend cap), `--fix-loop`, `--image`. |
+| `run` | Headless one-shot run — no web UI. Options: `--workdir`, `--model`, `--yolo`, `--budget` (USD spend cap), `--fix-loop`. (Image attach is web-UI only.) |
 | `serve` | Start the web server. `--port` (default 8765). |
-| `restart` | Restart a running server. `--port`. |
+| `restart` | Restart a running server. `--port`, `--status` (report PID + health, do nothing), `--dry-run` (show what would be bounced). |
 | `eval` | Replay recorded scenarios (`--scenarios`, `--workdir`), or record one from a real session (`--record SESSION_ID --name --out`, `--check` repeatable). |
 
 ### 2.1 First boot
