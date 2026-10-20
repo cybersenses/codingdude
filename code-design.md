@@ -104,9 +104,10 @@ work from a bare machine.
 
 **Design:** `docker/Dockerfile.verify` — python:3.12-slim + uv + Node.
 Build: `docker build -t codingdude-verify -f docker/Dockerfile.verify .`
-(context trimmed by `.dockerignore`: no .venv, node_modules, dist, .git,
-DBs). Runs the Linux equivalent of setup: `uv sync --frozen`, ruff, then
-`npm ci && npm run build`; boots `codingdude.cli serve`. Gates run
+(context trimmed by `.dockerignore`: no .git, caches, .venv,
+node_modules, dist, DBs, logs). Installs the Linux equivalent of setup:
+`uv sync --frozen`, then `npm ci && npm run build`; boots
+`codingdude.cli serve`. Gates (ruff/pytest/mypy) run
 interactively (`docker run codingdude-verify uv run pytest -q`) because
 full pytest OOM-kills the default docker build sandbox. Semgrep is not
 installed in the image, so the in-container security gate runs in its
