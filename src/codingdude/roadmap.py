@@ -35,6 +35,15 @@ from .gh_mirror import GitHubMirror
 
 logger = logging.getLogger(__name__)
 
+_default_mirror: GitHubMirror | None = None  # shared: one gh probe/label per process
+
+
+def _mirror() -> GitHubMirror:
+    global _default_mirror
+    if _default_mirror is None:
+        _default_mirror = GitHubMirror()
+    return _default_mirror
+
 ROADMAP_STATUSES = ('open', 'in_progress', 'done')
 TICKET_STATUSES = ('todo', 'in_progress', 'done')
 PRD_STATUSES = ('draft', 'active', 'sunset')
@@ -156,7 +165,7 @@ class RoadmapStore:
 
     def __init__(self, db: Database, mirror: GitHubMirror | None = None):
         self.db = db
-        self.mirror = mirror if mirror is not None else GitHubMirror()
+        self.mirror = mirror if mirror is not None else _mirror()
 
     # ---- GitHub mirroring (R53) ----
 

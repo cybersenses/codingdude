@@ -47,9 +47,9 @@ class GitHubMirror:
     """
 
     _available: dict[str, bool] = {}  # class-level: probed once per process
+    _label_ensured = False  # class-level: `done` label created once per process
 
     def __init__(self) -> None:
-        self._label_ensured = False
         self._enabled = True
         try:
             self._enabled = load_config().planning.github_mirror
@@ -73,10 +73,26 @@ class GitHubMirror:
     def _probe(self, workdir: str) -> bool:
         if self._gh_path() is None:
             return False
-        remote = self._gh(workdir, ['remote', 'get-url', 'origin'])
-        if remote is None or 'github.com' not in remote.stdout:
+        origin = self._git_origin(workdir)
+        if origin is None or 'github.com' not in origin:
             return False
         return self._gh(workdir, ['auth', 'status']) is not None
+
+    @staticmethod
+    def _git_origin(workdir: str) -> str | None:
+        """`git remote get-url origin` — gh has no `remote` subcommand."""
+        git = shutil.which('git')
+        if git is None:
+            return None
+        try:
+            # Fixed executable path, internal argument list.
+            out = subprocess.run(  # nosec B603
+                [git, 'remote', 'get-url', 'origin'],
+                cwd=workdir, capture_output=True, text=True, timeout=5,
+            )
+            return out.stdout.strip() or None if out.returncode == 0 else None
+        except (OSError, subprocess.SubprocessError):
+            return None
 
     @staticmethod
     def _gh_path() -> str | None:

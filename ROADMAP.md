@@ -828,7 +828,17 @@ as first-class planning artifacts (mirroring R4 roadmaps/tickets) — `prds` and
 sections, and `prd` + `tech-design` skills shipped to every project via
 `.codingdude-seed/skills/`. Mirrored to GitHub issue #14.
 
-## R53 — R53 — Automatic GitHub issue mirroring for planning items
-**Status:** open
+## R53 — Automatic GitHub issue mirroring for planning items
+**Status:** done
 
+Standing convention (user-mandated): every ticket/roadmap item is logged
+locally first, then mirrored to a GitHub issue — enforced in code because
+agent discipline proved unreliable. Closed by: `gh_mirror.py` (`GitHubMirror`
+— best-effort gh CLI boundary: create issue, close as completed, ensure green
+`done` label; probes gh/remote/auth once per workdir and never blocks or
+raises), additive `gh_mirror` mapping table (workdir, kind, local_id →
+issue_number), hooks inside `RoadmapStore` creates/done-transitions plus the
+ROADMAP.md paths (agent toolset and server endpoints), and a
+`[planning] github_mirror` config knob (default on). Graceful skip when gh,
+auth, or a GitHub remote is absent. Mirrored to GitHub issue #55.
 
