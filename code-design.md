@@ -144,17 +144,17 @@ wrote a fake answer into decision history.
 
 **Design:** add a terminal state rather than reusing `answered` — a
 dismissed card recorded no answer, and inventing one corrupts the audit
-trail.
+trail. Dismissal is **user-driven only**: nothing expires a card
+automatically, because silently hiding a question the user has not read
+yet is worse than a stale card.
 - `artifacts.py`: `dismiss(artifact_id)` → `status='dismissed'` (KeyError on
-  unknown id, ValueError if already terminal); `dismiss_pending()` sweeps
-  the session's pending rows and returns the count; `respond()` raises
+  unknown id, ValueError if already terminal); `respond()` raises
   ValueError on a dismissed artifact so a stale card cannot be resurrected.
   `feedback()` is unchanged — it already returns None for any status other
   than `answered`, so the agent's replacement sees nothing.
 - `server.py`: `POST /artifacts/{artifact_id}/dismiss` (404 unknown, 422
-  non-pending), mirroring the respond endpoint; `start_run` calls
-  `dismiss_pending()` before spawning the worker, because a card left
-  pending by the superseded run is unanswerable by construction.
+  non-pending), mirroring the respond endpoint. `start_run` deliberately
+  does *not* sweep pending cards.
 - `App.jsx`: dismiss button on each pending card in the chat column and in
   the Artifacts tab; choice buttons disabled for any non-pending status and
   a dismissed spec block renders its markdown read-only.
@@ -164,6 +164,6 @@ trail.
 **Impact:** no schema change (status is a free-text column; the SSE `watch`
 loop emits its `answered` delta for any status transition, so dismissal
 propagates live). Existing `answered` cards are untouched, and re-answering
-an `answered` card stays allowed — only `dismissed` is closed. Deliberately
-not covered: expiring a card the moment its worker dies mid-run; the
-run-start sweep clears it on the next run.
+an `answered` card stays allowed — only `dismissed` is closed. Not covered
+by design: a card is not auto-retired when its worker dies mid-run; the
+user dismisses it (or answers it, which still works if the run is alive).

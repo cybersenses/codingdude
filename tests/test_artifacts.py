@@ -111,19 +111,11 @@ def test_dismiss_unknown_artifact_id(store):
         store.dismiss('missing')
 
 
-def test_dismiss_pending_is_session_scoped(db, store):
+def test_dismiss_only_applies_to_pending_cards(store):
     answered_id = store.emit_choice_card('answered?', options=['a'])
     store.respond(answered_id, {'pick': 'a'})
-    pending_id = store.emit_spec_block('spec', 'draft')
-    other = ArtifactStore(db, db.create_session(Path.cwd(), title='other'))
-    other.emit_choice_card('other?', options=['a'])
-
-    assert store.dismiss_pending() == 1
-    assert {a['id']: a['status'] for a in store.list()} == {
-        answered_id: 'answered',
-        pending_id: 'dismissed',
-    }
-    assert other.list()[0]['status'] == 'pending'
+    with pytest.raises(ValueError, match='not pending'):
+        store.dismiss(answered_id)
 
 
 def test_watch_yields_snapshot_then_deltas(store):
@@ -204,8 +196,8 @@ def test_artifact_endpoints(tmp_path, monkeypatch):
         # exercise it end-to-end here.
 
 
-def test_start_run_dismisses_previous_runs_cards(tmp_path, monkeypatch):
-    """R58: a new run can never consume an answer meant for a dead one."""
+def test_start_run_leaves_pending_cards_for_the_user(tmp_path, monkeypatch):
+    """R58: dismissal is user-driven — a new run never retires cards silently."""
     monkeypatch.setenv('CODEDUDE_HOME', str(tmp_path / 'home'))
 
     class _FakeWorker:
@@ -229,12 +221,17 @@ def test_start_run_dismisses_previous_runs_cards(tmp_path, monkeypatch):
         wd.mkdir()
         sid = c.post('/sessions', json={'workdir': str(wd)}, headers=h).json()['session_id']
         store = ArtifactStore(Database.connect(tmp_path / 'home'), sid)
-        stale_id = store.emit_choice_card('from the dead run?', options=['a', 'b'])
+        card_id = store.emit_choice_card('still owed an answer?', options=['a', 'b'])
 
         assert c.post(
             f'/sessions/{sid}/runs', json={'prompt': 'go'}, headers=h
         ).status_code == 200
-        assert {a['id']: a['status'] for a in store.list()} == {stale_id: 'dismissed'}
+        # Untouched: hiding a question the user has not read yet is not our call.
+        assert {a['id']: a['status'] for a in store.list()} == {card_id: 'pending'}
+
+        # ...but they can retire it themselves, and it stays retired.
+        assert c.post(f'/artifacts/{card_id}/dismiss', headers=h).json() == {'ok': True}
+        assert {a['id']: a['status'] for a in store.list()} == {card_id: 'dismissed'}
 
 
 # ---- artifact history: auto-captured Q&A and decisions ----
