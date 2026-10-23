@@ -904,7 +904,7 @@ backoff. This only *widens the window*; it does not serialize writers.
 - Server errors persisted to `logs/server.log`, not just stdout.
 
 ## R58 — Stale artifact expiry — dismiss orphaned choice/spec cards
-**Status:** open
+**Status:** done
 
 Pending `choice`/`spec` artifacts are never retired. `emit_choice_card` writes a row with `status='pending'` and the Artifacts tab + chat card render every non-answered row forever, so a card emitted by a run that was stopped, crashed, or simply ended unanswered reappears at every boot and accumulates (~7 found on the remote install, 2026-09-28 → 2026-10-10).
 
