@@ -137,20 +137,6 @@ class ArtifactStore:
         )
         self._db._conn.commit()
 
-    def dismiss_pending(self) -> int:
-        """Sweep this session's unanswered cards; returns how many were retired.
-
-        Called when a run starts: anything still pending belongs to a previous
-        run, which is terminal and can never read the answer.
-        """
-        cursor = self._db._conn.execute(
-            "UPDATE artifacts SET status = 'dismissed'"
-            " WHERE session_id = ? AND status = 'pending'",
-            (self._session_id,),
-        )
-        self._db._conn.commit()
-        return cursor.rowcount
-
     def list(self) -> list[dict]:
         rows = self._db._conn.execute(
             'SELECT * FROM artifacts WHERE session_id = ? ORDER BY created_at DESC',

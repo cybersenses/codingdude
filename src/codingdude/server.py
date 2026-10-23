@@ -484,15 +484,10 @@ def create_app(
             run_id = secrets.token_urlsafe(8)
         channel = RunChannel(run_id, session_id, channels)
         channels[run_id] = channel
-        # R58: cards still pending belong to the run we just superseded — it is
-        # terminal and can never read an answer, so retire them instead of
-        # letting them pile up in the Artifacts tab for weeks.
-        from .artifacts import ArtifactStore
-
-        stale = ArtifactStore(db, session_id).dismiss_pending()
-        if stale:
-            logging.getLogger('codingdude.server').info(
-                'ARTIFACTS_DISMISSED session=%s count=%s', session_id, stale)
+        # R58: stale cards are retired by the user, never automatically. A
+        # pending card left by an earlier run stays visible (and answerable)
+        # until they click dismiss — expiring it behind their back would hide
+        # a question they may not have read yet.
         # R31: durable run record — survives a server bounce, unlike `channels`.
         db.record_run_start(run_id, session_id, pid=None)
 

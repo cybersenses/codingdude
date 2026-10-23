@@ -912,8 +912,8 @@ The answer path makes the dead ones harmless (`POST /artifacts/{id}/respond` onl
 
 Fix:
 - `status='dismissed'` as a distinct terminal state (not `answered` — no answer was given).
-- `ArtifactStore.dismiss(id)` + `dismiss_pending()`; `respond()` refuses a dismissed artifact so a stale card cannot be resurrected.
+- `ArtifactStore.dismiss(id)`; `respond()` refuses a dismissed artifact so a stale card cannot be resurrected.
 - `POST /artifacts/{id}/dismiss` endpoint + Dismiss button on pending cards (chat column and Artifacts tab).
-- `start_run` dismisses pending artifacts left by the session's previous run — a new run can never consume an old answer.
+- Dismissal is user-driven only — no automatic expiry, so a question the user has not read yet is never hidden behind their back.
 
-Out of scope: expiring cards mid-run when the worker crashes (run-start sweep covers reappearance).
+Out of scope: anything that retires a card without the user asking.
