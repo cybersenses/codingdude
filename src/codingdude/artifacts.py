@@ -99,6 +99,11 @@ class ArtifactStore:
 
     def respond(self, artifact_id: str, response: dict) -> None:
         artifact = self._get(artifact_id)
+        if artifact['status'] == 'dismissed':
+            raise ValueError(
+                f'artifact {artifact_id!r} was dismissed — its run is gone, so an'
+                ' answer would reach nobody'
+            )
         payload = json.loads(artifact['payload_json'])
         if artifact['kind'] == 'choice':
             pick = response.get('pick')
@@ -114,6 +119,37 @@ class ArtifactStore:
             ('answered', json.dumps(response), artifact_id),
         )
         self._db._conn.commit()
+
+    def dismiss(self, artifact_id: str) -> None:
+        """Retire a card nobody can answer any more (R58).
+
+        `dismissed` is a terminal state distinct from `answered`: no answer
+        was recorded, so `feedback` still reports nothing to the agent's
+        replacement — but the card stops rendering as pending forever.
+        """
+        artifact = self._get(artifact_id)
+        if artifact['status'] != 'pending':
+            raise ValueError(
+                f'artifact {artifact_id!r} is {artifact["status"]}, not pending'
+            )
+        self._db._conn.execute(
+            "UPDATE artifacts SET status = 'dismissed' WHERE id = ?", (artifact_id,)
+        )
+        self._db._conn.commit()
+
+    def dismiss_pending(self) -> int:
+        """Sweep this session's unanswered cards; returns how many were retired.
+
+        Called when a run starts: anything still pending belongs to a previous
+        run, which is terminal and can never read the answer.
+        """
+        cursor = self._db._conn.execute(
+            "UPDATE artifacts SET status = 'dismissed'"
+            " WHERE session_id = ? AND status = 'pending'",
+            (self._session_id,),
+        )
+        self._db._conn.commit()
+        return cursor.rowcount
 
     def list(self) -> list[dict]:
         rows = self._db._conn.execute(

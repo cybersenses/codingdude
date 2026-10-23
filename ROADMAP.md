@@ -903,3 +903,17 @@ backoff. This only *widens the window*; it does not serialize writers.
 - WAL bounded (autocheckpoint + explicit checkpoint on idle); documented ceiling.
 - Server errors persisted to `logs/server.log`, not just stdout.
 
+## R58 — Stale artifact expiry — dismiss orphaned choice/spec cards
+**Status:** open
+
+Pending `choice`/`spec` artifacts are never retired. `emit_choice_card` writes a row with `status='pending'` and the Artifacts tab + chat card render every non-answered row forever, so a card emitted by a run that was stopped, crashed, or simply ended unanswered reappears at every boot and accumulates (~7 found on the remote install, 2026-09-28 → 2026-10-10).
+
+The answer path makes the dead ones harmless (`POST /artifacts/{id}/respond` only flips `status`), but there is no way to clear them from the UI other than picking a bogus option.
+
+Fix:
+- `status='dismissed'` as a distinct terminal state (not `answered` — no answer was given).
+- `ArtifactStore.dismiss(id)` + `dismiss_pending()`; `respond()` refuses a dismissed artifact so a stale card cannot be resurrected.
+- `POST /artifacts/{id}/dismiss` endpoint + Dismiss button on pending cards (chat column and Artifacts tab).
+- `start_run` dismisses pending artifacts left by the session's previous run — a new run can never consume an old answer.
+
+Out of scope: expiring cards mid-run when the worker crashes (run-start sweep covers reappearance).
