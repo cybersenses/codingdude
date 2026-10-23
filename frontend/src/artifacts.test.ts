@@ -31,6 +31,11 @@ describe('pendingArtifacts (#189)', () => {
     expect(out.map((x) => x.id)).toEqual(['1', '4'])
   })
 
+  it('never surfaces a dismissed (expired) artifact', () => {
+    const out = pendingArtifacts([a('1', 'choice', 'dismissed'), a('2', 'spec')])
+    expect(out.map((x) => x.id)).toEqual(['2'])
+  })
+
   it('caps the inline list at 3', () => {
     const out = pendingArtifacts([a('1', 'choice'), a('2', 'spec'), a('3', 'choice'), a('4', 'spec')])
     expect(out).toHaveLength(3)

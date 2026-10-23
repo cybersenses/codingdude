@@ -428,6 +428,12 @@ function PendingArtifactCard({ items, onResponded }) {
       .then(onResponded)
       .catch((e) => setErrs((m) => ({ ...m, [item.id]: String(e) })))
   }
+  // R58: no run is alive to read an answer, so let the user just clear it.
+  const dismiss = (item) => {
+    call(`/artifacts/${item.id}/dismiss`, { method: 'POST' })
+      .then(onResponded)
+      .catch((e) => setErrs((m) => ({ ...m, [item.id]: String(e) })))
+  }
   return (
     <div className="my-2 overflow-hidden rounded-lg border border-brand-400/50 bg-surface">
       <div className="border-b border-line bg-brand-400/10 px-3 py-2 text-xs font-semibold text-brand-300">
@@ -438,6 +444,11 @@ function PendingArtifactCard({ items, onResponded }) {
           <div className="flex items-center gap-2 text-xs text-ink">
             {item.title}
             <span className="font-mono text-[9px] font-normal uppercase text-ink-muted">{item.kind}</span>
+            <button
+              className="ml-auto rounded border border-line px-1.5 py-0.5 text-[9px] text-ink-muted hover:text-ink"
+              title="retire this card — the run that asked is gone, nothing will read the answer"
+              onClick={() => dismiss(item)}
+            >dismiss</button>
           </div>
           {item.kind === 'choice' ? (
             <div className="flex flex-wrap gap-1">
@@ -989,6 +1000,14 @@ function Artifacts({ sessionId }) {
     } catch { /* transient */ }
   }
 
+  // R58: retire a card whose run has ended — no answer, just off the list.
+  async function dismiss(id) {
+    try {
+      await call(`/artifacts/${id}/dismiss`, { method: 'POST' })
+      setItems(await call(`/sessions/${sessionId}/artifacts`))
+    } catch { /* transient */ }
+  }
+
   if (!sessionId) return <div className="text-neutral-600">no session</div>
   if (items.length === 0) return <div className="text-neutral-600">no artifacts yet</div>
   return (
@@ -1001,7 +1020,16 @@ function Artifacts({ sessionId }) {
         <div key={a.id} className="rounded border border-neutral-800 bg-neutral-900 p-2">
           <div className="mb-1 flex items-center justify-between">
             <span className="text-[11px] font-semibold text-neutral-200">{a.title}</span>
-            <span className="text-[9px] uppercase text-neutral-500">{a.kind} · {a.status}</span>
+            <span className="flex items-center gap-2 text-[9px] uppercase text-neutral-500">
+              {a.kind} · {a.status}
+              {a.status === 'pending' && (
+                <button
+                  className="rounded border border-neutral-700 px-1 py-0.5 text-[9px] normal-case text-neutral-400 hover:text-neutral-100"
+                  title="retire this card — the run that asked is gone, nothing will read the answer"
+                  onClick={() => dismiss(a.id)}
+                >dismiss</button>
+              )}
+            </span>
           </div>
           {a.kind === 'html' ? (
             <iframe
@@ -1034,7 +1062,7 @@ function Artifacts({ sessionId }) {
               {a.payload.options.map((opt) => (
                 <button
                   key={opt}
-                  disabled={a.status === 'answered'}
+                  disabled={a.status !== 'pending'}
                   className={a.response?.pick === opt
                     ? 'rounded bg-accent px-2 py-0.5 text-[10px] text-accent-fg'
                     : 'rounded bg-neutral-800 px-2 py-0.5 text-[10px] text-neutral-300 hover:bg-neutral-700 disabled:opacity-40'}
@@ -1042,8 +1070,8 @@ function Artifacts({ sessionId }) {
                 >{opt}</button>
               ))}
             </div>
-          ) : a.status === 'answered' && a.response?.content != null ? (
-            <pre className="whitespace-pre-wrap text-[10px] text-neutral-300">{a.response.content}</pre>
+          ) : a.status !== 'pending' ? (
+            <pre className="whitespace-pre-wrap text-[10px] text-neutral-300">{a.response?.content ?? a.payload.markdown}</pre>
           ) : (
             <div>
               {a.payload.markdown.includes('```mermaid') && (

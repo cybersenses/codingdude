@@ -97,6 +97,35 @@ async def test_toolset_emit_and_feedback(db, session):
     assert 'stacked' in answered
 
 
+def test_dismiss_retires_a_pending_card(store):
+    artifact_id = store.emit_choice_card('Which?', options=['a', 'b'])
+    store.dismiss(artifact_id)
+    assert store.list()[0]['status'] == 'dismissed'
+    assert store.feedback(artifact_id) is None  # dismissed, not answered
+    with pytest.raises(ValueError, match='dismissed'):
+        store.respond(artifact_id, {'pick': 'a'})
+
+
+def test_dismiss_unknown_artifact_id(store):
+    with pytest.raises(KeyError, match='no artifact'):
+        store.dismiss('missing')
+
+
+def test_dismiss_pending_is_session_scoped(db, store):
+    answered_id = store.emit_choice_card('answered?', options=['a'])
+    store.respond(answered_id, {'pick': 'a'})
+    pending_id = store.emit_spec_block('spec', 'draft')
+    other = ArtifactStore(db, db.create_session(Path.cwd(), title='other'))
+    other.emit_choice_card('other?', options=['a'])
+
+    assert store.dismiss_pending() == 1
+    assert {a['id']: a['status'] for a in store.list()} == {
+        answered_id: 'answered',
+        pending_id: 'dismissed',
+    }
+    assert other.list()[0]['status'] == 'pending'
+
+
 def test_watch_yields_snapshot_then_deltas(store):
     choice_id = store.emit_choice_card('Which?', options=['a', 'b'])
     events = store.watch(poll_seconds=0.01)
@@ -156,13 +185,56 @@ def test_artifact_endpoints(tmp_path, monkeypatch):
             f'/artifacts/{choice_id}/respond', json={'pick': 'a'}
         ).status_code == 401
 
+        # R58: a stale card is retired, not answered, and cannot come back.
+        stale_id = store.emit_choice_card('stale?', options=['a', 'b'])
+        assert c.post(f'/artifacts/{stale_id}/dismiss', headers=h).json() == {'ok': True}
+        assert c.post(f'/artifacts/{stale_id}/dismiss', headers=h).status_code == 422
+        assert c.post('/artifacts/nope/dismiss', headers=h).status_code == 404
+
         listed = c.get(f'/sessions/{sid}/artifacts', headers=h).json()
-        assert all(a['status'] == 'answered' for a in listed)
+        assert {a['id']: a['status'] for a in listed} == {
+            stale_id: 'dismissed',
+            spec_id: 'answered',
+            choice_id: 'answered',
+        }
 
         # The SSE endpoint itself is wired as a StreamingResponse over
         # store.watch(); the generator is covered by test_watch_*, and a
         # TestClient stream read blocks on the infinite tail, so we don't
         # exercise it end-to-end here.
+
+
+def test_start_run_dismisses_previous_runs_cards(tmp_path, monkeypatch):
+    """R58: a new run can never consume an answer meant for a dead one."""
+    monkeypatch.setenv('CODEDUDE_HOME', str(tmp_path / 'home'))
+
+    class _FakeWorker:
+        pid = 4242
+        returncode = None
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            pass
+
+    monkeypatch.setattr('codingdude.server.subprocess.Popen', lambda *a, **k: _FakeWorker())
+    app = create_app(home=tmp_path / 'home', token='test-token', allow_testclient=True)
+    app.state.port = 8000
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as c:
+        h = {'Authorization': f'Bearer {app.state.token}'}
+        wd = tmp_path / 'proj'
+        wd.mkdir()
+        sid = c.post('/sessions', json={'workdir': str(wd)}, headers=h).json()['session_id']
+        store = ArtifactStore(Database.connect(tmp_path / 'home'), sid)
+        stale_id = store.emit_choice_card('from the dead run?', options=['a', 'b'])
+
+        assert c.post(
+            f'/sessions/{sid}/runs', json={'prompt': 'go'}, headers=h
+        ).status_code == 200
+        assert {a['id']: a['status'] for a in store.list()} == {stale_id: 'dismissed'}
 
 
 # ---- artifact history: auto-captured Q&A and decisions ----

@@ -484,6 +484,15 @@ def create_app(
             run_id = secrets.token_urlsafe(8)
         channel = RunChannel(run_id, session_id, channels)
         channels[run_id] = channel
+        # R58: cards still pending belong to the run we just superseded — it is
+        # terminal and can never read an answer, so retire them instead of
+        # letting them pile up in the Artifacts tab for weeks.
+        from .artifacts import ArtifactStore
+
+        stale = ArtifactStore(db, session_id).dismiss_pending()
+        if stale:
+            logging.getLogger('codingdude.server').info(
+                'ARTIFACTS_DISMISSED session=%s count=%s', session_id, stale)
         # R31: durable run record — survives a server bounce, unlike `channels`.
         db.record_run_start(run_id, session_id, pid=None)
 
@@ -612,6 +621,19 @@ def create_app(
         )
         try:
             ArtifactStore(db, '').respond(artifact_id, response)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {'ok': True}
+
+    @app.post('/artifacts/{artifact_id}/dismiss')
+    def artifact_dismiss(artifact_id: str, _: None = Depends(authorize)) -> dict:
+        """Retire a card whose run is gone (R58) — no answer, just off the list."""
+        from .artifacts import ArtifactStore
+
+        try:
+            ArtifactStore(db, '').dismiss(artifact_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
