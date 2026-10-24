@@ -32,6 +32,9 @@ Owner: CodingDude. Last updated: R59 P0, chrome + cards + store/panels extracted
 | **P0 COMPLETE** — move-only refactor landed | done | build · 91 tests · lint |
 | #227 fix: `Processes` tab was missing from `tabs` (body unreachable) | done | build · 91 tests · lint |
 | #228 fix: `Memory` tab polled but had no body branch | done | build · 91 tests · lint |
+| #229 perf: Memory list capped at newest 200 (15.8k → 2.2k DOM nodes) | done | build · 91 tests · lint · DOM count |
+| #230 fix: composer placeholder now says *why* it is disabled | done | build · 91 tests · lint · live DOM |
+| `tools/ui_smoke.py` — Playwright gate walking all 16 dock tabs | done | exit 0, 16/16 tabs |
 
 `App.jsx` is now ~1337 lines: `DockPanel` (tab shell + the 8 data-coupled bodies) and `App`
 (session/SSE state + layout). The eight remaining bodies all read `DockPanel`'s single shared
@@ -110,11 +113,27 @@ uv run ruff check src tests
 uv run mypy
 ```
 
-**Manual parity check (P0's real gate).** `npm run build` passing does not prove the UI is
-unchanged. Load the app and confirm: login card · sidebar projects/sessions · explorer tree
-· editor tabs + save/reload/diff · agent strip · chat + prompt row · every dock tab renders
-(Diff, Graph, Planning, Artifacts, Notes, Renders, Terminal, **Processes**, Output, Waterfall,
-Trace, Cost, **Memory**, MCP, Config, Standards — 16 tabs after #227/#228) · status footer.
+**Machine-checked parity (do this first — it catches what the build cannot).** No vitest file
+imports `App.jsx`, so a moved component that renders *nothing* still builds clean. The smoke
+gate drives the real bundle in Chromium and walks all 16 dock tabs, failing on an
+ErrorBoundary crash, an uncaught page error, a missing tab, or a tab still showing the
+"select a session" placeholder:
+
+```powershell
+cd G:\pydantic
+uv run python tools\ui_smoke.py --shots .scratch\shots   # server must already be running
+```
+
+Exit 0 = every tab rendered; a JSON report of per-tab findings prints either way. It needs the
+`playwright` dev dependency plus `playwright install chromium`.
+
+**Manual parity check (the last gate).** `npm run build` + the smoke gate passing does not
+prove the UI looks *the same*. Load the app and confirm layout visually: login card · sidebar
+projects/sessions · explorer tree · editor tabs + save/reload/diff · agent strip · chat +
+prompt row · every dock tab renders (Diff, Graph, Planning, Artifacts, Notes, Renders,
+Terminal, **Processes**, Output, Waterfall, Trace, Cost, **Memory**, MCP, Config, Standards —
+16 tabs after #227/#228) · status footer. The smoke gate writes one screenshot per tab, which
+is usually enough to eyeball this.
 
 ## 5. If the UI is blank / crashed
 
