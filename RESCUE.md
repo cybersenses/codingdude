@@ -42,7 +42,7 @@ Owner: CodingDude. Last updated: R59 P1 — the dock shell behind `?layout=dock`
 | **P1 START** — `dockview-react@8.6.1` installed (exact pin) | done | install 8.6.1 / dockview 8.6.1 |
 | P1 `workspace/catalogue.ts` — 5 panels + `DEFAULT_PRESET` placements | done | 13 vitest tests, red-verified (forward reference fails 2) |
 | P1 `workspace/Workspace.jsx` — shell, five panels, watermark reset | done | build · 115 tests · lint |
-| P1 geometry fix — `initialWidth` left the editor at 115 px; `pinSizes()` after one frame | done | gate: 250/215/650/385, Monaco 634 → 460 → 634 px (narrowed and restored; the hidden-panel path is NOT covered — see below) |
+| P1 geometry fix — `initialWidth` left the editor at 115 px; `pinSizes()` after one frame | done | gate records widths 256/208/652/384, Monaco 634 → 460 → 634 px (narrowed and restored; the hidden-panel path is NOT covered — see below) |
 | P1 `index.css` — `--dv-*` mapped onto `--ss-*` tokens | done | visual (screenshots inspected) |
 | P1 `App.jsx` — `?layout=dock` flag + prop bags shared by both shells | done | build · lint · classic smoke 16/16 |
 | P1 gate — `tools/ui_smoke.py --layout dock` + `data-panel` seam + Monaco reflow check | done | dock smoke exit 0, 5/5 · 19 verdict tests |
@@ -81,8 +81,10 @@ panels anywhere.
   container changes. It does **not** prove the hidden-then-revealed case: dockview's
   `DockviewPanelApi` omits `setVisible` and its group headers ship no actions, so hiding a
   panel needs P3 UI before a gate can test it. Do not read this as covered.
-- P2–P4 — remaining fifteen panels + the visibility-gated data store, then persistence/
-  presets/palette, then popouts. **Not started.**
+- P2–P4 — remaining fifteen panels + the visibility-gated data store, then
+  persistence/presets/palette/keyboard *plus* two obligations deferred from P1: the
+  panel-hide control a reveal test needs, and the REQ-9 drag → reload → assert proof.
+  Then popouts. **Not started.**
 
 **Rollback for P1 is one query parameter**: load the app without `?layout=dock` and the
 classic shell renders exactly as before. Nothing server-side changed, so no data migration
@@ -157,18 +159,22 @@ uv run python tools\ui_smoke.py --layout dock --shots .scratch\dock-shots   # R5
 ```
 
 Exit 0 = every check passed; a JSON report of per-tab findings prints either way. It does *not*
-judge content: `chars` per tab is recorded, so a tab stuck on "loading…" still passes — that
-is what the screenshots and the manual pass are for. It needs the `playwright` dev dependency
-plus `playwright install chromium`. Rebuild `frontend/dist` first or you are testing the old
-bundle.
+judge content: `chars` and `width` per panel are recorded, so a tab stuck on "loading…" still
+passes — that is what the screenshots and the manual pass are for. It needs the `playwright`
+dev dependency plus `playwright install chromium`. Rebuild `frontend/dist` first or you are
+testing the old bundle.
 
-`--layout dock` is the P1 gate: it reads `?layout=dock`, checks the five `DOCK_PANELS` against
-`workspace/catalogue.ts` (drift fails), asserts each panel root marked `data-panel="<id>"` is
-on screen with non-zero geometry — a tab in the tab bar proves a tab exists, not that its body
-rendered — and opens `README.md` in the editor to confirm Monaco re-lays-out when the viewport
-changes (a hidden `renderer: 'always'` panel is exactly where that regresses). Its verdict has
-unit tests (`tests/test_ui_smoke_verdict.py`, 19) because a gate nobody exercises is a gate
-nobody knows works.
+`--layout dock` is the P1 gate: it reads `?layout=dock`, waits for the explorer's tree (it
+renders nothing until a session binds, so without the wait a slow session fetch reads as a
+missing `README.md`), checks the five `DOCK_PANELS` against `workspace/catalogue.ts` (drift
+fails), asserts each panel root marked `data-panel="<id>"` has non-zero geometry — a bounding
+box, not a visibility test: a scrolled-away element still has one — and records each panel's
+width. A tab in the tab bar proves a tab exists, not that its body rendered; the geometry and
+the recorded text are what make that difference visible. It then opens `README.md` in the
+editor to confirm Monaco re-lays-out when the viewport changes. The hidden-then-revealed
+variant is **not** covered — see §2 — because the dock has no control that hides a panel. Its
+verdict has unit tests (`tests/test_ui_smoke_verdict.py`, 19) because a gate nobody exercises
+is a gate nobody knows works.
 
 **Manual parity check (the last gate).** `npm run build` + the smoke gate passing does not
 prove the UI looks *the same*. Load the app and confirm layout visually: login card · sidebar
@@ -177,11 +183,13 @@ prompt row · every dock tab renders (Diff, Graph, Planning, Artifacts, Notes, R
 Terminal, **Processes**, Output, Waterfall, Trace, Cost, **Memory**, MCP, Config, Standards —
 16 tabs after #227/#228) · status footer. The smoke gate writes one screenshot per tab, which
 is usually enough to eyeball this. Repeat once with `?layout=dock`: the five panels should be
-nav ≈250 px · explorer ≈215 px · editor + diff stacked in the middle · chat ≈384 px, i.e. the
-classic arrangement with draggable splitters. The preset *asks* for 256/208/384 and the gate
-consistently measures 250/215/650/385: `pinSizes` calls `setSize` per column and each call
-redistributes the remainder, so the landed values are approximate. Treat the measured numbers
-as correct, not as a 6 px regression.
+nav 256 px · explorer 208 px · editor + diff stacked in the middle · chat 384 px, i.e. the
+classic arrangement with draggable splitters. Those are the widths the preset requests, and the
+gate records the panel roots landing on them (`tabs[<title>].width`), with the middle column
+taking the remainder (~652 px). Nothing asserts a width — `pinSizes` calls `setSize` per column
+and each call redistributes the remainder — so compare against the recording and treat a few px
+either way as normal. An earlier draft of this paragraph quoted 250/215/650/385 as gate output;
+the gate does not reproduce those numbers.
 
 ## 5. If the UI is blank / crashed
 

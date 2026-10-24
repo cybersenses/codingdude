@@ -310,18 +310,21 @@ rollback is flipping a query parameter.
   resolves a reference eagerly, so a forward reference throws at mount — and
   that is exactly what `catalogue.test.ts` asserts. Red-verified: pointing
   `editor` at `chat` fails two tests.
-- **`initialWidth` alone did not reproduce the classic geometry.** Measured
-  through the gate: nav ≈497 px, explorer ≈503 px, editor ≈115 px. The new group
+- **`initialWidth` alone did not reproduce the classic geometry.** Read off the
+  panels' bounding boxes in a one-off run (the gate recorded no geometry at the
+  time): nav ≈497 px, explorer ≈503 px, editor ≈115 px. The new group
   is created by splitting its reference and lands on proportional sizes. Fixed
   by pinning the three fixed-width columns with `group.api.setSize()` one frame
   after the preset is built (`pinSizes`), leaving the flexible middle the
-  remainder. Measured after: 250 / 215 / 650 / 385 against the classic layout's
-  256 / 208 / flexible / 384, and Monaco's own width went 98 px → 634 px.
-  `pinSizes` is approximate and order-dependent on purpose — each `setSize`
-  redistributes the remainder, so the columns settle at 250/215 rather than the
-  requested 256/208. The requested values are what the preset asks for; the
-  measured ones are what the gate reports, and both are recorded so a reviewer
-  does not read a 6 px difference as a regression.
+  remainder. The gate now records each panel root's width
+  (`tabs[<title>].width`) and reports 256 / 208 / ~652 / 384 in a clean run —
+  the preset's requested 256 / 208 / flexible / 384, landed as asked — with
+  Monaco's own width at 634 px (98 px before the pin). Nothing asserts a width:
+  `pinSizes` is order-dependent by construction, each `setSize` redistributing
+  the remainder, so the numbers are recorded for a reviewer to compare against
+  and a few px either way is not a regression. An earlier draft of this bullet
+  quoted 250 / 215 / 650 / 385 as gate output — a measurement the gate does not
+  reproduce, and the reason the width recording was added.
 - **The catalogue's minimum sizes are wired, not decorative.** `PanelSpec`'s
   `minWidth`/`minHeight` are passed to `addPanel` as `minimumWidth`/
   `minimumHeight` — `AddPanelOptions` extends `Partial<Constraints>`, read from
@@ -354,8 +357,9 @@ rollback is flipping a query parameter.
   tech design §4.7, which asked for one). `automaticLayout: true` was already
   set in `baseOptions()`, so the question was whether it actually copes with a
   docked, resizable container — and the gate answers it with numbers: the window
-  is narrowed and restored while the editor's DOM stays mounted, and its width
-  must narrow with it (634 → 460 px) and come back (→ 634 px). **The
+  is narrowed and restored, and the editor's width must narrow with it and come
+  back. The assertion is only "narrower than before" and "within 2 px of where it
+  started", so 634 → 460 → 634 px is a recording, not a requirement. **The
   hidden-then-revealed case is not covered, and an earlier draft of this section
   wrongly claimed it was.** It cannot be reached from the gate: hiding a panel
   needs either a panel-level `setVisible` — `DockviewPanelApi` *omits* it, only
@@ -369,7 +373,9 @@ rollback is flipping a query parameter.
 - **Not shipped yet, deliberately:** `sanitiseLayout` (REQ-8's defensive load
   path) — nothing loads a saved layout until P3, so it would be dead code today;
   it lands with the loader that exercises it. Also absent: the remaining fifteen
-  panels (P2), persistence/presets/palette/keyboard (P3), popouts (P4).
+  panels (P2); persistence/presets/palette/keyboard (P3), *plus* the panel-hide
+  control a reveal test needs and the REQ-9 drag proof deferred from P1; popouts
+  (P4).
   **REQ-9's drag proof is not satisfied and P1 does not claim it:** the gate
   clicks tabs and measures geometry, but nothing drags a panel or moves it
   between groups, so REQ-4's "state survives a move" is backed by the
@@ -407,15 +413,19 @@ independent: the override selector repeats the theme class
 `catalogue.ts` (drift fails, the same anti-duplication trick as `DOCK_TABS` vs
 `App.jsx`). Each panel root carries `data-panel="<id>"`, because a tab in the
 tab bar proves a tab exists, not that its body rendered — the gate asserts the
-panel element exists, has non-zero geometry, and records the text it shows
-(`chars` is reported, not judged: a legitimately empty panel would make a length
-assertion brittle). The expected panel count comes from `catalogue.ts`, not from
+panel element exists, has non-zero geometry, and records the text it shows and
+its width (`chars` and `width` are reported, not judged: a legitimately empty
+panel would make a length assertion brittle, and `pinSizes` redistributes the
+remainder, so an exact width would make a flake generator). The expected panel
+count comes from `catalogue.ts`, not from
 `DOCK_PANELS` — comparing the walk against its own list is a check that can
 never fail. A panel root also carries `data-poll-error` when its fetch fails,
 the same seam `DockPanel` exposes, so the #231 banner check is live under this
 layout too. It also requires Monaco to reflow in both directions — narrowed with
-the window, restored with it — with its DOM mounted throughout. It does **not**
-cover the hidden-then-revealed path, for the structural reason recorded above.
+the window, restored with it — sampling the same locator three times (node
+identity is not asserted: nothing is hidden or moved, so there is no unmount for
+it to survive). It does **not** cover the hidden-then-revealed path, for the
+structural reason recorded above.
 `verdict()` gained three failure branches (`panel_drift`, `visible: false`, a
 `monaco` result that did not follow its container), with seven new tests in
 `tests/test_ui_smoke_verdict.py` (19 total); red-verified twice — by deleting the
@@ -426,7 +436,8 @@ each time watching a test fail.
 · `eslint src` 0 · `pytest` 802 passed / 1 skipped (was 796) · `ruff` and `mypy`
 (72 files) clean · classic gate exit 0, 16/16 tabs, 0 unexpected console errors,
 0 page errors, 0 `/api/` 5xx · dock gate exit 0, 5/5 panels visible, monaco
-634 → 460. Bundle cost of the new dependency, measured directly:
+634 → 460 → 634, panel widths recorded 256/208/652/384. Bundle cost of the new
+dependency, measured directly:
 `main.esm.min.mjs` 20,007 B raw / 4,820 B gzip, `dockview.css` 159,552 B raw /
 12,611 B gzip — ≈17.4 KB gzip against tech design §5's ~60 KB budget. The
 whole-chunk before/after delta was **not** measured (that needs a baseline build
