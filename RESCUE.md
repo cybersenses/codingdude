@@ -15,7 +15,7 @@ Owner: CodingDude. Last updated: R59 P0, chrome + cards + store/panels extracted
 | Working tree at kickoff | clean except `M ROADMAP.md` (R59 item) |
 | Risk area | `frontend/src/` — React UI |
 | Backend | untouched by R59 (Python, `src/codingdude/`) |
-| `App.jsx` size | 3288 lines at kickoff → ~2280 after chrome/cards/store/panel extraction |
+| `App.jsx` size | 3288 lines at kickoff → **1337** after chrome/cards/store/panel extraction (P0 complete) |
 
 ### Progress log (P0 steps, newest last)
 
@@ -29,6 +29,9 @@ Owner: CodingDude. Last updated: R59 P0, chrome + cards + store/panels extracted
 | `panels/dock/*`: Terminal, Notes, Artifacts, ModelsConfig, Planning, Standards, Diff | done | build · 91 tests · lint |
 | Remaining dock bodies (Graph, Output, Waterfall, Trace, Cost, MCP, Renders, Processes) | **deliberately left in `DockPanel` — see below** | — |
 | `DockPanel` reduced to a shell | partial (7/15 bodies extracted) | — |
+| **P0 COMPLETE** — move-only refactor landed | done | build · 91 tests · lint |
+| #227 fix: `Processes` tab was missing from `tabs` (body unreachable) | done | build · 91 tests · lint |
+| #228 fix: `Memory` tab polled but had no body branch | done | build · 91 tests · lint |
 
 `App.jsx` is now ~1337 lines: `DockPanel` (tab shell + the 8 data-coupled bodies) and `App`
 (session/SSE state + layout). The eight remaining bodies all read `DockPanel`'s single shared
@@ -45,10 +48,11 @@ Roadmap **R59** / tech design **#1** / design decision **#94**: replace the hard
 five-zone flexbox UI with a dockable-window workspace (`dockview-react`), so users can put
 panels anywhere.
 
-- **P0 (in progress)** — pure move-only refactor: split the 3288-line `frontend/src/App.jsx`
+- **P0 (complete)** — pure move-only refactor: split the 3288-line `frontend/src/App.jsx`
   into `src/chrome/`, `src/panels/`, `src/cards/`, `src/store/`. **No behaviour change.**
   Exit gate: `npm run build` clean, `npx vitest run` 91/91, `npm run lint` clean, UI
-  visually identical.
+  visually identical. Landed at 1337 lines; the eight data-coupled dock bodies stay inline
+  until P2 (see the note after the progress log).
 - **P1** — dockview shell behind `?layout=dock` (nav, explorer, editor, chat, diff);
   the classic layout stays the default.
 - P2–P4 — remaining panels, data store, persistence, popout. **Not started.**
@@ -109,8 +113,8 @@ uv run mypy
 **Manual parity check (P0's real gate).** `npm run build` passing does not prove the UI is
 unchanged. Load the app and confirm: login card · sidebar projects/sessions · explorer tree
 · editor tabs + save/reload/diff · agent strip · chat + prompt row · every dock tab renders
-(Diff, Graph, Planning, Artifacts, Notes, Renders, Terminal, Output, Waterfall, Trace, Cost,
-Memory, MCP, Config, Standards) · status footer.
+(Diff, Graph, Planning, Artifacts, Notes, Renders, Terminal, **Processes**, Output, Waterfall,
+Trace, Cost, **Memory**, MCP, Config, Standards — 16 tabs after #227/#228) · status footer.
 
 ## 5. If the UI is blank / crashed
 
