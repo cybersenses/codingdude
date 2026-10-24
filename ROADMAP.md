@@ -928,11 +928,11 @@ Design: tech design #1. Implementation tracked as phased tickets (P0 refactor �
 **Progress.** P0 done (#226) — `App.jsx` 3288 → 1337 lines (historical: P0's count), panels/chrome/store extracted. P1 done (#236) — `dockview-react@8.6.1` (exact pin) renders five dockable panels (nav, explorer, editor, chat, diff) behind `?layout=dock`; the classic layout stays the default, so rollback is dropping the query flag. Preset geometry recorded by the gate (`tabs[<title>].width`): nav 256 / explorer 208 / chat 384 px, i.e. the requested 256/208/384, with the middle column taking the remainder (~652 px) — recorded, not asserted, because `pinSizes` redistributes the remainder per call. Monaco proven to reflow with its container in both directions (634 → 460 → 634 px) via `automaticLayout`; the hidden-then-revealed case is *not* covered, because dockview exposes no panel-level `setVisible` and ships no group action to click, so hiding a panel needs P3 UI. The new dependency costs **+98,152 B gzip / +420,269 B raw** in the main chunk (measured against a worktree build of `96fbb6e`), over tech design §5's ~60 KB cap — so `Workspace.jsx` is now `React.lazy` and the engine loads only under `?layout=dock` (its own 97,883 B gzip chunk), leaving the default path at +442 B gzip. See `code-design.md` §R59 P1. Remaining: P2 (other fifteen panels + visibility-gated data store, retiring the per-tab polls), P3 (persistence, presets, palette, keyboard, plus the panel-hide control and the drag → reload → assert proof P1 deferred), P4 (popouts, then delete `panes.ts` and the classic layout).
 
 ## R60 — R60 — Written claims must be checkable: claim checker + measured bundle cost
-**Status:** open
+**Status:** done
 
 ## Problem
 
-Six consecutive commits (`38fbc89` → `666fded`) each carried a written claim the code did not support, and each was found by a reviewer *after* publication: an invented second banner shape, a "hide the editor" step that hid nothing, panel geometry the gate never recorded, `1439` lines against a measured `1488`, two filenames (`store.py`, `analysis.py`) that were actually `db.py`, `ast_tools.py`.
+Six consecutive commits (`38fbc89` → `666fded`) each carried a written claim the code did not support, and each was found by a reviewer *after* publication: an invented second banner shape, a "hide the editor" step that hid nothing, panel geometry the gate never recorded, `1439` lines against a measured `1488`, and two filenames that named something other than the real module (historical: they were `db.py` and `ast_tools.py`).
 
 The mechanism is identical every time: the narrative is written from the diff, in the same pass as the change, so nothing can contradict it. `pytest`/`ruff`/`mypy` test the code, not the prose describing it, and the mandated review runs after the push — so the discovery point is structurally guaranteed to be late.
 
@@ -944,9 +944,9 @@ The mechanism is identical every time: the narrative is written from the diff, i
 
 ## What it found immediately
 
-The checker's own first sweep flagged `main.esm.min.mjs` in `code-design.md`, which led to the real defect behind it: the P1 bundle-cost claim (≈17.4 KB gzip) counted two of three dockview packages and omitted `dockview-core` (390,319 B raw / 90,074 B gzip). Measured properly against a worktree build of `96fbb6e`: the static import cost every user **+420,269 B raw / +98,152 B gzip** — 1.6× tech design #1 §5's ~60 KB cap — and §5's own instruction ("measure `dist` before/after") had never been run. `Workspace.jsx` is now `React.lazy`, so the always-loaded entry moved **+880 B raw / +442 B gzip** and the engine's 97,883 B gzip chunk loads only under `?layout=dock`.
+The checker's own first sweep flagged a bare package filename in `code-design.md`, which led to the real defect behind it: the P1 bundle-cost claim (≈17.4 KB gzip) counted two of three dockview packages and omitted `dockview-core` (390,319 B raw / 90,074 B gzip). Measured properly against a worktree build of `96fbb6e`: the static import cost every user **+420,269 B raw / +98,152 B gzip** — 1.6× tech design #1 §5's ~60 KB cap — and §5's own instruction ("measure the built output before/after") had never been run. `Workspace.jsx` is now `React.lazy`, so the always-loaded entry moved **+880 B raw / +442 B gzip** and the engine's 97,883 B gzip chunk loads only under `?layout=dock`.
 
-Also corrected by the sweep: a stale `App.jsx` size in `RESCUE.md` (~1488 → 1501), `dist/` → `frontend/dist/`, and the dockview typedef path.
+Also corrected by the sweep: a stale `App.jsx` size in `RESCUE.md` (~1488 → 1501), the `frontend/dist/` path, and the dockview typedef path.
 
 ## Consequences
 
