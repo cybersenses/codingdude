@@ -42,10 +42,10 @@ Owner: CodingDude. Last updated: R59 P1 — the dock shell behind `?layout=dock`
 | **P1 START** — `dockview-react@8.6.1` installed (exact pin) | done | install 8.6.1 / dockview 8.6.1 |
 | P1 `workspace/catalogue.ts` — 5 panels + `DEFAULT_PRESET` placements | done | 13 vitest tests, red-verified (forward reference fails 2) |
 | P1 `workspace/Workspace.jsx` — shell, five panels, watermark reset | done | build · 115 tests · lint |
-| P1 geometry fix — `initialWidth` left the editor at 115 px; `pinSizes()` after one frame | done | gate: 250/215/650/385, Monaco 634 → 460 px (hidden, narrowed, revealed) |
+| P1 geometry fix — `initialWidth` left the editor at 115 px; `pinSizes()` after one frame | done | gate: 250/215/650/385, Monaco 634 → 460 → 634 px (narrowed and restored; the hidden-panel path is NOT covered — see below) |
 | P1 `index.css` — `--dv-*` mapped onto `--ss-*` tokens | done | visual (screenshots inspected) |
 | P1 `App.jsx` — `?layout=dock` flag + prop bags shared by both shells | done | build · lint · classic smoke 16/16 |
-| P1 gate — `tools/ui_smoke.py --layout dock` + `data-panel` seam + Monaco relayout check | done | dock smoke exit 0, 5/5 · 18 verdict tests |
+| P1 gate — `tools/ui_smoke.py --layout dock` + `data-panel` seam + Monaco reflow check | done | dock smoke exit 0, 5/5 · 19 verdict tests |
 
 `App.jsx` is now ~1439 lines: `DockPanel` (tab shell + the 9 inline bodies) and `App`
 (session/SSE state + layout). Eight of those nine bodies (Graph, Output, Waterfall, Trace,
@@ -75,9 +75,12 @@ panels anywhere.
 - **P1 (complete, #236)** — the dockview shell behind `?layout=dock`: five panels (`nav`,
   `explorer`, `editor`, `chat`, `diff`) built from `workspace/catalogue.ts`, themed from the
   StyleSeed tokens, reached by query flag so the classic layout stays the default. Exit gate:
-  build · 115 tests · lint · classic smoke 16/16 · dock smoke 5/5 with Monaco relayout
-  measured. Deviation recorded: no `onDidVisibilityChange` hook on `CodeEditor` — the gate
-  proves `automaticLayout` already handles a resized dock panel (634 → 460 px).
+  build · 115 tests · lint · classic smoke 16/16 · dock smoke 5/5 with Monaco reflow
+  measured (634 → 460 → 634 px). Deviation recorded: no `onDidVisibilityChange` hook on
+  `CodeEditor` — the gate proves `automaticLayout` reflows a *mounted* editor when its
+  container changes. It does **not** prove the hidden-then-revealed case: dockview's
+  `DockviewPanelApi` omits `setVisible` and its group headers ship no actions, so hiding a
+  panel needs P3 UI before a gate can test it. Do not read this as covered.
 - P2–P4 — remaining fifteen panels + the visibility-gated data store, then persistence/
   presets/palette, then popouts. **Not started.**
 
@@ -164,7 +167,7 @@ bundle.
 on screen with non-zero geometry — a tab in the tab bar proves a tab exists, not that its body
 rendered — and opens `README.md` in the editor to confirm Monaco re-lays-out when the viewport
 changes (a hidden `renderer: 'always'` panel is exactly where that regresses). Its verdict has
-unit tests (`tests/test_ui_smoke_verdict.py`, 18) because a gate nobody exercises is a gate
+unit tests (`tests/test_ui_smoke_verdict.py`, 19) because a gate nobody exercises is a gate
 nobody knows works.
 
 **Manual parity check (the last gate).** `npm run build` + the smoke gate passing does not
