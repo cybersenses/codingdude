@@ -65,9 +65,8 @@ export function ModelsConfig({ data, setData }) {
   const [verify, setVerify] = useState(null)
   const [verifying, setVerifying] = useState(false)
 
-  if (data.configError) {
-    return <div className="rounded border border-danger/40 bg-danger/10 p-3 text-xs text-danger">{data.configError}</div>
-  }
+  // No configError branch here: a failed /config/models fetch is surfaced by
+  // the dock's own error banner (#231), one path for every tab.
   if (!cfg) {
     return <div className="rounded border border-line bg-surface p-4 text-xs text-ink-muted">Loading model configuration…</div>
   }

@@ -192,15 +192,16 @@ they appear mid-run and settle with the run — and the codebase already
 precedent-sets this in `CodeEditor.jsx` (exports `CodeEditor` + `CodeDiff`).
 
 **Deliberate remainder.** `Graph`, `Output`, `Waterfall`, `Trace`, `Cost`,
-`MCP`, `Renders`, `Processes` and `Memory` stay inline in `DockPanel`. Seven
-of them read its single shared poll through `data`/`setData` (`selRun` belongs
-to `Output` and `Waterfall` only). The other two are inline for different
-reasons: `Processes` renders the `processes` prop from App's own 3 s poll, and
-`Memory` was *added* inline by #228 — it had no body at all before. Extracting
-them move-only would thread those props through more files — work P2's data
-store deletes. They move in P2, each with its own visible-subscriber
-subscription. (The earlier draft of this paragraph said "all eight read the
-poll via `selRun`" — wrong on both counts; corrected here.)
+`MCP`, `Renders`, `Processes` and `Memory` stay inline in `DockPanel`. Eight
+of those nine read its single shared poll through `data`/`setData` (`selRun`
+belongs to `Output` and `Waterfall` only). The exception is `Processes`, which
+renders the `processes` prop from App's own 3 s poll. `Memory` is the ninth —
+*added* inline by #228, and it polls like the rest. Extracting them move-only
+would thread those props through more files — work P2's data store deletes.
+They move in P2, each with its own visible-subscriber subscription. (Two
+earlier drafts of this paragraph got the count wrong — first "all eight read
+the poll via `selRun`", then "seven read the poll". The branches in `DockPanel`
+are the source of truth: eight poll, `Processes` does not.)
 
 **Impact.** `App.jsx` 3288 → 1337 lines and now holds only `DockPanel` plus
 `App` (session/SSE state machine + layout). No API, DB, or behaviour change.
@@ -231,10 +232,24 @@ the #228 class:
 - `DockPanel`'s poll ended in `catch { /* transient */ }`, so a failing
   `/usage` or MCP fetch was invisible *and* left the tab on the "select a
   session" placeholder — the exact symptom #228 fixed for `Memory`, still live
-  on `Cost` and `MCP`. The catch now records `pollError {tab, message}`, and
-  the fallback body distinguishes its three causes: no session, still loading,
-  or that tab's fetch failed. This is the repo rule "no silent catches"
-  applied where it was violated.
+  on `Cost` and `MCP`. This is the repo rule "no silent catches" applied where
+  it was violated.
+- **The first fix for it was too narrow, and the review of the fix said so.**
+  It rendered the error only in the shared fallback, so it reached the two tabs
+  it named and nothing else: `Diff`, `Graph`, `Trace`, `Artifacts`, `Renders`
+  kept stale or empty bodies with no reason given, and `Config`/`Memory` had
+  their own keys (`configError`, `memoryError`) that the poll never populated —
+  `configError` was reachable only on the no-session path, `memoryError` the
+  same. The error was also stamped with nothing but a tab name, so it could
+  follow the user to another session. The final design is one surface:
+  `pollErrors[tab] = {sessionId, message}` written by every failing fetch and
+  cleared once per successful poll; a single banner renders it for whichever
+  tab is on screen, and `body` is suppressed while it shows so a panel cannot
+  pair "could not load this tab" with "loading…" underneath. `configError` and
+  `memoryError` are gone, and `ModelsConfig` lost its error branch with them.
+  The lesson recorded: fixing the instance a review named is not the same as
+  fixing the class, and the class here was "per-tab error state that only some
+  branches rendered".
 - The gate never failed on `console_errors` (collected, never read), asserted
   the placeholder without knowing whether a session existed (spuriously red on
   a fresh workspace, and it only passed before because this workspace has
@@ -246,7 +261,12 @@ the #228 class:
   network idle, and compares `DOCK_TABS` against `const tabs` in `App.jsx` so
   drift fails. The per-tab settle went 900 ms → 2 s: `/memory` is ~800 KB of
   JSON, and a shorter wait photographed "loading…" and called it a rendered
-  tab.
+  tab. Review of that fix found the remaining hole: a data tab that failed
+  rendered its own error text, which is neither the placeholder nor a console
+  error, so a genuine 500 still passed. The gate now also fails on any `/api/`
+  response with a 5xx status and on the presence of the dock's error banner
+  (`[data-poll-error]`) — one hook and one attribute, rather than trusting each
+  tab to look broken in a way the gate recognises.
 - **Logged, not fixed** (#232): `refreshKey` is declared, passed to
   `DockPanel`, and never read — `setRefreshKey` is never called. Pre-existing
   (identical at `0c2e58e`), inert, and worth a decision rather than a silent
