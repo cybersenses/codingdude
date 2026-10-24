@@ -19,7 +19,7 @@
 //
 // Fixed chrome stays outside the dock — the error banner, AgentStrip and status
 // footer describe the shell, not a panel, and every phase keeps them there.
-import React, { createContext, useContext, useEffect, useState } from 'react'
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react'
 import { DockviewReact, themeDark } from 'dockview-react'
 import 'dockview-react/dist/styles/dockview.css'
 import { call } from '../api'
@@ -229,8 +229,17 @@ function Watermark({ containerApi }) {
 // Shell
 // ---------------------------------------------------------------------------
 
-export function Workspace({ error, agentStrip, sidebar, fileWs, onAsk, sessionId, prompt, pending, chat, footer, onRefreshArtifacts }) {
+export function Workspace({ error, agentStrip, sidebar, fileWs, onAsk, sessionId, prompt, pending, chat, footer, onRefreshArtifacts, reviewDiff = 0 }) {
   const shell = { sidebar, fileWs, onAsk, sessionId, prompt, pending, chat, onRefreshArtifacts }
+  const apiRef = useRef(null)
+
+  // #75's "Review changes →" bumps a counter in App. The classic shell answers
+  // it by switching DockPanel to the Diff tab; here it has to activate the
+  // `diff` panel instead, or the button silently does nothing in this shell.
+  useEffect(() => {
+    if (reviewDiff > 0) apiRef.current?.getPanel('diff')?.api.setActive()
+  }, [reviewDiff])
+
   return (
     <WorkspaceContext.Provider value={shell}>
       <div data-workspace="dock" className="flex h-screen flex-col bg-neutral-900 text-neutral-200">
@@ -241,7 +250,10 @@ export function Workspace({ error, agentStrip, sidebar, fileWs, onAsk, sessionId
             theme={themeDark}
             components={COMPONENTS}
             watermarkComponent={Watermark}
-            onReady={(event) => applyDefaultPreset(event.api)}
+            onReady={(event) => {
+              apiRef.current = event.api
+              applyDefaultPreset(event.api)
+            }}
           />
         </div>
         <StatusFooter {...footer} />
