@@ -10,12 +10,12 @@ Owner: CodingDude. Last updated: R59 P0, chrome + cards + store/panels extracted
 | Item | Value |
 |---|---|
 | Repo | `G:\pydantic` (branch `main`) |
-| Last known-good commit | `0c2e58e` — "fix(artifacts): dismissal is user-driven only (R58)" |
+| Last known-good commit | `0c4608a` — "fix(dock): one error surface for every tab" (last pushed, gates green; the #233 review fixes on top are #235) |
 | Restore tag | `pre-r59-p0` → `0c2e58e` (created before any refactor; **do not delete**) |
 | Working tree at kickoff | clean except `M ROADMAP.md` (R59 item) |
 | Risk area | `frontend/src/` — React UI |
 | Backend | untouched by R59 (Python, `src/codingdude/`) |
-| `App.jsx` size | 3288 lines at kickoff → **1337** after chrome/cards/store/panel extraction (P0 complete) |
+| `App.jsx` size | 3288 lines at kickoff → **1337** after chrome/cards/store/panel extraction (P0 complete), 1439 as of #233 |
 
 ### Progress log (P0 steps, newest last)
 
@@ -37,8 +37,9 @@ Owner: CodingDude. Last updated: R59 P0, chrome + cards + store/panels extracted
 | `tools/ui_smoke.py` — Playwright gate walking all 16 dock tabs | done | exit 0, 16/16 tabs |
 | #231 fix: dock poll errors surfaced on every tab (one banner, not per-tab keys) | done | build · 91 tests · lint · smoke exit 0 |
 | #231 gate: smoke now fails on `/api/` 5xx and on that banner | done | smoke exit 0, 0 5xx, 0 banners |
+| #233 review fixes: dead `/artifacts` poll removed (could blank a healthy panel), helpers moved to `pollErrors.ts` + 11 tests, `verdict()` no longer KeyErrors on a partial report | done | build · 102 tests · lint · ruff · mypy · pytest 796 · smoke exit 0 |
 
-`App.jsx` is now ~1337 lines: `DockPanel` (tab shell + the 9 inline bodies) and `App`
+`App.jsx` is now ~1439 lines: `DockPanel` (tab shell + the 9 inline bodies) and `App`
 (session/SSE state + layout). Eight of those nine bodies (Graph, Output, Waterfall, Trace,
 Cost, MCP, Renders, Memory) read `DockPanel`'s single shared poll (`data`, `setData`;
 `selRun` belongs to Output and Waterfall only). Only **Processes** is inline for a different
@@ -124,7 +125,9 @@ uv run mypy
 imports `App.jsx`, so a moved component that renders *nothing* still builds clean. The smoke
 gate drives the real bundle in Chromium and walks all 16 dock tabs, failing on an
 ErrorBoundary crash, an uncaught page error, an unexpected console error, a missing tab,
-`DOCK_TABS` drifting from the tab list in `App.jsx`, an unreachable `/api/sessions`, or — when
+`DOCK_TABS` drifting from the tab list in `App.jsx`, an unreachable `/api/sessions`, any
+`/api/` response with a 5xx status, a tab showing the dock's "could not load this tab"
+banner (#231), or — when
 the workspace has a session — a tab still showing the "select a session" placeholder:
 
 ```powershell
