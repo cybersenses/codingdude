@@ -1427,6 +1427,7 @@ export default function App() {
         pending={pending}
         chat={chatProps}
         footer={footerProps}
+        reviewDiff={focusDiffTab}
         onRefreshArtifacts={() => {
           call(`/sessions/${activeSession}/artifacts`).then(setArtifactsAll).catch(() => {})
         }}

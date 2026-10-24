@@ -341,6 +341,16 @@ rollback is flipping a query parameter.
   it lands with the loader that exercises it. Also absent: the remaining fifteen
   panels (P2), persistence/presets/palette/keyboard (P3), popouts (P4).
 
+- **Shared prop bags, and one signal that needed re-wiring.** `AgentStrip`,
+  `Sidebar`, `Prompt`, `Chat` and `StatusFooter` are fed from single prop-bag
+  objects that both shells spread, so the two cannot drift into different
+  wiring. One behaviour did not survive the move for free: `AgentStrip`'s
+  "Review changes →" bumps a counter that the classic shell answers by
+  switching `DockPanel` to its Diff tab. The dock shell rendered the same
+  button and ignored the signal — a dead control that a superficial parity
+  claim would have hidden. `Workspace` now keeps the `DockviewApi` and
+  activates the `diff` panel on that counter.
+
 **Theme.** dockview ships sixteen palettes; none of them are ours. Rather than
 adopt one, the colour-carrying `--dv-*` variables are re-pointed at the
 StyleSeed tokens, so the dock follows `[data-theme]` with the rest of the app
