@@ -45,7 +45,7 @@ Owner: CodingDude. Last updated: R59 P1 — the dock shell behind `?layout=dock`
 | P1 geometry fix — `initialWidth` left the editor at 115 px; `pinSizes()` after one frame | done | gate records widths 256/208/652/384, Monaco 634 → 460 → 634 px (narrowed and restored; the hidden-panel path is NOT covered — see below) |
 | P1 `index.css` — `--dv-*` mapped onto `--ss-*` tokens | done | visual (screenshots inspected) |
 | P1 `App.jsx` — `?layout=dock` flag + prop bags shared by both shells | done | build · lint · classic smoke 16/16 |
-| P1 gate — `tools/ui_smoke.py --layout dock` + `data-panel` seam + Monaco reflow check | done | dock smoke exit 0, 5/5 · 19 verdict tests |
+| P1 gate — `tools/ui_smoke.py --layout dock` + `data-panel` seam + Monaco reflow check | done | dock smoke exit 0, 5/5 · 21 verdict tests |
 
 `App.jsx` is now ~1439 lines: `DockPanel` (tab shell + the 9 inline bodies) and `App`
 (session/SSE state + layout). Eight of those nine bodies (Graph, Output, Waterfall, Trace,
@@ -171,11 +171,15 @@ chars for Explorer, i.e. header plus "loading…", and the Monaco step called th
 checks the five `DOCK_PANELS` against `workspace/catalogue.ts` (drift
 fails), asserts each panel root marked `data-panel="<id>"` has non-zero geometry — a bounding
 box, not a visibility test: a scrolled-away element still has one — and records each panel's
-width. A tab in the tab bar proves a tab exists, not that its body rendered; the geometry and
-the recorded text are what make that difference visible. It then opens `README.md` in the
+width. It reads that panel's #231 banner using a "root or descendant" selector, because the
+banner is sometimes the panel root itself (`DiffTabPanel` returns it) and sometimes nested
+(`DockPanel`); a descendant-only search looks scoped-correct and matches nothing, which is how
+this gate once passed a failing panel. A tab in the tab bar proves a tab exists, not that its
+body rendered; the geometry and the recorded text are what make that difference visible. It then
+opens `README.md` in the
 editor to confirm Monaco re-lays-out when the viewport changes. The hidden-then-revealed
 variant is **not** covered — see §2 — because the dock has no control that hides a panel. Its
-verdict has unit tests (`tests/test_ui_smoke_verdict.py`, 19) because a gate nobody exercises
+verdict has unit tests (`tests/test_ui_smoke_verdict.py`, 21) because a gate nobody exercises
 is a gate nobody knows works.
 
 **Manual parity check (the last gate).** `npm run build` + the smoke gate passing does not

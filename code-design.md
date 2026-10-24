@@ -419,17 +419,24 @@ panel would make a length assertion brittle, and `pinSizes` redistributes the
 remainder, so an exact width would make a flake generator). The expected panel
 count comes from `catalogue.ts`, not from
 `DOCK_PANELS` — comparing the walk against its own list is a check that can
-never fail. A panel root also carries `data-poll-error` when its fetch fails,
-the same seam `DockPanel` exposes, so the #231 banner check is live under this
-layout too — read from that panel's own root, because the dock arms one banner
-per panel and a page-wide locator reports the first it finds for every tab. It also requires Monaco to reflow in both directions — narrowed with
+never fail. The #231 seam `DockPanel` exposes is live under this layout too, but
+it takes two shapes: `DiffTabPanel` returns the banner element *as* the panel
+root when its fetch fails, while `DockPanel` nests its banner inside the dock
+body. The gate therefore matches both — a comma-joined "root or descendant"
+selector scoped to the panel. Scoping alone was not enough: all five panels mount
+at once, so a page-wide read reports whichever banner it finds first for every
+tab, and a descendant-only read finds nothing of the root shape at all. Both
+mistakes were real in sequence, so the selector is now verified in a browser
+against all three shapes (root 1, nested 1, clean 0) rather than reasoned about —
+the descendant-only form looked scoped-correct and matched 0. It also requires
+Monaco to reflow in both directions — narrowed with
 the window, restored with it — sampling the same locator three times (node
 identity is not asserted: nothing is hidden or moved, so there is no unmount for
 it to survive). It does **not** cover the hidden-then-revealed path, for the
 structural reason recorded above.
 `verdict()` gained three failure branches (`panel_drift`, `visible: false`, a
-`monaco` result that did not follow its container), with seven new tests in
-`tests/test_ui_smoke_verdict.py` (19 total); red-verified twice — by deleting the
+`monaco` result that did not follow its container), with nine new tests in
+`tests/test_ui_smoke_verdict.py` (21 total); red-verified twice — by deleting the
 `visible` check, and by making `_monaco_followed_its_container` return `True` —
 each time watching a test fail.
 

@@ -34,7 +34,37 @@ pytest.importorskip("playwright.sync_api")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
-from ui_smoke import DOCK_PANELS, DOCK_TABS, catalogue_panels, verdict  # noqa: E402
+from ui_smoke import (  # noqa: E402
+    DOCK_PANELS,
+    DOCK_TABS,
+    _no_readme_reason,
+    _panel_banner_selector,
+    catalogue_panels,
+    verdict,
+)
+
+
+def test_panel_banner_selector_matches_the_root_and_nested_shapes():
+    """The dock's banner is sometimes the panel root itself, not a child of it.
+
+    `Locator.locator()` matches descendants only, so the scoped search that
+    looked correct matched zero against `DiffTabPanel`'s failure state -- where
+    `data-panel` and `data-poll-error` sit on the same div -- and the gate
+    reported a failing panel as clean. Pins both shapes so that form cannot
+    quietly come back.
+    """
+    sel = _panel_banner_selector("diff")
+    assert '[data-panel="diff"][data-poll-error]' in sel
+    assert '[data-panel="diff"] [data-poll-error]' in sel
+
+
+def test_no_readme_reason_names_the_actual_cause():
+    """No session, no tree, no README are different facts; say which one."""
+    assert "no sessions" in _no_readme_reason({"sessions": 0})
+    assert "no file tree" in _no_readme_reason({"sessions": 2, "tree_ready": False})
+    assert "README.md not in the explorer" in _no_readme_reason(
+        {"sessions": 2, "tree_ready": True}
+    )
 
 
 def clean(**overrides) -> dict:

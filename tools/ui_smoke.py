@@ -70,7 +70,9 @@ DOCK_PANELS = {
     "diff": "Diff",
 }
 PLACEHOLDER = "Select a session to see diffs, files, cost and trace."
-# The dock's own error banner (#231): present means the tab's fetch failed.
+# The dock's own error banner (#231): present means the tab's fetch failed. Used
+# page-wide by the classic walk, where one tab body is mounted at a time; the
+# dock walk scopes it per panel via `_panel_banner_selector`.
 POLL_ERROR_SELECTOR = "[data-poll-error]"
 CRASH_MARKER = "UI crashed"
 REPO = Path(__file__).resolve().parents[1]
@@ -187,7 +189,10 @@ def _walk_classic(page, report: dict, base: str, workdir: str, shots: Path | Non
         dock = page.locator("section", has=page.get_by_role("button", name="Diff", exact=True))
         text = dock.first.inner_text() if dock.count() else page.inner_text("body")
         # #231: the tab's own error banner, which the placeholder and console
-        # checks both miss.
+        # checks both miss. Page-wide is correct here: the classic dock mounts
+        # one tab body at a time, so the only banner in the document is the
+        # active tab's. The dock shell mounts all five — hence the scoped,
+        # root-or-descendant search in `_panel_banner_selector`.
         err = page.locator(POLL_ERROR_SELECTOR)
         poll_error = err.first.inner_text() if err.count() else None
         report["tabs"][name] = {
@@ -215,6 +220,25 @@ def _dock_tab(page, title: str):
         if tab.inner_text().strip() == title:
             return tab
     return None
+
+
+def _panel_banner_selector(panel_id: str) -> str:
+    """A panel's error banner, whether it *is* the panel root or nested inside it.
+
+    `Locator.locator()` matches descendants only, which is a trap here: when
+    `DiffTabPanel`'s fetch fails it returns the banner element as the panel root
+    (`data-panel` and `data-poll-error` on the same div), so a scoped descendant
+    search finds nothing and reports the failing panel as clean. The comma is an
+    "or" — either shape, and still nothing belonging to another panel.
+
+    Verified in a browser against both shapes (root banner: 1 match, nested
+    banner: 1 match, clean panel: 0) rather than reasoned about: the earlier
+    descendant-only form looked scoped-correct and matched zero.
+    """
+    return (
+        f'[data-panel="{panel_id}"][data-poll-error], '
+        f'[data-panel="{panel_id}"] [data-poll-error]'
+    )
 
 
 def _wait_for_tree(page, timeout_ms: int = 15_000) -> bool:
@@ -291,16 +315,20 @@ def _walk_dock(page, report: dict, base: str, workdir: str, shots: Path | None) 
         # `data-panel` is the attribute the shell puts on each panel root — the
         # tab bar saying "Chat" proves a tab exists, not that its body rendered.
         panel = page.locator(f'[data-panel="{panel_id}"]')
-        box = panel.first.bounding_box() if panel.count() else None
-        text = panel.first.inner_text() if panel.count() else ""
-        # Scoped to this panel's root. The dock arms one banner per panel, so a
-        # page-wide locator reports whichever it finds first for every tab — a
-        # single failing Diff fetch once labelled all five panels as failing.
-        err = panel.first.locator(POLL_ERROR_SELECTOR) if panel.count() else None
+        present = panel.count() > 0
+        first = panel.first if present else None
+        box = first.bounding_box() if first else None
+        text = first.inner_text() if first else ""
+        # All five panels are mounted at once under this layout, so a page-wide
+        # locator reports whichever banner it finds first for every tab — a single
+        # failing Diff fetch once labelled all five panels as failing. Scoping is
+        # only half the job: see `_panel_banner_selector` for why the search has
+        # to match the panel root as well as its descendants.
+        banner = page.locator(_panel_banner_selector(panel_id))
         report["tabs"][title] = {
             "crashed": crashed,
             "placeholder": PLACEHOLDER in text,
-            "poll_error": err.first.inner_text() if err is not None and err.count() else None,
+            "poll_error": banner.first.inner_text() if banner.count() else None,
             "chars": len(text),
             # Recorded, not asserted: the pinned columns land approximate because
             # each `setSize` redistributes the remainder, so asserting a width
@@ -317,6 +345,24 @@ def _walk_dock(page, report: dict, base: str, workdir: str, shots: Path | None) 
     report["tab_count"] = found
     if not report.get("crashed"):
         _monaco_reflow(page, report, shots)
+
+
+def _no_readme_reason(report: dict) -> str:
+    """Why the README opener was missing — three causes, three messages.
+
+    All three fail the run (the check did not run), but they are not the same
+    fact and the report should not guess: a workspace with no session has no tree
+    to render by design, a bound session whose fetch never landed is slow, and a
+    rendered tree without README.md means this workdir cannot host the check.
+    """
+    if not report.get("sessions"):
+        return (
+            "the workspace has no sessions, so there is no file tree to open "
+            "README.md from"
+        )
+    if not report.get("tree_ready"):
+        return "the explorer rendered no file tree — nothing to open README.md from"
+    return "README.md not in the explorer — editor never opened"
 
 
 def _monaco_reflow(page, report: dict, shots: Path | None) -> None:
@@ -349,11 +395,7 @@ def _monaco_reflow(page, report: dict, shots: Path | None) -> None:
     # rather than silently skipping the check.
     opener = page.locator('button[title="README.md"]')
     if opener.count() == 0:
-        report["monaco"] = (
-            "the explorer rendered no file tree — nothing to open README.md from"
-            if not report.get("tree_ready")
-            else "README.md not in the explorer — editor never opened"
-        )
+        report["monaco"] = _no_readme_reason(report)
         return
     opener.first.click()
     editor = page.locator(".monaco-editor")
