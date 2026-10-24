@@ -128,7 +128,7 @@ function DockPanel({ sessionId, refreshKey, diffBadge, artifactsPending = 0, wor
           const a = await call(`/sessions/${sessionId}/archmap`)
           setData((d) => ({ ...d, structure: s, archmap: a }))
         }
-        if (tab === 'Cost') { const u = await call(`/sessions/${sessionId}/usage`); setData((d) => ({ ...d, usage: u })) }
+        if (tab === 'Cost') { const u = await call(`/sessions/${sessionId}/usage`); setData((d) => ({ ...d, usage: u, pollError: undefined })) }
         if (tab === 'Output') {
           const runs = await call(`/sessions/${sessionId}/runs`)
           const tr = await call(`/sessions/${sessionId}/trace?limit=300`)
@@ -136,7 +136,7 @@ function DockPanel({ sessionId, refreshKey, diffBadge, artifactsPending = 0, wor
         }
         if (tab === 'Config') { const r = await call('/config/models'); setData((d) => ({ ...d, config: r, configError: undefined })) }
         if (tab === 'Memory') { const m = await call('/memory'); setData((d) => ({ ...d, memory: m, memoryError: undefined })) }
-        if (tab === 'MCP') { const m = await api.listMcp(sessionId); setData((d) => ({ ...d, mcp: m })) }
+        if (tab === 'MCP') { const m = await api.listMcp(sessionId); setData((d) => ({ ...d, mcp: m, pollError: undefined })) }
         if (tab === 'Trace') {
           const tr = await call(`/sessions/${sessionId}/trace?limit=50`)
           const cps = await call(`/sessions/${sessionId}/checkpoints`)
@@ -147,7 +147,12 @@ function DockPanel({ sessionId, refreshKey, diffBadge, artifactsPending = 0, wor
           const r = await call(`/sessions/${sessionId}/renders`)
           setData((d) => ({ ...d, renders: r.renders, renderStart: r.session_start }))
         }
-      } catch { /* transient */ }
+      } catch (err) {
+        // #231: not swallowed. A failing fetch left the tab on the "select a
+        // session" placeholder forever — the symptom #228 fixed for Memory,
+        // still live on Cost and MCP because their bodies are gated on data.
+        setData((d) => ({ ...d, pollError: { tab, message: String(err instanceof Error ? err.message : err) } }))
+      }
       if (!stop) setTimeout(poll, 4000)
     }
     poll()
@@ -176,7 +181,14 @@ function DockPanel({ sessionId, refreshKey, diffBadge, artifactsPending = 0, wor
 
   let body = (
     <div className="rounded border border-line bg-surface p-4 text-xs text-ink-muted">
-      Select a session to see diffs, files, cost and trace.
+      {/* #231: the fallback used to claim "select a session" even with one
+          selected — reached whenever a tab's data had not landed, or its
+          fetch was failing silently. Say which of the three it actually is. */}
+      {data.pollError?.tab === tab
+        ? `could not load this tab: ${data.pollError.message}`
+        : sessionId
+          ? 'loading…'
+          : 'Select a session to see diffs, files, cost and trace.'}
     </div>
   )
   if (tab === 'Standards') {
