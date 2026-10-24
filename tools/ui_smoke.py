@@ -122,7 +122,9 @@ def run(base: str, shots: Path | None, workdir: str) -> tuple[dict, int]:
 
             if CRASH_MARKER in page.content():
                 report["crashed"] = "on boot"
-                return report, 1
+                # Via verdict() so the report keeps the same shape (and the
+                # derived console fields) as every other exit.
+                return report, verdict(report)
 
             found = 0
             for name in DOCK_TABS:
@@ -169,29 +171,34 @@ def verdict(report: dict) -> int:
 
     Extracted from `run()` so the decision can be exercised without a browser:
     a gate whose failure paths are never executed is a gate nobody knows works.
+    Every key is read with a default, so a partial report — a boot crash, or a
+    hand-built one in the tests — reaches a verdict instead of raising KeyError.
+    A missing tab count counts as a defect: the walk never completed.
     """
+    console_errors = report.get("console_errors") or []
     unexpected = [
         e
-        for e in report["console_errors"]
+        for e in console_errors
         if not any(b in e for b in BENIGN_CONSOLE) and NETWORK_NOISE not in e
     ]
     report["console_errors_unexpected"] = unexpected
-    report["console_errors_network"] = [
-        e for e in report["console_errors"] if NETWORK_NOISE in e
-    ]
+    report["console_errors_network"] = [e for e in console_errors if NETWORK_NOISE in e]
     has_session = bool(report.get("sessions"))
+
+    def tab_failed(v: object) -> bool:
+        if not isinstance(v, dict):
+            return True  # "MISSING" and anything else unexpected
+        return bool(v.get("crashed") or v.get("poll_error") or (has_session and v.get("placeholder")))
+
     failed = (
         report.get("crashed") is not None
-        or report["page_errors"]
+        or report.get("page_errors")
         or unexpected
-        or report["api_5xx"]
+        or report.get("api_5xx")
         or report.get("tab_drift") is not None
         or report.get("sessions_error") is not None
-        or report["tab_count"] != len(DOCK_TABS)
-        or any(
-            isinstance(v, str) or v["crashed"] or v["poll_error"] or (has_session and v["placeholder"])
-            for v in report["tabs"].values()
-        )
+        or report.get("tab_count", 0) != len(DOCK_TABS)
+        or any(tab_failed(v) for v in (report.get("tabs") or {}).values())
     )
     return 1 if failed else 0
 

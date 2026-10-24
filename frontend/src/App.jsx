@@ -27,6 +27,7 @@ import { buildTour } from './tour'
 import { buildDesignDocPrompt } from './designdoc'
 import { callgraphMermaid, graphView } from './callgraph'
 import { cfgMermaid } from './cfgView'
+import { pollCleared, pollFailure, tabError as tabErrorFor } from './pollErrors'
 import { buildRepoQuestionPrompt } from './repoqa'
 import { structureRows } from './structure'
 import { Mermaid } from './ui.jsx'
@@ -59,30 +60,6 @@ import { DiffPanel } from './panels/dock/Diff.jsx'
 // every 4s poll — 2,144 entries meant 15.8k DOM nodes versus 810 for Diff.
 const MEMORY_LIMIT = 200
 
-// #231: one error surface for the whole dock. Each tab used to carry its own
-// error key (configError, memoryError) and only some were rendered, so a
-// failing fetch looked like a tab that was still loading. Errors live in a
-// per-tab map keyed by tab, stamped with the session they belong to, so a
-// stale error cannot follow the user to another tab or another session.
-function pollFailure(data, tab, sessionId, err) {
-  return {
-    ...data.pollErrors,
-    [tab]: {
-      sessionId: sessionId ?? null,
-      message: String(err instanceof Error ? err.message : err),
-    },
-  }
-}
-
-// Returns the same object when nothing changed, so a successful poll does not
-// re-render the dock every 4 seconds just to clear an error that is not there.
-function pollCleared(data, tab) {
-  if (!data.pollErrors?.[tab]) return data.pollErrors
-  const next = { ...data.pollErrors }
-  delete next[tab]
-  return next
-}
-
 // R35 #72: bottom dock — VS Code panel position. Processes comes in as a
 // prop (App polls it); it used to be a bare-identifier crash in this scope.
 function DockPanel({ sessionId, refreshKey, diffBadge, artifactsPending = 0, workdir, processes, height, onResizeHeight, focusDiff = 0, activePath = '', onAsk }) {
@@ -107,15 +84,15 @@ function DockPanel({ sessionId, refreshKey, diffBadge, artifactsPending = 0, wor
         try {
           if (tab === 'Config') {
             const r = await call('/config/models')
-            setData((d) => ({ ...d, config: r, pollErrors: pollCleared(d, tab) }))
+            setData((d) => ({ ...d, config: r, pollErrors: pollCleared(d.pollErrors, tab) }))
           } else {
             const m = await call('/memory')
-            setData((d) => ({ ...d, memory: m, pollErrors: pollCleared(d, tab) }))
+            setData((d) => ({ ...d, memory: m, pollErrors: pollCleared(d.pollErrors, tab) }))
           }
         } catch (err) {
           // No session to stamp: the error is about this tab on a fresh
           // workspace, and the banner compares against null.
-          setData((d) => ({ ...d, pollErrors: pollFailure(d, tab, null, err) }))
+          setData((d) => ({ ...d, pollErrors: pollFailure(d.pollErrors, tab, null, err) }))
         }
       })()
       return
@@ -137,7 +114,12 @@ function DockPanel({ sessionId, refreshKey, diffBadge, artifactsPending = 0, wor
           try {
             const t = await call(`/sessions/${sessionId}/trust?path=${encodeURIComponent(activePath)}`)
             setData((d) => ({ ...d, trust: t, trustPath: activePath }))
-          } catch { /* trust is supplementary; callgraph errors already surfaced */ }
+          } catch {
+            // Supplementary: a failed /trust leaves the trust bar empty while
+            // the graph still renders, so it must not blank the tab. Note it is
+            // an independent call from /callgraph — one failing says nothing
+            // about the other, unlike the earlier comment here claimed (#233).
+          }
           if (activePath.endsWith('.py')) {
             try {
               const cf = await call(`/sessions/${sessionId}/cfg?path=${encodeURIComponent(activePath)}`)
@@ -166,19 +148,22 @@ function DockPanel({ sessionId, refreshKey, diffBadge, artifactsPending = 0, wor
           const cps = await call(`/sessions/${sessionId}/checkpoints`)
           setData((d) => ({ ...d, trace: tr, checkpoints: cps }))
         }
-        if (tab === 'Artifacts') { const r = await call(`/sessions/${sessionId}/artifacts`); setData((d) => ({ ...d, artifacts: r })) }
+        // #233: no /artifacts poll here. The fetch was write-only (`data.artifacts`
+        // had no reader — the body is <Artifacts>, which subscribes for itself),
+        // yet a failure of it set pollErrors['Artifacts'] and the banner
+        // suppressed that perfectly healthy panel.
         if (tab === 'Renders') {
           const r = await call(`/sessions/${sessionId}/renders`)
           setData((d) => ({ ...d, renders: r.renders, renderStart: r.session_start }))
         }
         // One clear for every tab, instead of a `pollError: undefined` per
         // branch — the old per-branch version left the other tabs' errors set.
-        setData((d) => ({ ...d, pollErrors: pollCleared(d, tab) }))
+        setData((d) => ({ ...d, pollErrors: pollCleared(d.pollErrors, tab) }))
       } catch (err) {
         // #231: not swallowed. A failing fetch left the tab looking like it
         // was still loading — the symptom #228 fixed for Memory, and it was
         // still live on Cost and MCP because their bodies gate on data.
-        setData((d) => ({ ...d, pollErrors: pollFailure(d, tab, sessionId, err) }))
+        setData((d) => ({ ...d, pollErrors: pollFailure(d.pollErrors, tab, sessionId, err) }))
       }
       if (!stop) setTimeout(poll, 4000)
     }
@@ -210,10 +195,11 @@ function DockPanel({ sessionId, refreshKey, diffBadge, artifactsPending = 0, wor
   // session on screen: switching session or tab must not carry an old failure
   // across. Suppressing `body` while it shows keeps the panel from pairing
   // "could not load this tab" with "loading…" underneath it.
-  const tabError = (() => {
-    const e = data.pollErrors?.[tab]
-    return e && e.sessionId === (sessionId ?? null) ? e.message : null
-  })()
+  // The error for the tab actually on screen, and only if it belongs to the
+  // session on screen: switching session or tab must not carry an old failure
+  // across. Suppressing `body` while it shows keeps the panel from pairing
+  // "could not load this tab" with "loading…" underneath it.
+  const tabError = tabErrorFor(data.pollErrors, tab, sessionId)
 
   let body = (
     <div className="rounded border border-line bg-surface p-4 text-xs text-ink-muted">
@@ -756,9 +742,12 @@ function DockPanel({ sessionId, refreshKey, diffBadge, artifactsPending = 0, wor
         ))}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-2 text-xs">
-        {/* #231: the single error surface — every tab's failed fetch lands
-            here, so no tab can look like it is still loading forever. The
-            attribute is what tools/ui_smoke.py gates on. */}
+        {/* #231/#233: every tab's failed *poll* lands here, so a tab can no
+            longer look like it is still loading for ever. Not the only error
+            surface: Graph still carries graphError/cfgError for the selected
+            file, and the self-fetching panels (Notes, Standards, Terminal)
+            render their own failures — those are #234. The attribute is what
+            tools/ui_smoke.py gates on. */}
         {tabError && (
           <div data-poll-error={tab} className="rounded border border-danger/40 bg-danger/10 p-3 text-xs text-danger">
             could not load this tab: {tabError}

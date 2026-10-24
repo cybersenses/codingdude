@@ -241,12 +241,21 @@ the #228 class:
   their own keys (`configError`, `memoryError`) that the poll never populated —
   `configError` was reachable only on the no-session path, `memoryError` the
   same. The error was also stamped with nothing but a tab name, so it could
-  follow the user to another session. The final design is one surface:
-  `pollErrors[tab] = {sessionId, message}` written by every failing fetch and
-  cleared once per successful poll; a single banner renders it for whichever
-  tab is on screen, and `body` is suppressed while it shows so a panel cannot
-  pair "could not load this tab" with "loading…" underneath. `configError` and
-  `memoryError` are gone, and `ModelsConfig` lost its error branch with them.
+  follow the user to another session. The design is one surface for the *poll*:
+  `pollErrors[tab] = {sessionId, message}` written by every failing fetch in
+  `DockPanel`'s poll and cleared once per successful poll; a single banner
+  renders it for whichever tab is on screen, and `body` is suppressed while it
+  shows so a panel cannot pair "could not load this tab" with "loading…"
+  underneath. `configError` and `memoryError` are gone, and `ModelsConfig` lost
+  its error branch with them. The helpers live in `frontend/src/pollErrors.ts`
+  with tests — no vitest file imports `App.jsx`, so anything left inside it is
+  untestable by construction.
+  What this deliberately does not cover, checked rather than assumed: `Graph`
+  keeps `graphError`/`cfgError` for the selected file (they are per-file detail
+  in the body, not poll state), and the self-fetching panels — `Notes`,
+  `Standards`, `Terminal` — still swallow their own fetch failures and cannot
+  reach the banner (#234). "Every failing fetch" would be an overclaim; "every
+  failing poll" is what the code does.
   The lesson recorded: fixing the instance a review named is not the same as
   fixing the class, and the class here was "per-tab error state that only some
   branches rendered".
