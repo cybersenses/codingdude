@@ -54,6 +54,11 @@ import { Planning } from './panels/dock/Planning.jsx'
 import { Standards } from './panels/dock/Standards.jsx'
 import { DiffPanel } from './panels/dock/Diff.jsx'
 
+// #229: how many memory entries the dock renders. The table grows forever
+// (one entry per remembered fact/solution), and the whole list is rebuilt on
+// every 4s poll — 2,144 entries meant 15.8k DOM nodes versus 810 for Diff.
+const MEMORY_LIMIT = 200
+
 // R35 #72: bottom dock — VS Code panel position. Processes comes in as a
 // prop (App polls it); it used to be a bare-identifier crash in this scope.
 function DockPanel({ sessionId, refreshKey, diffBadge, artifactsPending = 0, workdir, processes, height, onResizeHeight, focusDiff = 0, activePath = '', onAsk }) {
@@ -381,20 +386,29 @@ function DockPanel({ sessionId, refreshKey, diffBadge, artifactsPending = 0, wor
     // #228: the tab polled /memory but had no body branch — it rendered the
     // "select a session" placeholder forever. Facts and solutions the agent
     // recalls across sessions, newest first (server order).
-    const entries = data.memory || []
+    // #229: the whole table is rendered on every 4s poll — capped at the
+    // newest MEMORY_LIMIT entries, which is what a human scrolls anyway.
+    const entries = data.memory
+    const shown = (entries || []).slice(0, MEMORY_LIMIT)
     body = (
       <div className="space-y-1">
         <div className="flex items-baseline gap-2 font-mono text-[10px] uppercase tracking-wide text-ink-muted">
-          <span>{entries.length} {entries.length === 1 ? 'entry' : 'entries'}</span>
+          <span>
+            {entries === undefined
+              ? 'loading…'
+              : shown.length < entries.length
+                ? `showing newest ${shown.length} of ${entries.length} entries`
+                : `${entries.length} ${entries.length === 1 ? 'entry' : 'entries'}`}
+          </span>
           <span className="ml-auto normal-case">facts and solutions recalled across sessions</span>
         </div>
         {data.memoryError && <div className="text-danger">{data.memoryError}</div>}
-        {!entries.length && (
+        {entries && !entries.length && (
           <div className="rounded border border-line bg-surface p-4 text-ink-muted">
             No memory entries yet. The agent remembers facts mid-run and banks solutions it has proved.
           </div>
         )}
-        {entries.map((m) => (
+        {shown.map((m) => (
           <div key={m.id} className="rounded border border-line bg-surface p-1.5">
             <div className="flex flex-wrap items-baseline gap-2 font-mono text-[10px]">
               <span className={m.kind === 'solution' ? 'text-accent' : 'text-brand-300'}>{m.kind || 'fact'}</span>
