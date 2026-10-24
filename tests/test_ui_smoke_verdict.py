@@ -52,10 +52,27 @@ def test_panel_banner_selector_matches_the_root_and_nested_shapes():
     `data-panel` and `data-poll-error` sit on the same div -- and the gate
     reported a failing panel as clean. Pins both shapes so that form cannot
     quietly come back.
+
+    This pins the selector *string*; it does not run a browser. What it does
+    guarantee is that the attribute is not retyped here: the halves are built
+    from `POLL_ERROR_SELECTOR`, and every id is quoted, because an unquoted
+    value would make the whole selector invalid rather than merely wrong.
     """
     sel = _panel_banner_selector("diff")
-    assert '[data-panel="diff"][data-poll-error]' in sel
-    assert '[data-panel="diff"] [data-poll-error]' in sel
+    assert sel == (
+        '[data-panel="diff"][data-poll-error], [data-panel="diff"] [data-poll-error]'
+    )
+    # Every comma-separated alternative is scoped; a lone attribute would match
+    # every panel at once, which is the over-report this replaced.
+    for part in sel.split(","):
+        assert part.strip().startswith('[data-panel="diff"]')
+
+
+def test_panel_banner_selector_quotes_every_id():
+    """An unquoted id yields invalid CSS, which Playwright silently returns 0 for."""
+    for panel_id in DOCK_PANELS:
+        sel = _panel_banner_selector(panel_id)
+        assert sel.count(f'[data-panel="{panel_id}"]') == 2
 
 
 def test_no_readme_reason_names_the_actual_cause():
@@ -65,6 +82,20 @@ def test_no_readme_reason_names_the_actual_cause():
     assert "README.md not in the explorer" in _no_readme_reason(
         {"sessions": 2, "tree_ready": True}
     )
+
+
+def test_no_readme_reason_does_not_call_a_failed_fetch_no_sessions():
+    """`_record_sessions` stores `sessions: None` when GET /api/sessions fails.
+
+    That is not the same fact as an empty workspace, and `not None` is truthy
+    here, so without its own branch a server error is reported as "the workspace
+    has no sessions" -- a claim about the workspace made from a failed request.
+    """
+    reason = _no_readme_reason(
+        {"sessions": None, "sessions_error": "GET /api/sessions -> 500"}
+    )
+    assert "GET /api/sessions -> 500" in reason
+    assert "no sessions" not in reason
 
 
 def clean(**overrides) -> dict:
