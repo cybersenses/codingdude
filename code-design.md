@@ -203,7 +203,7 @@ earlier drafts of this paragraph got the count wrong — first "all eight read
 the poll via `selRun`", then "seven read the poll". The branches in `DockPanel`
 are the source of truth: eight poll, `Processes` does not.)
 
-**Impact.** `App.jsx` 3288 → 1337 lines and now holds only `DockPanel` plus
+**Impact.** `App.jsx` 3288 → 1337 lines (historical: P0's count, not today's) and now holds only `DockPanel` plus
 `App` (session/SSE state machine + layout). No API, DB, or behaviour change.
 Tests do not touch `App.jsx` (all 91 cover pure `src/*.ts` helpers), so the
 gates are `npm run build`, `eslint src`, and a manual visual parity pass —
@@ -329,7 +329,8 @@ rollback is flipping a query parameter.
   `minWidth`/`minHeight` are passed to `addPanel` as `minimumWidth`/
   `minimumHeight` — `AddPanelOptions` extends `Partial<Constraints>`, read from
   the shipped `dockview-core` typedefs rather than assumed
-  (`dist/cjs/gridview/gridviewPanel.d.ts`, `interface Constraints`). The path is
+  (`frontend/node_modules/dockview-core/dist/cjs/gridview/gridviewPanel.d.ts`,
+  `interface Constraints`). The path is
   recorded because `node_modules` is gitignored: this claim cannot be re-checked
   from a bare checkout, and a misspelled option in a `.jsx` file is silently
   inert — the exact bug being fixed. Left out, the entries were inert data and a
@@ -463,18 +464,42 @@ not assumed — the first version of that docstring asserted the opposite.)
 gate's own fixes and tests landed, below) · `ruff` and `mypy`
 (72 files) clean · classic gate exit 0, 16/16 tabs, 0 unexpected console errors,
 0 page errors, 0 `/api/` 5xx · dock gate exit 0, 5/5 panels visible, monaco
-634 → 460 → 634, panel widths recorded 256/208/652/384. Bundle cost of the new
-dependency, measured directly:
-`main.esm.min.mjs` 20,007 B raw / 4,820 B gzip, `dockview.css` 159,552 B raw /
-12,611 B gzip — ≈17.4 KB gzip against tech design §5's ~60 KB budget. The
-whole-chunk before/after delta was **not** measured (that needs a baseline build
-of the previous commit, which needs a worktree branch); the dependency's own
-weight is what the budget was about. Note the cost is paid by **every** load,
-not just `?layout=dock`: `Workspace.jsx` is a static import, so a user who never
-passes the flag still downloads it. That is deliberate for the flag-gated phase
-(P4 deletes the classic shell and the flag together, at which point the cost is
-simply the layout engine); a dynamic import is the escape if the flag outlives
-P4.
+634 → 460 → 634, panel widths recorded 256/208/652/384.
+
+**Bundle cost — measured, and over budget until it was made conditional.** The
+figure first published here was ≈17.4 KB gzip, taken from two package files
+(`frontend/node_modules/dockview-react/dist/package/main.esm.min.mjs` 20,007 B
+raw / 4,820 B gzip and
+`frontend/node_modules/dockview-react/dist/styles/dockview.css` 159,552 B raw /
+12,611 B gzip). That omitted the largest of the
+three packages:
+`frontend/node_modules/dockview-core/dist/package/main.esm.min.mjs` is 390,319 B
+raw / 90,074 B
+gzip, and it ships inside the bundle (the chunk carries `dv-dockview`). So the
+"17.4 KB against a ~60 KB budget" claim was wrong by 5×, and tech design #1 §5 —
+"measure `dist` before/after … reject if it exceeds ~60 KB gzip without a stated
+reason" — was never actually run.
+
+Run properly, with a worktree build of `96fbb6e` (pre-dockview) against the
+built `dist`:
+
+| Build | entry chunk raw | entry chunk gzip |
+|---|---|---|
+| `96fbb6e` (pre-P1) | 386,814 | 117,580 |
+| P1, static import | 807,083 | 215,732 |
+| **P1, lazy import (now)** | **387,694** | **118,022** |
+
+Static import cost every user **+420,269 B raw / +98,152 B gzip** — 1.6× the
+§5 budget — including anyone who never passes `?layout=dock`. `Workspace.jsx` is
+now `React.lazy`, so the engine lands in its own 419,264 B raw / 97,883 B gzip
+chunk fetched only when the flag is present; the always-loaded entry moved by
+**+880 B raw / +442 B gzip**, which is the Suspense stub. The §5 limit is met on
+the default path and a `?layout=dock` user pays 97.9 KB knowingly.
+
+The earlier note "a dynamic import is the escape if the flag outlives P4" had it
+backwards: the flag exists to keep the classic path *free*, so a static import
+made the flag pointless for the people it protects.
+
 
 **Docs deferred on purpose.** Tech design §8 lists a "Arranging the workspace"
 section in `docs/USER-MANUAL.md` and a `docs/TECHNICAL-DESIGN-MANUAL.md` §UI

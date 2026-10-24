@@ -925,4 +925,36 @@ Every surface in the UI becomes a movable panel. Users drag tabs to split/merge/
 
 Design: tech design #1. Implementation tracked as phased tickets (P0 refactor → P1 shell → P2 full catalogue → P3 persistence/palette → P4 polish).
 
-**Progress.** P0 done (#226) — `App.jsx` 3288 → 1337 lines, panels/chrome/store extracted. P1 done (#236) — `dockview-react@8.6.1` (exact pin) renders five dockable panels (nav, explorer, editor, chat, diff) behind `?layout=dock`; the classic layout stays the default, so rollback is dropping the query flag. Preset geometry recorded by the gate (`tabs[<title>].width`): nav 256 / explorer 208 / chat 384 px, i.e. the requested 256/208/384, with the middle column taking the remainder (~652 px) — recorded, not asserted, because `pinSizes` redistributes the remainder per call. Monaco proven to reflow with its container in both directions (634 → 460 → 634 px) via `automaticLayout`; the hidden-then-revealed case is *not* covered, because dockview exposes no panel-level `setVisible` and ships no group action to click, so hiding a panel needs P3 UI. The new dependency costs ≈17.4 KB gzip — paid by every load, not just `?layout=dock`, because the shell is a static import. See `code-design.md` §R59 P1. Remaining: P2 (other fifteen panels + visibility-gated data store, retiring the per-tab polls), P3 (persistence, presets, palette, keyboard, plus the panel-hide control and the drag → reload → assert proof P1 deferred), P4 (popouts, then delete `panes.ts` and the classic layout).
+**Progress.** P0 done (#226) — `App.jsx` 3288 → 1337 lines (historical: P0's count), panels/chrome/store extracted. P1 done (#236) — `dockview-react@8.6.1` (exact pin) renders five dockable panels (nav, explorer, editor, chat, diff) behind `?layout=dock`; the classic layout stays the default, so rollback is dropping the query flag. Preset geometry recorded by the gate (`tabs[<title>].width`): nav 256 / explorer 208 / chat 384 px, i.e. the requested 256/208/384, with the middle column taking the remainder (~652 px) — recorded, not asserted, because `pinSizes` redistributes the remainder per call. Monaco proven to reflow with its container in both directions (634 → 460 → 634 px) via `automaticLayout`; the hidden-then-revealed case is *not* covered, because dockview exposes no panel-level `setVisible` and ships no group action to click, so hiding a panel needs P3 UI. The new dependency costs **+98,152 B gzip / +420,269 B raw** in the main chunk (measured against a worktree build of `96fbb6e`), over tech design §5's ~60 KB cap — so `Workspace.jsx` is now `React.lazy` and the engine loads only under `?layout=dock` (its own 97,883 B gzip chunk), leaving the default path at +442 B gzip. See `code-design.md` §R59 P1. Remaining: P2 (other fifteen panels + visibility-gated data store, retiring the per-tab polls), P3 (persistence, presets, palette, keyboard, plus the panel-hide control and the drag → reload → assert proof P1 deferred), P4 (popouts, then delete `panes.ts` and the classic layout).
+
+## R60 — R60 — Written claims must be checkable: claim checker + measured bundle cost
+**Status:** open
+
+## Problem
+
+Six consecutive commits (`38fbc89` → `666fded`) each carried a written claim the code did not support, and each was found by a reviewer *after* publication: an invented second banner shape, a "hide the editor" step that hid nothing, panel geometry the gate never recorded, `1439` lines against a measured `1488`, two filenames (`store.py`, `analysis.py`) that were actually `db.py`, `ast_tools.py`.
+
+The mechanism is identical every time: the narrative is written from the diff, in the same pass as the change, so nothing can contradict it. `pytest`/`ruff`/`mypy` test the code, not the prose describing it, and the mandated review runs after the push — so the discovery point is structurally guaranteed to be late.
+
+## What shipped
+
+1. **`tools/claim_check.py`** — checks the mechanically settleable half: paths in backticks exist (resolving bare basenames against the tracked tree, root-level files, directory claims), `path:LINE` references point inside the file, short hex refs name a real commit, backticked identifiers appear in tracked source, and "N lines" next to a single named file matches. Explicit `(removed)`/`(historical)` markers let a document discuss a file it replaced. Deliberately not checked: test counts (that is `gates.bat`'s job) and anything phrased in prose.
+2. **`tests/test_claim_check.py`** — 27 tests, each check exercised on a claim that must be caught *and* a near-identical one that must not, plus a parametrised test holding every living document (`STRICT_DOCS`) to zero unsupported claims. Red-verified by breaking a real doc count and watching the suite fail.
+3. **The unverified half gets a rule, not a tool**, recorded in the `RESCUE.md` trap table: a claim about behaviour, measurement or absence carries its probe — the command and its output — or the word *unverified*.
+
+## What it found immediately
+
+The checker's own first sweep flagged `main.esm.min.mjs` in `code-design.md`, which led to the real defect behind it: the P1 bundle-cost claim (≈17.4 KB gzip) counted two of three dockview packages and omitted `dockview-core` (390,319 B raw / 90,074 B gzip). Measured properly against a worktree build of `96fbb6e`: the static import cost every user **+420,269 B raw / +98,152 B gzip** — 1.6× tech design #1 §5's ~60 KB cap — and §5's own instruction ("measure `dist` before/after") had never been run. `Workspace.jsx` is now `React.lazy`, so the always-loaded entry moved **+880 B raw / +442 B gzip** and the engine's 97,883 B gzip chunk loads only under `?layout=dock`.
+
+Also corrected by the sweep: a stale `App.jsx` size in `RESCUE.md` (~1488 → 1501), `dist/` → `frontend/dist/`, and the dockview typedef path.
+
+## Consequences
+
+- A stale count or renamed file in a living document now fails `pytest`, instead of waiting for a reviewer.
+- The tool's first version produced 157 findings, almost all false (basenames resolved against the repo root only). Recorded in its docstring: a check that cries wolf is worse than no check.
+- `gates.bat` is unchanged; the doc sweep rides on `pytest`.
+
+## Not covered
+
+Whether a mechanism works, whether a shape exists, and why an observation happened — five of the six original failures. Those need a probe, which no tool can supply.
+
