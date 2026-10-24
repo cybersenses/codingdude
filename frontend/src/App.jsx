@@ -13,11 +13,11 @@
 //
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import CodeEditor, { CodeDiff } from './CodeEditor.jsx'
 import { closeTab, openTab } from './editor'
-import { api, authLocal, call, checkAuth, login } from './api'
+import { api, authLocal, call, checkAuth } from './api'
 import { SSE_MAX_RETRIES, runToReattach, sseRetryDelayMs } from './reattach'
 import { activeProcesses, describeProcess, mergeProcesses } from './processes'
 import { PANE_SPECS, paneWidth } from './panes'
@@ -35,232 +35,13 @@ import { cfgMermaid } from './cfgView'
 import { buildRepoQuestionPrompt } from './repoqa'
 import { checklistPrompt } from './checklists'
 import { structureRows } from './structure'
-import logoUrl from './assets/logo.png'
+import { Mermaid, UI_BUILD, UI_SHA, UI_VERSION, shortStamp } from './ui.jsx'
+import { ErrorBoundary } from './chrome/ErrorBoundary.jsx'
 
-// R6: render-only mermaid diagrams inside spec blocks. Renders each
-// ```mermaid fence to SVG; on failure the raw fence stays visible.
-function Mermaid({ code }) {
-  const ref = useRef(null)
-  const [error, setError] = useState(null)
-  useEffect(() => {
-    let cancelled = false
-    ;(async () => {
-      try {
-        const mermaid = (await import('mermaid')).default
-        mermaid.initialize({ startOnLoad: false, theme: 'dark' })
-        const { svg } = await mermaid.render(`mmd-${Math.random().toString(36).slice(2)}`, code)
-        if (!cancelled && ref.current) {
-          ref.current.innerHTML = svg
-          setError(null)
-        }
-      } catch (e) {
-        if (!cancelled) setError(String(e?.message || e))
-      }
-    })()
-    return () => { cancelled = true }
-  }, [code])
-  return error
-    ? <div className="text-[9px] text-red-400">mermaid render failed: {error}</div>
-    : <div ref={ref} className="mermaid-svg overflow-auto [&_svg]:max-w-full" />
-}
-
-// Injected at build time by vite.config.js — makes the running build visible
-// so a stale bundle (or a server that hasn't restarted) is obvious on screen.
-const UI_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'dev'
-const UI_BUILD = typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : ''
-const UI_SHA = typeof __GIT_SHA__ !== 'undefined' ? __GIT_SHA__ : ''
-const shortStamp = (iso) => (iso ? iso.slice(5, 16).replace('T', ' ') : '')
-
-export class ErrorBoundary extends React.Component {
-  constructor(props) {
-    super(props)
-    this.state = { error: null }
-  }
-  static getDerivedStateFromError(error) {
-    return { error }
-  }
-  render() {
-    if (this.state.error) {
-      return (
-        <div className="flex h-screen items-center justify-center bg-neutral-900 p-6">
-          <div className="max-w-lg rounded-lg border border-danger/60 bg-neutral-950 p-6">
-            <h1 className="mb-2 text-lg font-bold text-danger">UI crashed</h1>
-            <pre className="mb-4 whitespace-pre-wrap text-xs text-neutral-400">
-              {this.state.error && this.state.error.stack
-                ? String(this.state.error.stack)
-                : String(this.state.error)}
-            </pre>
-            <button
-              className="rounded bg-brand-700 px-3 py-1 text-sm text-brand-fg"
-              onClick={() => location.reload()}
-            >
-              Reload
-            </button>
-          </div>
-        </div>
-      )
-    }
-    return this.props.children
-  }
-}
-
-function Login({ onLoggedIn }) {
-  const [password, setPassword] = useState('')
-  const [err, setErr] = useState('')
-  return (
-    <div className="flex h-screen items-center justify-center bg-neutral-900">
-      <form
-        className="w-80 rounded-lg border border-neutral-800 bg-neutral-950 p-6"
-        onSubmit={async (e) => {
-          e.preventDefault()
-          setErr('')
-          try {
-            await login(password)
-            onLoggedIn()
-          } catch {
-            setErr('wrong password')
-          }
-        }}
-      >
-        <div className="mb-4 flex items-center justify-center gap-2">
-          <img src={logoUrl} alt="CodingDude logo" className="h-10 w-10 rounded" />
-          <h1 className="text-center text-lg font-bold text-brand-400">CodingDude</h1>
-        </div>
-        <input
-          type="password"
-          className="mb-3 w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
-          placeholder="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          autoFocus
-        />
-        {err && <div className="mb-2 text-xs text-danger">{err}</div>}
-        <button className="w-full rounded bg-brand-700 px-3 py-2 text-sm font-medium text-brand-fg hover:bg-brand-600">
-          Log in
-        </button>
-      </form>
-    </div>
-  )
-}
-
-function Sidebar({ workdir, setWorkdir, sessions, activeSession, onSelect, onNewSession, width, runningSessions, projects, activeProject, onSelectProject, onAddProject, onDeleteProject }) {
-  const [newProjectName, setNewProjectName] = useState(null)
-  return (
-    <aside className="flex shrink-0 flex-col gap-3 border-r border-neutral-800 bg-neutral-950 p-3" style={{ width }}>
-      <div className="flex items-center gap-2">
-        <img src={logoUrl} alt="CodingDude logo" className="h-6 w-6 rounded" />
-        <h1 className="text-lg font-bold text-brand-400">CodingDude</h1>
-      </div>
-      <label className="text-xs text-neutral-400">
-        Project
-        <select
-          className="mt-1 w-full rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-200"
-          value={activeProject?.id ?? ''}
-          onChange={(e) => {
-            const p = projects.find((x) => x.id === Number(e.target.value))
-            if (p) onSelectProject(p)
-          }}
-        >
-          <option value="">— select project —</option>
-          {projects.map((p) => (
-            <option key={p.id} value={p.id}>{p.name}</option>
-          ))}
-        </select>
-      </label>
-      {activeProject && (
-        <div className="flex items-center justify-between text-[10px] text-neutral-500">
-          <span className="truncate font-mono">{activeProject.workdir}</span>
-          <button
-            className="text-danger hover:opacity-80"
-            title="remove project from list (files are not touched)"
-            aria-label="Remove project from list"
-            onClick={() => onDeleteProject(activeProject.id)}
-          >✕</button>
-        </div>
-      )}
-      <label className="text-xs text-neutral-400">
-        Workdir
-        <input
-          className="mt-1 w-full rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-200"
-          value={workdir}
-          onChange={(e) => setWorkdir(e.target.value)}
-          placeholder="C:\path\to\project"
-        />
-      </label>
-      {newProjectName !== null ? (
-        <div className="flex flex-col gap-1 rounded border border-neutral-700 bg-neutral-900 p-2">
-          <input
-            className="w-full rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-200"
-            value={newProjectName}
-            onChange={(e) => setNewProjectName(e.target.value)}
-            placeholder="project name"
-            autoFocus
-          />
-          <div className="truncate text-[10px] text-neutral-500">folder: {workdir || '— set workdir above —'}</div>
-          <div className="flex gap-1">
-            <button
-              className="rounded bg-success px-2 py-1 text-[10px] text-success-fg disabled:opacity-40"
-              disabled={!newProjectName.trim() || !workdir.trim()}
-              onClick={() => {
-                onAddProject(newProjectName.trim(), workdir.trim())
-                setNewProjectName(null)
-              }}
-            >save project</button>
-            <button
-              className="rounded bg-neutral-700 px-2 py-1 text-[10px] text-ink"
-              onClick={() => setNewProjectName(null)}
-            >cancel</button>
-          </div>
-        </div>
-      ) : (
-        <button
-          className="self-start rounded border border-neutral-700 px-2 py-1 text-[10px] text-neutral-400 hover:text-neutral-200"
-          onClick={() => setNewProjectName('')}
-        >+ New project</button>
-      )}
-      <button
-        className="rounded bg-brand-700 px-2 py-1 text-sm font-medium text-brand-fg hover:bg-brand-600"
-        onClick={onNewSession}
-      >
-        + New session
-      </button>
-      <div className="flex-1 overflow-y-auto">
-        {sessions.map((s) => (
-          <button
-            key={s.session_id}
-            className={`block w-full truncate rounded px-2 py-1 text-left text-sm ${
-              s.session_id === activeSession
-                ? 'bg-neutral-800 text-brand-300'
-                : 'text-neutral-400 hover:bg-neutral-900'
-            }`}
-            onClick={() => onSelect(s.session_id)}
-            title={s.title || s.session_id}
-          >
-            {s.title || s.session_id.slice(0, 12)}
-            {runningSessions.has(s.session_id) && (
-              <span className="ml-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-success" />
-            )}
-            {s.context_limit != null && s.context_tokens != null && s.context_tokens > 0 && (
-              <span className="mt-0.5 flex items-center gap-1" title={`Context: ${Math.round((s.context_tokens / s.context_limit) * 100)}% of ${Math.round(s.context_limit / 1000)}k tokens`}>
-                <span className="h-0.5 flex-1 overflow-hidden rounded bg-neutral-800">
-                  <span
-                    className={`block h-full ${
-                      s.context_tokens / s.context_limit > 0.8 ? 'bg-danger' : 'bg-brand-600'
-                    }`}
-                    style={{ width: `${Math.min(100, (s.context_tokens / s.context_limit) * 100)}%` }}
-                  />
-                </span>
-                <span className="text-[9px] text-neutral-500">
-                  {Math.round((s.context_tokens / s.context_limit) * 100)}%
-                </span>
-              </span>
-            )}
-          </button>
-        ))}
-      </div>
-    </aside>
-  )
-}
+import { Login } from './chrome/Login.jsx'
+import { Sidebar } from './chrome/Sidebar.jsx'
+import { AgentStrip } from './chrome/AgentStrip.jsx'
+import { StatusFooter } from './chrome/StatusFooter.jsx'
 
 function ToolTimeline({ events }) {
   const [open, setOpen] = useState(false)
@@ -2566,31 +2347,6 @@ function Prompt({ onSend, disabled, suggestMode, setSuggestMode, fixLoop, setFix
   )
 }
 
-function AgentStrip({ status, quietSeconds, hasChanges, streaming, onReviewChanges }) {
-  const stalled = streaming && quietSeconds >= 120
-  return (
-    <div className="flex h-7 shrink-0 items-center gap-3 border-b border-neutral-800 bg-neutral-950 px-3 text-[11px]">
-      <span className={streaming ? 'text-brand-400' : 'text-neutral-500'}>
-        <span
-          className={`mr-1.5 inline-block h-1.5 w-1.5 rounded-full align-middle ${streaming ? 'animate-pulse bg-brand-400' : 'bg-neutral-600'}`}
-        />
-        agent {status || 'idle'}
-      </span>
-      {streaming && quietSeconds > 0 && (
-        <span className={stalled ? 'text-red-400' : 'text-neutral-500'}>quiet {quietSeconds}s</span>
-      )}
-      {hasChanges && (
-        <button
-          className="ml-auto rounded bg-brand-700 px-2 py-0.5 text-[10px] font-medium text-white hover:bg-brand-600"
-          onClick={onReviewChanges}
-        >
-          Review changes →
-        </button>
-      )}
-    </div>
-  )
-}
-
 export default function App() {
   const [loggedIn, setLoggedIn] = useState(null) // null = checking cookie
   const [workdir, setWorkdir] = useState(localStorage.getItem('codingdude-workdir') || '')
@@ -3255,33 +3011,15 @@ export default function App() {
         onAsk={send}
         onResizeHeight={(h) => { setDockHeight(h); localStorage.setItem('cd-dock-h', String(h)) }}
       />
-      <footer className="flex items-center justify-between border-t border-neutral-800 bg-neutral-950 px-3 py-1 text-[10px] text-neutral-500">
-        <span>
-          {activeSession ? `session ${activeSession.slice(0, 8)}` : 'no session'} ·{' '}
-          {sessions.find((s) => s.session_id === activeSession)?.workdir || workdir || 'no workdir'}
-          {activeSession && !sessions.some((s) => s.session_id === activeSession) && (
-            <span className="text-danger"> · ⚠ session not in selected project</span>
-          )}
-        </span>
-        <span className="text-neutral-600" title="frontend build · backend server build">
-          ui v{UI_VERSION}{UI_SHA ? `+${UI_SHA}` : ''} {shortStamp(UI_BUILD)} · srv v{srv?.version ?? '?'}{srv?.git_sha ? `+${srv.git_sha}` : ''} {shortStamp(srv?.started_at)}
-        </span>
-        <button
-          className="rounded border border-neutral-700 px-1.5 py-0.5 text-[10px] text-neutral-400 hover:text-neutral-200"
-          title="toggle light / dark"
-          onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
-        >
-          {theme === 'dark' ? 'dark' : 'light'}
-        </button>
-        {processes.length > 0 && (
-          <span
-            className="ml-2 cursor-help text-neutral-500"
-            title={processes.map(describeProcess).join('\n')}
-          >
-            ⚙ {processes.filter((p) => p.status === 'running').length} live / {processes.length} spawned
-          </span>
-        )}
-      </footer>
+      <StatusFooter
+        activeSession={activeSession}
+        sessions={sessions}
+        workdir={workdir}
+        srv={srv}
+        theme={theme}
+        onToggleTheme={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
+        processes={processes}
+      />
     </div>
   )
 }

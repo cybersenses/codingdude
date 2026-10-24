@@ -15,7 +15,8 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import App, { ErrorBoundary } from './App.jsx'
+import App from './App.jsx'
+import { ErrorBoundary } from './chrome/ErrorBoundary.jsx'
 import './index.css'
 
 ReactDOM.createRoot(document.getElementById('root')).render(
