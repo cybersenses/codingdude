@@ -14,11 +14,13 @@ Two layouts:
 
 * `--layout classic` (default) walks the sixteen `DockPanel` tabs.
 * `--layout dock` opens `?layout=dock` (R59 P1) and checks the five dockable
-  panels, their visible geometry, and that Monaco follows its container: the
-  editor is hidden, the window is narrowed while it is away, and it is revealed
-  again. `renderer: 'always'` keeps a hidden panel's DOM alive, so this is the
-  regression the dock could introduce — an editor that comes back at the width
-  it last had.
+  panels, their visible geometry, and that Monaco reflows with its container:
+  the window is narrowed and restored while the editor's DOM stays mounted, and
+  the editor must narrow with it and come back. `renderer: 'always'` keeps that
+  DOM alive across a container change, which is the regression the dock could
+  introduce. The hidden-then-revealed variant is NOT covered — see
+  `_monaco_reflow` for why the dock cannot hide a panel without UI it has not
+  been given yet, and do not describe this gate as covering it.
 
 The 5xx and banner checks are what make a broken data tab fail here: a tab that
 cannot load renders its own error text, which is neither the placeholder nor a
@@ -278,24 +280,34 @@ def _walk_dock(page, report: dict, base: str, workdir: str, shots: Path | None) 
 
     report["tab_count"] = found
     if not report.get("crashed"):
-        _monaco_relayout(page, report, shots)
+        _monaco_reflow(page, report, shots)
 
 
-def _monaco_relayout(page, report: dict, shots: Path | None) -> None:
-    """The editor must follow its container, not the size it last had.
+def _monaco_reflow(page, report: dict, shots: Path | None) -> None:
+    """The editor must reflow with its container, not keep the width it had.
 
-    `renderer: 'always'` keeps a hidden panel's DOM alive, so this is the
-    regression P1 could introduce: the editor goes off screen, its container
-    changes underneath it, and it comes back at the geometry it went away with.
-    Measured by narrowing the window *while the editor is hidden* and comparing
-    the width after the reveal against the width before it.
+    `renderer: 'always'` keeps a panel's DOM alive, so the regression P1 could
+    introduce is an editor that keeps the geometry it had before its container
+    changed. Measured by narrowing the window and restoring it, with the
+    editor's DOM mounted throughout: the width must shrink with the window and
+    come back with it.
+
+    What this does NOT cover, and no doc may claim it does: the
+    hidden-then-revealed case. Hiding the editor needs either a panel-level
+    `setVisible` — dockview's `DockviewPanelApi` omits it, only gridview panels
+    have it — or a group action to click, and the group header renders
+    `.dv-right-actions-container` with no children unless the app supplies
+    actions (verified live: five containers, none populated). Adding a hide
+    control to the UI so a test can click it is P3's work, so this asserts the
+    reflow it can actually reach and records the gap instead of faking it.
     """
     tab = _dock_tab(page, "Editor")
     if tab is not None:
         tab.click()
         page.wait_for_timeout(300)
     # Root-level file in the session's workdir, so the explorer has a stable,
-    # unambiguous target to open.
+    # unambiguous target to open. A workdir with no README.md fails loudly here
+    # rather than silently skipping the check.
     opener = page.locator('button[title="README.md"]')
     if opener.count() == 0:
         report["monaco"] = "README.md not in the explorer — editor never opened"
@@ -310,48 +322,46 @@ def _monaco_relayout(page, report: dict, shots: Path | None) -> None:
     page.wait_for_timeout(800)
     before = editor.first.bounding_box()
 
-    # Hide the editor by activating another panel, then change the container
-    # width while it is away.
-    away = _dock_tab(page, "Chat")
-    if away is not None:
-        away.click()
-        page.wait_for_timeout(600)
-        page.set_viewport_size({"width": 1100, "height": 760})
-        page.wait_for_timeout(600)
-    back = _dock_tab(page, "Editor")
-    if back is not None:
-        back.click()
-        page.wait_for_timeout(900)
-    shown = editor.first.bounding_box()
-    if shots:
-        page.screenshot(path=str(shots / "dock-01-revealed.png"))
+    page.set_viewport_size({"width": 1100, "height": 760})
+    page.wait_for_timeout(800)
+    narrowed = editor.first.bounding_box()
 
-    # Restore the viewport so the run leaves the page where it found it.
+    # Restore the viewport so the run leaves the page where it found it — and
+    # so an editor that reflowed once and then stuck is caught as well.
     page.set_viewport_size({"width": 1500, "height": 950})
     page.wait_for_timeout(800)
     restored = editor.first.bounding_box()
+    if shots:
+        page.screenshot(path=str(shots / "dock-01-restored.png"))
+
     report["monaco"] = {
         "width_before": before["width"] if before else None,
-        "width_shown": shown["width"] if shown else None,
-        "width_after": restored["width"] if restored else None,
+        "width_narrowed": narrowed["width"] if narrowed else None,
+        "width_restored": restored["width"] if restored else None,
     }
 
 
 def _monaco_followed_its_container(m: object) -> bool:
-    """Whether the editor tracked a container change it could not see coming.
+    """Whether the editor tracked a container change in both directions.
 
-    The load-bearing measurement is `width_shown`: the panel was hidden, the
-    window was narrowed while it was away, and it was revealed. An editor that
-    comes back at `width_before` never re-laid-out — the `renderer: 'always'`
-    regression. A non-dict value means the check could not run at all, which is
-    a failure too, not a pass.
+    The editor's DOM stays mounted (`renderer: 'always'`), so it cannot rely on
+    a fresh mount to pick up new geometry: narrowing the window must narrow it,
+    and restoring the window must restore it. Both halves matter — an editor
+    that reflows once and then sticks passes the first and fails the second. A
+    non-dict value means the check could not run at all, which is a failure
+    too, not a pass.
     """
     if not isinstance(m, dict):
         return False
-    before, shown = m.get("width_before"), m.get("width_shown")
-    if not before or not shown:
+    before = m.get("width_before")
+    narrowed = m.get("width_narrowed")
+    restored = m.get("width_restored")
+    if not before or not narrowed or not restored:
         return False
-    return shown != before
+    if not narrowed < before:
+        return False
+    # Sub-pixel rounding, not slack: a stuck editor is out by hundreds.
+    return abs(restored - before) <= 2
 
 
 def verdict(report: dict) -> int:

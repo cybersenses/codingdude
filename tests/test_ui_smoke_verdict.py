@@ -112,7 +112,7 @@ def test_partial_report_does_not_raise():
 
 
 def dock_report(**overrides) -> dict:
-    """A passing `--layout dock` report: five visible panels, monaco relayout."""
+    """A passing `--layout dock` report: five visible panels, monaco reflow."""
     panels = {
         title: {"crashed": False, "placeholder": False, "poll_error": None, "chars": 40, "visible": True}
         for title in ("Projects & sessions", "Explorer", "Editor", "Chat", "Diff")
@@ -122,7 +122,7 @@ def dock_report(**overrides) -> dict:
         "expected_entries": 5,
         "tab_count": 5,
         "tabs": panels,
-        "monaco": {"width_before": 634, "width_shown": 460, "width_after": 634},
+        "monaco": {"width_before": 634, "width_narrowed": 460, "width_restored": 634},
     }
     report.update(overrides)
     return report
@@ -155,13 +155,17 @@ def test_panel_drift_fails():
     assert verdict(dock_report(panel_drift=drift)) == 1
 
 
-def test_monaco_that_never_relayouts_fails():
-    # Hidden, narrowed underneath it, revealed — and back at the width it left
-    # with. `width_before` == `width_shown` is the `renderer: 'always'` bug.
-    stale = {"width_before": 634, "width_shown": 634, "width_after": 634}
+def test_monaco_that_never_reflows_fails():
+    # Narrowed and restored with its DOM mounted throughout. `width_before` ==
+    # `width_narrowed` is the `renderer: 'always'` bug: it never noticed.
+    stale = {"width_before": 634, "width_narrowed": 634, "width_restored": 634}
     assert verdict(dock_report(monaco=stale)) == 1
-    # A reveal that measured nothing is not a pass either.
-    assert verdict(dock_report(monaco={"width_before": 634, "width_shown": None})) == 1
+    # Reflowing once and then sticking is the same failure one step later: the
+    # restore never happened. This is what the two-direction assertion buys.
+    stuck = {"width_before": 634, "width_narrowed": 460, "width_restored": 460}
+    assert verdict(dock_report(monaco=stuck)) == 1
+    # A measurement that did not happen is not a pass either.
+    assert verdict(dock_report(monaco={"width_before": 634, "width_narrowed": None})) == 1
     # A string means the check could not run at all — that is not a pass.
     assert verdict(dock_report(monaco="the editor never mounted")) == 1
 
@@ -174,5 +178,9 @@ def test_catalogue_is_readable_so_the_count_has_a_source():
 
 
 def test_classic_report_unaffected_by_the_dock_keys():
-    # `visible` is absent from classic tab reports; absent must not read as False.
-    assert verdict(clean()) == 0
+    # `visible` is absent from classic tab reports; absent must not read as
+    # False, or every classic run would fail. The tab entry is what makes this
+    # a test rather than a repeat of `test_clean_report_passes`: without one,
+    # the `visible` branch is never reached and the assertion cannot fail.
+    classic_tab = {"crashed": False, "placeholder": False, "poll_error": None, "chars": 40}
+    assert verdict(clean(tabs={"Diff": classic_tab})) == 0

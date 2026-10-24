@@ -325,11 +325,15 @@ rollback is flipping a query parameter.
 - **The catalogue's minimum sizes are wired, not decorative.** `PanelSpec`'s
   `minWidth`/`minHeight` are passed to `addPanel` as `minimumWidth`/
   `minimumHeight` — `AddPanelOptions` extends `Partial<Constraints>`, read from
-  the shipped `dockview-core` typedefs rather than assumed. Left out, the
-  entries were inert data and a docked `nav` could be dragged below the 180 px
-  `PANE_SPECS` clamp the classic layout enforces. The matching `max` clamps are
-  **not** wired: tech design §4.1's `PanelSpec` declares minimums only, so the
-  upper bounds land with P3's constraint pass.
+  the shipped `dockview-core` typedefs rather than assumed
+  (`dist/cjs/gridview/gridviewPanel.d.ts`, `interface Constraints`). The path is
+  recorded because `node_modules` is gitignored: this claim cannot be re-checked
+  from a bare checkout, and a misspelled option in a `.jsx` file is silently
+  inert — the exact bug being fixed. Left out, the entries were inert data and a
+  docked `nav` could be dragged below the 180 px `PANE_SPECS` clamp the classic
+  layout enforces. The matching `max` clamps are **not** wired: tech design
+  §4.1's `PanelSpec` declares minimums only, so the upper bounds land with P3's
+  constraint pass.
 - **Panel data comes from React context, not dockview `params`.** Params are
   serialized into the saved layout, so they cannot carry callbacks or live
   state; React portals keep docked panels inside the provider's tree, so context
@@ -338,20 +342,30 @@ rollback is flipping a query parameter.
   must move these bags into a module-level store first (tech design §4.3/§4.7).
 - **`renderer: 'always'` only where state must survive a move** — `editor` and
   `chat`. A useful consequence for the rest: dockview's default
-  `onlyWhenVisible` unmounts a hidden panel, so the new `diff` panel's poll
-  stops when its tab is hidden without any visibility plumbing. The diff panel
-  keeps its own 4 s poll for now because P1 runs both shells side by side and
-  `DockPanel`'s shared poll is not reachable from here; P2 retires both into the
-  visibility-gated store.
+  `onlyWhenVisible` unmounts a hidden panel, so a tabbed-together panel's poll
+  would stop while it is hidden without any visibility plumbing — **not yet
+  reachable in P1**, where the default preset gives every panel its own group,
+  so no panel is ever hidden and `diff`'s 4 s poll runs whenever the dock is up.
+  The diff panel keeps its own 4 s poll for now because P1 runs both shells side
+  by side and `DockPanel`'s shared poll is not reachable from here; P2 retires
+  both into the visibility-gated store, which is when stacking makes the
+  unmount-on-hide behaviour do real work.
 - **No `onDidVisibilityChange` hook was added to `CodeEditor`** (deviation from
   tech design §4.7, which asked for one). `automaticLayout: true` was already
   set in `baseOptions()`, so the question was whether it actually copes with a
-  docked, resizable container — and the gate answers it with numbers rather than
-  a redundant hook. The measurement is the hidden case, not just a resize: the
-  editor is hidden, the window is narrowed while it is off screen, and it is
-  revealed; its width must have changed (634 → 460 px). A panel that comes back
-  at the width it left with is exactly the `renderer: 'always'` failure mode. If
-  a future change drops `automaticLayout`, that check goes red.
+  docked, resizable container — and the gate answers it with numbers: the window
+  is narrowed and restored while the editor's DOM stays mounted, and its width
+  must narrow with it (634 → 460 px) and come back (→ 634 px). **The
+  hidden-then-revealed case is not covered, and an earlier draft of this section
+  wrongly claimed it was.** It cannot be reached from the gate: hiding a panel
+  needs either a panel-level `setVisible` — `DockviewPanelApi` *omits* it, only
+  gridview panels have it — or a group action to click, and dockview renders
+  `.dv-right-actions-container` empty unless the app supplies actions (verified
+  live: five containers, none populated). Testing it therefore needs a hide
+  control that is P3's to build; until then the honest statement is that
+  `automaticLayout` handles a resize of a mounted editor, and the reveal path is
+  reasoned-about, not measured. If a future change drops `automaticLayout`, the
+  reflow check goes red.
 - **Not shipped yet, deliberately:** `sanitiseLayout` (REQ-8's defensive load
   path) — nothing loads a saved layout until P3, so it would be dead code today;
   it lands with the loader that exercises it. Also absent: the remaining fifteen
@@ -399,13 +413,14 @@ assertion brittle). The expected panel count comes from `catalogue.ts`, not from
 `DOCK_PANELS` — comparing the walk against its own list is a check that can
 never fail. A panel root also carries `data-poll-error` when its fetch fails,
 the same seam `DockPanel` exposes, so the #231 banner check is live under this
-layout too. It also requires Monaco to follow a container change made while the
-panel was hidden. `verdict()` gained three failure branches (`panel_drift`,
-`visible: false`, a `monaco` result that did not follow its container), with
-seven new tests in `tests/test_ui_smoke_verdict.py` (19 total); red-verified
-twice — by deleting the `visible` check, and by making
-`_monaco_followed_its_container` return `True` — each time watching a test
-fail.
+layout too. It also requires Monaco to reflow in both directions — narrowed with
+the window, restored with it — with its DOM mounted throughout. It does **not**
+cover the hidden-then-revealed path, for the structural reason recorded above.
+`verdict()` gained three failure branches (`panel_drift`, `visible: false`, a
+`monaco` result that did not follow its container), with seven new tests in
+`tests/test_ui_smoke_verdict.py` (19 total); red-verified twice — by deleting the
+`visible` check, and by making `_monaco_followed_its_container` return `True` —
+each time watching a test fail.
 
 **Evidence (this session).** `npm run build` exit 0 · `vitest` 115/115 (was 102)
 · `eslint src` 0 · `pytest` 802 passed / 1 skipped (was 796) · `ruff` and `mypy`
