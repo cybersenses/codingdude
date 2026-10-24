@@ -15,7 +15,7 @@ Owner: CodingDude. Last updated: R59 P1 — the dock shell behind `?layout=dock`
 | Working tree at kickoff | clean except `M ROADMAP.md` (R59 item) |
 | Risk area | `frontend/src/` — React UI |
 | Backend | untouched by R59 (Python, `src/codingdude/`) |
-| `App.jsx` size | history row, all counts are as-of-then (historical): 3288 at kickoff → **1337** after P0 → **1439** after #233 → **1488** after P1 → **1501** after the lazy-import split. Today's figure is the last one. P1 is additive: `workspace/` is 485 lines across three files — `Workspace.jsx` 274, `catalogue.ts` 96, `catalogue.test.ts` 115 — and `App.jsx` only gained the flag, the shared prop bags and `React.lazy`/`Suspense` |
+| `App.jsx` size | history row, all counts are as-of-then (historical): 3288 at kickoff → **1337** after P0 → **1439** after #233 → **1488** after P1 → **1501** after the lazy-import split → **1500** after review deleted a duplicated comment block. Today's figure is the last one. P1 is additive: `workspace/` is 485 lines across three files — `Workspace.jsx` 274, `catalogue.ts` 96, `catalogue.test.ts` 115 — and `App.jsx` only gained the flag, the shared prop bags and `React.lazy`/`Suspense` |
 | **Two shells** | classic flexbox = default; `?layout=dock` = the dockview shell (P1) |
 
 ### Progress log (P0 steps, newest last)
@@ -48,7 +48,7 @@ Owner: CodingDude. Last updated: R59 P1 — the dock shell behind `?layout=dock`
 | P1 gate — `tools/ui_smoke.py --layout dock` + `data-panel` seam + Monaco reflow check | done | dock smoke exit 0, 5/5 · 23 gate unit tests |
 | P1 gate fixes — scoped banner selector (the descendant-only form found nothing of the root shape, so a failing panel read as clean); `expected_entries` no longer falling back to a number the walk agrees with by construction; `_no_readme_reason` separating a failed sessions fetch from an empty workspace; `playwright` imported inside `run()` so the gate's own tests cannot silently skip | done | pytest 807/1 skipped · dock 5/5 · classic 16/16 · 23 gate unit tests |
 
-`App.jsx` is now ~1501 lines: `DockPanel` (tab shell + the 9 inline bodies) and `App`
+`App.jsx` is now ~1500 lines: `DockPanel` (tab shell + the 9 inline bodies) and `App`
 (session/SSE state + layout). Eight of those nine bodies (Graph, Output, Waterfall, Trace,
 Cost, MCP, Renders, Memory) read `DockPanel`'s single shared poll (`data`, `setData`;
 `selRun` belongs to Output and Waterfall only). Only **Processes** is inline for a different
@@ -231,9 +231,10 @@ it first. A blank page with a console error almost always means one of:
 | Trap | Reality |
 |---|---|
 | "Edit reported success" | Verify every edit with `grep`/`Select-String` before moving on. Silent non-persistence has happened repeatedly in this repo. |
-| **Writing a claim you did not execute** | Six consecutive commits had a reviewer find a claim the code did not support: an invented banner shape, a "hide the editor" step that hid nothing, geometry the gate never recorded, `1439` vs a measured `1488`, two filenames that were different files. Cause is always the same — the narrative is written from the diff, in the same pass, so nothing contradicts it. **Rule: every claim about behaviour, measurement or absence carries its probe** — the command and its output, pasted next to the claim, or the word *unverified*. Prose about *why* something happened is the highest-risk form and needs the most evidence. `uv run pytest -q tests/test_claim_check.py` now enforces the arithmetic half (paths, identifiers, commit refs, line counts) over the living docs; the other half is this row. |
+| **Writing a claim you did not execute** | Six consecutive commits had a reviewer find a claim the code did not support: an invented banner shape, a "hide the editor" step that hid nothing, geometry the gate never recorded, `1439` vs a measured `1488`, two filenames that were different files. Cause is always the same — the narrative is written from the diff, in the same pass, so nothing contradicts it. **Rule: every claim about behaviour, measurement or absence carries its probe** — the command and its output, pasted next to the claim, or the word *unverified*. Prose about *why* something happened is the highest-risk form and needs the most evidence. `uv run pytest -q tests/test_claim_check.py` now enforces the arithmetic half (paths, `path:LINE` references, commit refs, line counts) over the living docs, and all five checks over commit messages; the other half is this row. |
 | PowerShell `Set-Content` on a repo file | Round-trips through cp1252 and adds a UTF-8 BOM: em dashes become mojibake and every line's bytes change. It has corrupted this file once. **Use `edit_file` only**; to restore, `git checkout -- <file>`. |
 | Parallel `edit_file` calls on the same file | They race and one edit is silently lost. **Edit one file at a time, sequentially.** |
+| A `git worktree` inside the repo | `pytest` collects its copied `tests/` too and dies with ~105 `import file mismatch` errors, which looks like a broken suite rather than a stray directory. **Remove the worktree (`git worktree remove --force`) before running the gates**; it is a measurement device, not a checkout. |
 | PowerShell `&&` | Syntax error. Use `;`. |
 | Push exit code 1 | Usually PowerShell flagging git's stderr progress line — check `git status` / `git log origin/main` before assuming failure. |
 | Mojibake in output | Often a PowerShell console artefact, not the file. Verify bytes before "fixing" UTF-8. |

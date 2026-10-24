@@ -41,6 +41,16 @@ sys.path.insert(0, str(ROOT / "tools"))
 import claim_check as cc  # noqa: E402 - after the sys.path insert by design
 
 
+def _fake_symbol() -> str:
+    """A symbol that is in no tracked file.
+
+    Assembled rather than written out: this test file is itself tracked source, so
+    a literal fake symbol would find itself in the corpus the check searches and
+    the check would look broken exactly where it is right.
+    """
+    return "zz_" + "not_a_real" + "_symbol"
+
+
 # --------------------------------------------------------------------------
 # paths
 # --------------------------------------------------------------------------
@@ -69,6 +79,17 @@ def test_directory_claim_resolves_by_prefix():
     assert cc.check_paths("Sources live under `no-such-dir/`.") == [
         "path does not exist: no-such-dir/"
     ]
+
+
+def test_gitignored_paths_are_not_verifiable_here():
+    """A build artefact is absent from a fresh checkout, so asserting on it
+    describes the machine that ran the check, not the document.
+
+    Probe for the bug this fixes: a `git worktree` of HEAD, where `frontend/dist/`,
+    `node_modules/` and `.scratch/` do not exist, failed 4 of the 7 living docs.
+    """
+    assert cc.check_paths("See `frontend/node_modules/some-pkg/index.js`.") == []
+    assert cc.check_paths("See `src/codingdude/store.py`.") != []
 
 
 def test_removal_marker_silences_a_deliberate_absence():
@@ -138,10 +159,7 @@ def test_historical_line_count_is_not_a_live_claim():
 # identifiers
 # --------------------------------------------------------------------------
 def test_unknown_identifier_is_reported():
-    # Assembled rather than written out: once this test file is tracked, its own
-    # text is part of the searched source, so a literal fake symbol would find
-    # itself and the check would look broken when it is right.
-    fake = "zz_" + "not_a_real" + "_symbol"
+    fake = _fake_symbol()
     assert cc.check_symbols(f"Handled by `{fake}`.") == [
         f"identifier not in tracked source: {fake}"
     ]
@@ -154,8 +172,56 @@ def test_known_identifier_passes():
     assert cc.check_symbols("Handled by `poll_error`.") == []
 
 
+def test_prose_does_not_vouch_for_an_identifier():
+    """A symbol named only in a document must fail, not cite that document.
+
+    The corpus was every tracked file's text, documents included, so any invented
+    symbol written in `ROADMAP.md` found itself there and passed — a check that
+    could not fail, on the exact class of claim it was built for.
+    """
+    sources = cc._source_files(ROOT)
+    assert [name for name in sources if name.endswith(".md")] == []
+    assert any(name.endswith(".py") for name in sources)
+
+
+def test_run_id_fragments_are_not_symbols():
+    assert cc.check_symbols("The run `G0SUN1seqSI` failed.") == []
+
+
 def test_tool_names_are_not_treated_as_symbols():
     assert cc.check_symbols("Runs `pytest` and `vitest`.") == []
+
+
+def test_run_is_the_single_definition_of_the_check_set():
+    """`main` calls `run`, so a check added to one reaches the other."""
+    text = "See `src/codingdude/store.py` and `deadbeefdeadbeef`."
+    assert cc.run(text) == [
+        "path does not exist: src/codingdude/store.py",
+        "commit does not exist: deadbeefdeadbeef",
+    ]
+
+
+# --------------------------------------------------------------------------
+# the CLI's default: document vs commit message
+# --------------------------------------------------------------------------
+def test_main_checks_identifiers_in_a_commit_message(tmp_path, capsys):
+    msg = tmp_path / "msg.txt"
+    msg.write_text(f"Handled by `{_fake_symbol()}`.", encoding="utf-8")
+    assert cc.main(["--message-file", str(msg)]) == 1
+    assert "identifier not in tracked source" in capsys.readouterr().out
+
+
+def test_main_skips_identifiers_in_a_document(tmp_path):
+    """A doc citing another project's API must not be reported as a defect."""
+    doc = tmp_path / "doc.md"
+    doc.write_text("The panel API is `DockviewApi`.", encoding="utf-8")
+    assert cc.main([str(doc)]) == 0
+
+
+def test_symbols_flag_forces_the_identifier_check_on_a_document(tmp_path):
+    doc = tmp_path / "doc.md"
+    doc.write_text(f"Handled by `{_fake_symbol()}`.", encoding="utf-8")
+    assert cc.main(["--symbols", str(doc)]) == 1
 
 
 # --------------------------------------------------------------------------
@@ -175,9 +241,18 @@ def test_a_false_claim_appended_to_a_real_document_is_caught(tmp_path):
 
 @pytest.mark.parametrize("doc", cc.STRICT_DOCS)
 def test_living_documents_carry_no_unsupported_claims(doc):
-    """A stale count or renamed file in a living doc fails here, not in review."""
+    """A stale count or renamed file in a living doc fails here, not in review.
+
+    Paths, line references, commit references and line counts only. The
+    identifier check is deliberately off here and on for commit messages: a
+    document names other people's APIs (`DockviewApi`), planned ones
+    (`sanitiseLayout`) and library keywords (`wal_checkpoint`) by design, so on
+    prose it fires on correct text -- twelve findings on a clean pass, none of
+    them a defect. In a commit message the claim being checked is "this symbol is
+    mine and I just wrote it", which is the shape it can settle.
+    """
     path = ROOT / doc
     if not path.exists():
         pytest.skip(f"{doc} is not in this checkout")
-    problems = cc.run(path.read_text(encoding="utf-8", errors="replace"), ROOT)
+    problems = cc.run(path.read_text(encoding="utf-8", errors="replace"), ROOT, symbols=False)
     assert problems == [], f"{doc}: " + "; ".join(problems)

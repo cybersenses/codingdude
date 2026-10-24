@@ -507,3 +507,52 @@ update. P1 is flag-gated and default-off, so a user-manual section would
 describe something no user can reach from the UI; both land when the dock
 becomes the default (P4) or the moment the flag is flipped, whichever comes
 first. Recorded here so the omission is a decision rather than an oversight.
+
+## R60 — Claims must be checkable (`tools/claim_check.py`)
+
+**Problem it addresses.** Six consecutive commits carried a written claim the code
+did not support, each found by a reviewer after publication. The mechanism was
+identical: the narrative was written from the diff, in the same pass as the change,
+so nothing could contradict it — `pytest`, `ruff` and `mypy` test code, not prose.
+
+**What it checks, and why exactly that set.** Backticked paths resolve (on disk,
+against the tracked tree for bare basenames, by prefix for directory claims);
+`path:LINE` lands inside the file; short hex refs name a real commit; "N lines"
+beside one named file matches; identifiers appear in tracked source. Deliberately
+not checked: test counts (settling those means running the suites, which is
+`gates.bat`'s job) and any claim phrased in prose. A check that cries wolf gets
+ignored, so the first version's 157 false findings are recorded in the docstring as
+the failure mode to avoid.
+
+**Two scoping decisions, each from a defect the first version shipped.**
+
+1. *Gitignored paths are skipped.* `frontend/dist/`, `node_modules/`, `reference/`
+   and `.scratch/` are build products and a local library: absent from a fresh
+   checkout by definition, present on the author's machine because a build or a scan
+   ran. Asserting on them made the check machine-dependent — green locally, twelve
+   findings in a clean one. Probe: a `git worktree` of `862c939`,
+   `pytest tests/test_claim_check.py` → 4 of 7 documents failed. `git check-ignore`
+   decides, queried with *and* without a trailing slash, because a directory-only
+   pattern (`frontend/dist/`) matches only the slash form. Fails closed: if git
+   cannot answer, the path is still checked, so a genuine missing file is still
+   caught on a machine without git.
+2. *The identifier check runs on commit messages, not documents.* Prose names other
+   people's APIs (`DockviewApi`), planned ones (`sanitiseLayout`) and library
+   keywords (`wal_checkpoint`) by design. With documents inside the corpus the check
+   could never fire — a symbol written in `ROADMAP.md` vouched for itself, which is
+   why it silently passed the exact class of claim it was built for. With documents
+   excluded it fires twelve times on correct text. The shape it can settle is a
+   commit message claiming "this symbol is mine and I just wrote it". So
+   `STRICT_DOCS` covers paths, line references, commit refs and line counts, while
+   `--message-file` covers all five. Digit-bearing tokens are not symbols
+   (`G0SUN1seqSI` is a run id).
+
+**Impact.** `tests/test_claim_check.py` (31 tests) rides on `pytest`, so a stale
+count or a renamed file fails the suite instead of waiting for a reviewer.
+`gates.bat` now runs `ruff` over `tools/` too: a new tool outside the linter is a
+file that rots. `main` delegates to `run`, so there is one definition of the check
+set and its order.
+
+**What it cannot do.** A claim phrased in prose — "the step hides the editor" — is
+invisible to it. That half stays a rule in the `RESCUE.md` trap table: a claim about
+behaviour, measurement or absence carries its probe, or says *unverified*.
