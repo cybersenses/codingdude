@@ -192,10 +192,15 @@ they appear mid-run and settle with the run — and the codebase already
 precedent-sets this in `CodeEditor.jsx` (exports `CodeEditor` + `CodeDiff`).
 
 **Deliberate remainder.** `Graph`, `Output`, `Waterfall`, `Trace`, `Cost`,
-`MCP`, `Renders` and `Processes` stay inline in `DockPanel`: all eight read
-its single shared poll through `data`/`setData`/`selRun`. Extracting them
-move-only would thread those props through nine files — work P2's data store
-deletes. They move in P2, each with its own visible-subscriber subscription.
+`MCP`, `Renders`, `Processes` and `Memory` stay inline in `DockPanel`. Seven
+of them read its single shared poll through `data`/`setData` (`selRun` belongs
+to `Output` and `Waterfall` only). The other two are inline for different
+reasons: `Processes` renders the `processes` prop from App's own 3 s poll, and
+`Memory` was *added* inline by #228 — it had no body at all before. Extracting
+them move-only would thread those props through more files — work P2's data
+store deletes. They move in P2, each with its own visible-subscriber
+subscription. (The earlier draft of this paragraph said "all eight read the
+poll via `selRun`" — wrong on both counts; corrected here.)
 
 **Impact.** `App.jsx` 3288 → 1337 lines and now holds only `DockPanel` plus
 `App` (session/SSE state machine + layout). No API, DB, or behaviour change.
@@ -218,3 +223,32 @@ a component that renders nothing. It found two further defects:
 4s poll; now newest 200 at 2,226 nodes — #229) and the chat composer said
 "create or select a session first" whenever disabled, including mid-run when a
 session *is* selected (now cause-specific — #230).
+
+**Post-push review fixes (#231 and the gate itself).** Reviewing the pushed
+range found the gate weaker than `RESCUE.md` claimed and one more instance of
+the #228 class:
+
+- `DockPanel`'s poll ended in `catch { /* transient */ }`, so a failing
+  `/usage` or MCP fetch was invisible *and* left the tab on the "select a
+  session" placeholder — the exact symptom #228 fixed for `Memory`, still live
+  on `Cost` and `MCP`. The catch now records `pollError {tab, message}`, and
+  the fallback body distinguishes its three causes: no session, still loading,
+  or that tab's fetch failed. This is the repo rule "no silent catches"
+  applied where it was violated.
+- The gate never failed on `console_errors` (collected, never read), asserted
+  the placeholder without knowing whether a session existed (spuriously red on
+  a fresh workspace, and it only passed before because this workspace has
+  sessions), waited on `networkidle` while an `EventSource` is always open, and
+  duplicated the tab list as a second source of truth. It now gates unexpected
+  console errors (the designed auth 401 and resource-load failures are
+  reported, not fatal), queries `/api/sessions` for the workdir to decide
+  whether the placeholder is legal, waits for the dock element instead of
+  network idle, and compares `DOCK_TABS` against `const tabs` in `App.jsx` so
+  drift fails. The per-tab settle went 900 ms → 2 s: `/memory` is ~800 KB of
+  JSON, and a shorter wait photographed "loading…" and called it a rendered
+  tab.
+- **Logged, not fixed** (#232): `refreshKey` is declared, passed to
+  `DockPanel`, and never read — `setRefreshKey` is never called. Pre-existing
+  (identical at `0c2e58e`), inert, and worth a decision rather than a silent
+  deletion: the dock already refetches on `activePath`, so the prop is
+  redundant rather than broken.

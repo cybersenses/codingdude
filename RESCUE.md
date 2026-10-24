@@ -27,8 +27,8 @@ Owner: CodingDude. Last updated: R59 P0, chrome + cards + store/panels extracted
 | `cards/chatCards.jsx` (6 chat cards) | done | build · lint |
 | `store/useFileWorkspace.js` · `panels/Explorer` · `Editor` · `Chat` · `Prompt` | done | build · 91 tests · lint |
 | `panels/dock/*`: Terminal, Notes, Artifacts, ModelsConfig, Planning, Standards, Diff | done | build · 91 tests · lint |
-| Remaining dock bodies (Graph, Output, Waterfall, Trace, Cost, MCP, Renders, Processes) | **deliberately left in `DockPanel` — see below** | — |
-| `DockPanel` reduced to a shell | partial (7/15 bodies extracted) | — |
+| Remaining dock bodies inline (Graph, Output, Waterfall, Trace, Cost, MCP, Renders, Processes, Memory) | **deliberately left in `DockPanel` — see below** | — |
+| `DockPanel` reduced to a shell | partial (7 extracted of 16 bodies) | — |
 | **P0 COMPLETE** — move-only refactor landed | done | build · 91 tests · lint |
 | #227 fix: `Processes` tab was missing from `tabs` (body unreachable) | done | build · 91 tests · lint |
 | #228 fix: `Memory` tab polled but had no body branch | done | build · 91 tests · lint |
@@ -36,11 +36,14 @@ Owner: CodingDude. Last updated: R59 P0, chrome + cards + store/panels extracted
 | #230 fix: composer placeholder now says *why* it is disabled | done | build · 91 tests · lint · live DOM |
 | `tools/ui_smoke.py` — Playwright gate walking all 16 dock tabs | done | exit 0, 16/16 tabs |
 
-`App.jsx` is now ~1337 lines: `DockPanel` (tab shell + the 8 data-coupled bodies) and `App`
-(session/SSE state + layout). The eight remaining bodies all read `DockPanel`'s single shared
-poll (`data`, `setData`, `selRun`). Extracting them as *move-only* components would mean
-threading those props through nine files — work that P2's data store deletes again. They are
-left inline on purpose and move in P2, when each panel gets its own subscription.
+`App.jsx` is now ~1337 lines: `DockPanel` (tab shell + the 9 inline bodies) and `App`
+(session/SSE state + layout). Seven of those bodies (Graph, Output, Waterfall, Trace, Cost,
+MCP, Renders) read `DockPanel`'s single shared poll (`data`, `setData`; `selRun` belongs to
+Output and Waterfall only). Two are inline for a different reason: **Processes** renders the
+`processes` prop from App's own 3 s poll, and **Memory** was *added* inline by #228 — it had
+no body at all before. Extracting a move-only component would mean threading those props
+through more files — work that P2's data store deletes again. They are left inline on purpose
+and move in P2, when each panel gets its own subscription.
 
 If a step is in doubt, `git log --oneline -20` shows which extraction commits landed; everything
 above is one commit per row.
@@ -54,7 +57,7 @@ panels anywhere.
 - **P0 (complete)** — pure move-only refactor: split the 3288-line `frontend/src/App.jsx`
   into `src/chrome/`, `src/panels/`, `src/cards/`, `src/store/`. **No behaviour change.**
   Exit gate: `npm run build` clean, `npx vitest run` 91/91, `npm run lint` clean, UI
-  visually identical. Landed at 1337 lines; the eight data-coupled dock bodies stay inline
+  visually identical. Landed at 1337 lines; the 9 data-coupled dock bodies stay inline
   until P2 (see the note after the progress log).
 - **P1** — dockview shell behind `?layout=dock` (nav, explorer, editor, chat, diff);
   the classic layout stays the default.
@@ -116,16 +119,20 @@ uv run mypy
 **Machine-checked parity (do this first — it catches what the build cannot).** No vitest file
 imports `App.jsx`, so a moved component that renders *nothing* still builds clean. The smoke
 gate drives the real bundle in Chromium and walks all 16 dock tabs, failing on an
-ErrorBoundary crash, an uncaught page error, a missing tab, or a tab still showing the
-"select a session" placeholder:
+ErrorBoundary crash, an uncaught page error, an unexpected console error, a missing tab,
+`DOCK_TABS` drifting from the tab list in `App.jsx`, an unreachable `/api/sessions`, or — when
+the workspace has a session — a tab still showing the "select a session" placeholder:
 
 ```powershell
 cd G:\pydantic
 uv run python tools\ui_smoke.py --shots .scratch\shots   # server must already be running
 ```
 
-Exit 0 = every tab rendered; a JSON report of per-tab findings prints either way. It needs the
-`playwright` dev dependency plus `playwright install chromium`.
+Exit 0 = every check passed; a JSON report of per-tab findings prints either way. It does *not*
+judge content: `chars` per tab is recorded, so a tab stuck on "loading…" still passes — that
+is what the screenshots and the manual pass are for. It needs the `playwright` dev dependency
+plus `playwright install chromium`. Rebuild `frontend/dist` first or you are testing the old
+bundle.
 
 **Manual parity check (the last gate).** `npm run build` + the smoke gate passing does not
 prove the UI looks *the same*. Load the app and confirm layout visually: login card · sidebar
