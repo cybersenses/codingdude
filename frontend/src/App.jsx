@@ -58,7 +58,9 @@ import { DiffPanel } from './panels/dock/Diff.jsx'
 // prop (App polls it); it used to be a bare-identifier crash in this scope.
 function DockPanel({ sessionId, refreshKey, diffBadge, artifactsPending = 0, workdir, processes, height, onResizeHeight, focusDiff = 0, activePath = '', onAsk }) {
   const [repoQuestion, setRepoQuestion] = useState('')
-  const tabs = ['Diff', 'Graph', 'Planning', 'Artifacts', 'Notes', 'Renders', 'Terminal', 'Output', 'Waterfall', 'Trace', 'Cost', 'Memory', 'MCP', 'Config', 'Standards']
+  // #227: Processes was wired (prop + body) but missing from this list, so its
+  // body was unreachable. It renders from App's 3s poll, not DockPanel's.
+  const tabs = ['Diff', 'Graph', 'Planning', 'Artifacts', 'Notes', 'Renders', 'Terminal', 'Processes', 'Output', 'Waterfall', 'Trace', 'Cost', 'Memory', 'MCP', 'Config', 'Standards']
   const [tab, setTab] = useState('Diff')
   const [data, setData] = useState({})
 
