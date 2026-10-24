@@ -17,6 +17,7 @@
 
 import re
 import sqlite3
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -256,8 +257,55 @@ class SessionInfo:
     keep_for_evals: bool = False
 
 
+class _Connection(sqlite3.Connection):
+    """A connection that never leaves a failed write holding the write lock.
+
+    Python's sqlite3 opens a transaction before DML but does not roll it back
+    when a statement raises, so the doomed transaction keeps SQLite's write
+    lock and every other writer waits out `busy_timeout` and then fails with
+    'database is locked' (R57). Rolling back one level below every caller —
+    including the modules that use `db._conn` directly — keeps the invariant
+    in one place instead of at 80 call sites.
+    """
+
+    def _rollback_quietly(self) -> None:
+        if not self.in_transaction:
+            return
+        try:
+            self.rollback()
+        except sqlite3.Error:  # pragma: no cover - rollback of a broken conn
+            pass
+
+    def execute(self, sql, parameters=(), /):
+        try:
+            return super().execute(sql, parameters)
+        except BaseException:
+            self._rollback_quietly()
+            raise
+
+    def executemany(self, sql, parameters, /):
+        try:
+            return super().executemany(sql, parameters)
+        except BaseException:
+            self._rollback_quietly()
+            raise
+
+    def executescript(self, sql_script, /):
+        try:
+            return super().executescript(sql_script)
+        except BaseException:
+            self._rollback_quietly()
+            raise
+
+
 class Database:
-    """CodingDude's single SQLite store. Created on first use."""
+    """CodingDude's single SQLite store. Created on first use.
+
+    One connection per thread (R57): a sqlite3 connection is a transaction
+    boundary, so sharing one across the server's threadpool lets two threads
+    commit each other's half-written work — and CPython raises
+    `InterfaceError: bad parameter or other API misuse` when it happens.
+    """
 
     # SQLITE_BUSY retry budget: server and worker processes share the DB
     # file; a transient lock (busy_timeout exceeded) is retried instead of
@@ -265,9 +313,48 @@ class Database:
     _BUSY_RETRIES = 3
     _BACKOFF_BASE = 0.05
 
-    def __init__(self, conn: sqlite3.Connection):
-        self._conn = conn
-        self._migrate()
+    def __init__(self, home: Path):
+        self._home = Path(home)
+        self._local = threading.local()
+        self._schema_ready = False
+        self._migrated = False
+        # open the first connection and migrate eagerly, on the calling thread
+        _ = self._conn
+
+    @property
+    def _conn(self) -> sqlite3.Connection:
+        """This thread's connection, opened on first use."""
+        conn = getattr(self._local, 'conn', None)
+        if conn is not None:
+            return conn
+        self._home.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(
+            self._home / 'codingdude.db',
+            check_same_thread=False,
+            factory=_Connection,
+        )
+        conn.row_factory = sqlite3.Row
+        conn.execute('PRAGMA journal_mode=WAL')
+        # migration: embeddings gained workdir scoping in 0.3.1 — the cache is
+        # disposable, so recreate the legacy shape in place
+        cols = [r[1] for r in conn.execute('PRAGMA table_info(embeddings)')]
+        if cols and 'workdir' not in cols:
+            conn.execute('DROP TABLE embeddings')
+        conn.execute('PRAGMA busy_timeout=15000')
+        self._local.conn = conn
+        if not self._schema_ready:
+            conn.executescript(_SCHEMA)
+            conn.commit()
+            self._schema_ready = True
+        if not self._migrated:
+            self._migrated = True
+            self._migrate()
+        return conn
+
+    @_conn.setter
+    def _conn(self, conn: sqlite3.Connection) -> None:
+        """Replace this thread's connection (test seam, and reconnect)."""
+        self._local.conn = conn
 
     def _migrate(self) -> None:
         """Add columns introduced after a database was created (R3).
@@ -307,13 +394,21 @@ class Database:
         self._commit()
 
     def _commit(self) -> None:
-        """Commit with bounded backoff retry while the DB is write-locked."""
+        """Commit with bounded backoff retry while the DB is write-locked.
+
+        When the retries run out the transaction is rolled back before the
+        error propagates: a connection left mid-transaction holds SQLite's
+        write lock for the rest of the process's life (R57).
+        """
         for attempt in range(self._BUSY_RETRIES + 1):
             try:
                 self._conn.commit()
                 return
             except sqlite3.OperationalError as exc:
                 if 'database is locked' not in str(exc) or attempt == self._BUSY_RETRIES:
+                    conn = self._conn
+                    if isinstance(conn, _Connection):
+                        conn._rollback_quietly()
                     raise
                 time.sleep(self._BACKOFF_BASE * 2**attempt)
 
@@ -330,21 +425,14 @@ class Database:
 
     @classmethod
     def connect(cls, home: Path) -> 'Database':
+        """Open the store, creating the home directory if needed.
+
+        Schema creation and migration run once, on the calling thread, before
+        any other thread can reach `_conn`.
+        """
+        home = Path(home)
         home.mkdir(parents=True, exist_ok=True)
-        # check_same_thread=False: runs may execute on a worker thread; access
-        # is serialized (one run at a time).
-        conn = sqlite3.connect(home / 'codingdude.db', check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        conn.execute('PRAGMA journal_mode=WAL')
-        # migration: embeddings gained workdir scoping in 0.3.1 — the cache is
-        # disposable, so recreate the legacy shape in place
-        cols = [r[1] for r in conn.execute('PRAGMA table_info(embeddings)')]
-        if cols and 'workdir' not in cols:
-            conn.execute('DROP TABLE embeddings')
-        conn.execute('PRAGMA busy_timeout=15000')
-        conn.executescript(_SCHEMA)
-        conn.commit()
-        return cls(conn)
+        return cls(home)
 
     def create_project(self, name: str, workdir: Path) -> int:
         cur = self._conn.execute(
@@ -407,13 +495,17 @@ class Database:
         return infos
 
     def append_messages(self, session_id: str, payload: str) -> None:
-        row = self._conn.execute(
-            'SELECT COALESCE(MAX(seq), -1) + 1 AS next FROM messages WHERE session_id = ?',
-            (session_id,),
-        ).fetchone()
+        """Append one message, allocating its sequence atomically.
+
+        A read-then-insert hands two concurrent appenders the same seq and
+        trips UNIQUE (session_id, seq): the server writes the user turn while
+        the worker writes assistant turns for the same session (R57).
+        """
         self._conn.execute(
-            'INSERT INTO messages (session_id, seq, payload) VALUES (?, ?, ?)',
-            (session_id, row['next'], payload),
+            'INSERT INTO messages (session_id, seq, payload)'
+            ' SELECT ?, COALESCE(MAX(seq), -1) + 1, ? FROM messages'
+            ' WHERE session_id = ?',
+            (session_id, payload, session_id),
         )
         self._conn.execute(
             'UPDATE sessions SET updated_at = ? WHERE session_id = ?', (utc_now_iso(), session_id)

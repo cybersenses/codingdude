@@ -863,7 +863,7 @@ Verified in python:3.12-slim Docker container. uv sync works (needs full source 
 Validate the install path end-to-end on a bare Linux environment via Docker: uv sync, gates, frontend build/serve, server /health boot. Document Windows-only steps that don't apply.
 
 ## R57 — SQLite 'database is locked' lockup: shared connection, no write serialization
-**Status:** open
+**Status:** in_progress
 
 ## Problem
 Intermittent `sqlite3.OperationalError: database is locked` that hangs a run and the UI
@@ -882,6 +882,33 @@ backoff. This only *widens the window*; it does not serialize writers.
 - Server stdout is not persisted (`server.log` holds only the banner) — the failure is
   invisible after the fact. Diagnosability gap.
 
+## Findings (measured by the #223 harness; supersedes the suspicions below)
+1. **No rollback, anywhere.** No `rollback()` call exists in `src/`. Python's `sqlite3`
+   opens a transaction before DML and leaves it open when a statement raises, so the
+   doomed transaction keeps SQLite's write lock. Measured: after a rejected write
+   `in_transaction` was `True`, and a second connection then failed with
+   `database is locked` after 16.4 s (i.e. it waited out `busy_timeout` first). A
+   long-lived process never releases it — this is the lockup, not the retry budget.
+2. **`append_messages` sequence allocation was not atomic.** `MAX(seq)+1` then INSERT
+   hands two concurrent appenders the same `seq`; the second trips
+   `UNIQUE (session_id, seq)`. The server writes the user turn while the worker writes
+   assistant turns to the same session, so the collision is by design, not by accident.
+   `record_usage` alone (no sequence) never failed in the same 4-writer race.
+3. **One connection shared across the server threadpool** is not a transaction boundary;
+   CPython reports `InterfaceError: bad parameter or other API misuse`.
+- Falsified: *lazy cursor iteration* (`references.py:177`) is `fetchall()`'d, so it pins
+  no snapshot; and the retry budget was never the limit — the failures are structural.
+
+## Progress
+Phase 1 + fix landed with ticket #223. `Database` now connects through a
+`sqlite3.Connection` subclass whose `execute`/`executemany`/`executescript` roll back and
+re-raise, which covers `db.py` and every module that reaches `db._conn` directly;
+`_commit` rolls back when its retries are exhausted; sequence allocation is a single
+`INSERT ... SELECT`; and each thread gets its own connection via `threading.local`.
+`tests/test_db_contention.py` asserts the three symptoms (red before, green after).
+Remaining: WAL ceiling/checkpoint policy, and persisting server errors to
+`logs/server.log`.
+
 ## Suspected causes (ranked, unverified)
 1. One `sqlite3.Connection` per process shared across FastAPI threadpool workers
    (`check_same_thread=False`, no `threading.Lock`). Interleaved implicit BEGIN/COMMIT —
@@ -897,11 +924,12 @@ backoff. This only *widens the window*; it does not serialize writers.
 
 ## Acceptance
 - A repeatable stress harness that reproduces the lock red (concurrency ≥4 writers against
-  a temp DB) — the diagnosing-bugs feedback loop.
+  a temp DB) — the diagnosing-bugs feedback loop. **Done (#223).**
 - Single writer seam (connection-level lock or a write queue) so no two threads share an
-  in-flight transaction.
+  in-flight transaction. **Done (#223): per-thread connections plus rollback-on-error.**
 - WAL bounded (autocheckpoint + explicit checkpoint on idle); documented ceiling.
 - Server errors persisted to `logs/server.log`, not just stdout.
+
 
 ## R58 — Stale artifact expiry — dismiss orphaned choice/spec cards
 **Status:** done
