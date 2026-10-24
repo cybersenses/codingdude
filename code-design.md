@@ -317,6 +317,19 @@ rollback is flipping a query parameter.
   after the preset is built (`pinSizes`), leaving the flexible middle the
   remainder. Measured after: 250 / 215 / 650 / 385 against the classic layout's
   256 / 208 / flexible / 384, and Monaco's own width went 98 px → 634 px.
+  `pinSizes` is approximate and order-dependent on purpose — each `setSize`
+  redistributes the remainder, so the columns settle at 250/215 rather than the
+  requested 256/208. The requested values are what the preset asks for; the
+  measured ones are what the gate reports, and both are recorded so a reviewer
+  does not read a 6 px difference as a regression.
+- **The catalogue's minimum sizes are wired, not decorative.** `PanelSpec`'s
+  `minWidth`/`minHeight` are passed to `addPanel` as `minimumWidth`/
+  `minimumHeight` — `AddPanelOptions` extends `Partial<Constraints>`, read from
+  the shipped `dockview-core` typedefs rather than assumed. Left out, the
+  entries were inert data and a docked `nav` could be dragged below the 180 px
+  `PANE_SPECS` clamp the classic layout enforces. The matching `max` clamps are
+  **not** wired: tech design §4.1's `PanelSpec` declares minimums only, so the
+  upper bounds land with P3's constraint pass.
 - **Panel data comes from React context, not dockview `params`.** Params are
   serialized into the saved layout, so they cannot carry callbacks or live
   state; React portals keep docked panels inside the provider's tree, so context
@@ -334,17 +347,32 @@ rollback is flipping a query parameter.
   tech design §4.7, which asked for one). `automaticLayout: true` was already
   set in `baseOptions()`, so the question was whether it actually copes with a
   docked, resizable container — and the gate answers it with numbers rather than
-  a redundant hook: `.monaco-editor` width 634 → 460 px across a viewport
-  resize. If a future change drops `automaticLayout`, that gate check goes red.
+  a redundant hook. The measurement is the hidden case, not just a resize: the
+  editor is hidden, the window is narrowed while it is off screen, and it is
+  revealed; its width must have changed (634 → 460 px). A panel that comes back
+  at the width it left with is exactly the `renderer: 'always'` failure mode. If
+  a future change drops `automaticLayout`, that check goes red.
 - **Not shipped yet, deliberately:** `sanitiseLayout` (REQ-8's defensive load
   path) — nothing loads a saved layout until P3, so it would be dead code today;
   it lands with the loader that exercises it. Also absent: the remaining fifteen
   panels (P2), persistence/presets/palette/keyboard (P3), popouts (P4).
+  **REQ-9's drag proof is not satisfied and P1 does not claim it:** the gate
+  clicks tabs and measures geometry, but nothing drags a panel or moves it
+  between groups, so REQ-4's "state survives a move" is backed by the
+  `renderer: 'always'` declaration and a test on the declaration, not by a
+  moving panel. The drag → reload → assert run is P3's exit criterion because
+  asserting after a reload needs the persistence P3 adds. Reading this as
+  "parity proven" would be the overclaim the rest of this section tries to
+  avoid.
 
 - **Shared prop bags, and one signal that needed re-wiring.** `AgentStrip`,
   `Sidebar`, `Prompt`, `Chat` and `StatusFooter` are fed from single prop-bag
-  objects that both shells spread, so the two cannot drift into different
-  wiring. One behaviour did not survive the move for free: `AgentStrip`'s
+  objects that both shells spread, so the five surfaces both shells host take
+  their props from one object each. That prevents drift on what the bags
+  carry, not on the wiring around them: the classic shell still wires
+  `workdir`, `activePath`, the artefacts badge and the twelve dock tabs P1 does
+  not host, and the dock shell adds its own `data-panel` seam and watermark.
+  One behaviour did not survive the move for free: `AgentStrip`'s
   "Review changes →" bumps a counter that the classic shell answers by
   switching `DockPanel` to its Diff tab. The dock shell rendered the same
   button and ignored the signal — a dead control that a superficial parity
@@ -365,11 +393,19 @@ independent: the override selector repeats the theme class
 `catalogue.ts` (drift fails, the same anti-duplication trick as `DOCK_TABS` vs
 `App.jsx`). Each panel root carries `data-panel="<id>"`, because a tab in the
 tab bar proves a tab exists, not that its body rendered — the gate asserts the
-panel element exists, has non-zero geometry, and has text. It also asserts
-Monaco re-lays-out on a viewport resize. `verdict()` gained three failure
-branches (`panel_drift`, `visible: false`, a `monaco` result that did not
-change), with six new tests in `tests/test_ui_smoke_verdict.py` (18 total);
-red-verified by deleting the `visible` check and watching one test fail.
+panel element exists, has non-zero geometry, and records the text it shows
+(`chars` is reported, not judged: a legitimately empty panel would make a length
+assertion brittle). The expected panel count comes from `catalogue.ts`, not from
+`DOCK_PANELS` — comparing the walk against its own list is a check that can
+never fail. A panel root also carries `data-poll-error` when its fetch fails,
+the same seam `DockPanel` exposes, so the #231 banner check is live under this
+layout too. It also requires Monaco to follow a container change made while the
+panel was hidden. `verdict()` gained three failure branches (`panel_drift`,
+`visible: false`, a `monaco` result that did not follow its container), with
+seven new tests in `tests/test_ui_smoke_verdict.py` (19 total); red-verified
+twice — by deleting the `visible` check, and by making
+`_monaco_followed_its_container` return `True` — each time watching a test
+fail.
 
 **Evidence (this session).** `npm run build` exit 0 · `vitest` 115/115 (was 102)
 · `eslint src` 0 · `pytest` 802 passed / 1 skipped (was 796) · `ruff` and `mypy`
@@ -380,7 +416,12 @@ red-verified by deleting the `visible` check and watching one test fail.
 12,611 B gzip — ≈17.4 KB gzip against tech design §5's ~60 KB budget. The
 whole-chunk before/after delta was **not** measured (that needs a baseline build
 of the previous commit, which needs a worktree branch); the dependency's own
-weight is what the budget was about.
+weight is what the budget was about. Note the cost is paid by **every** load,
+not just `?layout=dock`: `Workspace.jsx` is a static import, so a user who never
+passes the flag still downloads it. That is deliberate for the flag-gated phase
+(P4 deletes the classic shell and the flag together, at which point the cost is
+simply the layout engine); a dynamic import is the escape if the flag outlives
+P4.
 
 **Docs deferred on purpose.** Tech design §8 lists a "Arranging the workspace"
 section in `docs/USER-MANUAL.md` and a `docs/TECHNICAL-DESIGN-MANUAL.md` §UI

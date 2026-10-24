@@ -42,7 +42,7 @@ Owner: CodingDude. Last updated: R59 P1 — the dock shell behind `?layout=dock`
 | **P1 START** — `dockview-react@8.6.1` installed (exact pin) | done | install 8.6.1 / dockview 8.6.1 |
 | P1 `workspace/catalogue.ts` — 5 panels + `DEFAULT_PRESET` placements | done | 13 vitest tests, red-verified (forward reference fails 2) |
 | P1 `workspace/Workspace.jsx` — shell, five panels, watermark reset | done | build · 115 tests · lint |
-| P1 geometry fix — `initialWidth` left the editor at 115 px; `pinSizes()` after one frame | done | gate: 250/215/650/385, Monaco 634 px |
+| P1 geometry fix — `initialWidth` left the editor at 115 px; `pinSizes()` after one frame | done | gate: 250/215/650/385, Monaco 634 → 460 px (hidden, narrowed, revealed) |
 | P1 `index.css` — `--dv-*` mapped onto `--ss-*` tokens | done | visual (screenshots inspected) |
 | P1 `App.jsx` — `?layout=dock` flag + prop bags shared by both shells | done | build · lint · classic smoke 16/16 |
 | P1 gate — `tools/ui_smoke.py --layout dock` + `data-panel` seam + Monaco relayout check | done | dock smoke exit 0, 5/5 · 18 verdict tests |
@@ -174,8 +174,11 @@ prompt row · every dock tab renders (Diff, Graph, Planning, Artifacts, Notes, R
 Terminal, **Processes**, Output, Waterfall, Trace, Cost, **Memory**, MCP, Config, Standards —
 16 tabs after #227/#228) · status footer. The smoke gate writes one screenshot per tab, which
 is usually enough to eyeball this. Repeat once with `?layout=dock`: the five panels should be
-nav ≈256 px · explorer ≈208 px · editor + diff stacked in the middle · chat ≈384 px, i.e. the
-classic arrangement with draggable splitters.
+nav ≈250 px · explorer ≈215 px · editor + diff stacked in the middle · chat ≈384 px, i.e. the
+classic arrangement with draggable splitters. The preset *asks* for 256/208/384 and the gate
+consistently measures 250/215/650/385: `pinSizes` calls `setSize` per column and each call
+redistributes the remainder, so the landed values are approximate. Treat the measured numbers
+as correct, not as a 6 px regression.
 
 ## 5. If the UI is blank / crashed
 
