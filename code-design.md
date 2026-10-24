@@ -167,3 +167,41 @@ propagates live). Existing `answered` cards are untouched, and re-answering
 an `answered` card stays allowed — only `dismissed` is closed. Not covered
 by design: a card is not auto-retired when its worker dies mid-run; the
 user dismisses it (or answers it, which still works if the run is alive).
+
+## R59 — Dynamic dockable workspace (P0: frontend decomposition)
+
+**Goal.** Users arrange panels themselves (drag to split/merge/float, popout,
+persisted layout). Engine: `dockview-react` 8.6.1, MIT, pinned exactly — see
+tech design #1 and design decision #94. P0 is the prerequisite: `App.jsx` was
+a 3288-line monolith, and docking needs each surface to be an independently
+mountable panel.
+
+**P0 structure** (`frontend/src/`, move-only — no behaviour change):
+
+| Module | Contents |
+|---|---|
+| `ui.jsx` | `Mermaid`, build constants (`UI_VERSION`/`UI_BUILD`/`UI_SHA`), `shortStamp` |
+| `chrome/` | `ErrorBoundary` (imported by `main.jsx`), `Login`, `Sidebar`, `AgentStrip`, `StatusFooter` — the surfaces that stay fixed |
+| `cards/chatCards.jsx` | `ToolTimeline`, `EditBlock`, `AskUserCard`, `PendingArtifactCard`, `ApprovalCard`, `PlanCard` |
+| `store/useFileWorkspace.js` | shared tab/draft/dirty/diff state |
+| `panels/` | `Explorer` (TreeNode + FileTree), `Editor` (EditorPane), `Chat`, `Prompt` |
+| `panels/dock/` | `Terminal`, `Notes`, `Artifacts`, `ModelsConfig` (+`CfgTextField`/`CfgNumField`), `Planning`, `Standards`, `Diff` (`DiffPanel`) |
+
+**Why `cards/` groups six components in one file:** they share one lifecycle —
+they appear mid-run and settle with the run — and the codebase already
+precedent-sets this in `CodeEditor.jsx` (exports `CodeEditor` + `CodeDiff`).
+
+**Deliberate remainder.** `Graph`, `Output`, `Waterfall`, `Trace`, `Cost`,
+`MCP`, `Renders` and `Processes` stay inline in `DockPanel`: all eight read
+its single shared poll through `data`/`setData`/`selRun`. Extracting them
+move-only would thread those props through nine files — work P2's data store
+deletes. They move in P2, each with its own visible-subscriber subscription.
+
+**Impact.** `App.jsx` 3288 → 1337 lines and now holds only `DockPanel` plus
+`App` (session/SSE state machine + layout). No API, DB, or behaviour change.
+Tests do not touch `App.jsx` (all 91 cover pure `src/*.ts` helpers), so the
+gates are `npm run build`, `eslint src`, and a manual visual parity pass —
+documented in `RESCUE.md`, which is the recovery sheet for this refactor.
+Pre-existing gaps found, not fixed (out of move-only scope): the `Processes`
+tab body is unreachable (`Processes` is missing from the `tabs` array) and
+`Memory` polls but has no body branch.
