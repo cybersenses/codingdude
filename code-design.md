@@ -419,26 +419,36 @@ panel would make a length assertion brittle, and `pinSizes` redistributes the
 remainder, so an exact width would make a flake generator). The expected panel
 count comes from `catalogue.ts`, not from
 `DOCK_PANELS` — comparing the walk against its own list is a check that can
-never fail. The #231 seam `DockPanel` exposes is live under this layout too, but
-it takes two shapes: `DiffTabPanel` returns the banner element *as* the panel
-root when its fetch fails, while `DockPanel` nests its banner inside the dock
-body. The gate therefore matches both — a comma-joined "root or descendant"
-selector scoped to the panel. Scoping alone was not enough: all five panels mount
-at once, so a page-wide read reports whichever banner it finds first for every
-tab, and a descendant-only read finds nothing of the root shape at all. Both
-mistakes were real in sequence, so the selector is now verified in a browser
-against all three shapes (root 1, nested 1, clean 0) rather than reasoned about —
-the descendant-only form looked scoped-correct and matched 0. It also requires
+never fail. The #231 banner takes two possible shapes, though only one of
+them exists in this shell: `DiffTabPanel` returns the banner element *as* the
+panel root when its fetch fails. The gate also matches a nested banner — a
+comma-joined "root or descendant" selector scoped to the panel id, built from
+`POLL_ERROR_SELECTOR` so the attribute is not retyped — as a guard rather than
+as coverage: `DockPanel` does nest its banner in its body, but `DockPanel` is
+the *classic* shell and is never mounted behind `?layout=dock`. Scoping alone was
+not enough: all five panels mount at once, so a page-wide read reports whichever
+banner it finds first for every tab, and a descendant-only read finds nothing of
+the root shape at all. Both mistakes were real in sequence. The selector string
+is pinned by a test; its match behaviour was checked against this app's real DOM
+— `data-poll-error` set on the live diff panel root and counted both ways: the
+old scoped descendant form 0 (the bug, on the exact shape `DiffTabPanel` returns),
+the comma form 1, a neighbouring panel 0, page-wide 1, and 0 again once the
+attribute is removed. `_no_readme_reason` now separates four causes rather than
+three: a failed
+`/api/sessions` fetch is reported as a failed fetch, not as an empty workspace
+(`_record_sessions` stores `sessions: None` there, which `not ...` read as
+"no sessions"). It also requires
 Monaco to reflow in both directions — narrowed with
 the window, restored with it — sampling the same locator three times (node
 identity is not asserted: nothing is hidden or moved, so there is no unmount for
 it to survive). It does **not** cover the hidden-then-revealed path, for the
 structural reason recorded above.
 `verdict()` gained three failure branches (`panel_drift`, `visible: false`, a
-`monaco` result that did not follow its container), with nine new tests in
-`tests/test_ui_smoke_verdict.py` (21 total); red-verified twice — by deleting the
-`visible` check, and by making `_monaco_followed_its_container` return `True` —
-each time watching a test fail.
+`monaco` result that did not follow its container), with tests in
+`tests/test_ui_smoke_verdict.py` (23 total); red-verified — by deleting the
+`visible` check, by making `_monaco_followed_its_container` return `True`, by
+unquoting the selector id, and by dropping the failed-fetch branch — each time
+watching a test fail.
 
 **Evidence (this session).** `npm run build` exit 0 · `vitest` 115/115 (was 102)
 · `eslint src` 0 · `pytest` 802 passed / 1 skipped (was 796) · `ruff` and `mypy`

@@ -70,9 +70,9 @@ DOCK_PANELS = {
     "diff": "Diff",
 }
 PLACEHOLDER = "Select a session to see diffs, files, cost and trace."
-# The dock's own error banner (#231): present means the tab's fetch failed. Used
-# page-wide by the classic walk, where one tab body is mounted at a time; the
-# dock walk scopes it per panel via `_panel_banner_selector`.
+# The dock's own error banner (#231): present means the tab's fetch failed. The
+# classic walk reads it page-wide, where one tab body is mounted at a time; the
+# dock walk joins this attribute to a panel id via `_panel_banner_selector`.
 POLL_ERROR_SELECTOR = "[data-poll-error]"
 CRASH_MARKER = "UI crashed"
 REPO = Path(__file__).resolve().parents[1]
@@ -223,21 +223,24 @@ def _dock_tab(page, title: str):
 
 
 def _panel_banner_selector(panel_id: str) -> str:
-    """A panel's error banner, whether it *is* the panel root or nested inside it.
+    """A panel's own error banner, whether it *is* the panel root or nested in it.
 
     `Locator.locator()` matches descendants only, which is a trap here: when
     `DiffTabPanel`'s fetch fails it returns the banner element as the panel root
-    (`data-panel` and `data-poll-error` on the same div), so a scoped descendant
-    search finds nothing and reports the failing panel as clean. The comma is an
-    "or" — either shape, and still nothing belonging to another panel.
+    (`data-panel` and `data-poll-error` on the same div, `Workspace.jsx`), so a
+    scoped descendant search finds nothing and reports the failing panel as
+    clean. The comma is an "or" — either shape, and still nothing belonging to
+    another panel.
 
-    Verified in a browser against both shapes (root banner: 1 match, nested
-    banner: 1 match, clean panel: 0) rather than reasoned about: the earlier
-    descendant-only form looked scoped-correct and matched zero.
+    Only the root shape exists under this layout today: `DiffTabPanel` is the one
+    panel that arms a banner. The descendant half is a guard, not coverage —
+    `DockPanel` does nest its banner in its body, but `DockPanel` is the *classic*
+    shell and is never mounted behind `?layout=dock`, so it is the classic walk's
+    page-wide read that sees that one.
     """
     return (
-        f'[data-panel="{panel_id}"][data-poll-error], '
-        f'[data-panel="{panel_id}"] [data-poll-error]'
+        f'[data-panel="{panel_id}"]{POLL_ERROR_SELECTOR}, '
+        f'[data-panel="{panel_id}"] {POLL_ERROR_SELECTOR}'
     )
 
 
@@ -256,7 +259,7 @@ def _wait_for_tree(page, timeout_ms: int = 15_000) -> bool:
     tree = page.locator('[data-panel="explorer"] button[title]')
     try:
         tree.first.wait_for(timeout=timeout_ms)
-    except Exception:  # noqa: BLE001 - a missing tree is a finding, not an exception
+    except Exception:  # a missing tree is a finding, not an exception
         return False
     return True
 
@@ -282,9 +285,11 @@ def _walk_dock(page, report: dict, base: str, workdir: str, shots: Path | None) 
             report["panel_drift"] = drift
     # The expected count comes from the catalogue, not from DOCK_PANELS:
     # comparing the walk against its own list is a check that can never fail. A
-    # panel added to the catalogue and not walked here is drift, exactly as
-    # DOCK_TABS vs App.jsx's `tabs` behaves in the classic walk.
-    report["expected_entries"] = len(declared) if declared else len(DOCK_PANELS)
+    # catalogue panel missing from `DOCK_PANELS` is not recorded as `panel_drift`
+    # — that dict names mismatched titles and does not look in the other
+    # direction — so it fails the run as a count mismatch instead.
+    if declared:
+        report["expected_entries"] = len(declared)
 
     page.goto(_dock_url(base), wait_until="domcontentloaded", timeout=60_000)
     page.locator(".dv-default-tab").first.wait_for(timeout=30_000)
@@ -348,13 +353,19 @@ def _walk_dock(page, report: dict, base: str, workdir: str, shots: Path | None) 
 
 
 def _no_readme_reason(report: dict) -> str:
-    """Why the README opener was missing — three causes, three messages.
+    """Why the README opener was missing — four causes, four messages.
 
-    All three fail the run (the check did not run), but they are not the same
-    fact and the report should not guess: a workspace with no session has no tree
-    to render by design, a bound session whose fetch never landed is slow, and a
-    rendered tree without README.md means this workdir cannot host the check.
+    All four fail the run (the check did not run), but they are not the same fact
+    and the report should not guess: the sessions endpoint may have failed
+    outright, a workspace with no session has no tree to render by design, a
+    bound session whose fetch never landed is slow, and a rendered tree without
+    README.md means this workdir cannot host the check.
     """
+    if report.get("sessions_error"):
+        return (
+            f"{report['sessions_error']}, so it is unknown whether this workspace "
+            "has a file tree to open README.md from"
+        )
     if not report.get("sessions"):
         return (
             "the workspace has no sessions, so there is no file tree to open "
@@ -401,7 +412,7 @@ def _monaco_reflow(page, report: dict, shots: Path | None) -> None:
     editor = page.locator(".monaco-editor")
     try:
         editor.first.wait_for(timeout=20_000)
-    except Exception:  # noqa: BLE001 - the gate reports the miss, it does not raise
+    except Exception:  # the gate reports the miss, it does not raise
         report["monaco"] = "the editor never mounted"
         return
     page.wait_for_timeout(800)
