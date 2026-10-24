@@ -1,7 +1,7 @@
 # RESCUE.md — recovery sheet for the R59 P0/P1 frontend refactor
 
 **Read this first if a session died, the UI is broken, or you are an AI taking over with no context.**
-Owner: CodingDude. Last updated: R59 P0 kickoff.
+Owner: CodingDude. Last updated: R59 P0, chrome + cards + store/panels extracted.
 
 ---
 
@@ -15,6 +15,22 @@ Owner: CodingDude. Last updated: R59 P0 kickoff.
 | Working tree at kickoff | clean except `M ROADMAP.md` (R59 item) |
 | Risk area | `frontend/src/` — React UI |
 | Backend | untouched by R59 (Python, `src/codingdude/`) |
+| `App.jsx` size | 3288 lines at kickoff → ~2280 after chrome/cards/store/panel extraction |
+
+### Progress log (P0 steps, newest last)
+
+| Step | Result | Gate |
+|---|---|---|
+| Rescue sheet + restore tag | done | — |
+| `ui.jsx` + `chrome/ErrorBoundary.jsx` (main.jsx updated) | done | build · 91 tests · lint |
+| `chrome/Login` · `Sidebar` · `AgentStrip` · `StatusFooter` | done | build · 91 tests · lint |
+| `cards/chatCards.jsx` (6 chat cards) | done | build · lint |
+| `store/useFileWorkspace.js` · `panels/Explorer` · `Editor` · `Chat` · `Prompt` | done | build · 91 tests · lint |
+| Dock tab bodies → `panels/dock/*` | **not started** | — |
+| `DockPanel` reduced to a tab shell | **not started** | — |
+
+If a step is in doubt, `git log --oneline -20` shows which extraction commits landed; everything
+above is one commit per row.
 
 ## 2. What is being attempted
 
