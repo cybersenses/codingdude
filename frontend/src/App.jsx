@@ -13,7 +13,7 @@
 //
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { api, authLocal, call, checkAuth } from './api'
 import { SSE_MAX_RETRIES, runToReattach, sseRetryDelayMs } from './reattach'
 import { activeProcesses, mergeProcesses } from './processes'
@@ -45,9 +45,14 @@ import { EditorPane } from './panels/Editor.jsx'
 import { Chat } from './panels/Chat.jsx'
 import { Prompt } from './panels/Prompt.jsx'
 import { useFileWorkspace } from './store/useFileWorkspace.js'
-// R59 P1: the dockable shell, behind `?layout=dock`. Static import: the flag is
-// a developer/A-B switch, not a per-user setting worth a lazy chunk.
-import { Workspace } from './workspace/Workspace.jsx'
+// R59 P1: the dockable shell, behind `?layout=dock`. Lazy on measurement, not
+// taste: dockview costs ~96 KB gzip (420,269 B raw) in the main chunk, and tech
+// design #1 §5 caps the acceptable delta at ~60 KB. A static import made every
+// classic user pay that for a shell they never render; `?layout=dock` now pays
+// it instead, and the classic chunk returns to its pre-P1 size.
+const Workspace = lazy(() =>
+  import('./workspace/Workspace.jsx').then((m) => ({ default: m.Workspace })),
+)
 
 import { Terminal } from './panels/dock/Terminal.jsx'
 import { Notes } from './panels/dock/Notes.jsx'
@@ -1416,22 +1421,30 @@ export default function App() {
   // land; `?layout=dock` opts in, so the two can be compared in one browser.
   if (USE_DOCK) {
     return (
-      <Workspace
-        error={error}
-        agentStrip={agentStripProps}
-        sidebar={sidebarProps}
-        fileWs={fileWs}
-        onAsk={send}
-        sessionId={activeSession}
-        prompt={promptProps}
-        pending={pending}
-        chat={chatProps}
-        footer={footerProps}
-        reviewDiff={focusDiffTab}
-        onRefreshArtifacts={() => {
-          call(`/sessions/${activeSession}/artifacts`).then(setArtifactsAll).catch(() => {})
-        }}
-      />
+      <Suspense
+        fallback={
+          <div className="flex h-screen items-center justify-center bg-neutral-900 text-neutral-500">
+            loading workspace…
+          </div>
+        }
+      >
+        <Workspace
+          error={error}
+          agentStrip={agentStripProps}
+          sidebar={sidebarProps}
+          fileWs={fileWs}
+          onAsk={send}
+          sessionId={activeSession}
+          prompt={promptProps}
+          pending={pending}
+          chat={chatProps}
+          footer={footerProps}
+          reviewDiff={focusDiffTab}
+          onRefreshArtifacts={() => {
+            call(`/sessions/${activeSession}/artifacts`).then(setArtifactsAll).catch(() => {})
+          }}
+        />
+      </Suspense>
     )
   }
 

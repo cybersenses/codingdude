@@ -15,7 +15,7 @@ Owner: CodingDude. Last updated: R59 P1 — the dock shell behind `?layout=dock`
 | Working tree at kickoff | clean except `M ROADMAP.md` (R59 item) |
 | Risk area | `frontend/src/` — React UI |
 | Backend | untouched by R59 (Python, `src/codingdude/`) |
-| `App.jsx` size | 3288 lines at kickoff → **1337** after P0 → **1439** after #233 → **1488** after P1 (P1 is additive: `workspace/` is 485 lines across three files — `Workspace.jsx` 274, `catalogue.ts` 96, `catalogue.test.ts` 115 — and `App.jsx` only gained the flag and the shared prop bags) |
+| `App.jsx` size | history row, all counts are as-of-then (historical): 3288 at kickoff → **1337** after P0 → **1439** after #233 → **1488** after P1 → **1501** after the lazy-import split. Today's figure is the last one. P1 is additive: `workspace/` is 485 lines across three files — `Workspace.jsx` 274, `catalogue.ts` 96, `catalogue.test.ts` 115 — and `App.jsx` only gained the flag, the shared prop bags and `React.lazy`/`Suspense` |
 | **Two shells** | classic flexbox = default; `?layout=dock` = the dockview shell (P1) |
 
 ### Progress log (P0 steps, newest last)
@@ -48,7 +48,7 @@ Owner: CodingDude. Last updated: R59 P1 — the dock shell behind `?layout=dock`
 | P1 gate — `tools/ui_smoke.py --layout dock` + `data-panel` seam + Monaco reflow check | done | dock smoke exit 0, 5/5 · 23 gate unit tests |
 | P1 gate fixes — scoped banner selector (the descendant-only form found nothing of the root shape, so a failing panel read as clean); `expected_entries` no longer falling back to a number the walk agrees with by construction; `_no_readme_reason` separating a failed sessions fetch from an empty workspace; `playwright` imported inside `run()` so the gate's own tests cannot silently skip | done | pytest 807/1 skipped · dock 5/5 · classic 16/16 · 23 gate unit tests |
 
-`App.jsx` is now ~1488 lines: `DockPanel` (tab shell + the 9 inline bodies) and `App`
+`App.jsx` is now ~1501 lines: `DockPanel` (tab shell + the 9 inline bodies) and `App`
 (session/SSE state + layout). Eight of those nine bodies (Graph, Output, Waterfall, Trace,
 Cost, MCP, Renders, Memory) read `DockPanel`'s single shared poll (`data`, `setData`;
 `selRun` belongs to Output and Waterfall only). Only **Processes** is inline for a different
@@ -71,7 +71,8 @@ panels anywhere.
 - **P0 (complete)** — pure move-only refactor: split the 3288-line `frontend/src/App.jsx`
   into `src/chrome/`, `src/panels/`, `src/cards/`, `src/store/`. **No behaviour change.**
   Exit gate: `npm run build` clean, `npx vitest run` 91/91, `npm run lint` clean, UI
-  visually identical. Landed at 1337 lines; the 9 data-coupled dock bodies stay inline
+  visually identical. Landed at 1337 lines (historical — that count is P0's, not
+  today's); the 9 data-coupled dock bodies stay inline
   until P2 (see the note after the progress log).
 - **P1 (complete, #236)** — the dockview shell behind `?layout=dock`: five panels (`nav`,
   `explorer`, `editor`, `chat`, `diff`) built from `workspace/catalogue.ts`, themed from the
@@ -207,10 +208,13 @@ the gate does not reproduce those numbers.
 it first. A blank page with a console error almost always means one of:
 
 1. **A component was moved but a stale import remains** — `grep` the old name across `src/`.
-2. **`dist/` is stale** — rebuild; a stale bundle after a source move is the single most
+2. **`frontend/dist/` is stale** — rebuild; a stale bundle after a source move is the single most
    likely false alarm.
 3. **A named export went missing** — `App.jsx` imports from each new module; check the
    import list at the top of `App.jsx` against the exports in the moved file.
+4. **`?layout=dock` shows "loading workspace…" forever** — the dock shell is a `React.lazy`
+   chunk; a stale `frontend/dist/` can leave `index.html` pointing at a bundle that requests
+   a chunk the server no longer has. Rebuild.
 
 ## 6. Environment facts (do not re-derive these)
 
@@ -227,6 +231,8 @@ it first. A blank page with a console error almost always means one of:
 | Trap | Reality |
 |---|---|
 | "Edit reported success" | Verify every edit with `grep`/`Select-String` before moving on. Silent non-persistence has happened repeatedly in this repo. |
+| **Writing a claim you did not execute** | Six consecutive commits had a reviewer find a claim the code did not support: an invented banner shape, a "hide the editor" step that hid nothing, geometry the gate never recorded, `1439` vs a measured `1488`, two filenames that were different files. Cause is always the same — the narrative is written from the diff, in the same pass, so nothing contradicts it. **Rule: every claim about behaviour, measurement or absence carries its probe** — the command and its output, pasted next to the claim, or the word *unverified*. Prose about *why* something happened is the highest-risk form and needs the most evidence. `uv run pytest -q tests/test_claim_check.py` now enforces the arithmetic half (paths, identifiers, commit refs, line counts) over the living docs; the other half is this row. |
+| PowerShell `Set-Content` on a repo file | Round-trips through cp1252 and adds a UTF-8 BOM: em dashes become mojibake and every line's bytes change. It has corrupted this file once. **Use `edit_file` only**; to restore, `git checkout -- <file>`. |
 | Parallel `edit_file` calls on the same file | They race and one edit is silently lost. **Edit one file at a time, sequentially.** |
 | PowerShell `&&` | Syntax error. Use `;`. |
 | Push exit code 1 | Usually PowerShell flagging git's stderr progress line — check `git status` / `git log origin/main` before assuming failure. |
