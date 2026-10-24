@@ -164,9 +164,11 @@ passes — that is what the screenshots and the manual pass are for. It needs th
 dev dependency plus `playwright install chromium`. Rebuild `frontend/dist` first or you are
 testing the old bundle.
 
-`--layout dock` is the P1 gate: it reads `?layout=dock`, waits for the explorer's tree (it
-renders nothing until a session binds, so without the wait a slow session fetch reads as a
-missing `README.md`), checks the five `DOCK_PANELS` against `workspace/catalogue.ts` (drift
+`--layout dock` is the P1 gate: it reads `?layout=dock`, waits for the explorer's file rows (it
+shows a "no session"/"loading…" placeholder until the session binds *and* `/sessions/{id}/tree`
+resolves, so without the wait a slow fetch reads as a missing `README.md` — one run recorded 17
+chars for Explorer, i.e. header plus "loading…", and the Monaco step called that a missing file),
+checks the five `DOCK_PANELS` against `workspace/catalogue.ts` (drift
 fails), asserts each panel root marked `data-panel="<id>"` has non-zero geometry — a bounding
 box, not a visibility test: a scrolled-away element still has one — and records each panel's
 width. A tab in the tab bar proves a tab exists, not that its body rendered; the geometry and

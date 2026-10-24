@@ -421,7 +421,8 @@ count comes from `catalogue.ts`, not from
 `DOCK_PANELS` — comparing the walk against its own list is a check that can
 never fail. A panel root also carries `data-poll-error` when its fetch fails,
 the same seam `DockPanel` exposes, so the #231 banner check is live under this
-layout too. It also requires Monaco to reflow in both directions — narrowed with
+layout too — read from that panel's own root, because the dock arms one banner
+per panel and a page-wide locator reports the first it finds for every tab. It also requires Monaco to reflow in both directions — narrowed with
 the window, restored with it — sampling the same locator three times (node
 identity is not asserted: nothing is hidden or moved, so there is no unmount for
 it to survive). It does **not** cover the hidden-then-revealed path, for the
