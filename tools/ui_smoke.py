@@ -15,10 +15,10 @@ Two layouts:
 * `--layout classic` (default) walks the sixteen `DockPanel` tabs.
 * `--layout dock` opens `?layout=dock` (R59 P1) and checks the five dockable
   panels, their visible geometry, and that Monaco reflows with its container:
-  the window is narrowed and restored while the editor's DOM stays mounted, and
-  the editor must narrow with it and come back. `renderer: 'always'` keeps that
-  DOM alive across a container change, which is the regression the dock could
-  introduce. The hidden-then-revealed variant is NOT covered — see
+  the window is narrowed and restored and the editor must narrow with it and
+  come back. Nothing is hidden or moved, so `renderer: 'always'` — which only
+  matters for a hidden panel — is not what this exercises. The
+  hidden-then-revealed variant is NOT covered — see
   `_monaco_reflow` for why the dock cannot hide a panel without UI it has not
   been given yet, and do not describe this gate as covering it.
 
@@ -217,6 +217,23 @@ def _dock_tab(page, title: str):
     return None
 
 
+def _wait_for_tree(page, timeout_ms: int = 15_000) -> bool:
+    """Wait for the explorer's file tree, which arrives after the session does.
+
+    `FileTree` renders nothing until the session auto-resume binds a session id,
+    so a fixed settle in the walk is a race: on a slow fetch the Explorer panel
+    looks empty and the Monaco step reports "README.md not in the explorer" — a
+    false red about a missing file rather than about a slow session. Bounded wait,
+    and the caller still reports a real miss.
+    """
+    tree = page.locator('[data-panel="explorer"] button[title]')
+    try:
+        tree.first.wait_for(timeout=timeout_ms)
+    except Exception:  # noqa: BLE001 - a missing tree is a finding, not an exception
+        return False
+    return True
+
+
 def _walk_dock(page, report: dict, base: str, workdir: str, shots: Path | None) -> None:
     """R59 P1: the dockable shell behind `?layout=dock`."""
     declared = catalogue_panels()
@@ -225,13 +242,14 @@ def _walk_dock(page, report: dict, base: str, workdir: str, shots: Path | None) 
         # cannot be read, every count below is meaningless — say so rather than
         # falling back to a number the walk agrees with by construction.
         report["panel_drift"] = {"_catalogue": "catalogue.ts could not be read"}
-    drift = {
-        pid: {"smoke": title, "catalogue": declared.get(pid)}
-        for pid, title in DOCK_PANELS.items()
-        if declared.get(pid) != title
-    }
-    if drift:
-        report["panel_drift"] = drift
+    else:
+        drift = {
+            pid: {"smoke": title, "catalogue": declared.get(pid)}
+            for pid, title in DOCK_PANELS.items()
+            if declared.get(pid) != title
+        }
+        if drift:
+            report["panel_drift"] = drift
     # The expected count comes from the catalogue, not from DOCK_PANELS:
     # comparing the walk against its own list is a check that can never fail. A
     # panel added to the catalogue and not walked here is drift, exactly as
@@ -249,6 +267,10 @@ def _walk_dock(page, report: dict, base: str, workdir: str, shots: Path | None) 
     if CRASH_MARKER in page.content():
         report["crashed"] = "on boot"
         return
+
+    # Recorded, and waited for: an empty Explorer panel otherwise reads as a
+    # missing file when it is a session fetch still in flight.
+    report["tree_ready"] = _wait_for_tree(page)
 
     found = 0
     for panel_id, title in DOCK_PANELS.items():
@@ -271,6 +293,11 @@ def _walk_dock(page, report: dict, base: str, workdir: str, shots: Path | None) 
             "placeholder": PLACEHOLDER in text,
             "poll_error": err.first.inner_text() if err.count() else None,
             "chars": len(text),
+            # Recorded, not asserted: the pinned columns land approximate because
+            # each `setSize` redistributes the remainder, so asserting a width
+            # here would only generate flakes. The geometry numbers quoted in
+            # RESCUE/code-design/ROADMAP come from these recordings.
+            "width": round(box["width"]) if box else None,
             "visible": bool(box and box["width"] > 0 and box["height"] > 0),
         }
         if shots:
@@ -286,11 +313,14 @@ def _walk_dock(page, report: dict, base: str, workdir: str, shots: Path | None) 
 def _monaco_reflow(page, report: dict, shots: Path | None) -> None:
     """The editor must reflow with its container, not keep the width it had.
 
-    `renderer: 'always'` keeps a panel's DOM alive, so the regression P1 could
-    introduce is an editor that keeps the geometry it had before its container
-    changed. Measured by narrowing the window and restoring it, with the
-    editor's DOM mounted throughout: the width must shrink with the window and
-    come back with it.
+    The regression P1 could introduce is an editor that keeps the geometry it
+    had before its container changed, so its width is sampled before, during and
+    after a window resize: it must shrink with the window and come back with it.
+    Three samples from the same locator, not a node-identity assertion — nothing
+    here hides or moves the panel, so there is no unmount for it to survive, and
+    `renderer: 'always'` is therefore not what this exercises. What the reflow
+    does depend on is `automaticLayout` in `baseOptions()`; drop that and this
+    goes red.
 
     What this does NOT cover, and no doc may claim it does: the
     hidden-then-revealed case. Hiding the editor needs either a panel-level
@@ -310,7 +340,11 @@ def _monaco_reflow(page, report: dict, shots: Path | None) -> None:
     # rather than silently skipping the check.
     opener = page.locator('button[title="README.md"]')
     if opener.count() == 0:
-        report["monaco"] = "README.md not in the explorer — editor never opened"
+        report["monaco"] = (
+            "no file tree to open README.md from (no session in this workdir?)"
+            if not report.get("tree_ready")
+            else "README.md not in the explorer — editor never opened"
+        )
         return
     opener.first.click()
     editor = page.locator(".monaco-editor")
@@ -344,12 +378,11 @@ def _monaco_reflow(page, report: dict, shots: Path | None) -> None:
 def _monaco_followed_its_container(m: object) -> bool:
     """Whether the editor tracked a container change in both directions.
 
-    The editor's DOM stays mounted (`renderer: 'always'`), so it cannot rely on
-    a fresh mount to pick up new geometry: narrowing the window must narrow it,
-    and restoring the window must restore it. Both halves matter — an editor
-    that reflows once and then sticks passes the first and fails the second. A
-    non-dict value means the check could not run at all, which is a failure
-    too, not a pass.
+    A resize does not remount the panel, so it cannot rely on a fresh mount to
+    pick up new geometry: narrowing the window must narrow it, and restoring the
+    window must restore it. Both halves matter — an editor that reflows once and
+    then sticks passes the first and fails the second. A non-dict value means the
+    check could not run at all, which is a failure too, not a pass.
     """
     if not isinstance(m, dict):
         return False

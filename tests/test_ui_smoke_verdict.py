@@ -171,9 +171,11 @@ def test_monaco_that_never_reflows_fails():
 
 
 def test_catalogue_is_readable_so_the_count_has_a_source():
-    # `_walk_dock` takes its expected entry count from catalogue.ts rather than
-    # from its own panel list; if the parse stops matching, the gate silently
-    # loses its anti-drift check, so the contract is asserted here.
+    # The panel list is duplicated: TS declares what the shell builds, this file
+    # declares what the gate walks. If the regex stops matching `catalogue.ts`
+    # the walk is compared against a catalogue it cannot read, so the parse seam
+    # is asserted here. (The failure is not silent: an unreadable catalogue sets
+    # `panel_drift`, which `verdict` fails on.)
     assert set(catalogue_panels()) == set(DOCK_PANELS)
 
 
