@@ -917,3 +917,10 @@ Fix:
 - Dismissal is user-driven only — no automatic expiry, so a question the user has not read yet is never hidden behind their back.
 
 Out of scope: anything that retires a card without the user asking.
+
+## R59 — Dynamic dockable workspace (user-arrangeable panels)
+**Status:** open
+
+Every surface in the UI becomes a movable panel. Users drag tabs to split/merge/float, pop panels out to OS windows, save named presets, and the arrangement persists. Replaces the hard-coded five-zone flexbox shell (sidebar | explorer | editor | chat | bottom dock) with a docking layout engine.
+
+Design: tech design #1. Implementation tracked as phased tickets (P0 refactor → P1 shell → P2 full catalogue → P3 persistence/palette → P4 polish).

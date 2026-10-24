@@ -1,0 +1,130 @@
+# RESCUE.md — recovery sheet for the R59 P0/P1 frontend refactor
+
+**Read this first if a session died, the UI is broken, or you are an AI taking over with no context.**
+Owner: CodingDude. Last updated: R59 P0 kickoff.
+
+---
+
+## 1. Snapshot (update this table every time the state moves)
+
+| Item | Value |
+|---|---|
+| Repo | `G:\pydantic` (branch `main`) |
+| Last known-good commit | `0c2e58e` — "fix(artifacts): dismissal is user-driven only (R58)" |
+| Restore tag | `pre-r59-p0` → `0c2e58e` (created before any refactor; **do not delete**) |
+| Working tree at kickoff | clean except `M ROADMAP.md` (R59 item) |
+| Risk area | `frontend/src/` — React UI |
+| Backend | untouched by R59 (Python, `src/codingdude/`) |
+
+## 2. What is being attempted
+
+Roadmap **R59** / tech design **#1** / design decision **#94**: replace the hard-coded
+five-zone flexbox UI with a dockable-window workspace (`dockview-react`), so users can put
+panels anywhere.
+
+- **P0 (in progress)** — pure move-only refactor: split the 3288-line `frontend/src/App.jsx`
+  into `src/chrome/`, `src/panels/`, `src/cards/`, `src/store/`. **No behaviour change.**
+  Exit gate: `npm run build` clean, `npx vitest run` 91/91, `npm run lint` clean, UI
+  visually identical.
+- **P1** — dockview shell behind `?layout=dock` (nav, explorer, editor, chat, diff);
+  the classic layout stays the default.
+- P2–P4 — remaining panels, data store, persistence, popout. **Not started.**
+
+P0 is safe to abandon at any moment: nothing is deployed, nothing is pushed until the
+gates pass.
+
+## 3. Restore — pick the smallest action that fixes the problem
+
+```powershell
+# 0. TRIAGE FIRST — what actually changed?
+cd G:\pydantic
+git status --porcelain
+git diff --stat
+
+# 1. Abandon uncommitted refactor work, keep the tree at the restore tag
+git reset --hard pre-r59-p0
+
+# 2. Undo a committed-but-bad P0 step, keeping history honest
+git revert <bad-sha>          # preferred: published history is never rewritten
+
+# 3. Nuclear: force main back to the tag (only if the commits were never pushed)
+git reset --hard pre-r59-p0
+git tag -f pre-r59-p0 0c2e58e  # keep the tag pointing at the known-good commit
+```
+
+The UI is served from `frontend/dist`, which is **gitignored** — a `git reset` restores
+sources but *not* the bundle. Always rebuild:
+
+```powershell
+cd G:\pydantic\frontend
+npm install     # only if node_modules is missing/corrupt
+npm run build   # rewrites dist/ from src/
+```
+
+Then **restart the server** (the running process holds the old bundle in memory):
+`start-codingdude.bat`, or `uv run codingdude serve`. Confirm `GET /health` reports the
+expected `version` / `git_sha`.
+
+## 4. Verification — run all four before believing anything works
+
+```powershell
+cd G:\pydantic\frontend
+npm run build      # must exit 0; watch for a chunk-size or unresolved-import warning
+npx vitest run     # must be 91 passed (no test imports App.jsx — they cover pure helpers)
+npm run lint       # eslint src, must be clean
+```
+
+Backend is not in scope, but if you touched anything shared:
+
+```powershell
+cd G:\pydantic
+uv run pytest -q
+uv run ruff check src tests
+uv run mypy
+```
+
+**Manual parity check (P0's real gate).** `npm run build` passing does not prove the UI is
+unchanged. Load the app and confirm: login card · sidebar projects/sessions · explorer tree
+· editor tabs + save/reload/diff · agent strip · chat + prompt row · every dock tab renders
+(Diff, Graph, Planning, Artifacts, Notes, Renders, Terminal, Output, Waterfall, Trace, Cost,
+Memory, MCP, Config, Standards) · status footer.
+
+## 5. If the UI is blank / crashed
+
+`ErrorBoundary` (now `src/chrome/ErrorBoundary.jsx`) shows the stack trace on screen — read
+it first. A blank page with a console error almost always means one of:
+
+1. **A component was moved but a stale import remains** — `grep` the old name across `src/`.
+2. **`dist/` is stale** — rebuild; a stale bundle after a source move is the single most
+   likely false alarm.
+3. **A named export went missing** — `App.jsx` imports from each new module; check the
+   import list at the top of `App.jsx` against the exports in the moved file.
+
+## 6. Environment facts (do not re-derive these)
+
+- OS Windows 11; shell is **PowerShell** — `&&` is a syntax error, use `;`.
+- Project dir is `G:\pydantic`; `cd /g/pydantic` fails. `cd frontend` from the repo root works.
+- Python tooling is venv-scoped: `uv run pytest` / `ruff` / `mypy`. Never assume global PATH.
+- Frontend is Vite + React 18.3.1, Tailwind v4, vitest 5. `node_modules` is present.
+- `frontend/dist` is gitignored and served from disk by the Python server.
+- No test imports `App.jsx`; the 91 vitest tests exercise `src/*.ts` pure logic only. So the
+  refactor cannot be caught by tests — **the build + manual parity check are the real gate.**
+
+## 7. Traps that have bitten before
+
+| Trap | Reality |
+|---|---|
+| "Edit reported success" | Verify every edit with `grep`/`Select-String` before moving on. Silent non-persistence has happened repeatedly in this repo. |
+| Parallel `edit_file` calls on the same file | They race and one edit is silently lost. **Edit one file at a time, sequentially.** |
+| PowerShell `&&` | Syntax error. Use `;`. |
+| Push exit code 1 | Usually PowerShell flagging git's stderr progress line — check `git status` / `git log origin/main` before assuming failure. |
+| Mojibake in output | Often a PowerShell console artefact, not the file. Verify bytes before "fixing" UTF-8. |
+| Bulk edits via python/shell | **Not permitted** without explicit user approval. Use `write_file` / `edit_file`. |
+
+## 8. Where the plan and decisions live
+
+- `ROADMAP.md` → **R59**
+- Planning DB → tech design **#1**, design decision **#94**, ticket **#226** (P0)
+- Artifact `R59-workspace-design` (rendered design + mock)
+- This file — **update section 1 and 2 at every milestone**, so a successor never has to
+  reverse-engineer how far the refactor got.
