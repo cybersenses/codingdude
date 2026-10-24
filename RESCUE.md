@@ -35,15 +35,19 @@ Owner: CodingDude. Last updated: R59 P0, chrome + cards + store/panels extracted
 | #229 perf: Memory list capped at newest 200 (15.8k → 2.2k DOM nodes) | done | build · 91 tests · lint · DOM count |
 | #230 fix: composer placeholder now says *why* it is disabled | done | build · 91 tests · lint · live DOM |
 | `tools/ui_smoke.py` — Playwright gate walking all 16 dock tabs | done | exit 0, 16/16 tabs |
+| #231 fix: dock poll errors surfaced on every tab (one banner, not per-tab keys) | done | build · 91 tests · lint · smoke exit 0 |
+| #231 gate: smoke now fails on `/api/` 5xx and on that banner | done | smoke exit 0, 0 5xx, 0 banners |
 
 `App.jsx` is now ~1337 lines: `DockPanel` (tab shell + the 9 inline bodies) and `App`
-(session/SSE state + layout). Seven of those bodies (Graph, Output, Waterfall, Trace, Cost,
-MCP, Renders) read `DockPanel`'s single shared poll (`data`, `setData`; `selRun` belongs to
-Output and Waterfall only). Two are inline for a different reason: **Processes** renders the
-`processes` prop from App's own 3 s poll, and **Memory** was *added* inline by #228 — it had
-no body at all before. Extracting a move-only component would mean threading those props
-through more files — work that P2's data store deletes again. They are left inline on purpose
-and move in P2, when each panel gets its own subscription.
+(session/SSE state + layout). Eight of those nine bodies (Graph, Output, Waterfall, Trace,
+Cost, MCP, Renders, Memory) read `DockPanel`'s single shared poll (`data`, `setData`;
+`selRun` belongs to Output and Waterfall only). Only **Processes** is inline for a different
+reason: it renders the `processes` prop from App's own 3 s poll. **Memory** is the ninth —
+*added* inline by #228, and it polls like the rest. (Two earlier drafts of this paragraph got
+the count wrong; this one was checked against the branches in `DockPanel`.) Extracting a
+move-only component would mean threading those props through more files — work that P2's
+data store deletes again. They are left inline on purpose and move in P2, when each panel
+gets its own subscription.
 
 If a step is in doubt, `git log --oneline -20` shows which extraction commits landed; everything
 above is one commit per row.

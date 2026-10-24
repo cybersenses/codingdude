@@ -5,9 +5,14 @@ App.jsx, so a moved component that renders nothing is invisible to `npm test`.
 This drives the real bundle in Chromium and fails on: a render crash reaching
 ErrorBoundary, an uncaught page error, an unexpected console error, a missing
 dock tab, DOCK_TABS drifting from the list in App.jsx, an unreachable
-/api/sessions, or — when the workspace has a session — a tab still showing the
-"select a session" placeholder (the #228 symptom). Designed console noise (the
-auth-cookie 401) and resource-load failures are reported, not fatal.
+/api/sessions, any /api/ response with a 5xx status, a tab showing the dock's
+"could not load this tab" banner (#231), or — when the workspace has a session —
+a tab still showing the "select a session" placeholder (the #228 symptom).
+Designed console noise (the auth-cookie 401) is reported, not fatal.
+
+The 5xx and banner checks are what make a broken data tab fail here: a tab that
+cannot load renders its own error text, which is neither the placeholder nor a
+console error, so neither of those alone would catch it.
 
 It does not judge what a tab says beyond that: `chars` is recorded per tab and
 `--shots` writes one screenshot per tab for a human to glance at.
@@ -42,6 +47,8 @@ DOCK_TABS = [
     "Config", "Standards",
 ]
 PLACEHOLDER = "Select a session to see diffs, files, cost and trace."
+# The dock's own error banner (#231): present means the tab's fetch failed.
+POLL_ERROR_SELECTOR = "[data-poll-error]"
 CRASH_MARKER = "UI crashed"
 REPO = Path(__file__).resolve().parents[1]
 APP_JSX = REPO / "frontend" / "src" / "App.jsx"
@@ -49,9 +56,9 @@ APP_JSX = REPO / "frontend" / "src" / "App.jsx"
 # probes the auth cookie first and logs the 401 before falling back to
 # authLocal(). Anything else on the console fails the gate.
 BENIGN_CONSOLE = ("the server responded with a status of 401",)
-# Resource-load failures are reported but not fatal: a server busy with a live
-# run can fail one fetch, which is not a render regression. A tab that cannot
-# load still fails its own check below.
+# Resource-load failures are reported, not fatal on their own: the browser logs
+# one for every non-2xx fetch, and the real verdict comes from the 5xx response
+# hook and the tab's own error banner below — not from this string.
 NETWORK_NOISE = "Failed to load resource"
 
 
@@ -68,6 +75,7 @@ def run(base: str, shots: Path | None, workdir: str) -> tuple[dict, int]:
         "tabs": {},
         "console_errors": [],
         "page_errors": [],
+        "api_5xx": [],
     }
     expected = app_tabs()
     drift = (sorted(set(expected) - set(DOCK_TABS)), sorted(set(DOCK_TABS) - set(expected)))
@@ -85,6 +93,14 @@ def run(base: str, shots: Path | None, workdir: str) -> tuple[dict, int]:
                 lambda m: report["console_errors"].append(m.text) if m.type == "error" else None,
             )
             page.on("pageerror", lambda e: report["page_errors"].append(str(e)))
+            # A 5xx on any /api/ route is a server-side failure the UI cannot
+            # paper over, however gracefully it renders — gate on it directly.
+            page.on(
+                "response",
+                lambda r: report["api_5xx"].append({"url": r.url, "status": r.status})
+                if "/api/" in r.url and r.status >= 500
+                else None,
+            )
 
             # The app holds an EventSource open and polls every 3-5s, so
             # "networkidle" is slow and flaky here — wait for the dock itself.
@@ -126,9 +142,14 @@ def run(base: str, shots: Path | None, workdir: str) -> tuple[dict, int]:
                     "section", has=page.get_by_role("button", name="Diff", exact=True)
                 )
                 text = dock.first.inner_text() if dock.count() else page.inner_text("body")
+                # #231: the tab's own error banner, which the placeholder and
+                # console checks both miss.
+                err = page.locator(POLL_ERROR_SELECTOR)
+                poll_error = err.first.inner_text() if err.count() else None
                 report["tabs"][name] = {
                     "crashed": crashed,
                     "placeholder": PLACEHOLDER in text,
+                    "poll_error": poll_error,
                     "chars": len(text),
                 }
                 if shots:
@@ -140,6 +161,15 @@ def run(base: str, shots: Path | None, workdir: str) -> tuple[dict, int]:
         finally:
             browser.close()
 
+    return report, verdict(report)
+
+
+def verdict(report: dict) -> int:
+    """1 when the run reveals a defect, else 0.
+
+    Extracted from `run()` so the decision can be exercised without a browser:
+    a gate whose failure paths are never executed is a gate nobody knows works.
+    """
     unexpected = [
         e
         for e in report["console_errors"]
@@ -154,15 +184,16 @@ def run(base: str, shots: Path | None, workdir: str) -> tuple[dict, int]:
         report.get("crashed") is not None
         or report["page_errors"]
         or unexpected
+        or report["api_5xx"]
         or report.get("tab_drift") is not None
         or report.get("sessions_error") is not None
         or report["tab_count"] != len(DOCK_TABS)
         or any(
-            isinstance(v, str) or v["crashed"] or (has_session and v["placeholder"])
+            isinstance(v, str) or v["crashed"] or v["poll_error"] or (has_session and v["placeholder"])
             for v in report["tabs"].values()
         )
     )
-    return report, 1 if failed else 0
+    return 1 if failed else 0
 
 
 def main() -> int:

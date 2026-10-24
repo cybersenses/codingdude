@@ -59,6 +59,30 @@ import { DiffPanel } from './panels/dock/Diff.jsx'
 // every 4s poll — 2,144 entries meant 15.8k DOM nodes versus 810 for Diff.
 const MEMORY_LIMIT = 200
 
+// #231: one error surface for the whole dock. Each tab used to carry its own
+// error key (configError, memoryError) and only some were rendered, so a
+// failing fetch looked like a tab that was still loading. Errors live in a
+// per-tab map keyed by tab, stamped with the session they belong to, so a
+// stale error cannot follow the user to another tab or another session.
+function pollFailure(data, tab, sessionId, err) {
+  return {
+    ...data.pollErrors,
+    [tab]: {
+      sessionId: sessionId ?? null,
+      message: String(err instanceof Error ? err.message : err),
+    },
+  }
+}
+
+// Returns the same object when nothing changed, so a successful poll does not
+// re-render the dock every 4 seconds just to clear an error that is not there.
+function pollCleared(data, tab) {
+  if (!data.pollErrors?.[tab]) return data.pollErrors
+  const next = { ...data.pollErrors }
+  delete next[tab]
+  return next
+}
+
 // R35 #72: bottom dock — VS Code panel position. Processes comes in as a
 // prop (App polls it); it used to be a bare-identifier crash in this scope.
 function DockPanel({ sessionId, refreshKey, diffBadge, artifactsPending = 0, workdir, processes, height, onResizeHeight, focusDiff = 0, activePath = '', onAsk }) {
@@ -83,15 +107,15 @@ function DockPanel({ sessionId, refreshKey, diffBadge, artifactsPending = 0, wor
         try {
           if (tab === 'Config') {
             const r = await call('/config/models')
-            setData((d) => ({ ...d, config: r, configError: undefined }))
+            setData((d) => ({ ...d, config: r, pollErrors: pollCleared(d, tab) }))
           } else {
             const m = await call('/memory')
-            setData((d) => ({ ...d, memory: m, memoryError: undefined }))
+            setData((d) => ({ ...d, memory: m, pollErrors: pollCleared(d, tab) }))
           }
         } catch (err) {
-          const msg = String(err instanceof Error ? err.message : err)
-          if (tab === 'Config') setData((d) => ({ ...d, configError: msg }))
-          else setData((d) => ({ ...d, memoryError: msg }))
+          // No session to stamp: the error is about this tab on a fresh
+          // workspace, and the banner compares against null.
+          setData((d) => ({ ...d, pollErrors: pollFailure(d, tab, null, err) }))
         }
       })()
       return
@@ -128,15 +152,15 @@ function DockPanel({ sessionId, refreshKey, diffBadge, artifactsPending = 0, wor
           const a = await call(`/sessions/${sessionId}/archmap`)
           setData((d) => ({ ...d, structure: s, archmap: a }))
         }
-        if (tab === 'Cost') { const u = await call(`/sessions/${sessionId}/usage`); setData((d) => ({ ...d, usage: u, pollError: undefined })) }
+        if (tab === 'Cost') { const u = await call(`/sessions/${sessionId}/usage`); setData((d) => ({ ...d, usage: u })) }
         if (tab === 'Output') {
           const runs = await call(`/sessions/${sessionId}/runs`)
           const tr = await call(`/sessions/${sessionId}/trace?limit=300`)
           setData((d) => ({ ...d, runs, runEvents: tr }))
         }
-        if (tab === 'Config') { const r = await call('/config/models'); setData((d) => ({ ...d, config: r, configError: undefined })) }
-        if (tab === 'Memory') { const m = await call('/memory'); setData((d) => ({ ...d, memory: m, memoryError: undefined })) }
-        if (tab === 'MCP') { const m = await api.listMcp(sessionId); setData((d) => ({ ...d, mcp: m, pollError: undefined })) }
+        if (tab === 'Config') { const r = await call('/config/models'); setData((d) => ({ ...d, config: r })) }
+        if (tab === 'Memory') { const m = await call('/memory'); setData((d) => ({ ...d, memory: m })) }
+        if (tab === 'MCP') { const m = await api.listMcp(sessionId); setData((d) => ({ ...d, mcp: m })) }
         if (tab === 'Trace') {
           const tr = await call(`/sessions/${sessionId}/trace?limit=50`)
           const cps = await call(`/sessions/${sessionId}/checkpoints`)
@@ -147,11 +171,14 @@ function DockPanel({ sessionId, refreshKey, diffBadge, artifactsPending = 0, wor
           const r = await call(`/sessions/${sessionId}/renders`)
           setData((d) => ({ ...d, renders: r.renders, renderStart: r.session_start }))
         }
+        // One clear for every tab, instead of a `pollError: undefined` per
+        // branch — the old per-branch version left the other tabs' errors set.
+        setData((d) => ({ ...d, pollErrors: pollCleared(d, tab) }))
       } catch (err) {
-        // #231: not swallowed. A failing fetch left the tab on the "select a
-        // session" placeholder forever — the symptom #228 fixed for Memory,
-        // still live on Cost and MCP because their bodies are gated on data.
-        setData((d) => ({ ...d, pollError: { tab, message: String(err instanceof Error ? err.message : err) } }))
+        // #231: not swallowed. A failing fetch left the tab looking like it
+        // was still loading — the symptom #228 fixed for Memory, and it was
+        // still live on Cost and MCP because their bodies gate on data.
+        setData((d) => ({ ...d, pollErrors: pollFailure(d, tab, sessionId, err) }))
       }
       if (!stop) setTimeout(poll, 4000)
     }
@@ -179,16 +206,20 @@ function DockPanel({ sessionId, refreshKey, diffBadge, artifactsPending = 0, wor
   }
 
 
+  // The error for the tab actually on screen, and only if it belongs to the
+  // session on screen: switching session or tab must not carry an old failure
+  // across. Suppressing `body` while it shows keeps the panel from pairing
+  // "could not load this tab" with "loading…" underneath it.
+  const tabError = (() => {
+    const e = data.pollErrors?.[tab]
+    return e && e.sessionId === (sessionId ?? null) ? e.message : null
+  })()
+
   let body = (
     <div className="rounded border border-line bg-surface p-4 text-xs text-ink-muted">
       {/* #231: the fallback used to claim "select a session" even with one
-          selected — reached whenever a tab's data had not landed, or its
-          fetch was failing silently. Say which of the three it actually is. */}
-      {data.pollError?.tab === tab
-        ? `could not load this tab: ${data.pollError.message}`
-        : sessionId
-          ? 'loading…'
-          : 'Select a session to see diffs, files, cost and trace.'}
+          selected — reached whenever a tab's data had not landed yet. */}
+      {sessionId ? 'loading…' : 'Select a session to see diffs, files, cost and trace.'}
     </div>
   )
   if (tab === 'Standards') {
@@ -414,7 +445,6 @@ function DockPanel({ sessionId, refreshKey, diffBadge, artifactsPending = 0, wor
           </span>
           <span className="ml-auto normal-case">facts and solutions recalled across sessions</span>
         </div>
-        {data.memoryError && <div className="text-danger">{data.memoryError}</div>}
         {entries && !entries.length && (
           <div className="rounded border border-line bg-surface p-4 text-ink-muted">
             No memory entries yet. The agent remembers facts mid-run and banks solutions it has proved.
@@ -725,7 +755,17 @@ function DockPanel({ sessionId, refreshKey, diffBadge, artifactsPending = 0, wor
           </button>
         ))}
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-2 text-xs">{body}</div>
+      <div className="min-h-0 flex-1 overflow-y-auto p-2 text-xs">
+        {/* #231: the single error surface — every tab's failed fetch lands
+            here, so no tab can look like it is still loading forever. The
+            attribute is what tools/ui_smoke.py gates on. */}
+        {tabError && (
+          <div data-poll-error={tab} className="rounded border border-danger/40 bg-danger/10 p-3 text-xs text-danger">
+            could not load this tab: {tabError}
+          </div>
+        )}
+        {tabError ? null : body}
+      </div>
     </section>
   )
 }
