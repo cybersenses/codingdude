@@ -1348,6 +1348,7 @@ export default function App() {
           <Prompt
             onSend={send}
             disabled={!activeSession || streaming}
+            running={streaming}
             suggestMode={suggestMode}
             setSuggestMode={(v) => { setSuggestMode(v); localStorage.setItem('cd-suggest', v ? '1' : '0') }}
             fixLoop={fixLoop}

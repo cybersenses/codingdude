@@ -19,12 +19,20 @@ import { checklistPrompt } from '../checklists'
 
 // R59 P0: moved verbatim out of App.jsx. The prompt row sits directly above the
 // chat panel and is docked with it in P1.
-export function Prompt({ onSend, disabled, suggestMode, setSuggestMode, fixLoop, setFixLoop, models, model, setModel, yolo, setYolo, notify, toggleNotify }) {
+export function Prompt({ onSend, disabled, running = false, suggestMode, setSuggestMode, fixLoop, setFixLoop, models, model, setModel, yolo, setYolo, notify, toggleNotify }) {
   const [text, setText] = useState('')
   const [image, setImage] = useState(null) // {b64, name}
   const [checklists, setChecklists] = useState(null) // null = picker not opened yet
   const fileRef = useRef(null)
   // notify state is owned by App (single source of truth, L13) and passed in.
+  // #230: `disabled` has two causes — no session, or a run in flight. They are
+  // not interchangeable: "select a session" while the agent is working is a
+  // lie that invites the user to navigate away from a live run.
+  const placeholder = !disabled
+    ? 'describe the task… (Enter to send, Shift+Enter for newline)'
+    : running
+      ? 'the agent is working — press Stop to interrupt…'
+      : 'create or select a session first'
 
   // #93: checklist picker — load the list on first open, send a checklist run on pick.
   async function pickChecklist(name) {
@@ -61,7 +69,7 @@ export function Prompt({ onSend, disabled, suggestMode, setSuggestMode, fixLoop,
               }
             }
           }}
-          placeholder={disabled ? 'create or select a session first' : 'describe the task… (Enter to send, Shift+Enter for newline)'}
+          placeholder={placeholder}
           disabled={disabled}
         />
         <button
