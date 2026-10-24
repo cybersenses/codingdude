@@ -71,13 +71,22 @@ function DockPanel({ sessionId, refreshKey, diffBadge, artifactsPending = 0, wor
 
   useEffect(() => {
     // R50: model config is session-independent — load it without a session.
-    if (tab === 'Config' && !sessionId) {
+    // #228: memory is too (global + every workdir), so it loads on a fresh
+    // workspace instead of being gated behind a session it does not need.
+    if (!sessionId && (tab === 'Config' || tab === 'Memory')) {
       ;(async () => {
         try {
-          const r = await call('/config/models')
-          setData((d) => ({ ...d, config: r, configError: undefined }))
+          if (tab === 'Config') {
+            const r = await call('/config/models')
+            setData((d) => ({ ...d, config: r, configError: undefined }))
+          } else {
+            const m = await call('/memory')
+            setData((d) => ({ ...d, memory: m, memoryError: undefined }))
+          }
         } catch (err) {
-          setData((d) => ({ ...d, configError: String(err instanceof Error ? err.message : err) }))
+          const msg = String(err instanceof Error ? err.message : err)
+          if (tab === 'Config') setData((d) => ({ ...d, configError: msg }))
+          else setData((d) => ({ ...d, memoryError: msg }))
         }
       })()
       return
@@ -121,7 +130,7 @@ function DockPanel({ sessionId, refreshKey, diffBadge, artifactsPending = 0, wor
           setData((d) => ({ ...d, runs, runEvents: tr }))
         }
         if (tab === 'Config') { const r = await call('/config/models'); setData((d) => ({ ...d, config: r, configError: undefined })) }
-        if (tab === 'Memory') { const m = await call('/memory'); setData((d) => ({ ...d, memory: m })) }
+        if (tab === 'Memory') { const m = await call('/memory'); setData((d) => ({ ...d, memory: m, memoryError: undefined })) }
         if (tab === 'MCP') { const m = await api.listMcp(sessionId); setData((d) => ({ ...d, mcp: m })) }
         if (tab === 'Trace') {
           const tr = await call(`/sessions/${sessionId}/trace?limit=50`)
@@ -366,6 +375,40 @@ function DockPanel({ sessionId, refreshKey, diffBadge, artifactsPending = 0, wor
           </div>
         ))}
         <div className="text-neutral-600">config: ~/.codingdude/mcp.json (global) + .codingdude/mcp.json (project)</div>
+      </div>
+    )
+  } else if (tab === 'Memory') {
+    // #228: the tab polled /memory but had no body branch — it rendered the
+    // "select a session" placeholder forever. Facts and solutions the agent
+    // recalls across sessions, newest first (server order).
+    const entries = data.memory || []
+    body = (
+      <div className="space-y-1">
+        <div className="flex items-baseline gap-2 font-mono text-[10px] uppercase tracking-wide text-ink-muted">
+          <span>{entries.length} {entries.length === 1 ? 'entry' : 'entries'}</span>
+          <span className="ml-auto normal-case">facts and solutions recalled across sessions</span>
+        </div>
+        {data.memoryError && <div className="text-danger">{data.memoryError}</div>}
+        {!entries.length && (
+          <div className="rounded border border-line bg-surface p-4 text-ink-muted">
+            No memory entries yet. The agent remembers facts mid-run and banks solutions it has proved.
+          </div>
+        )}
+        {entries.map((m) => (
+          <div key={m.id} className="rounded border border-line bg-surface p-1.5">
+            <div className="flex flex-wrap items-baseline gap-2 font-mono text-[10px]">
+              <span className={m.kind === 'solution' ? 'text-accent' : 'text-brand-300'}>{m.kind || 'fact'}</span>
+              <span className="text-ink-muted">{m.scope}</span>
+              {m.workdir && (
+                <span className="min-w-0 truncate text-ink-muted" title={m.workdir}>
+                  {m.workdir.split(/[\\/]/).filter(Boolean).pop()}
+                </span>
+              )}
+              <span className="ml-auto shrink-0 text-ink-muted">{(m.created_at || '').replace('T', ' ').slice(0, 16)}</span>
+            </div>
+            <div className="mt-0.5 whitespace-pre-wrap break-words text-[11px] text-ink">{m.content}</div>
+          </div>
+        ))}
       </div>
     )
   } else if (tab === 'Graph') {

@@ -202,6 +202,9 @@ deletes. They move in P2, each with its own visible-subscriber subscription.
 Tests do not touch `App.jsx` (all 91 cover pure `src/*.ts` helpers), so the
 gates are `npm run build`, `eslint src`, and a manual visual parity pass —
 documented in `RESCUE.md`, which is the recovery sheet for this refactor.
-Pre-existing gaps found, not fixed (out of move-only scope): the `Processes`
-tab body is unreachable (`Processes` is missing from the `tabs` array) and
-`Memory` polls but has no body branch.
+Two pre-existing gaps found during P0 were **left alone by P0 (move-only) and
+then fixed under their own tickets**: the `Processes` tab body was unreachable
+(`Processes` missing from the `tabs` array — #227) and `Memory` polled
+`/memory` with no body branch (plus it was gated on a session it does not
+need — #228). Both are behaviour changes, so they are separate commits from
+the move-only ones and both got a full build/lint/91-test pass.
