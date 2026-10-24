@@ -208,3 +208,13 @@ then fixed under their own tickets**: the `Processes` tab body was unreachable
 `/memory` with no body branch (plus it was gated on a session it does not
 need — #228). Both are behaviour changes, so they are separate commits from
 the move-only ones and both got a full build/lint/91-test pass.
+
+**UI smoke gate.** `tools/ui_smoke.py` renders the running bundle in Chromium
+and walks all 16 dock tabs, failing on an ErrorBoundary crash, an uncaught page
+error, a missing tab, or a leftover placeholder. It exists because nothing in
+`frontend/src/*.test.ts` imports `App.jsx` — the build and the tests cannot see
+a component that renders nothing. It found two further defects:
+`Memory` mapped the entire table (2,144 rows → 15,822 DOM nodes rebuilt every
+4s poll; now newest 200 at 2,226 nodes — #229) and the chat composer said
+"create or select a session first" whenever disabled, including mid-run when a
+session *is* selected (now cause-specific — #230).
