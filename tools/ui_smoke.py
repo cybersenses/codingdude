@@ -14,8 +14,11 @@ Two layouts:
 
 * `--layout classic` (default) walks the sixteen `DockPanel` tabs.
 * `--layout dock` opens `?layout=dock` (R59 P1) and checks the five dockable
-  panels, their visible geometry, and that Monaco re-lays-out when the window
-  resizes — the regression a hidden-then-shown editor would otherwise cause.
+  panels, their visible geometry, and that Monaco follows its container: the
+  editor is hidden, the window is narrowed while it is away, and it is revealed
+  again. `renderer: 'always'` keeps a hidden panel's DOM alive, so this is the
+  regression the dock could introduce — an editor that comes back at the width
+  it last had.
 
 The 5xx and banner checks are what make a broken data tab fail here: a tab that
 cannot load renders its own error text, which is neither the placeholder nor a
@@ -215,6 +218,11 @@ def _dock_tab(page, title: str):
 def _walk_dock(page, report: dict, base: str, workdir: str, shots: Path | None) -> None:
     """R59 P1: the dockable shell behind `?layout=dock`."""
     declared = catalogue_panels()
+    if not declared:
+        # The catalogue is the source of truth for how many panels exist. If it
+        # cannot be read, every count below is meaningless — say so rather than
+        # falling back to a number the walk agrees with by construction.
+        report["panel_drift"] = {"_catalogue": "catalogue.ts could not be read"}
     drift = {
         pid: {"smoke": title, "catalogue": declared.get(pid)}
         for pid, title in DOCK_PANELS.items()
@@ -222,7 +230,11 @@ def _walk_dock(page, report: dict, base: str, workdir: str, shots: Path | None) 
     }
     if drift:
         report["panel_drift"] = drift
-    report["expected_entries"] = len(DOCK_PANELS)
+    # The expected count comes from the catalogue, not from DOCK_PANELS:
+    # comparing the walk against its own list is a check that can never fail. A
+    # panel added to the catalogue and not walked here is drift, exactly as
+    # DOCK_TABS vs App.jsx's `tabs` behaves in the classic walk.
+    report["expected_entries"] = len(declared) if declared else len(DOCK_PANELS)
 
     page.goto(_dock_url(base), wait_until="domcontentloaded", timeout=60_000)
     page.locator(".dv-default-tab").first.wait_for(timeout=30_000)
@@ -270,11 +282,13 @@ def _walk_dock(page, report: dict, base: str, workdir: str, shots: Path | None) 
 
 
 def _monaco_relayout(page, report: dict, shots: Path | None) -> None:
-    """The editor must follow its container, not the size it mounted at.
+    """The editor must follow its container, not the size it last had.
 
-    A docked panel is resizeable and a hidden `renderer: always` panel keeps a
-    stale geometry, so this is the specific regression P1 could introduce: the
-    editor mounts at one width and never re-lays-out.
+    `renderer: 'always'` keeps a hidden panel's DOM alive, so this is the
+    regression P1 could introduce: the editor goes off screen, its container
+    changes underneath it, and it comes back at the geometry it went away with.
+    Measured by narrowing the window *while the editor is hidden* and comparing
+    the width after the reveal against the width before it.
     """
     tab = _dock_tab(page, "Editor")
     if tab is not None:
@@ -295,16 +309,49 @@ def _monaco_relayout(page, report: dict, shots: Path | None) -> None:
         return
     page.wait_for_timeout(800)
     before = editor.first.bounding_box()
-    page.set_viewport_size({"width": 1100, "height": 760})
-    page.wait_for_timeout(1000)
-    after = editor.first.bounding_box()
+
+    # Hide the editor by activating another panel, then change the container
+    # width while it is away.
+    away = _dock_tab(page, "Chat")
+    if away is not None:
+        away.click()
+        page.wait_for_timeout(600)
+        page.set_viewport_size({"width": 1100, "height": 760})
+        page.wait_for_timeout(600)
+    back = _dock_tab(page, "Editor")
+    if back is not None:
+        back.click()
+        page.wait_for_timeout(900)
+    shown = editor.first.bounding_box()
     if shots:
-        page.screenshot(path=str(shots / "dock-01-resized.png"))
+        page.screenshot(path=str(shots / "dock-01-revealed.png"))
+
+    # Restore the viewport so the run leaves the page where it found it.
     page.set_viewport_size({"width": 1500, "height": 950})
+    page.wait_for_timeout(800)
+    restored = editor.first.bounding_box()
     report["monaco"] = {
         "width_before": before["width"] if before else None,
-        "width_after": after["width"] if after else None,
+        "width_shown": shown["width"] if shown else None,
+        "width_after": restored["width"] if restored else None,
     }
+
+
+def _monaco_followed_its_container(m: object) -> bool:
+    """Whether the editor tracked a container change it could not see coming.
+
+    The load-bearing measurement is `width_shown`: the panel was hidden, the
+    window was narrowed while it was away, and it was revealed. An editor that
+    comes back at `width_before` never re-laid-out — the `renderer: 'always'`
+    regression. A non-dict value means the check could not run at all, which is
+    a failure too, not a pass.
+    """
+    if not isinstance(m, dict):
+        return False
+    before, shown = m.get("width_before"), m.get("width_shown")
+    if not before or not shown:
+        return False
+    return shown != before
 
 
 def verdict(report: dict) -> int:
@@ -343,12 +390,7 @@ def verdict(report: dict) -> int:
     # count keeps a hand-built report meaningful.
     expected_entries = report.get("expected_entries", len(DOCK_TABS))
     monaco = report.get("monaco")
-    monaco_failed = monaco is not None and not (
-        isinstance(monaco, dict)
-        and monaco.get("width_before")
-        and monaco.get("width_after")
-        and monaco["width_before"] != monaco["width_after"]
-    )
+    monaco_failed = monaco is not None and not _monaco_followed_its_container(monaco)
     failed = (
         report.get("crashed") is not None
         or report.get("page_errors")

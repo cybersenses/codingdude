@@ -34,7 +34,7 @@ pytest.importorskip("playwright.sync_api")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
-from ui_smoke import DOCK_TABS, verdict  # noqa: E402
+from ui_smoke import DOCK_PANELS, DOCK_TABS, catalogue_panels, verdict  # noqa: E402
 
 
 def clean(**overrides) -> dict:
@@ -122,7 +122,7 @@ def dock_report(**overrides) -> dict:
         "expected_entries": 5,
         "tab_count": 5,
         "tabs": panels,
-        "monaco": {"width_before": 634, "width_after": 460},
+        "monaco": {"width_before": 634, "width_shown": 460, "width_after": 634},
     }
     report.update(overrides)
     return report
@@ -156,9 +156,21 @@ def test_panel_drift_fails():
 
 
 def test_monaco_that_never_relayouts_fails():
-    assert verdict(dock_report(monaco={"width_before": 634, "width_after": 634})) == 1
+    # Hidden, narrowed underneath it, revealed — and back at the width it left
+    # with. `width_before` == `width_shown` is the `renderer: 'always'` bug.
+    stale = {"width_before": 634, "width_shown": 634, "width_after": 634}
+    assert verdict(dock_report(monaco=stale)) == 1
+    # A reveal that measured nothing is not a pass either.
+    assert verdict(dock_report(monaco={"width_before": 634, "width_shown": None})) == 1
     # A string means the check could not run at all — that is not a pass.
     assert verdict(dock_report(monaco="the editor never mounted")) == 1
+
+
+def test_catalogue_is_readable_so_the_count_has_a_source():
+    # `_walk_dock` takes its expected entry count from catalogue.ts rather than
+    # from its own panel list; if the parse stops matching, the gate silently
+    # loses its anti-drift check, so the contract is asserted here.
+    assert set(catalogue_panels()) == set(DOCK_PANELS)
 
 
 def test_classic_report_unaffected_by_the_dock_keys():

@@ -138,7 +138,14 @@ function DiffTabPanel() {
   }
   if (failure) {
     return (
-      <div data-panel="diff" className="m-2 rounded border border-danger/40 bg-danger/10 p-3 text-xs text-danger">
+      // `data-poll-error` is the same seam DockPanel's banner exposes: without
+      // it, tools/ui_smoke.py's banner check finds nothing under `--layout
+      // dock` and a panel whose fetch is failing passes the gate.
+      <div
+        data-panel="diff"
+        data-poll-error="diff"
+        className="m-2 rounded border border-danger/40 bg-danger/10 p-3 text-xs text-danger"
+      >
         could not load this tab: {failure}
       </div>
     )
@@ -165,8 +172,6 @@ const COMPONENTS = {
 
 // Builds the default arrangement through the public addPanel API (see the note
 // in catalogue.ts on why the preset is placements, not serialized grid JSON).
-// Builds the default arrangement through the public addPanel API (see the note
-// in catalogue.ts on why the preset is placements, not serialized grid JSON).
 //
 // addPanel's `initialWidth` alone does not reproduce the classic geometry: the
 // new group is created by splitting its reference and the sizes it lands on are
@@ -184,6 +189,12 @@ function applyDefaultPreset(api) {
       renderer: spec.renderer,
       initialWidth: placement.initialWidth,
       initialHeight: placement.initialHeight,
+      // `AddPanelOptions` extends `Partial<Constraints>`, so the catalogue's
+      // minimums land on dockview's own resize clamp instead of being inert
+      // data. Without them a docked panel could be dragged below the size the
+      // classic layout's PANE_SPECS clamp allows.
+      ...(spec.minWidth !== undefined ? { minimumWidth: spec.minWidth } : {}),
+      ...(spec.minHeight !== undefined ? { minimumHeight: spec.minHeight } : {}),
       ...(placement.referencePanel
         ? { position: { direction: placement.direction, referencePanel: placement.referencePanel } }
         : {}),
