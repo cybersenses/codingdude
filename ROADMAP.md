@@ -927,7 +927,7 @@ Design: tech design #1. Implementation tracked as phased tickets (P0 refactor �
 
 **Progress.** P0 done (#226) — `App.jsx` 3288 → 1337 lines (historical: P0's count), panels/chrome/store extracted. P1 done (#236) — `dockview-react@8.6.1` (exact pin) renders five dockable panels (nav, explorer, editor, chat, diff) behind `?layout=dock`; the classic layout stays the default, so rollback is dropping the query flag. Preset geometry recorded by the gate (`tabs[<title>].width`): nav 256 / explorer 208 / chat 384 px, i.e. the requested 256/208/384, with the middle column taking the remainder (~652 px) — recorded, not asserted, because `pinSizes` redistributes the remainder per call. Monaco proven to reflow with its container in both directions (634 → 460 → 634 px) via `automaticLayout`; the hidden-then-revealed case is *not* covered, because dockview exposes no panel-level `setVisible` and ships no group action to click, so hiding a panel needs P3 UI. The new dependency costs **+98,152 B gzip / +420,269 B raw** in the main chunk (measured against a worktree build of `96fbb6e`), over tech design §5's ~60 KB cap — so `Workspace.jsx` is now `React.lazy` and the engine loads only under `?layout=dock` (its own 97,883 B gzip chunk), leaving the default path at +442 B gzip. See `code-design.md` §R59 P1. Remaining: P2 (other fifteen panels + visibility-gated data store, retiring the per-tab polls), P3 (persistence, presets, palette, keyboard, plus the panel-hide control and the drag → reload → assert proof P1 deferred), P4 (popouts, then delete `panes.ts` and the classic layout).
 
-## R60 — R60 — Written claims must be checkable: claim checker + measured bundle cost
+## R60 — Written claims must be checkable: claim checker + measured bundle cost
 **Status:** done
 
 ## Problem
@@ -938,8 +938,8 @@ The mechanism is identical every time: the narrative is written from the diff, i
 
 ## What shipped
 
-1. **`tools/claim_check.py`** — checks the mechanically settleable half: paths in backticks exist (resolving bare basenames against the tracked tree, root-level files, directory claims), `path:LINE` references point inside the file, short hex refs name a real commit, backticked identifiers appear in tracked source, and "N lines" next to a single named file matches. Explicit `(removed)`/`(historical)` markers let a document discuss a file it replaced. Deliberately not checked: test counts (that is `gates.bat`'s job) and anything phrased in prose.
-2. **`tests/test_claim_check.py`** — 27 tests, each check exercised on a claim that must be caught *and* a near-identical one that must not, plus a parametrised test holding every living document (`STRICT_DOCS`) to zero unsupported claims. Red-verified by breaking a real doc count and watching the suite fail.
+1. **`tools/claim_check.py`** — checks the mechanically settleable half: paths in backticks exist (resolving bare basenames against the tracked tree, root-level files, directory claims; gitignored build artefacts are skipped as unverifiable), `path:LINE` references point inside the file, short hex refs name a real commit, "N lines" next to a single named file matches, and backticked identifiers appear in tracked **source** — that last check runs on commit messages only, because documents legitimately name other people's APIs and planned ones. Explicit `(removed)`/`(historical)` markers let a document discuss a file it replaced. Deliberately not checked: test counts (that is `gates.bat`'s job) and anything phrased in prose.
+2. **`tests/test_claim_check.py`** — 31 tests, each check exercised on a claim that must be caught *and* a near-identical one that must not, plus a parametrised test holding every living document (`STRICT_DOCS`) to zero unsupported claims. Red-verified twice: by breaking a real doc count, and by running the suite in a `git worktree` of HEAD, where the gitignored-path bug failed 4 of the 7 documents.
 3. **The unverified half gets a rule, not a tool**, recorded in the `RESCUE.md` trap table: a claim about behaviour, measurement or absence carries its probe — the command and its output — or the word *unverified*.
 
 ## What it found immediately
@@ -952,7 +952,7 @@ Also corrected by the sweep: a stale `App.jsx` size in `RESCUE.md` (~1488 → 15
 
 - A stale count or renamed file in a living document now fails `pytest`, instead of waiting for a reviewer.
 - The tool's first version produced 157 findings, almost all false (basenames resolved against the repo root only). Recorded in its docstring: a check that cries wolf is worse than no check.
-- `gates.bat` is unchanged; the doc sweep rides on `pytest`.
+- `gates.bat` now lints `tools/` along with `src` and `tests`, so the checker itself is held to the linter; the doc sweep rides on `pytest`.
 
 ## Not covered
 

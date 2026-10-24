@@ -46,13 +46,11 @@ import { Chat } from './panels/Chat.jsx'
 import { Prompt } from './panels/Prompt.jsx'
 import { useFileWorkspace } from './store/useFileWorkspace.js'
 // R59 P1: the dockable shell, behind `?layout=dock`. Lazy on measurement, not
-// taste: dockview costs ~96 KB gzip (420,269 B raw) in the main chunk, and tech
-// design #1 §5 caps the acceptable delta at ~60 KB. A static import made every
-// classic user pay that for a shell they never render; `?layout=dock` now pays
-// it instead, and the classic chunk returns to its pre-P1 size.
-const Workspace = lazy(() =>
-  import('./workspace/Workspace.jsx').then((m) => ({ default: m.Workspace })),
-)
+// taste: dockview costs +420,269 B raw / +98,152 B gzip in the main chunk, and
+// tech design #1 §5 caps the delta at ~60 KB. A static import made every classic
+// user pay that for a shell they never render; `?layout=dock` now pays it
+// instead, leaving the always-loaded entry at +880 B raw / +442 B gzip (the
+// Suspense stub) over the 386,814 B raw / 117,580 B gzip pre-P1 baseline.
 
 import { Terminal } from './panels/dock/Terminal.jsx'
 import { Notes } from './panels/dock/Notes.jsx'
@@ -62,6 +60,11 @@ import { ModelsConfig } from './panels/dock/ModelsConfig.jsx'
 import { Planning } from './panels/dock/Planning.jsx'
 import { Standards } from './panels/dock/Standards.jsx'
 import { DiffPanel } from './panels/dock/Diff.jsx'
+
+// Lazy so the classic path does not download it: the note above has the numbers.
+const Workspace = lazy(() =>
+  import('./workspace/Workspace.jsx').then((m) => ({ default: m.Workspace })),
+)
 
 // #229: how many memory entries the dock renders. The table grows forever
 // (one entry per remembered fact/solution), and the whole list is rebuilt on
@@ -203,10 +206,6 @@ function DockPanel({ sessionId, refreshKey, diffBadge, artifactsPending = 0, wor
   }
 
 
-  // The error for the tab actually on screen, and only if it belongs to the
-  // session on screen: switching session or tab must not carry an old failure
-  // across. Suppressing `body` while it shows keeps the panel from pairing
-  // "could not load this tab" with "loading…" underneath it.
   // The error for the tab actually on screen, and only if it belongs to the
   // session on screen: switching session or tab must not carry an old failure
   // across. Suppressing `body` while it shows keeps the panel from pairing

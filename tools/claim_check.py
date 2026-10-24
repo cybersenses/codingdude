@@ -47,10 +47,18 @@ removal. Mark it with `(removed)`, `(deleted)`, `(gone)` or `(historical)` in th
 same sentence and the check skips that sentence. The marker is explicit on
 purpose: naming a file that no longer exists is a decision, not an oversight.
 
+Paths inside a gitignored tree (`frontend/dist/`, `node_modules/`, `reference/`,
+`.scratch/`) are skipped rather than reported. They are build products and a local
+library: absent from a fresh checkout by definition, so a finding there describes
+the machine that ran the check, not the document.
+
 Usage:
     python tools/claim_check.py code-design.md RESCUE.md
     python tools/claim_check.py --message-file .git/COMMIT_EDITMSG
     git log -1 --format=%B | python tools/claim_check.py --message -
+
+The identifier check is on by default only for `--message-file`; `--symbols` and
+`--no-symbols` override that either way.
 """
 
 from __future__ import annotations
@@ -72,6 +80,11 @@ PATH_SUFFIXES = frozenset(
         ".tsx", ".txt", ".yaml", ".yml",
     }
 )
+
+#: Suffixes that must not vouch for an identifier. A symbol written in a doc or a
+#: data file would otherwise find itself in the corpus below and pass the check
+#: that exists to catch invented symbols -- prose proving prose.
+NON_SOURCE_SUFFIXES = frozenset({".md", ".json", ".txt", ".lock", ".yaml", ".yml"})
 
 #: Documents whose claims must hold *now*. Commit messages are excluded by
 #: default: their narrative may legitimately name a file it replaced.
@@ -208,6 +221,33 @@ def _tracked_files(root: Path) -> list[str]:
     return files
 
 
+def _is_ignored(token: str, root: Path) -> bool:
+    """Whether a path claim points into a gitignored tree.
+
+    The check this feeds cannot be made honestly about such a path. `frontend/dist/`,
+    `node_modules/`, `reference/` and `.scratch/` are build products and a local
+    library: absent from a fresh checkout *by definition*, present here because a
+    build or a scan ran. Asserting on them made the whole check machine-dependent --
+    green on the author's tree, eleven failures in a clean one (probe: a
+    `git worktree` of HEAD, `pytest tests/test_claim_check.py` -> 4 failed).
+
+    Fails closed: if git cannot answer, the path is still checked.
+
+    Queried with *and* without a trailing slash: a directory-only ignore pattern
+    (`frontend/dist/`, `reference/`) matches `frontend/dist/` but not
+    `frontend/dist`, and stripping the slash was the first version's bug.
+    """
+    forms = [token, token.rstrip("/"), token.rstrip("/") + "/"]
+    for form in dict.fromkeys(forms):
+        try:
+            result = _git(["check-ignore", "-q", "--", form], root)
+        except (GitUnavailable, OSError):
+            return False
+        if result.returncode == 0:
+            return True
+    return False
+
+
 def _path_exists(token: str, root: Path) -> bool:
     """Whether a path claim names something in the tree.
 
@@ -257,6 +297,8 @@ def _looks_like_symbol(token: str) -> bool:
         return False
     if token in NOT_SYMBOLS or token.upper() == token:
         return False
+    if any(c.isdigit() for c in token):
+        return False  # a run id, hash or versioned name: `G0SUN1seqSI` is not a symbol
     if "_" in token:
         return True  # snake_case or _leading
     if token.lower() == token:
@@ -264,21 +306,30 @@ def _looks_like_symbol(token: str) -> bool:
     return any(c.isupper() for c in token[1:])  # CamelCase
 
 
+def _source_files(root: Path) -> list[str]:
+    """Tracked files whose text may vouch for an identifier.
+
+    Excludes prose and data (`NON_SOURCE_SUFFIXES`): a symbol named only in a
+    document must fail the check, not cite itself.
+    """
+    return [
+        name
+        for name in _tracked_files(root)
+        if Path(name).suffix in PATH_SUFFIXES and Path(name).suffix not in NON_SOURCE_SUFFIXES
+    ]
+
+
 def _tracked_source_tokens(root: Path) -> set[str]:
-    """Every identifier-shaped token in the tracked source, for symbol claims."""
-    try:
-        listed = _git(["ls-files"], root)
-    except (GitUnavailable, OSError):
-        return set()
-    if listed.returncode != 0:
-        return set()
+    """Every identifier-shaped token in the tracked source, for symbol claims.
+
+    Built from `_tracked_files` rather than a second `git ls-files`: one run
+    should list the tree once, and its rglob fallback keeps this working outside
+    a repository instead of returning an empty set that flags every symbol.
+    """
     tokens: set[str] = set()
-    for name in listed.stdout.splitlines():
-        path = root / name
-        if path.suffix not in PATH_SUFFIXES:
-            continue
+    for name in _source_files(root):
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = (root / name).read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
         tokens.update(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", text))
@@ -305,8 +356,9 @@ def check_paths(text: str, root: Path = ROOT) -> list[str]:
                 continue
             if _LINE_REF.match(token):
                 continue  # check_line_refs owns this shape
-            if not _path_exists(token, root):
-                problems.append(f"path does not exist: {token}")
+            if _path_exists(token, root) or _is_ignored(token, root):
+                continue
+            problems.append(f"path does not exist: {token}")
     return problems
 
 
@@ -320,7 +372,7 @@ def check_line_refs(text: str, root: Path = ROOT) -> list[str]:
                 continue
             target = _resolve(match.group("path"), root)
             if target is None:
-                if not _is_marked_removed(sentence):
+                if not _is_ignored(match.group("path"), root) and not _is_marked_removed(sentence):
                     problems.append(f"line reference to a missing file: {token}")
                 continue
             end = int(match.group("end") or match.group("line"))
@@ -335,10 +387,13 @@ def check_line_refs(text: str, root: Path = ROOT) -> list[str]:
 def check_hashes(text: str, root: Path = ROOT) -> list[str]:
     """Short hex refs that name no commit."""
     problems = []
-    for token in _BACKTICK.findall(text):
-        token = token.strip()
-        if _HEX_REF.match(token) and not _commit_exists(token, root):
-            problems.append(f"commit does not exist: {token}")
+    for sentence in _sentences(text):
+        if _is_marked_removed(sentence):
+            continue
+        for token in _BACKTICK.findall(sentence):
+            token = token.strip()
+            if _HEX_REF.match(token) and not _commit_exists(token, root):
+                problems.append(f"commit does not exist: {token}")
     return problems
 
 
@@ -387,14 +442,25 @@ def check_line_counts(text: str, root: Path = ROOT) -> list[str]:
     return problems
 
 
-def run(text: str, root: Path = ROOT, symbols: bool = True) -> list[str]:
-    """Every finding, in a stable order."""
+def run(
+    text: str,
+    root: Path = ROOT,
+    symbols: bool = True,
+    source: set[str] | None = None,
+) -> list[str]:
+    """Every finding, in a stable order.
+
+    The single definition of "the check set and its order" — `main` calls this
+    rather than repeating the list, so a check added here reaches the CLI.
+    `source` is passed through so a caller checking several documents builds the
+    identifier corpus once.
+    """
     problems = check_paths(text, root)
     problems += check_line_refs(text, root)
     problems += check_hashes(text, root)
     problems += check_line_counts(text, root)
     if symbols:
-        problems += check_symbols(text, root)
+        problems += check_symbols(text, root, source=source)
     return problems
 
 
@@ -412,9 +478,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--no-symbols",
         action="store_true",
-        help="skip the identifier check (useful for historical narrative)",
+        help="skip the identifier check (the default for documents)",
+    )
+    parser.add_argument(
+        "--symbols",
+        action="store_true",
+        help="force the identifier check on (the default for --message-file)",
     )
     args = parser.parse_args(argv)
+
+    # Documents name other people's APIs and planned ones by design, so the
+    # identifier check fires on correct prose there; a commit message claims "this
+    # symbol is mine and I just wrote it", which is the shape it can settle. Hence
+    # the default follows the input, and both flags exist to override it.
+    if args.symbols:
+        with_symbols = True
+    elif args.no_symbols:
+        with_symbols = False
+    else:
+        with_symbols = bool(args.message_file)
 
     if not args.files and not args.message_file:
         parser.error("give at least one file or --message-file")
@@ -439,14 +521,11 @@ def main(argv: list[str] | None = None) -> int:
 
     # Built once, shared by every document: the source tree does not change
     # between files, and walking it per file would dominate the runtime.
-    token_set = set() if args.no_symbols else _tracked_source_tokens(ROOT)
+    token_set = _tracked_source_tokens(ROOT) if with_symbols else set()
 
     failures = 0
     for name, text in sources:
-        problems = check_paths(text, ROOT) + check_line_refs(text, ROOT)
-        problems += check_hashes(text, ROOT) + check_line_counts(text, ROOT)
-        if not args.no_symbols:
-            problems += check_symbols(text, ROOT, source=token_set)
+        problems = run(text, ROOT, symbols=with_symbols, source=token_set)
         for problem in problems:
             print(f"{name}: {problem}")
         failures += len(problems)
