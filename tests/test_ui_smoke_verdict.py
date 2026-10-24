@@ -106,3 +106,61 @@ def test_partial_report_does_not_raise():
     # instead of raising KeyError (the #233 version did).
     assert verdict({}) == 1
     assert verdict({"api_5xx": [{"status": 503}]}) == 1
+
+
+# --- R59 P1: the dock shell's checks ----------------------------------------
+
+
+def dock_report(**overrides) -> dict:
+    """A passing `--layout dock` report: five visible panels, monaco relayout."""
+    panels = {
+        title: {"crashed": False, "placeholder": False, "poll_error": None, "chars": 40, "visible": True}
+        for title in ("Projects & sessions", "Explorer", "Editor", "Chat", "Diff")
+    }
+    report = {
+        "layout": "dock",
+        "expected_entries": 5,
+        "tab_count": 5,
+        "tabs": panels,
+        "monaco": {"width_before": 634, "width_after": 460},
+    }
+    report.update(overrides)
+    return report
+
+
+def test_dock_report_passes():
+    assert verdict(dock_report()) == 0
+
+
+def test_dock_expected_count_comes_from_the_report():
+    # Five panels is not sixteen: the count check must follow the walk, not the
+    # classic tab list.
+    assert verdict(dock_report(tab_count=4)) == 1
+    assert verdict(dock_report(expected_entries=4)) == 1
+
+
+def test_dock_missing_or_invisible_panel_fails():
+    missing = dock_report()
+    missing["tabs"]["Diff"] = "MISSING"
+    assert verdict(missing) == 1
+    hidden = dock_report()
+    hidden["tabs"]["Chat"] = {
+        "crashed": False, "placeholder": False, "poll_error": None, "chars": 0, "visible": False,
+    }
+    assert verdict(hidden) == 1
+
+
+def test_panel_drift_fails():
+    drift = {"nav": {"smoke": "Projects & sessions", "catalogue": "Projects"}}
+    assert verdict(dock_report(panel_drift=drift)) == 1
+
+
+def test_monaco_that_never_relayouts_fails():
+    assert verdict(dock_report(monaco={"width_before": 634, "width_after": 634})) == 1
+    # A string means the check could not run at all — that is not a pass.
+    assert verdict(dock_report(monaco="the editor never mounted")) == 1
+
+
+def test_classic_report_unaffected_by_the_dock_keys():
+    # `visible` is absent from classic tab reports; absent must not read as False.
+    assert verdict(clean()) == 0

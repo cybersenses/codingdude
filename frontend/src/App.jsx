@@ -45,6 +45,9 @@ import { EditorPane } from './panels/Editor.jsx'
 import { Chat } from './panels/Chat.jsx'
 import { Prompt } from './panels/Prompt.jsx'
 import { useFileWorkspace } from './store/useFileWorkspace.js'
+// R59 P1: the dockable shell, behind `?layout=dock`. Static import: the flag is
+// a developer/A-B switch, not a per-user setting worth a lazy chunk.
+import { Workspace } from './workspace/Workspace.jsx'
 
 import { Terminal } from './panels/dock/Terminal.jsx'
 import { Notes } from './panels/dock/Notes.jsx'
@@ -59,6 +62,10 @@ import { DiffPanel } from './panels/dock/Diff.jsx'
 // (one entry per remembered fact/solution), and the whole list is rebuilt on
 // every 4s poll — 2,144 entries meant 15.8k DOM nodes versus 810 for Diff.
 const MEMORY_LIMIT = 200
+
+// R59 P1: which shell to render. Read once per page load — the query string
+// cannot change without a reload, and App must not re-read it per render.
+const USE_DOCK = new URLSearchParams(window.location.search).get('layout') === 'dock'
 
 // R35 #72: bottom dock — VS Code panel position. Processes comes in as a
 // prop (App polls it); it used to be a bare-identifier crash in this scope.
@@ -1308,6 +1315,87 @@ export default function App() {
     if (runRef.current) api.approve(runRef.current, decision).catch((e) => setError(String(e.message)))
   }
 
+  // R59 P1: prop bags shared by both shells. The classic layout and the dock
+  // get identical wiring from one place, so the two can be compared without a
+  // divergence bug hiding in the differences between two prop lists.
+  const agentStripProps = {
+    status: streaming ? status : 'idle',
+    quietSeconds,
+    hasChanges: diffBadge,
+    streaming,
+    onReviewChanges: () => setFocusDiffTab((n) => n + 1),
+  }
+  const sidebarProps = {
+    projects,
+    activeProject,
+    workdir,
+    setWorkdir,
+    sessions,
+    activeSession,
+    runningSessions: new Set(runningSessions.keys()),
+    onSelect: (id) => {
+      setActiveSession(id) // history loads via the activeSession effect
+    },
+    onNewSession: newSession,
+    onSelectProject: (p) => {
+      setActiveProject(p)
+      setWorkdir(p.workdir)
+      setActiveSession(null)
+      setMessages([])
+      refreshSessions(p.workdir)
+    },
+    onAddProject: (name, wd) => {
+      api.addProject(name, wd)
+        .then((proj) => {
+          setProjects((list) => [...list, proj].sort((a, b) => a.name.localeCompare(b.name)))
+          setActiveProject(proj)
+          setWorkdir(proj.workdir)
+          setActiveSession(null)
+          setMessages([])
+        })
+        .catch((e) => setError(String(e.message)))
+    },
+    onDeleteProject: (id) => {
+      api.deleteProject(id).catch(() => {})
+      setProjects((list) => list.filter((x) => x.id !== id))
+      if (activeProject?.id === id) setActiveProject(null)
+    },
+  }
+  const promptProps = {
+    onSend: send,
+    disabled: !activeSession || streaming,
+    running: streaming,
+    suggestMode,
+    setSuggestMode: (v) => { setSuggestMode(v); localStorage.setItem('cd-suggest', v ? '1' : '0') },
+    fixLoop,
+    setFixLoop,
+    models,
+    model,
+    setModel,
+    yolo,
+    setYolo,
+    notify,
+    toggleNotify,
+  }
+  const chatProps = {
+    messages,
+    streaming,
+    onStop: stop,
+    onDecide: decide,
+    suggestMode,
+    onEditRevert,
+    runId: runRef.current,
+  }
+  const footerProps = {
+    activeSession,
+    sessions,
+    workdir,
+    srv,
+    theme,
+    onToggleTheme: () => setTheme((t) => (t === 'dark' ? 'light' : 'dark')),
+    processes,
+  }
+
   if (loggedIn === null) {
     return <div className="flex h-screen items-center justify-center bg-neutral-900 text-neutral-500">connecting…</div>
   }
@@ -1324,46 +1412,35 @@ export default function App() {
     )
   }
 
+  // R59 P1: the dockable shell. Classic stays the default while the phases
+  // land; `?layout=dock` opts in, so the two can be compared in one browser.
+  if (USE_DOCK) {
+    return (
+      <Workspace
+        error={error}
+        agentStrip={agentStripProps}
+        sidebar={sidebarProps}
+        fileWs={fileWs}
+        onAsk={send}
+        sessionId={activeSession}
+        prompt={promptProps}
+        pending={pending}
+        chat={chatProps}
+        footer={footerProps}
+        onRefreshArtifacts={() => {
+          call(`/sessions/${activeSession}/artifacts`).then(setArtifactsAll).catch(() => {})
+        }}
+      />
+    )
+  }
+
   return (
     <div className="flex h-screen flex-col bg-neutral-900 text-neutral-200">
       <div className="flex min-h-0 flex-1">
         {dividerFor('sidebar')}
         <Sidebar
           width={sidebarWidth}
-          projects={projects}
-          activeProject={activeProject}
-          onSelectProject={(p) => {
-            setActiveProject(p)
-            setWorkdir(p.workdir)
-            setActiveSession(null)
-            setMessages([])
-            refreshSessions(p.workdir)
-          }}
-          onAddProject={(name, wd) => {
-            api.addProject(name, wd)
-              .then((proj) => {
-                setProjects((list) => [...list, proj].sort((a, b) => a.name.localeCompare(b.name)))
-                setActiveProject(proj)
-                setWorkdir(proj.workdir)
-                setActiveSession(null)
-                setMessages([])
-              })
-              .catch((e) => setError(String(e.message)))
-          }}
-          onDeleteProject={(id) => {
-            api.deleteProject(id).catch(() => {})
-            setProjects((list) => list.filter((x) => x.id !== id))
-            if (activeProject?.id === id) setActiveProject(null)
-          }}
-          workdir={workdir}
-          setWorkdir={setWorkdir}
-          sessions={sessions}
-          activeSession={activeSession}
-          runningSessions={new Set(runningSessions.keys())}
-          onSelect={(id) => {
-            setActiveSession(id)  // history loads via the activeSession effect
-          }}
-          onNewSession={newSession}
+          {...sidebarProps}
         />
         <nav className="flex shrink-0 flex-col border-r border-neutral-800 bg-neutral-950" style={{ width: railWidth }}>
           <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-ink-muted">Explorer</div>
@@ -1372,13 +1449,7 @@ export default function App() {
         {dividerFor('rail')}
         <main className="flex min-w-0 flex-1 flex-col">
           {error && <div className="bg-danger/15 px-4 py-1 text-xs text-danger">{error}</div>}
-          <AgentStrip
-            status={streaming ? status : 'idle'}
-            quietSeconds={quietSeconds}
-            hasChanges={diffBadge}
-            streaming={streaming}
-            onReviewChanges={() => setFocusDiffTab((n) => n + 1)}
-          />
+          <AgentStrip {...agentStripProps} />
           <EditorPane ws={fileWs} onAsk={send} />
         </main>
         {dividerFor('right')}
@@ -1386,29 +1457,14 @@ export default function App() {
           className="flex min-w-0 shrink-0 flex-col overflow-hidden border-l border-neutral-800 bg-neutral-950"
           style={{ width: rightWidth }}
         >
-          <Prompt
-            onSend={send}
-            disabled={!activeSession || streaming}
-            running={streaming}
-            suggestMode={suggestMode}
-            setSuggestMode={(v) => { setSuggestMode(v); localStorage.setItem('cd-suggest', v ? '1' : '0') }}
-            fixLoop={fixLoop}
-            setFixLoop={setFixLoop}
-            models={models}
-            model={model}
-            setModel={setModel}
-            yolo={yolo}
-            setYolo={setYolo}
-            notify={notify}
-            toggleNotify={toggleNotify}
-          />
+          <Prompt {...promptProps} />
           <PendingArtifactCard
             items={pending}
             onResponded={() => {
               call(`/sessions/${activeSession}/artifacts`).then(setArtifactsAll).catch(() => {})
             }}
           />
-          <Chat messages={messages} streaming={streaming} onStop={stop} onDecide={decide} sessionId={activeSession} suggestMode={suggestMode} onEditRevert={onEditRevert} runId={runRef.current} />
+          <Chat sessionId={activeSession} {...chatProps} />
         </aside>
       </div>
       <DockPanel
@@ -1424,15 +1480,7 @@ export default function App() {
         onAsk={send}
         onResizeHeight={(h) => { setDockHeight(h); localStorage.setItem('cd-dock-h', String(h)) }}
       />
-      <StatusFooter
-        activeSession={activeSession}
-        sessions={sessions}
-        workdir={workdir}
-        srv={srv}
-        theme={theme}
-        onToggleTheme={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
-        processes={processes}
-      />
+      <StatusFooter {...footerProps} />
     </div>
   )
 }
