@@ -26,8 +26,15 @@ Owner: CodingDude. Last updated: R59 P0, chrome + cards + store/panels extracted
 | `chrome/Login` · `Sidebar` · `AgentStrip` · `StatusFooter` | done | build · 91 tests · lint |
 | `cards/chatCards.jsx` (6 chat cards) | done | build · lint |
 | `store/useFileWorkspace.js` · `panels/Explorer` · `Editor` · `Chat` · `Prompt` | done | build · 91 tests · lint |
-| Dock tab bodies → `panels/dock/*` | **not started** | — |
-| `DockPanel` reduced to a tab shell | **not started** | — |
+| `panels/dock/*`: Terminal, Notes, Artifacts, ModelsConfig, Planning, Standards, Diff | done | build · 91 tests · lint |
+| Remaining dock bodies (Graph, Output, Waterfall, Trace, Cost, MCP, Renders, Processes) | **deliberately left in `DockPanel` — see below** | — |
+| `DockPanel` reduced to a shell | partial (7/15 bodies extracted) | — |
+
+`App.jsx` is now ~1337 lines: `DockPanel` (tab shell + the 8 data-coupled bodies) and `App`
+(session/SSE state + layout). The eight remaining bodies all read `DockPanel`'s single shared
+poll (`data`, `setData`, `selRun`). Extracting them as *move-only* components would mean
+threading those props through nine files — work that P2's data store deletes again. They are
+left inline on purpose and move in P2, when each panel gets its own subscription.
 
 If a step is in doubt, `git log --oneline -20` shows which extraction commits landed; everything
 above is one commit per row.
