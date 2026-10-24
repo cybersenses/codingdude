@@ -158,3 +158,45 @@
     }
   }
 }
+
+/* ---- R59 P1: the dockable shell (dockview) --------------------------------
+   dockview ships its own palettes (VS Code greys). Rather than inventing a
+   second colour system, the variables that carry colour are re-pointed at the
+   StyleSeed tokens above, so the dock follows light/dark with the rest of the
+   app and re-theming stays a change to this file.
+
+   Specificity note: dockview's stylesheet is imported from Workspace.jsx, which
+   can land *after* this file in the bundle. Repeating the theme class gives
+   this block (0,3,0) against dockview's (0,1,0), so the overrides win wherever
+   the two files end up ordered — without `!important`.
+   ------------------------------------------------------------------------- */
+[data-workspace='dock'] .dockview-theme-dark.dockview-theme-dark {
+  --dv-group-view-background-color: var(--ss-surface);
+  --dv-tabs-and-actions-container-background-color: var(--ss-background);
+  --dv-tabs-and-actions-container-font-size: 12px;
+  --dv-tabs-and-actions-container-height: 30px;
+  --dv-tab-font-size: 12px;
+
+  --dv-activegroup-visiblepanel-tab-background-color: var(--ss-surface);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--ss-background);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--ss-background);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--ss-background);
+  --dv-activegroup-visiblepanel-tab-color: var(--ss-primary);
+  --dv-activegroup-hiddenpanel-tab-color: var(--ss-muted-foreground);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--ss-muted-foreground);
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--ss-muted-foreground);
+
+  --dv-separator-border: var(--ss-border);
+  --dv-tab-divider-color: var(--ss-border);
+  --dv-sash-color: var(--ss-border);
+  --dv-active-sash-color: var(--ss-primary);
+  --dv-scrollbar-background-color: var(--ss-border);
+  --dv-icon-hover-background-color: var(--ss-chrome);
+  --dv-floating-group-border: 1px solid var(--ss-border);
+  --dv-drag-over-background-color: color-mix(in srgb, var(--ss-primary) 22%, transparent);
+  --dv-drag-over-border-color: var(--ss-primary);
+
+  /* The dock is themed by tokens, not by a fixed colour scheme. */
+  color-scheme: inherit;
+}
+

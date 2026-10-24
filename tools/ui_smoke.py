@@ -1,14 +1,21 @@
-"""UI smoke gate: render the running app and walk every dock tab.
+"""UI smoke gate: render the running app and walk its panels.
 
-Covers the part of R59 P0 that tests cannot reach — no vitest file imports
-App.jsx, so a moved component that renders nothing is invisible to `npm test`.
-This drives the real bundle in Chromium and fails on: a render crash reaching
+Covers the part of R59 that tests cannot reach — no vitest file imports App.jsx,
+so a moved component that renders nothing is invisible to `npm test`. This
+drives the real bundle in Chromium and fails on: a render crash reaching
 ErrorBoundary, an uncaught page error, an unexpected console error, a missing
 dock tab, DOCK_TABS drifting from the list in App.jsx, an unreachable
 /api/sessions, any /api/ response with a 5xx status, a tab showing the dock's
 "could not load this tab" banner (#231), or — when the workspace has a session —
 a tab still showing the "select a session" placeholder (the #228 symptom).
 Designed console noise (the auth-cookie 401) is reported, not fatal.
+
+Two layouts:
+
+* `--layout classic` (default) walks the sixteen `DockPanel` tabs.
+* `--layout dock` opens `?layout=dock` (R59 P1) and checks the five dockable
+  panels, their visible geometry, and that Monaco re-lays-out when the window
+  resizes — the regression a hidden-then-shown editor would otherwise cause.
 
 The 5xx and banner checks are what make a broken data tab fail here: a tab that
 cannot load renders its own error text, which is neither the placeholder nor a
@@ -20,6 +27,7 @@ It does not judge what a tab says beyond that: `chars` is recorded per tab and
 Usage (server must already be running; default http://127.0.0.1:8765):
 
     uv run python tools/ui_smoke.py
+    uv run python tools/ui_smoke.py --layout dock --shots .scratch/shots
     uv run python tools/ui_smoke.py --base http://127.0.0.1:8765 --shots .scratch/shots
 
 Exit code 0 = every check passed. 1 = at least one failed. Requires the
@@ -46,12 +54,23 @@ DOCK_TABS = [
     "Processes", "Output", "Waterfall", "Trace", "Cost", "Memory", "MCP",
     "Config", "Standards",
 ]
+# R59 P1: the dockable shell's panels, as (data-panel attribute → tab title).
+# The attribute is the seam the shell puts on each panel root, so the gate can
+# assert a panel is really on screen rather than trusting the tab bar.
+DOCK_PANELS = {
+    "nav": "Projects & sessions",
+    "explorer": "Explorer",
+    "editor": "Editor",
+    "chat": "Chat",
+    "diff": "Diff",
+}
 PLACEHOLDER = "Select a session to see diffs, files, cost and trace."
 # The dock's own error banner (#231): present means the tab's fetch failed.
 POLL_ERROR_SELECTOR = "[data-poll-error]"
 CRASH_MARKER = "UI crashed"
 REPO = Path(__file__).resolve().parents[1]
 APP_JSX = REPO / "frontend" / "src" / "App.jsx"
+CATALOGUE_TS = REPO / "frontend" / "src" / "workspace" / "catalogue.ts"
 # Console errors that are the app working as designed, not defects: the boot
 # probes the auth cookie first and logs the 401 before falling back to
 # authLocal(). Anything else on the console fails the gate.
@@ -68,19 +87,23 @@ def app_tabs() -> list[str]:
     return re.findall(r"'([^']+)'", match.group(1)) if match else []
 
 
-def run(base: str, shots: Path | None, workdir: str) -> tuple[dict, int]:
+def catalogue_panels() -> dict[str, str]:
+    """Panel id → title as declared in the dock catalogue, so DOCK_PANELS cannot drift."""
+    text = CATALOGUE_TS.read_text(encoding="utf-8")
+    pairs = re.findall(r"\{ id: '([^']+)', title: '([^']+)'", text)
+    return dict(pairs)
+
+
+def run(base: str, shots: Path | None, workdir: str, layout: str = "classic") -> tuple[dict, int]:
     report: dict = {
         "base": base,
+        "layout": layout,
         "workdir": workdir,
         "tabs": {},
         "console_errors": [],
         "page_errors": [],
         "api_5xx": [],
     }
-    expected = app_tabs()
-    drift = (sorted(set(expected) - set(DOCK_TABS)), sorted(set(DOCK_TABS) - set(expected)))
-    if any(drift):
-        report["tab_drift"] = {"app_jsx_only": drift[0], "smoke_only": drift[1]}
     if shots:
         shots.mkdir(parents=True, exist_ok=True)
 
@@ -101,69 +124,187 @@ def run(base: str, shots: Path | None, workdir: str) -> tuple[dict, int]:
                 if "/api/" in r.url and r.status >= 500
                 else None,
             )
-
-            # The app holds an EventSource open and polls every 3-5s, so
-            # "networkidle" is slow and flaky here — wait for the dock itself.
-            page.goto(base, wait_until="domcontentloaded", timeout=60_000)
-            page.get_by_role("button", name="Diff", exact=True).first.wait_for(timeout=30_000)
-            page.wait_for_timeout(1500)  # let the initial session/config fetches settle
-            if shots:
-                page.screenshot(path=str(shots / "01-boot.png"))
-
-            # The app auto-resumes a session when the workspace has one. With
-            # none, every session-scoped tab correctly shows the placeholder,
-            # so that check only means something when a session exists.
-            sessions = page.request.get(f"{base}/api/sessions?workdir={quote(workdir)}")
-            if not sessions.ok:
-                report["sessions_error"] = f"GET /api/sessions -> {sessions.status}"
-                report["sessions"] = None
-            else:
-                report["sessions"] = len(sessions.json())
-
-            if CRASH_MARKER in page.content():
-                report["crashed"] = "on boot"
-                # Via verdict() so the report keeps the same shape (and the
-                # derived console fields) as every other exit.
-                return report, verdict(report)
-
-            found = 0
-            for name in DOCK_TABS:
-                button = page.get_by_role("button", name=name, exact=True)
-                if button.count() == 0:
-                    report["tabs"][name] = "MISSING"
-                    continue
-                found += 1
-                button.first.click()
-                # Tab bodies fetch on mount; /memory is ~800 KB of JSON, so a
-                # shorter settle leaves data tabs on "loading…" and the gate
-                # would report an empty-looking tab that is merely in flight.
-                page.wait_for_timeout(2000)
-                crashed = CRASH_MARKER in page.content()
-                # The dock is the section that owns the Diff tab button.
-                dock = page.locator(
-                    "section", has=page.get_by_role("button", name="Diff", exact=True)
-                )
-                text = dock.first.inner_text() if dock.count() else page.inner_text("body")
-                # #231: the tab's own error banner, which the placeholder and
-                # console checks both miss.
-                err = page.locator(POLL_ERROR_SELECTOR)
-                poll_error = err.first.inner_text() if err.count() else None
-                report["tabs"][name] = {
-                    "crashed": crashed,
-                    "placeholder": PLACEHOLDER in text,
-                    "poll_error": poll_error,
-                    "chars": len(text),
-                }
-                if shots:
-                    page.screenshot(path=str(shots / f"tab-{name}.png"))
-                if crashed:
-                    break
-
-            report["tab_count"] = found
+            walk = _walk_dock if layout == "dock" else _walk_classic
+            walk(page, report, base, workdir, shots)
         finally:
             browser.close()
 
     return report, verdict(report)
+
+
+def _record_sessions(page, report: dict, base: str, workdir: str) -> None:
+    """Whether the workspace has a session: the placeholder check needs to know."""
+    sessions = page.request.get(f"{base}/api/sessions?workdir={quote(workdir)}")
+    if not sessions.ok:
+        report["sessions_error"] = f"GET /api/sessions -> {sessions.status}"
+        report["sessions"] = None
+    else:
+        report["sessions"] = len(sessions.json())
+
+
+def _walk_classic(page, report: dict, base: str, workdir: str, shots: Path | None) -> None:
+    expected = app_tabs()
+    drift = (sorted(set(expected) - set(DOCK_TABS)), sorted(set(DOCK_TABS) - set(expected)))
+    if any(drift):
+        report["tab_drift"] = {"app_jsx_only": drift[0], "smoke_only": drift[1]}
+
+    # The app holds an EventSource open and polls every 3-5s, so
+    # "networkidle" is slow and flaky here — wait for the dock itself.
+    page.goto(base, wait_until="domcontentloaded", timeout=60_000)
+    page.get_by_role("button", name="Diff", exact=True).first.wait_for(timeout=30_000)
+    page.wait_for_timeout(1500)  # let the initial session/config fetches settle
+    if shots:
+        page.screenshot(path=str(shots / "01-boot.png"))
+
+    # The app auto-resumes a session when the workspace has one. With none,
+    # every session-scoped tab correctly shows the placeholder, so that check
+    # only means something when a session exists.
+    _record_sessions(page, report, base, workdir)
+
+    if CRASH_MARKER in page.content():
+        report["crashed"] = "on boot"
+        return  # the verdict still comes from run(), one exit shape for both walks
+
+    found = 0
+    for name in DOCK_TABS:
+        button = page.get_by_role("button", name=name, exact=True)
+        if button.count() == 0:
+            report["tabs"][name] = "MISSING"
+            continue
+        found += 1
+        button.first.click()
+        # Tab bodies fetch on mount; /memory is ~800 KB of JSON, so a shorter
+        # settle leaves data tabs on "loading…" and the gate would report an
+        # empty-looking tab that is merely in flight.
+        page.wait_for_timeout(2000)
+        crashed = CRASH_MARKER in page.content()
+        # The dock is the section that owns the Diff tab button.
+        dock = page.locator("section", has=page.get_by_role("button", name="Diff", exact=True))
+        text = dock.first.inner_text() if dock.count() else page.inner_text("body")
+        # #231: the tab's own error banner, which the placeholder and console
+        # checks both miss.
+        err = page.locator(POLL_ERROR_SELECTOR)
+        poll_error = err.first.inner_text() if err.count() else None
+        report["tabs"][name] = {
+            "crashed": crashed,
+            "placeholder": PLACEHOLDER in text,
+            "poll_error": poll_error,
+            "chars": len(text),
+        }
+        if shots:
+            page.screenshot(path=str(shots / f"tab-{name}.png"))
+        if crashed:
+            break
+
+    report["tab_count"] = found
+
+
+def _dock_url(base: str) -> str:
+    return f"{base}{'&' if '?' in base else '?'}layout=dock"
+
+
+def _dock_tab(page, title: str):
+    """The dockview tab whose label is exactly `title` (substring matching is a
+    trap here: 'Diff' is also a word inside the Diff panel's own body)."""
+    for tab in page.locator(".dv-default-tab").all():
+        if tab.inner_text().strip() == title:
+            return tab
+    return None
+
+
+def _walk_dock(page, report: dict, base: str, workdir: str, shots: Path | None) -> None:
+    """R59 P1: the dockable shell behind `?layout=dock`."""
+    declared = catalogue_panels()
+    drift = {
+        pid: {"smoke": title, "catalogue": declared.get(pid)}
+        for pid, title in DOCK_PANELS.items()
+        if declared.get(pid) != title
+    }
+    if drift:
+        report["panel_drift"] = drift
+    report["expected_entries"] = len(DOCK_PANELS)
+
+    page.goto(_dock_url(base), wait_until="domcontentloaded", timeout=60_000)
+    page.locator(".dv-default-tab").first.wait_for(timeout=30_000)
+    page.wait_for_timeout(1500)
+    if shots:
+        page.screenshot(path=str(shots / "dock-00-boot.png"))
+
+    _record_sessions(page, report, base, workdir)
+
+    if CRASH_MARKER in page.content():
+        report["crashed"] = "on boot"
+        return
+
+    found = 0
+    for panel_id, title in DOCK_PANELS.items():
+        tab = _dock_tab(page, title)
+        if tab is None:
+            report["tabs"][title] = "MISSING"
+            continue
+        found += 1
+        tab.click()
+        page.wait_for_timeout(700)
+        crashed = CRASH_MARKER in page.content()
+        # `data-panel` is the attribute the shell puts on each panel root — the
+        # tab bar saying "Chat" proves a tab exists, not that its body rendered.
+        panel = page.locator(f'[data-panel="{panel_id}"]')
+        box = panel.first.bounding_box() if panel.count() else None
+        text = panel.first.inner_text() if panel.count() else ""
+        err = page.locator(POLL_ERROR_SELECTOR)
+        report["tabs"][title] = {
+            "crashed": crashed,
+            "placeholder": PLACEHOLDER in text,
+            "poll_error": err.first.inner_text() if err.count() else None,
+            "chars": len(text),
+            "visible": bool(box and box["width"] > 0 and box["height"] > 0),
+        }
+        if shots:
+            page.screenshot(path=str(shots / f"dock-{panel_id}.png"))
+        if crashed:
+            break
+
+    report["tab_count"] = found
+    if not report.get("crashed"):
+        _monaco_relayout(page, report, shots)
+
+
+def _monaco_relayout(page, report: dict, shots: Path | None) -> None:
+    """The editor must follow its container, not the size it mounted at.
+
+    A docked panel is resizeable and a hidden `renderer: always` panel keeps a
+    stale geometry, so this is the specific regression P1 could introduce: the
+    editor mounts at one width and never re-lays-out.
+    """
+    tab = _dock_tab(page, "Editor")
+    if tab is not None:
+        tab.click()
+        page.wait_for_timeout(300)
+    # Root-level file in the session's workdir, so the explorer has a stable,
+    # unambiguous target to open.
+    opener = page.locator('button[title="README.md"]')
+    if opener.count() == 0:
+        report["monaco"] = "README.md not in the explorer — editor never opened"
+        return
+    opener.first.click()
+    editor = page.locator(".monaco-editor")
+    try:
+        editor.first.wait_for(timeout=20_000)
+    except Exception:  # noqa: BLE001 - the gate reports the miss, it does not raise
+        report["monaco"] = "the editor never mounted"
+        return
+    page.wait_for_timeout(800)
+    before = editor.first.bounding_box()
+    page.set_viewport_size({"width": 1100, "height": 760})
+    page.wait_for_timeout(1000)
+    after = editor.first.bounding_box()
+    if shots:
+        page.screenshot(path=str(shots / "dock-01-resized.png"))
+    page.set_viewport_size({"width": 1500, "height": 950})
+    report["monaco"] = {
+        "width_before": before["width"] if before else None,
+        "width_after": after["width"] if after else None,
+    }
 
 
 def verdict(report: dict) -> int:
@@ -188,16 +329,36 @@ def verdict(report: dict) -> int:
     def tab_failed(v: object) -> bool:
         if not isinstance(v, dict):
             return True  # "MISSING" and anything else unexpected
-        return bool(v.get("crashed") or v.get("poll_error") or (has_session and v.get("placeholder")))
+        return bool(
+            v.get("crashed")
+            or v.get("poll_error")
+            or (has_session and v.get("placeholder"))
+            # R59 P1: the dock gate reports whether the panel body was really on
+            # screen; `is False` so the classic walk (no such key) is unaffected.
+            or v.get("visible") is False
+        )
 
+    # The expected entry count comes from the walk: sixteen dock tabs in the
+    # classic shell, five panels in the dock shell. Defaulting to the classic
+    # count keeps a hand-built report meaningful.
+    expected_entries = report.get("expected_entries", len(DOCK_TABS))
+    monaco = report.get("monaco")
+    monaco_failed = monaco is not None and not (
+        isinstance(monaco, dict)
+        and monaco.get("width_before")
+        and monaco.get("width_after")
+        and monaco["width_before"] != monaco["width_after"]
+    )
     failed = (
         report.get("crashed") is not None
         or report.get("page_errors")
         or unexpected
         or report.get("api_5xx")
         or report.get("tab_drift") is not None
+        or report.get("panel_drift") is not None
         or report.get("sessions_error") is not None
-        or report.get("tab_count", 0) != len(DOCK_TABS)
+        or report.get("tab_count", 0) != expected_entries
+        or monaco_failed
         or any(tab_failed(v) for v in (report.get("tabs") or {}).values())
     )
     return 1 if failed else 0
@@ -208,12 +369,21 @@ def main() -> int:
     parser.add_argument("--base", default="http://127.0.0.1:8765", help="running app URL")
     parser.add_argument("--shots", default="", help="directory for screenshots (omit to skip)")
     parser.add_argument(
+        "--layout",
+        default="classic",
+        choices=["classic", "dock"],
+        help="classic = the sixteen-tab dock; dock = ?layout=dock (R59 P1)",
+    )
+    parser.add_argument(
         "--workdir", default=str(REPO), help="workspace to query sessions for (default: this repo)"
     )
     args = parser.parse_args()
 
     report, code = run(
-        args.base, Path(args.shots) if args.shots else None, str(Path(args.workdir).resolve())
+        args.base,
+        Path(args.shots) if args.shots else None,
+        str(Path(args.workdir).resolve()),
+        args.layout,
     )
     print(json.dumps(report, indent=2))
     return code

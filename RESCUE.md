@@ -1,7 +1,7 @@
 # RESCUE.md — recovery sheet for the R59 P0/P1 frontend refactor
 
 **Read this first if a session died, the UI is broken, or you are an AI taking over with no context.**
-Owner: CodingDude. Last updated: R59 P0, chrome + cards + store/panels extracted.
+Owner: CodingDude. Last updated: R59 P1 — the dock shell behind `?layout=dock`.
 
 ---
 
@@ -10,12 +10,13 @@ Owner: CodingDude. Last updated: R59 P0, chrome + cards + store/panels extracted
 | Item | Value |
 |---|---|
 | Repo | `G:\pydantic` (branch `main`) |
-| Last known-good commit | `0c4608a` — "fix(dock): one error surface for every tab" (last pushed, gates green; the #233 review fixes on top are #235) |
+| Last known-good commit | `96fbb6e` — "fix(dock): stop a dead fetch blanking a healthy panel" (#235), pushed, gates green |
 | Restore tag | `pre-r59-p0` → `0c2e58e` (created before any refactor; **do not delete**) |
 | Working tree at kickoff | clean except `M ROADMAP.md` (R59 item) |
 | Risk area | `frontend/src/` — React UI |
 | Backend | untouched by R59 (Python, `src/codingdude/`) |
-| `App.jsx` size | 3288 lines at kickoff → **1337** after chrome/cards/store/panel extraction (P0 complete), 1439 as of #233 |
+| `App.jsx` size | 3288 lines at kickoff → **1337** after P0 → **1439** after #233 → 1439 after P1 (P1 is additive: `workspace/` is 320 lines across three files and `App.jsx` only gained the flag and the shared prop bags) |
+| **Two shells** | classic flexbox = default; `?layout=dock` = the dockview shell (P1) |
 
 ### Progress log (P0 steps, newest last)
 
@@ -38,6 +39,13 @@ Owner: CodingDude. Last updated: R59 P0, chrome + cards + store/panels extracted
 | #231 fix: dock poll errors surfaced on every tab (one banner, not per-tab keys) | done | build · 91 tests · lint · smoke exit 0 |
 | #231 gate: smoke now fails on `/api/` 5xx and on that banner | done | smoke exit 0, 0 5xx, 0 banners |
 | #233 review fixes: dead `/artifacts` poll removed (could blank a healthy panel), helpers moved to `pollErrors.ts` + 11 tests, `verdict()` no longer KeyErrors on a partial report | done | build · 102 tests · lint · ruff · mypy · pytest 796 · smoke exit 0 |
+| **P1 START** — `dockview-react@8.6.1` installed (exact pin) | done | install 8.6.1 / dockview 8.6.1 |
+| P1 `workspace/catalogue.ts` — 5 panels + `DEFAULT_PRESET` placements | done | 13 vitest tests, red-verified (forward reference fails 2) |
+| P1 `workspace/Workspace.jsx` — shell, five panels, watermark reset | done | build · 115 tests · lint |
+| P1 geometry fix — `initialWidth` left the editor at 115 px; `pinSizes()` after one frame | done | gate: 250/215/650/385, Monaco 634 px |
+| P1 `index.css` — `--dv-*` mapped onto `--ss-*` tokens | done | visual (screenshots inspected) |
+| P1 `App.jsx` — `?layout=dock` flag + prop bags shared by both shells | done | build · lint · classic smoke 16/16 |
+| P1 gate — `tools/ui_smoke.py --layout dock` + `data-panel` seam + Monaco relayout check | done | dock smoke exit 0, 5/5 · 18 verdict tests |
 
 `App.jsx` is now ~1439 lines: `DockPanel` (tab shell + the 9 inline bodies) and `App`
 (session/SSE state + layout). Eight of those nine bodies (Graph, Output, Waterfall, Trace,
@@ -64,9 +72,18 @@ panels anywhere.
   Exit gate: `npm run build` clean, `npx vitest run` 91/91, `npm run lint` clean, UI
   visually identical. Landed at 1337 lines; the 9 data-coupled dock bodies stay inline
   until P2 (see the note after the progress log).
-- **P1** — dockview shell behind `?layout=dock` (nav, explorer, editor, chat, diff);
-  the classic layout stays the default.
-- P2–P4 — remaining panels, data store, persistence, popout. **Not started.**
+- **P1 (complete, #236)** — the dockview shell behind `?layout=dock`: five panels (`nav`,
+  `explorer`, `editor`, `chat`, `diff`) built from `workspace/catalogue.ts`, themed from the
+  StyleSeed tokens, reached by query flag so the classic layout stays the default. Exit gate:
+  build · 115 tests · lint · classic smoke 16/16 · dock smoke 5/5 with Monaco relayout
+  measured. Deviation recorded: no `onDidVisibilityChange` hook on `CodeEditor` — the gate
+  proves `automaticLayout` already handles a resized dock panel (634 → 460 px).
+- P2–P4 — remaining fifteen panels + the visibility-gated data store, then persistence/
+  presets/palette, then popouts. **Not started.**
+
+**Rollback for P1 is one query parameter**: load the app without `?layout=dock` and the
+classic shell renders exactly as before. Nothing server-side changed, so no data migration
+and no API version concern exists for this phase.
 
 P0 is safe to abandon at any moment: nothing is deployed, nothing is pushed until the
 gates pass.
@@ -108,7 +125,7 @@ expected `version` / `git_sha`.
 ```powershell
 cd G:\pydantic\frontend
 npm run build      # must exit 0; watch for a chunk-size or unresolved-import warning
-npx vitest run     # must be 91 passed (no test imports App.jsx — they cover pure helpers)
+npx vitest run     # must be 115 passed (no test imports App.jsx — they cover pure helpers)
 npm run lint       # eslint src, must be clean
 ```
 
@@ -132,7 +149,8 @@ the workspace has a session — a tab still showing the "select a session" place
 
 ```powershell
 cd G:\pydantic
-uv run python tools\ui_smoke.py --shots .scratch\shots   # server must already be running
+uv run python tools\ui_smoke.py --shots .scratch\shots                 # classic shell
+uv run python tools\ui_smoke.py --layout dock --shots .scratch\dock-shots   # R59 P1 shell
 ```
 
 Exit 0 = every check passed; a JSON report of per-tab findings prints either way. It does *not*
@@ -141,13 +159,23 @@ is what the screenshots and the manual pass are for. It needs the `playwright` d
 plus `playwright install chromium`. Rebuild `frontend/dist` first or you are testing the old
 bundle.
 
+`--layout dock` is the P1 gate: it reads `?layout=dock`, checks the five `DOCK_PANELS` against
+`workspace/catalogue.ts` (drift fails), asserts each panel root marked `data-panel="<id>"` is
+on screen with non-zero geometry — a tab in the tab bar proves a tab exists, not that its body
+rendered — and opens `README.md` in the editor to confirm Monaco re-lays-out when the viewport
+changes (a hidden `renderer: 'always'` panel is exactly where that regresses). Its verdict has
+unit tests (`tests/test_ui_smoke_verdict.py`, 18) because a gate nobody exercises is a gate
+nobody knows works.
+
 **Manual parity check (the last gate).** `npm run build` + the smoke gate passing does not
 prove the UI looks *the same*. Load the app and confirm layout visually: login card · sidebar
 projects/sessions · explorer tree · editor tabs + save/reload/diff · agent strip · chat +
 prompt row · every dock tab renders (Diff, Graph, Planning, Artifacts, Notes, Renders,
 Terminal, **Processes**, Output, Waterfall, Trace, Cost, **Memory**, MCP, Config, Standards —
 16 tabs after #227/#228) · status footer. The smoke gate writes one screenshot per tab, which
-is usually enough to eyeball this.
+is usually enough to eyeball this. Repeat once with `?layout=dock`: the five panels should be
+nav ≈256 px · explorer ≈208 px · editor + diff stacked in the middle · chat ≈384 px, i.e. the
+classic arrangement with draggable splitters.
 
 ## 5. If the UI is blank / crashed
 
@@ -167,7 +195,7 @@ it first. A blank page with a console error almost always means one of:
 - Python tooling is venv-scoped: `uv run pytest` / `ruff` / `mypy`. Never assume global PATH.
 - Frontend is Vite + React 18.3.1, Tailwind v4, vitest 5. `node_modules` is present.
 - `frontend/dist` is gitignored and served from disk by the Python server.
-- No test imports `App.jsx`; the 91 vitest tests exercise `src/*.ts` pure logic only. So the
+- No test imports `App.jsx`; the 115 vitest tests exercise `src/*.ts` pure logic only. So the
   refactor cannot be caught by tests — **the build + manual parity check are the real gate.**
 
 ## 7. Traps that have bitten before
@@ -184,7 +212,8 @@ it first. A blank page with a console error almost always means one of:
 ## 8. Where the plan and decisions live
 
 - `ROADMAP.md` → **R59**
-- Planning DB → tech design **#1**, design decision **#94**, ticket **#226** (P0)
+- Planning DB → tech design **#1**, design decision **#94**, ticket **#226** (P0), ticket **#236** (P1)
+- `code-design.md` → §R59 (P0 structure) and §R59 P1 (the dock shell: decisions, evidence, deviations)
 - Artifact `R59-workspace-design` (rendered design + mock)
 - This file — **update section 1 and 2 at every milestone**, so a successor never has to
   reverse-engineer how far the refactor got.

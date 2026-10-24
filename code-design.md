@@ -281,3 +281,100 @@ the #228 class:
   (identical at `0c2e58e`), inert, and worth a decision rather than a silent
   deletion: the dock already refetches on `activePath`, so the prop is
   redundant rather than broken.
+
+### R59 P1 — the dock shell behind `?layout=dock` (#236)
+
+`dockview-react` 8.6.1 (exact pin, `"dockview-react": "8.6.1"`; it pulls
+`dockview` 8.6.1, which re-exports `dockview-core`) is now installed and a
+second shell renders five dockable panels. The classic flexbox layout is still
+the default: `?layout=dock` opts in, so both can be compared in one browser and
+rollback is flipping a query parameter.
+
+**Files.**
+
+| Module | Contents |
+|---|---|
+| `workspace/catalogue.ts` | `PANELS` (the five shipped panels), `DEFAULT_PRESET` (placements), `panelSpec`/`isKnownPanel` |
+| `workspace/catalogue.test.ts` | 13 tests: registry integrity, preset references, geometry parity with `PANE_SPECS` |
+| `workspace/Workspace.jsx` | `Workspace` shell, the five panel components, preset application, watermark with "Reset layout" |
+| `App.jsx` | `USE_DOCK` flag + prop bags shared by both shells |
+| `index.css` | `--dv-*` → `--ss-*` theme mapping |
+| `tools/ui_smoke.py` | `--layout dock` walk (see below) |
+
+**Decisions and why.**
+
+- **The preset is a placement list, not serialized grid JSON.** `SerializedDockview`
+  is an internal shape (grid root, orientation, per-group views) that cannot be
+  verified from here; `addPanel` with `position: {direction, referencePanel}` is
+  the documented public API. The preset's real invariant is order — dockview
+  resolves a reference eagerly, so a forward reference throws at mount — and
+  that is exactly what `catalogue.test.ts` asserts. Red-verified: pointing
+  `editor` at `chat` fails two tests.
+- **`initialWidth` alone did not reproduce the classic geometry.** Measured
+  through the gate: nav ≈497 px, explorer ≈503 px, editor ≈115 px. The new group
+  is created by splitting its reference and lands on proportional sizes. Fixed
+  by pinning the three fixed-width columns with `group.api.setSize()` one frame
+  after the preset is built (`pinSizes`), leaving the flexible middle the
+  remainder. Measured after: 250 / 215 / 650 / 385 against the classic layout's
+  256 / 208 / flexible / 384, and Monaco's own width went 98 px → 634 px.
+- **Panel data comes from React context, not dockview `params`.** Params are
+  serialized into the saved layout, so they cannot carry callbacks or live
+  state; React portals keep docked panels inside the provider's tree, so context
+  reaches them wherever they dock. Recorded caveat: a P4 *popout* renders in
+  another document with its own root and will not see the provider — popouts
+  must move these bags into a module-level store first (tech design §4.3/§4.7).
+- **`renderer: 'always'` only where state must survive a move** — `editor` and
+  `chat`. A useful consequence for the rest: dockview's default
+  `onlyWhenVisible` unmounts a hidden panel, so the new `diff` panel's poll
+  stops when its tab is hidden without any visibility plumbing. The diff panel
+  keeps its own 4 s poll for now because P1 runs both shells side by side and
+  `DockPanel`'s shared poll is not reachable from here; P2 retires both into the
+  visibility-gated store.
+- **No `onDidVisibilityChange` hook was added to `CodeEditor`** (deviation from
+  tech design §4.7, which asked for one). `automaticLayout: true` was already
+  set in `baseOptions()`, so the question was whether it actually copes with a
+  docked, resizable container — and the gate answers it with numbers rather than
+  a redundant hook: `.monaco-editor` width 634 → 460 px across a viewport
+  resize. If a future change drops `automaticLayout`, that gate check goes red.
+- **Not shipped yet, deliberately:** `sanitiseLayout` (REQ-8's defensive load
+  path) — nothing loads a saved layout until P3, so it would be dead code today;
+  it lands with the loader that exercises it. Also absent: the remaining fifteen
+  panels (P2), persistence/presets/palette/keyboard (P3), popouts (P4).
+
+**Theme.** dockview ships sixteen palettes; none of them are ours. Rather than
+adopt one, the colour-carrying `--dv-*` variables are re-pointed at the
+StyleSeed tokens, so the dock follows `[data-theme]` with the rest of the app
+and re-theming stays a change to `index.css`. Specificity is load-order
+independent: the override selector repeats the theme class
+(`.dockview-theme-dark.dockview-theme-dark`) to outrank dockview's own
+`.dockview-theme-dark` rule, since the library stylesheet is imported from
+`Workspace.jsx` and can land after `index.css` in the bundle.
+
+**Gate.** `tools/ui_smoke.py` gained `--layout dock`:
+`DOCK_PANELS` maps a panel id to its tab title and is checked against
+`catalogue.ts` (drift fails, the same anti-duplication trick as `DOCK_TABS` vs
+`App.jsx`). Each panel root carries `data-panel="<id>"`, because a tab in the
+tab bar proves a tab exists, not that its body rendered — the gate asserts the
+panel element exists, has non-zero geometry, and has text. It also asserts
+Monaco re-lays-out on a viewport resize. `verdict()` gained three failure
+branches (`panel_drift`, `visible: false`, a `monaco` result that did not
+change), with six new tests in `tests/test_ui_smoke_verdict.py` (18 total);
+red-verified by deleting the `visible` check and watching one test fail.
+
+**Evidence (this session).** `npm run build` exit 0 · `vitest` 115/115 (was 102)
+· `eslint src` 0 · `pytest` 802 passed / 1 skipped (was 796) · `ruff` and `mypy`
+(72 files) clean · classic gate exit 0, 16/16 tabs, 0 unexpected console errors,
+0 page errors, 0 `/api/` 5xx · dock gate exit 0, 5/5 panels visible, monaco
+634 → 460. Bundle cost of the new dependency, measured directly:
+`main.esm.min.mjs` 20,007 B raw / 4,820 B gzip, `dockview.css` 159,552 B raw /
+12,611 B gzip — ≈17.4 KB gzip against tech design §5's ~60 KB budget. The
+whole-chunk before/after delta was **not** measured (that needs a baseline build
+of the previous commit, which needs a worktree branch); the dependency's own
+weight is what the budget was about.
+
+**Docs deferred on purpose.** Tech design §8 lists a "Arranging the workspace"
+section in `docs/USER-MANUAL.md` and a `docs/TECHNICAL-DESIGN-MANUAL.md` §UI
+update. P1 is flag-gated and default-off, so a user-manual section would
+describe something no user can reach from the UI; both land when the dock
+becomes the default (P4) or the moment the flag is flipped, whichever comes
+first. Recorded here so the omission is a decision rather than an oversight.
