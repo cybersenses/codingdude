@@ -418,8 +418,10 @@ its width (`chars` and `width` are reported, not judged: a legitimately empty
 panel would make a length assertion brittle, and `pinSizes` redistributes the
 remainder, so an exact width would make a flake generator). The expected panel
 count comes from `catalogue.ts`, not from
-`DOCK_PANELS` — comparing the walk against its own list is a check that can
-never fail. The #231 banner takes two possible shapes, though only one of
+`DOCK_PANELS` — a `DOCK_PANELS` list checked against itself cannot notice a
+panel the catalogue added (it can still fail the other way: a stale extra entry
+finds no tab and misses the count). The #231 banner takes two possible shapes,
+though only one of
 them exists in this shell: `DiffTabPanel` returns the banner element *as* the
 panel root when its fetch fails. The gate also matches a nested banner — a
 comma-joined "root or descendant" selector scoped to the panel id, built from
@@ -428,9 +430,12 @@ as coverage: `DockPanel` does nest its banner in its body, but `DockPanel` is
 the *classic* shell and is never mounted behind `?layout=dock`. Scoping alone was
 not enough: all five panels mount at once, so a page-wide read reports whichever
 banner it finds first for every tab, and a descendant-only read finds nothing of
-the root shape at all. Both mistakes were real in sequence. The selector string
+the root shape at all. Both mistakes were real in sequence. The gate reads the
+banner's presence, not its text (`""` is falsy, so an empty banner would have
+read as clean). The selector string
 is pinned by a test; its match behaviour was checked against this app's real DOM
-— `data-poll-error` set on the live diff panel root and counted both ways: the
+in a one-off probe (not committed — the committed test pins the string only):
+`data-poll-error` set on the live diff panel root and counted both ways: the
 old scoped descendant form 0 (the bug, on the exact shape `DiffTabPanel` returns),
 the comma form 1, a neighbouring panel 0, page-wide 1, and 0 again once the
 attribute is removed. `_no_readme_reason` now separates four causes rather than
@@ -448,10 +453,14 @@ structural reason recorded above.
 `tests/test_ui_smoke_verdict.py` (23 total); red-verified — by deleting the
 `visible` check, by making `_monaco_followed_its_container` return `True`, by
 unquoting the selector id, and by dropping the failed-fetch branch — each time
-watching a test fail.
+watching a test fail. (The quoting pin guards a convention, not validity: an
+unparsable selector raises rather than matching 0, and the ids are plain
+identifiers, so `[data-panel=diff]` parses. Both were probed against a browser,
+not assumed — the first version of that docstring asserted the opposite.)
 
 **Evidence (this session).** `npm run build` exit 0 · `vitest` 115/115 (was 102)
-· `eslint src` 0 · `pytest` 802 passed / 1 skipped (was 796) · `ruff` and `mypy`
+· `eslint src` 0 · `pytest` 802 passed / 1 skipped (was 796; 805/807 once the
+gate's own fixes and tests landed, below) · `ruff` and `mypy`
 (72 files) clean · classic gate exit 0, 16/16 tabs, 0 unexpected console errors,
 0 page errors, 0 `/api/` 5xx · dock gate exit 0, 5/5 panels visible, monaco
 634 → 460 → 634, panel widths recorded 256/208/652/384. Bundle cost of the new

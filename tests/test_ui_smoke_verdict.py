@@ -19,18 +19,17 @@
 failing would not be noticed by anything else. These tests are the only proof
 that each failure branch actually returns 1 — and they run in milliseconds,
 unlike the live gate, which needs a server, Chromium and ~40 seconds.
+
+Nothing here needs Playwright: `ui_smoke` imports it inside `run()`, so these
+run on a checkout with no dev extra. Importing it at `ui_smoke`'s module level
+made this whole file skip — exit 0, every branch unproven — which is the silent
+loss of proof the tests exist to prevent.
 """
 
 from __future__ import annotations
 
 import sys
 from pathlib import Path
-
-import pytest
-
-# ui_smoke imports playwright at module level; skip rather than error when a
-# checkout has not installed it.
-pytest.importorskip("playwright.sync_api")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
@@ -45,18 +44,22 @@ from ui_smoke import (  # noqa: E402
 
 
 def test_panel_banner_selector_matches_the_root_and_nested_shapes():
-    """The dock's banner is sometimes the panel root itself, not a child of it.
+    """Under `?layout=dock` the panel's banner *is* the panel root, not a child.
 
     `Locator.locator()` matches descendants only, so the scoped search that
-    looked correct matched zero against `DiffTabPanel`'s failure state -- where
-    `data-panel` and `data-poll-error` sit on the same div -- and the gate
-    reported a failing panel as clean. Pins both shapes so that form cannot
-    quietly come back.
+    looked correct matched zero against `DiffTabPanel`'s failure state — where
+    `data-panel` and `data-poll-error` sit on the same div — and the gate
+    reported a failing panel as clean. Pins both alternatives so that form
+    cannot quietly come back.
+
+    Only the root alternative is reachable today: `DiffTabPanel` is the one panel
+    that arms a banner, and the nested alternative belongs to the classic shell's
+    `DockPanel`, which is never mounted behind `?layout=dock`. It is pinned as a
+    guard, not as coverage.
 
     This pins the selector *string*; it does not run a browser. What it does
     guarantee is that the attribute is not retyped here: the halves are built
-    from `POLL_ERROR_SELECTOR`, and every id is quoted, because an unquoted
-    value would make the whole selector invalid rather than merely wrong.
+    from `POLL_ERROR_SELECTOR`.
     """
     sel = _panel_banner_selector("diff")
     assert sel == (
@@ -69,7 +72,19 @@ def test_panel_banner_selector_matches_the_root_and_nested_shapes():
 
 
 def test_panel_banner_selector_quotes_every_id():
-    """An unquoted id yields invalid CSS, which Playwright silently returns 0 for."""
+    """Every panel id is quoted — a convention, and the reason is not validity.
+
+    `[data-panel=diff]` is valid CSS and matches: the ids are plain identifiers,
+    so quoting changes nothing for them. Probed rather than assumed, and the
+    assumed failure mode was wrong twice over: an unparsable selector makes
+    `Locator.count` raise a `SyntaxError`, it does not quietly return 0 — the
+    silent zero was the root-vs-descendant bug, a different failure entirely.
+
+    What quoting buys is an id that needs escaping. `[data-panel=a b]` is a
+    descendant selector, so a future id containing a space would change what the
+    selector means while still parsing, and this gate would then read the wrong
+    element. Keeping every id quoted means that cannot happen quietly.
+    """
     for panel_id in DOCK_PANELS:
         sel = _panel_banner_selector(panel_id)
         assert sel.count(f'[data-panel="{panel_id}"]') == 2
@@ -89,7 +104,7 @@ def test_no_readme_reason_does_not_call_a_failed_fetch_no_sessions():
 
     That is not the same fact as an empty workspace, and `not None` is truthy
     here, so without its own branch a server error is reported as "the workspace
-    has no sessions" -- a claim about the workspace made from a failed request.
+    has no sessions" — a claim about the workspace made from a failed request.
     """
     reason = _no_readme_reason(
         {"sessions": None, "sessions_error": "GET /api/sessions -> 500"}

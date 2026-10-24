@@ -4,8 +4,8 @@ Covers the part of R59 that tests cannot reach — no vitest file imports App.js
 so a moved component that renders nothing is invisible to `npm test`. This
 drives the real bundle in Chromium and fails on: a render crash reaching
 ErrorBoundary, an uncaught page error, an unexpected console error, a missing
-dock tab, DOCK_TABS drifting from the list in App.jsx, an unreachable
-/api/sessions, any /api/ response with a 5xx status, a tab showing the dock's
+dock tab, DOCK_TABS drifting from the list in App.jsx, a non-OK /api/sessions
+response, any /api/ response with a 5xx status, a tab showing the dock's
 "could not load this tab" banner (#231), or — when the workspace has a session —
 a tab still showing the "select a session" placeholder (the #228 symptom).
 Designed console noise (the auth-cookie 401) is reported, not fatal.
@@ -52,7 +52,11 @@ import sys
 from pathlib import Path
 from urllib.parse import quote
 
-from playwright.sync_api import sync_playwright
+# `playwright` is imported inside `run()` rather than here: this module's
+# browser-free parts (`verdict`, `_panel_banner_selector`, `_no_readme_reason`,
+# `catalogue_panels`, the panel tables) are what `tests/test_ui_smoke_verdict.py`
+# exercises, and a module-level import would make that file skip — silently
+# unproving the gate's failure branches — on any checkout without the dev extra.
 
 DOCK_TABS = [
     "Diff", "Graph", "Planning", "Artifacts", "Notes", "Renders", "Terminal",
@@ -113,6 +117,8 @@ def run(base: str, shots: Path | None, workdir: str, layout: str = "classic") ->
     }
     if shots:
         shots.mkdir(parents=True, exist_ok=True)
+
+    from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -194,7 +200,7 @@ def _walk_classic(page, report: dict, base: str, workdir: str, shots: Path | Non
         # active tab's. The dock shell mounts all five — hence the scoped,
         # root-or-descendant search in `_panel_banner_selector`.
         err = page.locator(POLL_ERROR_SELECTOR)
-        poll_error = err.first.inner_text() if err.count() else None
+        poll_error = _banner_text(err)
         report["tabs"][name] = {
             "crashed": crashed,
             "placeholder": PLACEHOLDER in text,
@@ -244,6 +250,18 @@ def _panel_banner_selector(panel_id: str) -> str:
     )
 
 
+def _banner_text(banner) -> str | None:
+    """The banner's text, or `None` when no banner is there.
+
+    Presence, not presence-with-text: an empty banner still means the fetch
+    failed, and `""` is falsy, so a plain `inner_text()` would report that panel
+    as clean — the same class of blind spot as the scoped search this file fixed.
+    """
+    if banner.count() == 0:
+        return None
+    return banner.first.inner_text().strip() or "(banner present, no text)"
+
+
 def _wait_for_tree(page, timeout_ms: int = 15_000) -> bool:
     """Wait for the explorer's file rows, which arrive after the session does.
 
@@ -283,11 +301,14 @@ def _walk_dock(page, report: dict, base: str, workdir: str, shots: Path | None) 
         }
         if drift:
             report["panel_drift"] = drift
-    # The expected count comes from the catalogue, not from DOCK_PANELS:
-    # comparing the walk against its own list is a check that can never fail. A
-    # catalogue panel missing from `DOCK_PANELS` is not recorded as `panel_drift`
-    # — that dict names mismatched titles and does not look in the other
-    # direction — so it fails the run as a count mismatch instead.
+    # The expected count comes from the catalogue, not from DOCK_PANELS: a
+    # `DOCK_PANELS` list compared against itself cannot notice a panel the
+    # catalogue added. (It is not literally unfailable — a stale extra entry in
+    # `DOCK_PANELS` finds no tab and so fails the count — but it cannot see the
+    # other direction.) A catalogue panel missing from `DOCK_PANELS` is not
+    # recorded as `panel_drift` either — that dict names mismatched titles and
+    # does not look in the other direction — so it fails the run as a count
+    # mismatch instead.
     if declared:
         report["expected_entries"] = len(declared)
 
@@ -333,7 +354,7 @@ def _walk_dock(page, report: dict, base: str, workdir: str, shots: Path | None) 
         report["tabs"][title] = {
             "crashed": crashed,
             "placeholder": PLACEHOLDER in text,
-            "poll_error": banner.first.inner_text() if banner.count() else None,
+            "poll_error": _banner_text(banner),
             "chars": len(text),
             # Recorded, not asserted: the pinned columns land approximate because
             # each `setSize` redistributes the remainder, so asserting a width
@@ -372,7 +393,10 @@ def _no_readme_reason(report: dict) -> str:
             "README.md from"
         )
     if not report.get("tree_ready"):
-        return "the explorer rendered no file tree — nothing to open README.md from"
+        return (
+            "the explorer showed no file tree within the 15 s wait — either none "
+            "rendered or the fetch was still in flight; nothing to open README.md from"
+        )
     return "README.md not in the explorer — editor never opened"
 
 
