@@ -10,12 +10,12 @@ Owner: CodingDude. Last updated: R59 P1 — the dock shell behind `?layout=dock`
 | Item | Value |
 |---|---|
 | Repo | `G:\pydantic` (branch `main`) |
-| Last known-good commit | `96fbb6e` — "fix(dock): stop a dead fetch blanking a healthy panel" (#235), pushed, gates green |
+| Last known-good commit | `c103d5c` — "fix(ui_smoke): the second shape I invented for the banner does not exist here", pushed, gates green |
 | Restore tag | `pre-r59-p0` → `0c2e58e` (created before any refactor; **do not delete**) |
 | Working tree at kickoff | clean except `M ROADMAP.md` (R59 item) |
 | Risk area | `frontend/src/` — React UI |
 | Backend | untouched by R59 (Python, `src/codingdude/`) |
-| `App.jsx` size | 3288 lines at kickoff → **1337** after P0 → **1439** after #233 → 1439 after P1 (P1 is additive: `workspace/` is 320 lines across three files and `App.jsx` only gained the flag and the shared prop bags) |
+| `App.jsx` size | 3288 lines at kickoff → **1337** after P0 → **1439** after #233 → **1488** after P1 (P1 is additive: `workspace/` is 485 lines across three files — `Workspace.jsx` 274, `catalogue.ts` 96, `catalogue.test.ts` 115 — and `App.jsx` only gained the flag and the shared prop bags) |
 | **Two shells** | classic flexbox = default; `?layout=dock` = the dockview shell (P1) |
 
 ### Progress log (P0 steps, newest last)
@@ -45,9 +45,10 @@ Owner: CodingDude. Last updated: R59 P1 — the dock shell behind `?layout=dock`
 | P1 geometry fix — `initialWidth` left the editor at 115 px; `pinSizes()` after one frame | done | gate records widths 256/208/652/384, Monaco 634 → 460 → 634 px (narrowed and restored; the hidden-panel path is NOT covered — see below) |
 | P1 `index.css` — `--dv-*` mapped onto `--ss-*` tokens | done | visual (screenshots inspected) |
 | P1 `App.jsx` — `?layout=dock` flag + prop bags shared by both shells | done | build · lint · classic smoke 16/16 |
-| P1 gate — `tools/ui_smoke.py --layout dock` + `data-panel` seam + Monaco reflow check | done | dock smoke exit 0, 5/5 · 23 verdict tests |
+| P1 gate — `tools/ui_smoke.py --layout dock` + `data-panel` seam + Monaco reflow check | done | dock smoke exit 0, 5/5 · 23 gate unit tests |
+| P1 gate fixes — scoped banner selector (the descendant-only form found nothing of the root shape, so a failing panel read as clean); `expected_entries` no longer falling back to a number the walk agrees with by construction; `_no_readme_reason` separating a failed sessions fetch from an empty workspace; `playwright` imported inside `run()` so the gate's own tests cannot silently skip | done | pytest 807/1 skipped · dock 5/5 · classic 16/16 · 23 gate unit tests |
 
-`App.jsx` is now ~1439 lines: `DockPanel` (tab shell + the 9 inline bodies) and `App`
+`App.jsx` is now ~1488 lines: `DockPanel` (tab shell + the 9 inline bodies) and `App`
 (session/SSE state + layout). Eight of those nine bodies (Graph, Output, Waterfall, Trace,
 Cost, MCP, Renders, Memory) read `DockPanel`'s single shared poll (`data`, `setData`;
 `selRun` belongs to Output and Waterfall only). Only **Processes** is inline for a different
@@ -147,7 +148,7 @@ uv run mypy
 imports `App.jsx`, so a moved component that renders *nothing* still builds clean. The smoke
 gate drives the real bundle in Chromium and walks all 16 dock tabs, failing on an
 ErrorBoundary crash, an uncaught page error, an unexpected console error, a missing tab,
-`DOCK_TABS` drifting from the tab list in `App.jsx`, an unreachable `/api/sessions`, any
+`DOCK_TABS` drifting from the tab list in `App.jsx`, a non-OK `/api/sessions` response, any
 `/api/` response with a 5xx status, a tab showing the dock's "could not load this tab"
 banner (#231), or — when
 the workspace has a session — a tab still showing the "select a session" placeholder:
