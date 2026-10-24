@@ -218,13 +218,16 @@ def _dock_tab(page, title: str):
 
 
 def _wait_for_tree(page, timeout_ms: int = 15_000) -> bool:
-    """Wait for the explorer's file tree, which arrives after the session does.
+    """Wait for the explorer's file rows, which arrive after the session does.
 
-    `FileTree` renders nothing until the session auto-resume binds a session id,
-    so a fixed settle in the walk is a race: on a slow fetch the Explorer panel
-    looks empty and the Monaco step reports "README.md not in the explorer" — a
-    false red about a missing file rather than about a slow session. Bounded wait,
-    and the caller still reports a real miss.
+    `FileTree` renders a placeholder — "no session" until the session id binds,
+    then "loading…" until `/sessions/{id}/tree` resolves — and the file buttons
+    (the ones carrying `title`) exist only once the tree is in hand. So a fixed
+    settle in the walk is a race, and it was observed one: a run recorded 17
+    chars for Explorer, which is "Explorer" plus the "loading…" placeholder, i.e.
+    the session had bound and the tree fetch was still in flight. The Monaco step
+    then reported that as a missing `README.md` — a false red about a missing file
+    rather than a slow fetch. Bounded wait; the caller still reports a real miss.
     """
     tree = page.locator('[data-panel="explorer"] button[title]')
     try:
@@ -238,10 +241,13 @@ def _walk_dock(page, report: dict, base: str, workdir: str, shots: Path | None) 
     """R59 P1: the dockable shell behind `?layout=dock`."""
     declared = catalogue_panels()
     if not declared:
-        # The catalogue is the source of truth for how many panels exist. If it
-        # cannot be read, every count below is meaningless — say so rather than
-        # falling back to a number the walk agrees with by construction.
-        report["panel_drift"] = {"_catalogue": "catalogue.ts could not be read"}
+        # The catalogue is the source of truth for how many panels exist. An
+        # empty parse means the regex no longer matches the file, so every count
+        # below is meaningless — say that rather than falling back to a number
+        # the walk agrees with by construction. (A *missing* catalogue raises out
+        # of `catalogue_panels()`: a broken checkout should be loud, not a
+        # diagnostic.)
+        report["panel_drift"] = {"_catalogue": "catalogue.ts parsed to no panels"}
     else:
         drift = {
             pid: {"smoke": title, "catalogue": declared.get(pid)}
@@ -287,11 +293,14 @@ def _walk_dock(page, report: dict, base: str, workdir: str, shots: Path | None) 
         panel = page.locator(f'[data-panel="{panel_id}"]')
         box = panel.first.bounding_box() if panel.count() else None
         text = panel.first.inner_text() if panel.count() else ""
-        err = page.locator(POLL_ERROR_SELECTOR)
+        # Scoped to this panel's root. The dock arms one banner per panel, so a
+        # page-wide locator reports whichever it finds first for every tab — a
+        # single failing Diff fetch once labelled all five panels as failing.
+        err = panel.first.locator(POLL_ERROR_SELECTOR) if panel.count() else None
         report["tabs"][title] = {
             "crashed": crashed,
             "placeholder": PLACEHOLDER in text,
-            "poll_error": err.first.inner_text() if err.count() else None,
+            "poll_error": err.first.inner_text() if err is not None and err.count() else None,
             "chars": len(text),
             # Recorded, not asserted: the pinned columns land approximate because
             # each `setSize` redistributes the remainder, so asserting a width
@@ -341,7 +350,7 @@ def _monaco_reflow(page, report: dict, shots: Path | None) -> None:
     opener = page.locator('button[title="README.md"]')
     if opener.count() == 0:
         report["monaco"] = (
-            "no file tree to open README.md from (no session in this workdir?)"
+            "the explorer rendered no file tree — nothing to open README.md from"
             if not report.get("tree_ready")
             else "README.md not in the explorer — editor never opened"
         )

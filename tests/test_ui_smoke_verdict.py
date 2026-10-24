@@ -156,8 +156,10 @@ def test_panel_drift_fails():
 
 
 def test_monaco_that_never_reflows_fails():
-    # Narrowed and restored with its DOM mounted throughout. `width_before` ==
-    # `width_narrowed` is the `renderer: 'always'` bug: it never noticed.
+    # An editor that keeps the width it had while its container narrows. What
+    # makes the real check go red is dropping `automaticLayout` from Monaco's
+    # options — not `renderer: 'always'`, which only matters for a hidden panel
+    # and no hide happens here.
     stale = {"width_before": 634, "width_narrowed": 634, "width_restored": 634}
     assert verdict(dock_report(monaco=stale)) == 1
     # Reflowing once and then sticking is the same failure one step later: the
