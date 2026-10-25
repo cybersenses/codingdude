@@ -40,6 +40,9 @@ export function Notes({ sessionId, workdir }) {
   const [pdraft, setPdraft] = useState('')
   const [loadError, setLoadError] = useState(null)
   const [ploadError, setPLoadError] = useState(null)
+  // #242: mutations must not fail silently. Every catch keeps the user's input
+  // and reverts optimistic UI, then surfaces here through the Failure seam.
+  const [mutError, setMutError] = useState(null)
 
   useEffect(() => {
     if (!sessionId) return
@@ -78,13 +81,21 @@ export function Notes({ sessionId, workdir }) {
     <div className="space-y-2">
       {loadError && <Failure>could not load session notes: {loadError}</Failure>}
       {ploadError && <Failure>could not load project notes: {ploadError}</Failure>}
+      {mutError && <Failure>{mutError}</Failure>}
       <label className="flex items-center gap-1.5 text-xs text-neutral-300">
         <input
           type="checkbox"
           checked={!!keep}
           onChange={async (e) => {
+            const prev = keep
             setKeep(e.target.checked)
-            try { await call(`/sessions/${sessionId}/keep`, { method: 'POST', body: JSON.stringify({ keep: e.target.checked }) }) } catch { /* transient */ }
+            try {
+              await call(`/sessions/${sessionId}/keep`, { method: 'POST', body: JSON.stringify({ keep: e.target.checked }) })
+              setMutError(null)
+            } catch (err) {
+              setKeep(prev)
+              setMutError(`could not save "keep for evals": ${errMsg(err)}`)
+            }
           }}
         />
         keep for evals
@@ -113,7 +124,10 @@ export function Notes({ sessionId, workdir }) {
               await call(`/sessions/${sessionId}/notes`, { method: 'POST', body: JSON.stringify(body) })
               setDraft(''); setOffset('')
               setNotes(await call(`/sessions/${sessionId}/notes`))
-            } catch { /* transient */ }
+              setMutError(null)
+            } catch (err) {
+              setMutError(`could not add note: ${errMsg(err)}`)
+            }
           }}
         >add</button>
       </div>
@@ -145,7 +159,10 @@ export function Notes({ sessionId, workdir }) {
                 await call('/notes', { method: 'POST', body: JSON.stringify({ workdir, content: pdraft.trim() }) })
                 setPdraft('')
                 loadProjectNotes()
-              } catch { /* transient */ }
+                setMutError(null)
+              } catch (err) {
+                setMutError(`could not add project note: ${errMsg(err)}`)
+              }
             }}
           >add</button>
         </div>
@@ -160,12 +177,12 @@ export function Notes({ sessionId, workdir }) {
               <button
                 title="mark dealt with"
                 className="rounded bg-neutral-800 px-1.5 text-[10px] text-neutral-300 hover:bg-neutral-700"
-                onClick={async () => { try { await call(`/notes/${n.id}/resolve`, { method: 'POST' }); loadProjectNotes() } catch { /* transient */ } }}
+                onClick={async () => { try { await call(`/notes/${n.id}/resolve`, { method: 'POST' }); loadProjectNotes(); setMutError(null) } catch (err) { setMutError(`could not resolve note: ${errMsg(err)}`) } }}
               >✓</button>
               <button
                 title="delete"
                 className="rounded bg-neutral-800 px-1.5 text-[10px] text-neutral-300 hover:bg-neutral-700"
-                onClick={async () => { try { await call(`/notes/${n.id}`, { method: 'DELETE' }); loadProjectNotes() } catch { /* transient */ } }}
+                onClick={async () => { try { await call(`/notes/${n.id}`, { method: 'DELETE' }); loadProjectNotes(); setMutError(null) } catch (err) { setMutError(`could not delete note: ${errMsg(err)}`) } }}
               >✕</button>
             </div>
           </div>

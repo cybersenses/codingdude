@@ -1023,6 +1023,22 @@ Shipped (ticket #240): `chrome-devtools` entry in `_default_mcp_servers()` (`mcp
 Six consecutive commits shipped failure-mode claims a reviewer could not back ("silently returns 0", "can't miss a banner", "hides nothing"). The arithmetic half is gated by tools/claim_check.py; the failure-mode half is not. This closes it mechanically (ticket #241, shipped `f051ad5`, tightened after post-push review): a sentence in a commit message (or doc, on request) containing a failure-mode verb must carry a `[probe: ...]` annotation naming the command that demonstrated it, or state "not yet verified" — otherwise the check fails and the message is not committed. Default: on for --message-file, opt-in for documents (historical docs would scream). Honest limit: the checker is run by the agent as its documented pre-commit step, not wired into a git hook — a hook is a separate decision. Post-push review found and closed four holes (empty `[probe: ]`, a probe on a neighbouring bullet, `pecan never` matching `can never`, and the message-file default leaking onto documents in the same run); tests 43 → 47. Design notes: code-design.md §R62.
 
 ## R63 — Silent failure surfacing in dock panel mutations
-**Status:** open
+**Status:** done
 
+Pre-existing gaps logged during #234's review (ticket #242): Notes and
+Standards swallowed mutation failures — Notes had five bare
+`catch { /* transient */ }` blocks (keep-for-evals checkbox, add note, add
+project note, resolve, delete) so a failed save silently discarded the user's
+input or left optimistic UI lying; Standards had four unguarded mutations
+(`saveDirectives`, `startEditSkill`, `saveSkill`) plus `deleteSkill`, which
+removed the skill from the list regardless of the HTTP response.
+
+Shipped (#242): every mutation catch surfaces through the same
+`data-poll-error` Failure seam as the #234 loads — Notes via a `mutError`
+line (which also reverts the checkbox and keeps the draft on failure);
+Standards via an `errors.save` line (`saveSkill` failure keeps the editor
+open so the body is not lost; `deleteSkill` checks `r.ok` before touching the
+list). Failure rendering reuses the existing smoke-gate seam; the live-browser
+failure path was not re-probed (the banner mechanism was probe-verified in
+#234). Gates: vitest 117/117, build clean, eslint 0.
 

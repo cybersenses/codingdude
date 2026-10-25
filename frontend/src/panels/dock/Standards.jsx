@@ -55,33 +55,55 @@ export function Standards({ sessionId }) {
       .catch((err) => { setDirectivesDraft(''); setErrors((e) => ({ ...e, directives: errMsg(err) })) })
   }, [sessionId])
 
+  // #242: mutations must not fail silently — saveDirectives/saveSkill/ deleteSkill
+  // surface failures through the same Failure seam as the loads (errors.save).
   async function saveDirectives() {
-    await call('/directives', { method: 'PUT', body: JSON.stringify({ content: directivesDraft }) })
-    setSavedMsg('directives saved — enforced from the next run')
-    setTimeout(() => setSavedMsg(''), 2500)
+    try {
+      await call('/directives', { method: 'PUT', body: JSON.stringify({ content: directivesDraft }) })
+      setErrors((e) => ({ ...e, save: null }))
+      setSavedMsg('directives saved — enforced from the next run')
+      setTimeout(() => setSavedMsg(''), 2500)
+    } catch (err) {
+      setErrors((e) => ({ ...e, save: errMsg(err) }))
+    }
   }
 
   async function startEditSkill(name) {
-    const list = await call('/skills/detail')
-    setEditingSkill(list.find((s) => s.name === name) || null)
+    try {
+      const list = await call('/skills/detail')
+      setEditingSkill(list.find((s) => s.name === name) || null)
+    } catch (err) {
+      setErrors((e) => ({ ...e, save: `could not open skill: ${errMsg(err)}` }))
+    }
   }
 
   async function saveSkill() {
     if (!editingSkill?.name) return
-    await call(`/skills/detail/${encodeURIComponent(editingSkill.name)}`, {
-      method: 'PUT',
-      body: JSON.stringify({ description: editingSkill.description, body: editingSkill.body }),
-    })
-    setEditingSkill(null)
-    call('/skills/detail').then(setSkillList).catch(() => {})
+    try {
+      await call(`/skills/detail/${encodeURIComponent(editingSkill.name)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ description: editingSkill.description, body: editingSkill.body }),
+      })
+      setEditingSkill(null)
+      setErrors((e) => ({ ...e, save: null }))
+      call('/skills/detail').then(setSkillList).catch(() => {})
+    } catch (err) {
+      setErrors((e) => ({ ...e, save: `could not save skill: ${errMsg(err)}` }))
+    }
   }
 
   async function deleteSkill(name) {
     // Auth is the HttpOnly session cookie — no bearer header exists (L13).
-    await fetch(`/api/skills/detail/${encodeURIComponent(name)}`, {
-      method: 'DELETE',
-    }).then((r) => r.json())
-    setSkillList((list) => list.filter((s) => s.name !== name))
+    try {
+      const r = await fetch(`/api/skills/detail/${encodeURIComponent(name)}`, {
+        method: 'DELETE',
+      })
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      setSkillList((list) => list.filter((s) => s.name !== name))
+      setErrors((e) => ({ ...e, save: null }))
+    } catch (err) {
+      setErrors((e) => ({ ...e, save: `could not delete skill: ${errMsg(err)}` }))
+    }
   }
 
   const modes = ['directives', 'skills', 'checklist']
@@ -100,6 +122,7 @@ export function Standards({ sessionId }) {
       {errors.directives && <Failure>could not load directives: {errors.directives}</Failure>}
       {errors.skills && <Failure>could not load skills: {errors.skills}</Failure>}
       {errors.checklist && <Failure>could not load review checklist: {errors.checklist}</Failure>}
+      {errors.save && <Failure>save failed: {errors.save}</Failure>}
 
       {stdMode === 'directives' && (
         <div className="flex min-h-0 flex-1 flex-col gap-1">
