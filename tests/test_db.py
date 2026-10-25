@@ -324,6 +324,7 @@ def test_giving_up_on_commit_rolls_the_transaction_back(home, workdir, monkeypat
         " VALUES (?, 'doomed', 'x')",
         (sid,),
     )
+    assert db._conn.in_transaction is True  # the rollback has something to undo
     with pytest.raises(sqlite3.OperationalError, match='database is locked'):
         db._conn.commit()
 
@@ -360,6 +361,7 @@ def test_interrupted_commit_rolls_the_transaction_back(home, workdir):
         " VALUES (?, 'abandoned', 'x')",
         (sid,),
     )
+    assert db._conn.in_transaction is True  # the rollback has something to undo
     with pytest.raises(KeyboardInterrupt):
         db._conn.commit()
 
@@ -385,6 +387,7 @@ def test_interrupt_during_backoff_sleep_rolls_back(home, workdir, monkeypatch):
         " VALUES (?, 'abandoned', 'x')",
         (sid,),
     )
+    assert db._conn.in_transaction is True  # the rollback has something to undo
 
     def interrupted_sleep(_seconds):
         raise KeyboardInterrupt

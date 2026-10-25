@@ -908,7 +908,8 @@ them covering `db.py` and every module that reaches `db._conn` directly, includi
 31 call sites that commit through the raw connection; sequence allocation is a single
 `INSERT ... SELECT`; and each thread gets its own connection via `threading.local`.
 `tests/test_db_contention.py` asserts the three symptoms (red before, green after), and
-`tests/test_db.py` covers the commit path (retry, give up, direct commit, rollback).
+`tests/test_db.py` covers the commit path (retry, give up, direct commit, rollback,
+and the two interrupt cases).
 Remaining: WAL ceiling/checkpoint policy, and persisting server errors to
 `logs/server.log`.
 

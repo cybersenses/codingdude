@@ -282,19 +282,22 @@ class _Connection(sqlite3.Connection):
 
     `commit` is guarded for the same reason, and it is the path that actually
     produced the reported symptom: a COMMIT that returns SQLITE_BUSY also
-    leaves the transaction open, and 31 call sites outside `db.py` commit
-    through `db._conn` rather than through `Database._commit` — 29 literal,
-    plus the two in `references.py` that bind `conn = self._db._conn` first.
+    leaves the transaction open, and 31 call sites in the store modules
+    commit through `db._conn` rather than through `Database._commit` — 29
+    literal, plus the two in `references.py` that bind
+    `conn = self._db._conn` first.
     Putting the retry here — rather than in `Database._commit` — is what makes
     it reach them; a rollback at this level and a retry one level up would
     instead commit an empty transaction and lose the write.
     """
 
     def _rollback_quietly(self) -> None:
-        if not self.in_transaction:
-            return
+        # The in_transaction check sits inside the try too: on a broken or
+        # closed connection it can itself raise, and that must not mask the
+        # original error the caller is about to receive.
         try:
-            self.rollback()
+            if self.in_transaction:
+                self.rollback()
         except sqlite3.Error:
             # The caller is about to receive the original failure, which is
             # the actionable one; say that this connection is now dirty.
@@ -332,9 +335,10 @@ class _Connection(sqlite3.Connection):
             self._rollback_quietly()
             raise
 
-    # BaseException is deliberate in all three: a Ctrl-C or a SystemExit
-    # mid-write must not leave the transaction (and its write lock) behind
-    # either. The error is always re-raised, so nothing is swallowed.
+    # BaseException is deliberate in all four (commit and the three
+    # statement shims): a Ctrl-C or a SystemExit mid-write must not leave the
+    # transaction (and its write lock) behind either. The error is always
+    # re-raised, so nothing is swallowed.
     # `Any` on the parameters: sqlite3's own stub type for it is a long
     # union of protocols, and this shim only forwards the value unchanged.
     def execute(self, sql: str, parameters: Any = (), /) -> sqlite3.Cursor:
