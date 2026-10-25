@@ -282,11 +282,12 @@ class _Connection(sqlite3.Connection):
 
     `commit` is guarded for the same reason, and it is the path that actually
     produced the reported symptom: a COMMIT that returns SQLITE_BUSY also
-    leaves the transaction open, and 29 call sites outside `db.py` commit
-    through `db._conn` rather than through `Database._commit`. Putting the
-    retry here — rather than in `Database._commit` — is what makes it reach
-    them; a rollback at this level and a retry one level up would instead
-    commit an empty transaction and lose the write.
+    leaves the transaction open, and 31 call sites outside `db.py` commit
+    through `db._conn` rather than through `Database._commit` — 29 literal,
+    plus the two in `references.py` that bind `conn = self._db._conn` first.
+    Putting the retry here — rather than in `Database._commit` — is what makes
+    it reach them; a rollback at this level and a retry one level up would
+    instead commit an empty transaction and lose the write.
     """
 
     def _rollback_quietly(self) -> None:
@@ -308,19 +309,28 @@ class _Connection(sqlite3.Connection):
     def commit(self) -> None:
         """Commit, retrying while the database stays write-locked.
 
-        When the retries run out the transaction is rolled back before the
-        error propagates: a connection left mid-transaction holds SQLite's
-        write lock for the rest of the process's life (R57).
+        When the retries run out — or anything else interrupts the attempt,
+        including the backoff sleep itself — the transaction is rolled back
+        before the error propagates: a connection left mid-transaction holds
+        SQLite's write lock for the rest of the process's life (R57).
         """
-        for attempt in range(_BUSY_RETRIES + 1):
-            try:
-                self._commit_once()
-                return
-            except sqlite3.OperationalError as exc:
-                if 'database is locked' not in str(exc) or attempt == _BUSY_RETRIES:
-                    self._rollback_quietly()
-                    raise
-                time.sleep(_BACKOFF_BASE * 2**attempt)
+        try:
+            for attempt in range(_BUSY_RETRIES + 1):
+                try:
+                    self._commit_once()
+                    return
+                except sqlite3.OperationalError as exc:
+                    if 'database is locked' not in str(exc) or attempt == _BUSY_RETRIES:
+                        raise
+                    time.sleep(_BACKOFF_BASE * 2**attempt)
+        except BaseException:
+            # Same invariant as the statement shims below, and the reason the
+            # rollback wraps the whole loop rather than each attempt: a COMMIT
+            # can block for the full busy_timeout, so a Ctrl-C arrives either
+            # inside it or inside the sleep after it. Both must leave nothing
+            # behind.
+            self._rollback_quietly()
+            raise
 
     # BaseException is deliberate in all three: a Ctrl-C or a SystemExit
     # mid-write must not leave the transaction (and its write lock) behind
@@ -447,7 +457,7 @@ class Database:
         """Commit this thread's connection.
 
         The retry-and-rollback lives in `_Connection.commit`, one level down,
-        so the 29 call sites in the store modules that commit through
+        so the 31 call sites in the store modules that commit through
         `db._conn` directly get it too, not just the ones in this module.
         """
         self._conn.commit()

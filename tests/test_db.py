@@ -277,7 +277,7 @@ def test_commit_gives_up_after_max_retries(home, workdir, monkeypatch):
 
 
 def test_direct_connection_commit_retries_too(home, workdir, monkeypatch):
-    """`db._conn.commit()` — the path 29 store call sites use — also retries.
+    """`db._conn.commit()` — the path 31 store call sites use — also retries.
 
     Guarding only `Database._commit` left every module that commits through
     the raw connection unprotected, which is where the reported lockup came
@@ -330,6 +330,72 @@ def test_giving_up_on_commit_rolls_the_transaction_back(home, workdir, monkeypat
     assert db._conn.in_transaction is False, (
         'a failed COMMIT left an open transaction holding the write lock'
     )
+
+
+def _interrupting_conn(home) -> _Connection:
+    """A real connection whose COMMIT is interrupted rather than locked."""
+
+    class Interrupted(_Connection):
+        def _commit_once(self) -> None:
+            raise KeyboardInterrupt
+
+    conn = sqlite3.connect(home / 'codingdude.db', factory=Interrupted)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def test_interrupted_commit_rolls_the_transaction_back(home, workdir):
+    """A Ctrl-C mid-COMMIT must not leave the write lock behind either.
+
+    COMMIT can block for the full busy_timeout, which is exactly when an
+    interrupt arrives, so `commit` needs the same BaseException invariant
+    the statement shims already enforce (R57 review).
+    """
+    db = Database.connect(home)
+    sid = db.create_session(workdir)
+
+    db._conn = _interrupting_conn(home)
+    db._conn.execute(
+        "INSERT INTO session_notes (session_id, content, created_at)"
+        " VALUES (?, 'abandoned', 'x')",
+        (sid,),
+    )
+    with pytest.raises(KeyboardInterrupt):
+        db._conn.commit()
+
+    assert db._conn.in_transaction is False, (
+        'an interrupted COMMIT left an open transaction holding the write lock'
+    )
+
+
+def test_interrupt_during_backoff_sleep_rolls_back(home, workdir, monkeypatch):
+    """The interrupt can also land in the sleep between retries.
+
+    That is why the rollback wraps the whole retry loop instead of each
+    attempt: an exception raised inside the handler would otherwise escape
+    with the write still locked.
+    """
+    db = Database.connect(home)
+    sid = db.create_session(workdir)
+    calls = {'n': 0}
+
+    db._conn = _flaky_conn(home, fail_times=999, calls=calls)
+    db._conn.execute(
+        "INSERT INTO session_notes (session_id, content, created_at)"
+        " VALUES (?, 'abandoned', 'x')",
+        (sid,),
+    )
+
+    def interrupted_sleep(_seconds):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr('codingdude.db.time.sleep', interrupted_sleep)
+
+    with pytest.raises(KeyboardInterrupt):
+        db._conn.commit()
+
+    assert calls['n'] == 1  # gave up on the sleep, not on the budget
+    assert db._conn.in_transaction is False
 
 
 def test_run_lifecycle_start_then_end(home, workdir):
