@@ -23,6 +23,7 @@ dead run indefinitely.
 """
 
 import asyncio
+import sqlite3
 
 from codingdude.db import Database
 from codingdude.server import RunChannel, _reap_worker, _run_janitor
@@ -144,6 +145,32 @@ async def test_janitor_checkpoints_idle_wal(tmp_path, monkeypatch):
             break
     task.cancel()
     assert calls, 'janitor never attempted an idle WAL checkpoint'
+
+
+async def test_janitor_survives_a_failing_checkpoint(tmp_path, monkeypatch):
+    """#238: a raising checkpoint is logged and swallowed — housekeeping
+    failure must never kill the sweep loop that also watches workers."""
+    import codingdude.server as srv
+    monkeypatch.setattr(srv, '_JANITOR_INTERVAL_S', 0.02)
+    attempts = []
+
+    def boom(self, **kw):
+        attempts.append(kw)
+        raise sqlite3.OperationalError('disk I/O error')
+
+    monkeypatch.setattr(Database, 'checkpoint_idle', boom)
+    worker = FakeWorker(poll_result=None)
+    ch, db = make_channel(worker, tmp_path)
+    ch.boot_seen = True
+    channels = {ch.run_id: ch}
+    task = asyncio.create_task(_run_janitor(channels, db))
+    for _ in range(100):
+        await asyncio.sleep(0.02)
+        if len(attempts) >= 2:
+            break
+    task.cancel()
+    assert len(attempts) >= 2, 'janitor died after the first failing checkpoint'
+    assert not worker.terminated  # the sweep itself kept running
 
 
 async def test_janitor_spares_healthy_booted_worker(tmp_path, monkeypatch):

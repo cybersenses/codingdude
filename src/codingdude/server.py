@@ -239,7 +239,9 @@ async def _run_janitor(channels: dict, db: Database) -> None:
 
     - exited worker → run the (idempotent) reaper;
     - live worker that never connected within _BOOT_TIMEOUT_S → treat as a
-      failed boot, terminate it (the reaper then settles the run).
+      failed boot, terminate it (the reaper then settles the run);
+    - #238: bound the WAL — each sweep attempts an idle TRUNCATE checkpoint
+      past 4 MB (see Database.checkpoint_idle).
     """
     log = logging.getLogger('codingdude.server')
     while True:

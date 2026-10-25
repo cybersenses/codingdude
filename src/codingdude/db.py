@@ -486,7 +486,7 @@ class Database:
         `threshold_bytes` (default 4 MB).
 
         Passive autocheckpoint can be starved indefinitely by a reader
-        holding an old snapshot, which is how the WAL reached 25 MB in the
+        holding an old snapshot, which is how the WAL reached 25.5 MB in the
         wild. The janitor calls this each sweep; busy readers surface as
         `busy=1` in the result (never an exception). The attempt runs on a
         dedicated connection with a 1 s busy_timeout so a held write lock
@@ -502,7 +502,7 @@ class Database:
         wal = self._home / 'codingdude.db-wal'
         size = wal.stat().st_size if wal.exists() else 0
         if size < threshold:
-            return {'ran': False, 'wal_bytes': size}
+            return {'ran': False, 'busy': 0, 'wal_bytes': size}
         ck = sqlite3.connect(self._home / 'codingdude.db')
         try:
             ck.execute('PRAGMA busy_timeout=1000')
