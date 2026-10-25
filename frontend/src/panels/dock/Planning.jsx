@@ -35,7 +35,13 @@ export function Planning({ workdir }) {
   useEffect(() => { refresh() }, [workdir])
 
   async function setStatus(fn, id, status) {
-    await fn(workdir, id, status).catch(() => {})
+    // #242 class: a failed status change must surface — a silent catch makes
+    // refresh() re-show the old status as if the change had worked.
+    try {
+      await fn(workdir, id, status)
+    } catch (e) {
+      setErr(`status change failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
     refresh()
   }
   async function add() {
@@ -59,7 +65,7 @@ export function Planning({ workdir }) {
   }
   if (err && !data) {
     return (
-      <div className="rounded border border-danger/50 bg-danger/10 p-3 text-xs text-danger">
+      <div data-poll-error="Planning" className="rounded border border-danger/50 bg-danger/10 p-3 text-xs text-danger">
         planning data unavailable: {err}{' '}
         <button className="ml-1 underline hover:opacity-80" onClick={refresh}>retry</button>
       </div>
