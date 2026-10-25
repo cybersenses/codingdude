@@ -648,6 +648,22 @@ The measurements above come from `.scratch/db_contention.py` and
 from a checkout — the committed tests are the durable half of the evidence, and the
 timings are the record of the diagnosis.
 
+**#239 — server errors reach `logs/server.log`.** Two changes, both in
+`src/codingdude/server.py`. The middleware that rewrites `/api/` also catches
+unhandled handler exceptions and emits a `REQUEST_FAILED` ERROR record with the
+traceback on the `codingdude.server` logger before re-raising — uvicorn's own
+"Exception in ASGI application" traceback goes to stdout only, and stdout is lost
+once the launching console is gone, which is why past crash investigations found
+a `server.log` with nothing but the boot banner. The file-handler setup that
+lived inline in `serve()` became `configure_file_logging(log_dir)`, testable
+without booting a server (it attaches the handler to the root logger, so every
+`codingdude.*` logger persists). Red→green:
+`test_unhandled_route_error_is_logged_with_traceback` failed with no
+`REQUEST_FAILED` record before the middleware; `test_configure_file_logging_
+writes_server_log` failed on the missing function. Known limit, recorded in the
+middleware docstring: an exception raised while a streaming response body is
+already being sent occurs after the middleware has returned and is not captured.
+
 **What this does not claim.** Two shapes still produce the error and are expected to:
 a writer that holds the write lock past `busy_timeout` (17 s in the probe) is by
 definition beyond what a 15 s wait covers, and an explicit `BEGIN` on one connection

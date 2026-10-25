@@ -1708,10 +1708,22 @@ def create_app(
     @app.middleware('http')
     async def strip_api_prefix(request, call_next):
         """The built frontend calls /api/... (its dev-proxy convention);
-        rewrite to the real routes when FastAPI serves it directly."""
-        if request.url.path.startswith('/api/'):
-            request.scope['path'] = request.url.path[len('/api'):]
-        return await call_next(request)
+        rewrite to the real routes when FastAPI serves it directly.
+
+        #239: unhandled handler exceptions also get a REQUEST_FAILED ERROR
+        record with the traceback on the server logger — uvicorn prints them
+        to stdout only, which is lost once the launching console is gone.
+        (Exceptions raised while a streaming response body is being sent
+        occur after this middleware has returned and are not captured.)
+        """
+        try:
+            if request.url.path.startswith('/api/'):
+                request.scope['path'] = request.url.path[len('/api'):]
+            return await call_next(request)
+        except Exception:
+            logging.getLogger('codingdude.server').exception(
+                'REQUEST_FAILED %s %s', request.method, request.url.path)
+            raise
 
     # Serve the built frontend when it exists (single-command deployment).
     dist = Path(__file__).resolve().parents[2] / 'frontend' / 'dist'
@@ -1741,6 +1753,21 @@ def load_or_create_token(home: Path | None = None) -> str:
     return token
 
 
+def configure_file_logging(log_dir: Path) -> logging.Handler:
+    """#239: attach a logs/server.log handler to the root logger so server
+    records (including REQUEST_FAILED tracebacks) survive the console.
+
+    Returns the handler so callers/tests can detach it.
+    """
+    log_dir.mkdir(parents=True, exist_ok=True)
+    handler = logging.FileHandler(log_dir / 'server.log', encoding='utf-8')
+    handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(name)s %(message)s'))
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    root.addHandler(handler)
+    return handler
+
+
 def serve(host: str = HOST, port: int = 8765) -> None:
     """Run the uvicorn server on the given host/port (foreground)."""
     import uvicorn
@@ -1750,13 +1777,7 @@ def serve(host: str = HOST, port: int = 8765) -> None:
     app.state.port = port
     # Lifecycle diagnostics (R31) must land somewhere readable even when the
     # console that launched the server is gone.
-    log_dir = config_home() / 'logs'
-    log_dir.mkdir(parents=True, exist_ok=True)
-    handler = logging.FileHandler(log_dir / 'server.log', encoding='utf-8')
-    handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(name)s %(message)s'))
-    root = logging.getLogger()
-    root.setLevel(logging.INFO)
-    root.addHandler(handler)
+    configure_file_logging(config_home() / 'logs')
     logging.getLogger(__name__).info('codingdude server on http://%s:%s', host, port)
     print(f'codingdude server on http://{host}:{port} token={token}')
     uvicorn.run(app, host=host, port=port, log_level='warning')
