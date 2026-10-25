@@ -93,8 +93,9 @@ def _default_mcp_servers() -> dict:
         # Chrome DevTools for agents (R61): browser automation, console,
         # network, and performance traces for automated testing. Google's
         # usage statistics and update checks are on by default; both are
-        # disabled here. A failure to spawn or initialise is caught by
-        # the pre-flight, which drops the server for the run (R61).
+        # disabled here. Spawn/connect failures the pre-flight recognises
+        # drop the server for the run with a warning; toolset shapes it
+        # cannot verify are kept unverified (mcp_config `_find_list_tools`).
         servers['chrome-devtools'] = {
             'type': 'stdio',
             'command': cdt_command,

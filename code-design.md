@@ -626,9 +626,10 @@ concurrent appends neither collide nor lose rows; a shared `Database` survives f
 threads. All three failed before the change (`IntegrityError`,
 `OperationalError: database is locked`, `InterfaceError`) and pass after — the third
 because two threads interleaved, so it is the weakest of the three rather than a
-guaranteed red. Six commit-path tests sit in `tests/test_db.py` alongside them:
+guaranteed red. Seven commit-path tests sit in `tests/test_db.py` alongside them:
 retry-then-succeed, give-up-after-budget, the direct `db._conn.commit()` path,
-rollback when a `COMMIT` never succeeds, and two for interrupts — one raised
+rollback when a `COMMIT` never succeeds, non-lock `OperationalError` raising on
+the first attempt, and two for interrupts — one raised
 inside the `COMMIT`, one inside the backoff sleep between retries, both asserting
 `in_transaction` is false afterwards. The interrupt cases exist because `commit`
 guards `BaseException` for the same reason the statement shims do: a `COMMIT` can
