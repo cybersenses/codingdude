@@ -921,9 +921,14 @@ too — #238 landed: `PRAGMA wal_autocheckpoint=256` (≈1 MB, down from SQLite'
 1000-page default) plus `Database.checkpoint_idle()`, run by the #148 janitor
 every sweep via `asyncio.to_thread`: past a 4 MB soft threshold it attempts
 `PRAGMA wal_checkpoint(TRUNCATE)` on a dedicated 1 s-busy_timeout connection
-(busy readers surface as `busy=1`, never an exception), with a documented
-64 MB warning ceiling. Tests: `test_wal_autocheckpoint_is_bounded`,
-`test_checkpoint_idle_*`, `test_janitor_checkpoints_idle_wal`.
+(busy readers surface as `busy=1`, as data rather than an exception), with a
+documented 64 MB warning ceiling. Honest limit, probed by
+`test_checkpoint_idle_survives_busy_readers`: a reader that pins the log
+still blocks TRUNCATE — the mechanism bounds the WAL when checkpoints are
+merely starved, and degrades to logged warnings (INFO on busy, WARNING past
+the ceiling) if a pin never clears. Tests: `test_wal_autocheckpoint_is_bounded`,
+`test_checkpoint_idle_*`, `test_janitor_checkpoints_idle_wal`,
+`test_janitor_survives_a_failing_checkpoint`.
 
 ## Suspected causes (ranked, unverified)
 1. One `sqlite3.Connection` per process shared across FastAPI threadpool workers
