@@ -905,7 +905,7 @@ Phase 1 + fix landed with ticket #223. `Database` now connects through a
 `sqlite3.Connection` subclass whose `execute`/`executemany`/`executescript` roll back
 and re-raise, and whose `commit` retries while write-locked then rolls back — between
 them covering `db.py` and every module that reaches `db._conn` directly, including the
-29 call sites that commit through the raw connection; sequence allocation is a single
+31 call sites that commit through the raw connection; sequence allocation is a single
 `INSERT ... SELECT`; and each thread gets its own connection via `threading.local`.
 `tests/test_db_contention.py` asserts the three symptoms (red before, green after), and
 `tests/test_db.py` covers the commit path (retry, give up, direct commit, rollback).

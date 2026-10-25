@@ -607,7 +607,7 @@ Defect 3 becomes one connection per thread, created lazily through a
 
 **The guard had a hole, found by the post-push review of `229f96c`.** The first
 version guarded `execute`, `executemany` and `executescript` but not `commit`,
-while `Database._commit` — then the only place that retried — is bypassed by 29
+while `Database._commit` — then the only place that retried — is bypassed by 31
 call sites in those eight modules, which call `db._conn.commit()` directly. A
 `COMMIT` returning `SQLITE_BUSY` leaves the transaction open exactly as a failed
 `INSERT` does, so the reported lockup was still reachable from the write path
@@ -626,9 +626,16 @@ concurrent appends neither collide nor lose rows; a shared `Database` survives f
 threads. All three failed before the change (`IntegrityError`,
 `OperationalError: database is locked`, `InterfaceError`) and pass after — the third
 because two threads interleaved, so it is the weakest of the three rather than a
-guaranteed red. Four commit-path tests sit in `tests/test_db.py` alongside them:
-retry-then-succeed, give-up-after-budget, the direct `db._conn.commit()` path, and
-rollback when a `COMMIT` never succeeds. `uv run pytest tests/test_db.py
+guaranteed red. Six commit-path tests sit in `tests/test_db.py` alongside them:
+retry-then-succeed, give-up-after-budget, the direct `db._conn.commit()` path,
+rollback when a `COMMIT` never succeeds, and two for interrupts — one raised
+inside the `COMMIT`, one inside the backoff sleep between retries, both asserting
+`in_transaction` is false afterwards. The interrupt cases exist because `commit`
+guards `BaseException` for the same reason the statement shims do: a `COMMIT` can
+block for the full `busy_timeout`, which is exactly when a Ctrl-C arrives, and the
+rollback therefore wraps the whole retry loop rather than each attempt — an
+exception raised in the handler would otherwise escape with the write still
+locked. `uv run pytest tests/test_db.py
 tests/test_db_contention.py -q` runs them in about a second.
 
 The measurements above come from `.scratch/db_contention.py` and
