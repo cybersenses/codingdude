@@ -28,6 +28,15 @@ export interface PollError {
   message: string
 }
 
+/**
+ * The one error-to-text rule for every fetch failure the UI shows (#234).
+ * Panels and polls catch whatever `call` rejected with — an Error from the
+ * network layer or a plain string — so this is the single place that decides.
+ */
+export function errMsg(err: unknown): string {
+  return String(err instanceof Error ? err.message : err)
+}
+
 /** Tab name -> the last failure for that tab. */
 export type PollErrors = Record<string, PollError>
 
@@ -42,7 +51,7 @@ export function pollFailure(
     ...errors,
     [tab]: {
       sessionId: sessionId ?? null,
-      message: String(err instanceof Error ? err.message : err),
+      message: errMsg(err),
     },
   }
 }

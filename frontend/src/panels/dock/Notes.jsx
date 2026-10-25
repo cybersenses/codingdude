@@ -15,6 +15,19 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import React, { useEffect, useState } from 'react'
 import { call } from '../../api'
+import { errMsg } from '../../pollErrors'
+
+// #234: a failed load must not look like "no notes yet" — the panel keeps the
+// last failure on screen (with the data-poll-error seam the smoke gate fails
+// on) and clears it on the next successful fetch.
+function Failure({ children }) {
+  return (
+    <div
+      data-poll-error="Notes"
+      className="rounded border border-danger/40 bg-danger/10 p-2 text-xs text-danger"
+    >{children}</div>
+  )
+}
 
 // R59 P0: moved verbatim out of App.jsx's DockPanel tab body. Session notes +
 // project guidance; becomes the `notes` panel in P2.
@@ -25,6 +38,8 @@ export function Notes({ sessionId, workdir }) {
   const [offset, setOffset] = useState('')
   const [pnotes, setPnotes] = useState([])
   const [pdraft, setPdraft] = useState('')
+  const [loadError, setLoadError] = useState(null)
+  const [ploadError, setPLoadError] = useState(null)
 
   useEffect(() => {
     if (!sessionId) return
@@ -38,7 +53,10 @@ export function Notes({ sessionId, workdir }) {
         if (!live) return
         setNotes(n)
         setKeep((sessions.find((x) => x.session_id === sessionId) || {}).keep_for_evals ?? false)
-      } catch { /* transient */ }
+        setLoadError(null)
+      } catch (err) {
+        if (live) setLoadError(errMsg(err))
+      }
     }
     load()
     return () => { live = false }
@@ -46,13 +64,20 @@ export function Notes({ sessionId, workdir }) {
 
   const loadProjectNotes = async () => {
     if (!workdir) return
-    try { setPnotes(await call(`/notes?workdir=${encodeURIComponent(workdir)}`)) } catch { /* transient */ }
+    try {
+      setPnotes(await call(`/notes?workdir=${encodeURIComponent(workdir)}`))
+      setPLoadError(null)
+    } catch (err) {
+      setPLoadError(errMsg(err))
+    }
   }
   useEffect(() => { loadProjectNotes() }, [workdir])
 
   if (!sessionId) return <div className="text-neutral-600">no session</div>
   return (
     <div className="space-y-2">
+      {loadError && <Failure>could not load session notes: {loadError}</Failure>}
+      {ploadError && <Failure>could not load project notes: {ploadError}</Failure>}
       <label className="flex items-center gap-1.5 text-xs text-neutral-300">
         <input
           type="checkbox"

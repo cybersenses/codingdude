@@ -14,7 +14,20 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import { describe, expect, it } from 'vitest'
-import { pollCleared, pollFailure, tabError } from './pollErrors'
+import { errMsg, pollCleared, pollFailure, tabError } from './pollErrors'
+
+describe('errMsg (#234)', () => {
+  it('unwraps an Error to its message', () => {
+    expect(errMsg(new Error('boom'))).toBe('boom')
+  })
+
+  it('carries a non-Error rejection value through as text', () => {
+    // Self-fetching panels catch whatever `call` threw, which is not always an
+    // Error — `call` rejects with a Response status line on non-OK fetches.
+    expect(errMsg('plain string')).toBe('plain string')
+    expect(errMsg({ status: 500 })).toBe('[object Object]')
+  })
+})
 
 describe('pollFailure (#233)', () => {
   it('stamps the failure with the session it belongs to', () => {
