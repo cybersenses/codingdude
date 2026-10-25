@@ -319,6 +319,7 @@ def test_mcp_status_block_lists_dead_servers_only_when_dead():
     ])
     assert block.startswith('## MCP Status')
     assert 'codegraph' in block and 'WinError 2' in block
-    assert '## MCP Status' in block and 'echo' not in block.split('Status', 1)[1].split('\n\n', 1)[-1] or True
+    # healthy servers are never named in the block
+    assert 'echo' not in block
     # dead server must be flagged as unavailable this run
-    assert 'unavailable' in block or 'disabled' in block
+    assert 'unavailable' in block
