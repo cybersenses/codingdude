@@ -910,8 +910,13 @@ them covering `db.py` and every module that reaches `db._conn` directly, includi
 `tests/test_db_contention.py` asserts the three symptoms (red before, green after), and
 `tests/test_db.py` covers the commit path (retry, give up, direct commit, rollback,
 and the two interrupt cases).
-Remaining: WAL ceiling/checkpoint policy, and persisting server errors to
-`logs/server.log`.
+Remaining: WAL ceiling/checkpoint policy. Server errors are now persisted to
+`logs/server.log` — #239 landed: `configure_file_logging()` attaches the root
+file handler (factored out of `serve()`), and the `strip_api_prefix` middleware
+emits a `REQUEST_FAILED` ERROR record with the traceback for every unhandled
+handler exception (uvicorn prints those to stdout only, which is lost once the
+launching console is gone). Traceback capture verified red→green via
+`test_unhandled_route_error_is_logged_with_traceback`.
 
 ## Suspected causes (ranked, unverified)
 1. One `sqlite3.Connection` per process shared across FastAPI threadpool workers
@@ -933,7 +938,7 @@ Remaining: WAL ceiling/checkpoint policy, and persisting server errors to
   in-flight transaction. **Done (#223): per-thread connections, plus
   rollback-and-retry on both a failed statement and a failed COMMIT.**
 - WAL bounded (autocheckpoint + explicit checkpoint on idle); documented ceiling.
-- Server errors persisted to `logs/server.log`, not just stdout.
+- Server errors persisted to `logs/server.log`, not just stdout. **Done (#239).**
 
 
 ## R58 — Stale artifact expiry — dismiss orphaned choice/spec cards

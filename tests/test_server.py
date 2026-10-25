@@ -694,3 +694,49 @@ def test_terminal_status_always_in_db_check_set():
         assert _terminal_status(channel) in allowed, (
             f'{terminal} maps to a status outside the runs CHECK set'
         )
+
+
+# ---- #239: server errors must reach logs/server.log, not just stdout ----
+
+
+def test_unhandled_route_error_is_logged_with_traceback(server, caplog):
+    """#239: an unhandled exception in a request handler gets a
+    REQUEST_FAILED ERROR record (with traceback) on the server logger, so it
+    lands in logs/server.log via the root file handler."""
+    import logging
+
+    app, base = server
+
+    from starlette.routing import Route
+
+    async def boom(request):
+        raise RuntimeError('kaboom-diagnostic')
+
+    # Insert before the '/' static mount, which would otherwise swallow it.
+    app.router.routes.insert(0, Route('/boom-test', boom))
+
+    with caplog.at_level(logging.ERROR, logger='codingdude.server'):
+        r = httpx.get(f'{base}/boom-test', headers=auth(), timeout=10)
+    assert r.status_code == 500
+    failed = [rec for rec in caplog.records if 'REQUEST_FAILED' in rec.message]
+    assert failed, 'no REQUEST_FAILED record for the failing request'
+    assert 'GET' in failed[0].message and 'boom-test' in failed[0].message
+    assert failed[0].exc_info, 'record carries no traceback'
+
+
+def test_configure_file_logging_writes_server_log(tmp_path):
+    """#239: the file-logging setup attaches a server.log handler to the root
+    logger, so records from any codingdude logger persist to disk."""
+    import logging
+
+    from codingdude.server import configure_file_logging
+
+    handler = configure_file_logging(tmp_path)
+    try:
+        logging.getLogger('codingdude.server').info('PROBE_LINE xyzzy')
+    finally:
+        handler.flush()
+        logging.getLogger().removeHandler(handler)
+    text = (tmp_path / 'server.log').read_text(encoding='utf-8')
+    assert 'PROBE_LINE xyzzy' in text
+    assert any(h for h in logging.getLogger().handlers if h is handler) is False
