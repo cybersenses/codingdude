@@ -469,6 +469,8 @@ def test_checkpoint_idle_skips_below_threshold(home, workdir):
     result = db.checkpoint_idle(threshold_bytes=64 * 1024 * 1024)
 
     assert result['ran'] is False
+    assert result['busy'] == 0  # the key exists even on the skip branch
+    assert 'wal_bytes' in result
 
 
 def test_checkpoint_idle_survives_busy_readers(home, workdir):
