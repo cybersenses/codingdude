@@ -283,6 +283,40 @@ def test_no_failure_modes_flag_disables_it_for_a_message(tmp_path):
     assert cc.main(["--no-failure-modes", "--message-file", str(msg)]) == 0
 
 
+def test_empty_probe_annotation_does_not_count(tmp_path):
+    """`[probe: ]` names no command, so it must not vouch for the claim."""
+    msg = tmp_path / "msg.txt"
+    msg.write_text("The gate silently drops the error [probe: ].", encoding="utf-8")
+    assert cc.main(["--message-file", str(msg)]) == 1
+
+
+def test_a_probe_on_a_different_bullet_does_not_vouch(tmp_path):
+    """Bullets are separate claims; one line's probe proves nothing about the next."""
+    msg = tmp_path / "msg.txt"
+    msg.write_text(
+        "* the gate silently drops the error\n* [probe: pytest -q tests/test_x.py]\n",
+        encoding="utf-8",
+    )
+    problems = cc.check_failure_modes(msg.read_text(encoding="utf-8"))
+    assert problems == [
+        "failure-mode claim without a probe: * the gate silently drops the error"
+    ]
+
+
+def test_words_containing_a_verb_fragment_are_not_claims():
+    """`pecan never` must not match `can never`; an unbounded substring cried wolf."""
+    assert cc.check_failure_modes("The pecan never rots in storage.") == []
+
+
+def test_a_document_is_not_failure_mode_checked_because_a_message_is_present(tmp_path):
+    """Opt-in for documents must not leak from the message-file default."""
+    doc = tmp_path / "doc.md"
+    doc.write_text("Historically the gate silently dropped the error.", encoding="utf-8")
+    msg = tmp_path / "msg.txt"
+    msg.write_text("Fine message.", encoding="utf-8")
+    assert cc.main([str(doc), "--message-file", str(msg)]) == 0
+
+
 # --------------------------------------------------------------------------
 # the enforcement path
 # --------------------------------------------------------------------------

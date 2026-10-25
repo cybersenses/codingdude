@@ -140,9 +140,9 @@ RUNTIME_FILES = frozenset(
 _FAILURE_MODE_PATTERNS = (
     r"\braises\b",
     r"\bsilently\b",
-    r"can never",
-    r"cannot miss",
-    r"can't miss",
+    r"\bcan never\b",
+    r"\bcannot miss\b",
+    r"\bcan't miss\b",
     r"\balways\b",
     r"\bunreachable\b",
     r"\bhides\b",
@@ -150,9 +150,13 @@ _FAILURE_MODE_PATTERNS = (
     r"\bguarantees\b",
 )
 _FAILURE_MODE_RE = re.compile("|".join(_FAILURE_MODE_PATTERNS), re.IGNORECASE)
-_PROBE_RE = re.compile(r"\[probe:")
+#: The annotation must name a command, so at least one non-space character
+#: after the colon -- `[probe: ]` is an empty vouch.
+_PROBE_RE = re.compile(r"\[probe:\s*[^\]\s]")
 
-_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+|\n\n+")
+#: A bullet is a separate claim: a probe on the next line proves nothing about
+#: this one, so single newlines split sentences too, not just blank lines.
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+|\n+")
 _BACKTICK = re.compile(r"`([^`\n]+)`")
 _HEX_REF = re.compile(r"^[0-9a-f]{7,40}$")
 _LINE_REF = re.compile(r"^(?P<path>[^\s:]+):(?P<line>\d+)(?:-(?P<end>\d+))?$")
@@ -252,7 +256,7 @@ def _is_ignored(token: str, root: Path) -> bool:
     `node_modules/`, `reference/` and `.scratch/` are build products and a local
     library: absent from a fresh checkout *by definition*, present here because a
     build or a scan ran. Asserting on them made the whole check machine-dependent --
-    green on the author's tree, eleven failures in a clean one (probe: a
+    green on the author's tree, twelve findings in a clean one (probe: a
     `git worktree` of HEAD, `pytest tests/test_claim_check.py` -> 4 failed).
 
     Fails closed: if git cannot answer, the path is still checked.
@@ -576,33 +580,36 @@ def main(argv: list[str] | None = None) -> int:
     if not args.files and not args.message_file:
         parser.error("give at least one file or --message-file")
 
-    sources: list[tuple[str, str]] = []
+    sources: list[tuple[str, str, bool]] = []  # (name, text, is_commit_message)
     for name in args.files:
         try:
-            sources.append((name, Path(name).read_text(encoding="utf-8", errors="replace")))
+            sources.append((name, Path(name).read_text(encoding="utf-8", errors="replace"), False))
         except OSError as exc:
             print(f"claim_check: cannot read {name}: {exc}", file=sys.stderr)
             return 2
     if args.message_file:
         if args.message_file == "-":
-            sources.append(("<stdin>", sys.stdin.read()))
+            sources.append(("<stdin>", sys.stdin.read(), True))
         else:
             try:
                 text = Path(args.message_file).read_text(encoding="utf-8", errors="replace")
             except OSError as exc:
                 print(f"claim_check: cannot read {args.message_file}: {exc}", file=sys.stderr)
                 return 2
-            sources.append((args.message_file, text))
+            sources.append((args.message_file, text, True))
 
     # Built once, shared by every document: the source tree does not change
     # between files, and walking it per file would dominate the runtime.
     token_set = _tracked_source_tokens(ROOT) if with_symbols else set()
 
+    # Documents are failure-mode-checked only on explicit `--failure-modes`,
+    # even when a --message-file is present in the same run: the default that
+    # follows the input applies per source, not to the whole invocation.
     failures = 0
-    for name, text in sources:
+    for name, text, is_commit_message in sources:
         problems = run(
             text, ROOT, symbols=with_symbols, source=token_set,
-            failure_modes=with_failure_modes,
+            failure_modes=with_failure_modes if is_commit_message else args.failure_modes,
         )
         for problem in problems:
             print(f"{name}: {problem}")
