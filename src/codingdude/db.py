@@ -400,6 +400,10 @@ class Database:
         # with SQLite's default 5 s handler instead of the configured 15 s.
         conn.execute('PRAGMA busy_timeout=15000')
         conn.execute('PRAGMA journal_mode=WAL')
+        # #238: passive autocheckpoint every 256 pages (~1 MB), not SQLite's
+        # 1000-page (~4 MB) default — smaller WAL frames mean cheaper reads
+        # and a shorter window in which a pinned reader can starve checkpoints.
+        conn.execute('PRAGMA wal_autocheckpoint=256')
         # migration: embeddings gained workdir scoping in 0.3.1 — the cache is
         # disposable, so recreate the legacy shape in place
         cols = [r[1] for r in conn.execute('PRAGMA table_info(embeddings)')]
@@ -467,6 +471,56 @@ class Database:
         `db._conn` directly get it too, not just the ones in this module.
         """
         self._conn.commit()
+
+    # #238: soft threshold at which the idle janitor attempts a TRUNCATE
+    # checkpoint; above WAL_CEILING_BYTES it also warns — that is the
+    # documented worst case, reached only when readers pin the log faster
+    # than sweeps can truncate it.
+    WAL_CHECKPOINT_THRESHOLD_BYTES = 4 * 1024 * 1024
+    WAL_CEILING_BYTES = 64 * 1024 * 1024
+
+    def checkpoint_idle(
+        self, threshold_bytes: int | None = None
+    ) -> dict:
+        """Bound the WAL (#238): TRUNCATE-checkpoint when it has grown past
+        `threshold_bytes` (default 4 MB).
+
+        Passive autocheckpoint can be starved indefinitely by a reader
+        holding an old snapshot, which is how the WAL reached 25 MB in the
+        wild. The janitor calls this each sweep; busy readers surface as
+        `busy=1` in the result (never an exception). The attempt runs on a
+        dedicated connection with a 1 s busy_timeout so a held write lock
+        cannot stall a sweep — the worker connections keep their 15 s.
+        A WAL past WAL_CEILING_BYTES (64 MB, documented ceiling) additionally
+        logs a warning — growth beyond it means readers never release.
+        """
+        threshold = (
+            self.WAL_CHECKPOINT_THRESHOLD_BYTES
+            if threshold_bytes is None
+            else threshold_bytes
+        )
+        wal = self._home / 'codingdude.db-wal'
+        size = wal.stat().st_size if wal.exists() else 0
+        if size < threshold:
+            return {'ran': False, 'wal_bytes': size}
+        ck = sqlite3.connect(self._home / 'codingdude.db')
+        try:
+            ck.execute('PRAGMA busy_timeout=1000')
+            busy, _log, _ckpt = ck.execute(
+                'PRAGMA wal_checkpoint(TRUNCATE)'
+            ).fetchone()
+        finally:
+            ck.close()
+        size = wal.stat().st_size if wal.exists() else 0
+        if busy:
+            _logger.info('idle WAL checkpoint skipped (busy readers); %d bytes', size)
+        if size >= self.WAL_CEILING_BYTES:
+            _logger.warning(
+                'WAL is %d bytes (past the %d ceiling) — readers are pinning '
+                'the log faster than checkpoints can truncate it',
+                size, self.WAL_CEILING_BYTES,
+            )
+        return {'ran': True, 'busy': busy, 'wal_bytes': size}
 
     def update_session_context(
         self, session_id: str, total_tokens: int, model_limit: int

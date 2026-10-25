@@ -863,7 +863,7 @@ Verified in python:3.12-slim Docker container. uv sync works (needs full source 
 Validate the install path end-to-end on a bare Linux environment via Docker: uv sync, gates, frontend build/serve, server /health boot. Document Windows-only steps that don't apply.
 
 ## R57 — SQLite 'database is locked' lockup: shared connection, no write serialization
-**Status:** in_progress
+**Status:** done
 
 ## Problem
 Intermittent `sqlite3.OperationalError: database is locked` that hangs a run and the UI
@@ -916,7 +916,14 @@ file handler (factored out of `serve()`), and the `strip_api_prefix` middleware
 emits a `REQUEST_FAILED` ERROR record with the traceback for every unhandled
 handler exception (uvicorn prints those to stdout only, which is lost once the
 launching console is gone). Traceback capture verified red→green via
-`test_unhandled_route_error_is_logged_with_traceback`.
+`test_unhandled_route_error_is_logged_with_traceback`. The WAL is now bounded
+too — #238 landed: `PRAGMA wal_autocheckpoint=256` (≈1 MB, down from SQLite's
+1000-page default) plus `Database.checkpoint_idle()`, run by the #148 janitor
+every sweep via `asyncio.to_thread`: past a 4 MB soft threshold it attempts
+`PRAGMA wal_checkpoint(TRUNCATE)` on a dedicated 1 s-busy_timeout connection
+(busy readers surface as `busy=1`, never an exception), with a documented
+64 MB warning ceiling. Tests: `test_wal_autocheckpoint_is_bounded`,
+`test_checkpoint_idle_*`, `test_janitor_checkpoints_idle_wal`.
 
 ## Suspected causes (ranked, unverified)
 1. One `sqlite3.Connection` per process shared across FastAPI threadpool workers
@@ -938,6 +945,8 @@ launching console is gone). Traceback capture verified red→green via
   in-flight transaction. **Done (#223): per-thread connections, plus
   rollback-and-retry on both a failed statement and a failed COMMIT.**
 - WAL bounded (autocheckpoint + explicit checkpoint on idle); documented ceiling.
+  **Done (#238): wal_autocheckpoint=256, janitor-driven TRUNCATE past 4 MB,
+  64 MB warning ceiling.**
 - Server errors persisted to `logs/server.log`, not just stdout. **Done (#239).**
 
 

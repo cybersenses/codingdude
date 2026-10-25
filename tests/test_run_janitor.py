@@ -125,6 +125,27 @@ async def test_janitor_terminates_never_booted_worker(tmp_path, monkeypatch):
     )
 
 
+async def test_janitor_checkpoints_idle_wal(tmp_path, monkeypatch):
+    """#238: every janitor sweep also tries to bound the WAL via
+    db.checkpoint_idle, so a busy production DB still gets periodic
+    TRUNCATE attempts."""
+    import codingdude.server as srv
+    monkeypatch.setattr(srv, '_JANITOR_INTERVAL_S', 0.02)
+    calls = []
+    monkeypatch.setattr(Database, 'checkpoint_idle', lambda self, **kw: calls.append(kw))
+    worker = FakeWorker(poll_result=None)
+    ch, db = make_channel(worker, tmp_path)
+    ch.boot_seen = True
+    channels = {ch.run_id: ch}
+    task = asyncio.create_task(_run_janitor(channels, db))
+    for _ in range(100):
+        await asyncio.sleep(0.02)
+        if calls:
+            break
+    task.cancel()
+    assert calls, 'janitor never attempted an idle WAL checkpoint'
+
+
 async def test_janitor_spares_healthy_booted_worker(tmp_path, monkeypatch):
     import codingdude.server as srv
     monkeypatch.setattr(srv, '_JANITOR_INTERVAL_S', 0.02)
