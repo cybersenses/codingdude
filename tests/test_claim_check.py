@@ -225,6 +225,65 @@ def test_symbols_flag_forces_the_identifier_check_on_a_document(tmp_path):
 
 
 # --------------------------------------------------------------------------
+# failure-mode claims
+# --------------------------------------------------------------------------
+def test_failure_mode_claim_without_a_probe_is_reported():
+    assert cc.check_failure_modes("An unquoted id yields invalid CSS, which is silently dropped.") == [
+        "failure-mode claim without a probe: An unquoted id yields invalid CSS,"
+        " which is silently dropped."
+    ]
+
+
+def test_failure_mode_claim_with_a_probe_annotation_passes():
+    text = (
+        "An unquoted id raises SyntaxError [probe: python -c \"from playwright.sync_api"
+        " import sync_playwright; ...\"]."
+    )
+    assert cc.check_failure_modes(text) == []
+
+
+def test_failure_mode_claim_marked_not_yet_verified_passes():
+    text = "The pre-flight hides the server on spawn failure (not yet verified)."
+    assert cc.check_failure_modes(text) == []
+
+
+def test_plain_description_is_not_a_failure_mode_claim():
+    assert cc.check_failure_modes("The banner shows the error message from the poll.") == []
+
+
+def test_run_includes_failure_modes_when_asked():
+    text = "`poll_error` can never miss a banner."
+    assert cc.run(text, ROOT, symbols=False, failure_modes=True) == [
+        "failure-mode claim without a probe: `poll_error` can never miss a banner."
+    ]
+
+
+def test_main_enforces_failure_modes_in_a_commit_message_by_default(tmp_path, capsys):
+    msg = tmp_path / "msg.txt"
+    msg.write_text("The gate always fails on a 5xx.", encoding="utf-8")
+    assert cc.main(["--message-file", str(msg)]) == 1
+    assert "failure-mode claim" in capsys.readouterr().out
+
+
+def test_main_skips_failure_modes_in_a_document_by_default(tmp_path):
+    doc = tmp_path / "doc.md"
+    doc.write_text("Historically the gate silently dropped the error.", encoding="utf-8")
+    assert cc.main([str(doc)]) == 0
+
+
+def test_failure_modes_flag_forces_the_check_on_a_document(tmp_path):
+    doc = tmp_path / "doc.md"
+    doc.write_text("The gate silently drops the error.", encoding="utf-8")
+    assert cc.main(["--failure-modes", str(doc)]) == 1
+
+
+def test_no_failure_modes_flag_disables_it_for_a_message(tmp_path):
+    msg = tmp_path / "msg.txt"
+    msg.write_text("The gate silently drops the error.", encoding="utf-8")
+    assert cc.main(["--no-failure-modes", "--message-file", str(msg)]) == 0
+
+
+# --------------------------------------------------------------------------
 # the enforcement path
 # --------------------------------------------------------------------------
 def test_a_false_claim_appended_to_a_real_document_is_caught(tmp_path):

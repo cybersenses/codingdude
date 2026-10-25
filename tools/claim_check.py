@@ -31,6 +31,9 @@ This narrows that. It checks the subset of claims a machine can settle:
 * short hex refs name a real commit
 * an identifier in backticks appears somewhere in the tracked source
 * "N lines" next to a single named file matches that file
+* a sentence claiming what a failure path does (raises/silently/always/...)
+  carries `[probe: ...]` or "not yet verified" -- on by default for commit
+  messages, opt-in (`--failure-modes`) for documents
 
 It cannot check what most of those six commits got wrong: whether a mechanism
 works, whether a shape exists, or why an observation happened. Those need a probe
@@ -127,6 +130,27 @@ RUNTIME_FILES = frozenset(
     }
 )
 
+
+#: Words that assert what happens when something goes wrong. A sentence
+#: carrying one is a claim about a failure path, which is exactly the class
+#: six consecutive commits got wrong -- the happy paths were executed, the
+#: failure paths were described from imagination. Such a sentence must name the
+#: command that demonstrated it (`[probe: ...]`) or admit it was not run
+#: (`not yet verified`); anything else is rejected.
+_FAILURE_MODE_PATTERNS = (
+    r"\braises\b",
+    r"\bsilently\b",
+    r"can never",
+    r"cannot miss",
+    r"can't miss",
+    r"\balways\b",
+    r"\bunreachable\b",
+    r"\bhides\b",
+    r"\bprevents\b",
+    r"\bguarantees\b",
+)
+_FAILURE_MODE_RE = re.compile("|".join(_FAILURE_MODE_PATTERNS), re.IGNORECASE)
+_PROBE_RE = re.compile(r"\[probe:")
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+|\n\n+")
 _BACKTICK = re.compile(r"`([^`\n]+)`")
@@ -442,23 +466,48 @@ def check_line_counts(text: str, root: Path = ROOT) -> list[str]:
     return problems
 
 
+def check_failure_modes(text: str) -> list[str]:
+    """Failure-mode claims with no probe annotation and no honesty marker.
+
+    Every finding in the six-commit pattern shared one shape: a sentence about
+    what happens when something goes wrong, written from the diff, never
+    executed. A gate cannot force the execution, but it can force the choice
+    this check offers: name the command that demonstrated the behaviour
+    (`[probe: ...]`) or write `not yet verified` and let the reader weigh it.
+    Sentence-scoped by design -- an annotation a paragraph away proves nothing.
+    """
+    problems = []
+    for sentence in _sentences(text):
+        if not _FAILURE_MODE_RE.search(sentence):
+            continue
+        if _PROBE_RE.search(sentence) or "not yet verified" in sentence.lower():
+            continue
+        problems.append(f"failure-mode claim without a probe: {sentence.strip()}")
+    return problems
+
+
 def run(
     text: str,
     root: Path = ROOT,
     symbols: bool = True,
     source: set[str] | None = None,
+    failure_modes: bool = False,
 ) -> list[str]:
     """Every finding, in a stable order.
 
     The single definition of "the check set and its order" — `main` calls this
     rather than repeating the list, so a check added here reaches the CLI.
     `source` is passed through so a caller checking several documents builds the
-    identifier corpus once.
+    identifier corpus once. `failure_modes` is opt-in here: the living documents
+    describe historical behaviour in prose, so it defaults off and `main` turns
+    it on for commit messages, where the claim is about this change.
     """
     problems = check_paths(text, root)
     problems += check_line_refs(text, root)
     problems += check_hashes(text, root)
     problems += check_line_counts(text, root)
+    if failure_modes:
+        problems += check_failure_modes(text)
     if symbols:
         problems += check_symbols(text, root, source=source)
     return problems
@@ -485,6 +534,20 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="force the identifier check on (the default for --message-file)",
     )
+    parser.add_argument(
+        "--failure-modes",
+        action="store_true",
+        help=(
+            "check failure-mode prose (raises/silently/always/...); a sentence "
+            "with such a verb must carry '[probe: ...]' or 'not yet verified' "
+            "(the default for --message-file)"
+        ),
+    )
+    parser.add_argument(
+        "--no-failure-modes",
+        action="store_true",
+        help="skip the failure-mode check (documents describe history in prose)",
+    )
     args = parser.parse_args(argv)
 
     # Documents name other people's APIs and planned ones by design, so the
@@ -497,6 +560,18 @@ def main(argv: list[str] | None = None) -> int:
         with_symbols = False
     else:
         with_symbols = bool(args.message_file)
+
+    # Same reasoning for failure-mode prose: a living document narrates what a
+    # past change did, which is history rather than a live claim, while a commit
+    # message asserts behaviour this change introduces. The verbs list is small
+    # on purpose -- a wrong check gets ignored, and an ignored gate is worse
+    # than none.
+    if args.failure_modes:
+        with_failure_modes = True
+    elif args.no_failure_modes:
+        with_failure_modes = False
+    else:
+        with_failure_modes = bool(args.message_file)
 
     if not args.files and not args.message_file:
         parser.error("give at least one file or --message-file")
@@ -525,7 +600,10 @@ def main(argv: list[str] | None = None) -> int:
 
     failures = 0
     for name, text in sources:
-        problems = run(text, ROOT, symbols=with_symbols, source=token_set)
+        problems = run(
+            text, ROOT, symbols=with_symbols, source=token_set,
+            failure_modes=with_failure_modes,
+        )
         for problem in problems:
             print(f"{name}: {problem}")
         failures += len(problems)
