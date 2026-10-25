@@ -590,6 +590,29 @@ threaded into the shell was removed, a dead `useMemo` import dropped, and
 the stale "only the root banner shape exists" / "five panels" claims in
 `tools/ui_smoke.py` and `RESCUE.md` corrected.
 
+**Second review round** (two delegates, findings verified in code before
+fixing): the first fix for the double-decrement still double-decremented — the
+store's `subscribe()` counted visibility (`+1` on subscribe, `−1` on
+unsubscribe) *and* the gate counted through `setVisible`, so a subscriber
+visible at unmount netted `+1 −2` and starved a shared-topic sibling (Output +
+Waterfall both read `output`). Visibility counting now lives exclusively in
+the gate: `subscribe()` only manages the subscriber set, the gate's
+`countedRef` starts uncounted so the first `sync(true)` performs the count,
+and a regression test covers the close-one-keep-one shape. Second regression:
+session-dependent topics polled `/api/sessions/null/...` every tick forever on
+a session-less workspace (classic returns before starting its polls) — the
+store now takes a `requiresSession` predicate (`sessionTopics.ts` exports it;
+`config` and `memory` are exempt as session-independent) and never fetches
+those keys with a null session, also under test. Remaining #242-class catches
+in the ported panels were surfaced: the Artifacts poll fallback and its
+`respond`/`dismiss` mutations now set a `data-poll-error="Artifacts"` banner
+instead of silently keeping stale state, and Planning's failed `setStatus`
+shows in the warning banner instead of being swallowed (`.catch(() => {})`),
+with the hard-fail branch carrying `data-poll-error`. Graph's two catches stay
+as documented deviations (per-file detail fetches, not poll state). Vitest
+131/131 (two new store tests), eslint 0, build clean, dock smoke 20/20 exit 0,
+classic 16/16 exit 0.
+
 ## R60 — Claims must be checkable (`tools/claim_check.py`)
 
 **Problem it addresses.** Six consecutive commits carried a written claim the code

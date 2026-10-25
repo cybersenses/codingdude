@@ -65,6 +65,12 @@ export interface StoreOptions {
   intervalMs?: number
   /** Hidden-document probe; defaults to the DOM. */
   isHidden?: () => boolean
+  /** Topics that must not be fetched without a selected session. The React
+   *  gate keeps subscribing even when `sessionId` is null (panels render a
+   *  "no session" placeholder), and without this guard every tick would call
+   *  e.g. `/api/sessions/null/diff` forever — a regression vs classic, which
+   *  returns before starting its polls when no session is selected. */
+  requiresSession?: (topic: string) => boolean
 }
 
 function keyOf(topic: string, sessionId: SessionId): string {
@@ -77,7 +83,13 @@ export function createSessionStore(
 ): SessionStore {
   const intervalMs = opts.intervalMs ?? 2000
   const isHidden = opts.isHidden ?? (() => typeof document !== 'undefined' && document.hidden)
+  const requiresSession = opts.requiresSession ?? (() => false)
   const keys = new Map<string, KeyState>()
+
+  // A session-dependent topic with no selected session must never fetch.
+  function blocked(topic: string, sessionId: SessionId): boolean {
+    return sessionId === null && requiresSession(topic)
+  }
 
   function state(topic: string, sessionId: SessionId): KeyState {
     const k = keyOf(topic, sessionId)
@@ -114,7 +126,10 @@ export function createSessionStore(
     for (const [k, s] of keys) {
       if (s.subscribers.size === 0 || s.visible === 0) continue
       const idx = k.indexOf(':')
-      fetchKey(k.slice(idx + 1), k.slice(0, idx) === '_' ? null : k.slice(0, idx), s)
+      const sid = k.slice(0, idx) === '_' ? null : k.slice(0, idx)
+      const topic = k.slice(idx + 1)
+      if (blocked(topic, sid)) continue
+      fetchKey(topic, sid, s)
     }
   }
 
@@ -125,13 +140,16 @@ export function createSessionStore(
       const s = state(topic, sessionId)
       const first = s.subscribers.size === 0
       s.subscribers.add(cb)
-      s.visible += 1
+      // Visibility is NOT counted here — the React gate (`visible()` in
+      // Workspace.jsx) owns the visible count exclusively through
+      // setVisible(). Counting in both places double-decremented on unmount
+      // and starved a still-visible sibling sharing the topic.
       // Classic panels polled the moment they mounted; a subscriber that only
       // waits for the next tick stares at "loading…" for up to intervalMs.
-      if (first && !isHidden()) fetchKey(topic, sessionId, s)
+      if (first && !isHidden() && !blocked(topic, sessionId)) fetchKey(topic, sessionId, s)
       return () => {
         s.subscribers.delete(cb)
-        s.visible = Math.max(0, s.visible - 1)
+        if (s.subscribers.size === 0) s.visible = 0
       }
     },
     getSnapshot(topic, sessionId) {

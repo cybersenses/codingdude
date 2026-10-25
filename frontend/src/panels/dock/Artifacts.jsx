@@ -22,6 +22,9 @@ import { Mermaid } from '../../ui.jsx'
 export function Artifacts({ sessionId }) {
   const [items, setItems] = useState([])
   const [drafts, setDrafts] = useState({})
+  // #242 seam: a failed poll or mutation must be visible, not "no artifacts yet".
+  const [pollError, setPollError] = useState(null)
+  const [mutError, setMutError] = useState(null)
 
   useEffect(() => {
     if (!sessionId) return
@@ -31,7 +34,13 @@ export function Artifacts({ sessionId }) {
     const startPolling = () => {
       if (closed || fallback) return
       const poll = async () => {
-        try { setItems(await call(`/sessions/${sessionId}/artifacts`)) } catch { /* transient */ }
+        try {
+          setItems(await call(`/sessions/${sessionId}/artifacts`))
+          setPollError(null)
+        } catch (e) {
+          // Keep the last items; surface the failure (the #231 bug class).
+          setPollError(e instanceof Error ? e.message : String(e))
+        }
         if (!closed) fallback = setTimeout(poll, 4000)
       }
       poll()
@@ -53,7 +62,11 @@ export function Artifacts({ sessionId }) {
     try {
       await call(`/artifacts/${id}/respond`, { method: 'POST', body: JSON.stringify(body) })
       setItems(await call(`/sessions/${sessionId}/artifacts`))
-    } catch { /* transient */ }
+      setMutError(null)
+    } catch (e) {
+      // A failed answer must not look successful (#242 class).
+      setMutError(e instanceof Error ? e.message : String(e))
+    }
   }
 
   // R58: retire a card whose run has ended — no answer, just off the list.
@@ -61,13 +74,27 @@ export function Artifacts({ sessionId }) {
     try {
       await call(`/artifacts/${id}/dismiss`, { method: 'POST' })
       setItems(await call(`/sessions/${sessionId}/artifacts`))
-    } catch { /* transient */ }
+      setMutError(null)
+    } catch (e) {
+      // A failed dismiss must leave the card in place (#242 class).
+      setMutError(e instanceof Error ? e.message : String(e))
+    }
   }
 
   if (!sessionId) return <div className="text-neutral-600">no session</div>
-  if (items.length === 0) return <div className="text-neutral-600">no artifacts yet</div>
   return (
     <div className="space-y-2">
+      {pollError && (
+        <div data-poll-error="Artifacts" className="rounded border border-danger/50 bg-danger/10 p-2 text-[10px] text-danger">
+          artifacts unavailable: {pollError}
+        </div>
+      )}
+      {mutError && (
+        <div data-poll-error="Artifacts" className="rounded border border-danger/50 bg-danger/10 p-2 text-[10px] text-danger">
+          last action failed: {mutError}
+        </div>
+      )}
+      {items.length === 0 && !pollError && <div className="text-neutral-600">no artifacts yet</div>}
       <p className="text-[10px] text-neutral-500">
         Artifacts are interactive things the agent hands you mid-run — choice cards to pick
         from, spec blocks you can edit, and HTML pages it renders for you right here.

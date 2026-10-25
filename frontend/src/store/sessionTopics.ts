@@ -23,6 +23,17 @@
 import { api, call } from '../api'
 import type { TopicFetcher } from './sessionData'
 
+// Topics whose fetcher embeds the session id in the URL (or otherwise needs a
+// selected session). `config` and `memory` are deliberately absent: they are
+// session-independent and must keep polling on a fresh workspace.
+const SESSION_REQUIRED = new Set([
+  'diff', 'cost', 'mcp', 'renders', 'trace', 'output', 'processes',
+])
+
+export function requiresSession(topic: string): boolean {
+  return SESSION_REQUIRED.has(topic)
+}
+
 export const sessionTopics: Record<string, TopicFetcher> = {
   diff: async (sid) => {
     const r = await call(`/sessions/${sid}/diff`)

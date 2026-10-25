@@ -33,7 +33,7 @@ import { Prompt } from '../panels/Prompt.jsx'
 import { PendingArtifactCard } from '../cards/chatCards.jsx'
 import { WorkspaceContext, useShell } from './shellContext'
 import { createSessionStore } from '../store/sessionData'
-import { sessionTopics } from '../store/sessionTopics'
+import { sessionTopics, requiresSession } from '../store/sessionTopics'
 import {
   ArtifactsPanel,
   ConfigPanel,
@@ -56,7 +56,7 @@ import {
 // One store per browser: the scheduler loop and its subscriber bookkeeping
 // are module state, not React state. Disposal is unnecessary for a store that
 // lives as long as the document does.
-const store = createSessionStore(sessionTopics)
+const store = createSessionStore(sessionTopics, { requiresSession })
 
 // ---------------------------------------------------------------------------
 // Panels
@@ -114,26 +114,29 @@ function ChatPanel() {
 // ones. dockview's onDidVisibilityChange flips the subscriber's visibility flag
 // instead, so only panels on screen are ever fetched.
 //
-// Post-push review fix: the flag is synced through a `countedRef` that mirrors
-// whether *this* subscriber is currently counted visible. The earlier version
-// decremented unconditionally on unmount, which — with two subscribers on one
-// topic (Output + Waterfall both read `output`) — subtracted twice and left a
-// still-visible sibling unpolled.
+// The gate owns the visible count EXCLUSIVELY: the store's subscribe() does
+// not touch it (post-push review fix — counting in both places
+// double-decremented on unmount, leaving a still-visible sibling on a shared
+// topic — Output + Waterfall both read `output` — unpolled). `countedRef`
+// mirrors whether THIS subscriber is currently counted; the first sync(true)
+// after mount performs the subscribe-time +1.
 function visible(topic, Panel) {
   function GatedPanel(props) {
     const { store: shellStore, sessionId } = useShell()
     const panelApi = props.api
-    const countedRef = useRef(true) // subscribe() counted this subscriber visible
+    const countedRef = useRef(false) // not yet counted visible
     useEffect(() => {
-      if (!panelApi || typeof panelApi.onDidVisibilityChange !== 'function') return
       const sync = (isVisible) => {
         if (isVisible === countedRef.current) return
         shellStore.setVisible(topic, sessionId, isVisible)
         countedRef.current = isVisible
       }
+      if (!panelApi || typeof panelApi.onDidVisibilityChange !== 'function') {
+        // No visibility signal available: assume on screen.
+        sync(true)
+        return () => sync(false)
+      }
       const disp = panelApi.onDidVisibilityChange((ev) => sync(ev.isVisible))
-      // Correct the subscribe-time +1 if dockview mounted the panel hidden
-      // (a background tab).
       sync(panelApi.isVisible !== false)
       return () => {
         disp.dispose()
