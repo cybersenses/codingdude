@@ -2,6 +2,16 @@
 
 This product includes software developed by third parties:
 
+## chrome-devtools-mcp (optional, not redistributed)
+
+- https://github.com/ChromeDevTools/chrome-devtools-mcp — Apache License 2.0,
+  Copyright Google LLC
+- Not vendored: CodingDude spawns it on demand via `npx -y
+  chrome-devtools-mcp@latest` as a default MCP server (R61), with Google's
+  usage-statistics collection and update checks disabled by flags. No copy
+  ships in this repository, so no Apache-2.0 notice obligation arises here;
+  this entry records the dependency and its provenance.
+
 ## github-mcp-server
 
 - `tools/github-mcp/github-mcp-server.exe` and its `README.md`

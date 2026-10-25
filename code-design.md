@@ -653,3 +653,13 @@ searching `src/` for it. The production symptom's disappearance cannot be proven
 from here; what is proven is that the mechanism which wedged the store is gone and
 now has a regression test.
 
+
+## R61 — chrome-devtools-mcp as a default MCP server
+
+**Structure.** One entry in `_default_mcp_servers()` (`src/codingdude/mcp_config.py`), behind the same `shutil.which('npx')` gate as zai-vision. The Windows `.cmd/.bat` shim handling is repeated per-server (separate `command`/`args` pairs for zai-vision and chrome-devtools) rather than factored, because each server's args differ; the existing pattern is one branch per server. Spawn: `npx -y chrome-devtools-mcp@latest --no-usage-statistics --no-update-checks` — Google's telemetry and update checks default to on and are explicitly opted out.
+
+**Rationale.** Automated browser testing (screenshots, console, network, performance traces) becomes a standard capability instead of a per-project setup step. Not vendored: npx fetches at spawn, so no Apache-2.0 redistribution obligation; NOTICE.md records the dependency.
+
+**Impact.** `ensure_default_mcp` seeds the entry additively — user edits win, and a machine without Chrome fails at connect where `verify_mcp_toolsets` drops the server for the run with a warning (no run ever dies from it). Absent npx, no entry. Existing installs pick it up on next bounce via the additive seed.
+
+**Verified.** `npx -y chrome-devtools-mcp@latest --version` → 1.12.0; seeded entry inspected live (cmd wrapper + both flags); tests in `tests/test_mcp.py` (seeding with flags, absent without npx).
