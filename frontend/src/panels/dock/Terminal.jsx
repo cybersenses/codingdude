@@ -34,8 +34,7 @@ export function Terminal({ sessionId }) {
       setOutput((o) => [...o, { cmd: cmd.trim(), exit: r.exit, out: r.output }])
     } catch (err) {
       // #234: a failed exec must not vanish — the command stays on screen with
-      // its error so the user knows it never ran. Transient data-poll-error so
-      // the smoke gate sees it while it is the latest entry.
+      // its error so the user knows it never ran.
       setOutput((o) => [...o, { cmd: cmd.trim(), exit: null, out: `could not run: ${errMsg(err)}` }])
     }
     setBusy(false)
@@ -46,7 +45,9 @@ export function Terminal({ sessionId }) {
       <div className="min-h-0 flex-1 overflow-auto rounded bg-canvas p-2 font-mono text-[11px]">
         {output.length === 0 && <div className="text-ink-muted">no commands yet</div>}
         {output.map((o, i) => (
-          <div key={i} className="mb-2" data-poll-error={o.exit == null ? 'Terminal' : undefined}>
+          // data-poll-error only on the *latest* entry when it failed: a stale
+          // failed command must not keep the panel flagged after recovery.
+          <div key={i} className="mb-2" data-poll-error={i === output.length - 1 && o.exit == null ? 'Terminal' : undefined}>
             <div className="text-accent">$ {o.cmd}</div>
             <pre className="whitespace-pre-wrap text-ink-muted">{o.out || '(no output)'}</pre>
             <div className={o.exit === 0 ? 'text-success' : 'text-danger'}>exit {o.exit}</div>
