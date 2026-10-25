@@ -999,6 +999,6 @@ Add Google's chrome-devtools-mcp (Apache-2.0, npm `chrome-devtools-mcp`) as a se
 Shipped (ticket #240): `chrome-devtools` entry in `_default_mcp_servers()` (`mcp_config.py`), seeded additively by `ensure_default_mcp` (user edits to an existing entry win; absent npx means no entry). Behaviour without Chrome on the machine: not yet verified (see code-design R61). NOTICE.md records the dependency (not vendored, so no Apache-2.0 redistribution obligation). Tests: `tests/test_mcp.py` seeding/skip tests.
 
 ## R62 — Claim gate: failure-mode prose must carry probe evidence
-**Status:** open
+**Status:** done
 
 Six consecutive commits shipped failure-mode claims a reviewer could not back ("silently returns 0", "can't miss a banner", "hides nothing"). The arithmetic half is gated by tools/claim_check.py; the failure-mode half is not. This closes it mechanically: a sentence in a commit message (or doc, on request) containing a failure-mode verb must carry a `[probe: ...]` annotation naming the command that demonstrated it, or state "not yet verified" — otherwise the commit is rejected. Default: on for --message-file, opt-in for documents (historical docs would scream).
