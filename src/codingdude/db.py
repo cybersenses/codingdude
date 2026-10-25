@@ -15,6 +15,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """SQLite persistence for Sessions, messages, approvals, Memory, and usage."""
 
+import logging
 import re
 import sqlite3
 import threading
@@ -23,6 +24,9 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
+
+_logger = logging.getLogger(__name__)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -257,15 +261,32 @@ class SessionInfo:
     keep_for_evals: bool = False
 
 
+# SQLITE_BUSY retry budget: server and worker processes share the DB file, so a
+# transient lock (busy_timeout exceeded) is retried instead of surfacing as
+# 'database is locked' to the run. After the last attempt it fails loudly.
+_BUSY_RETRIES = 3
+_BACKOFF_BASE = 0.05
+
+
 class _Connection(sqlite3.Connection):
     """A connection that never leaves a failed write holding the write lock.
 
     Python's sqlite3 opens a transaction before DML but does not roll it back
     when a statement raises, so the doomed transaction keeps SQLite's write
     lock and every other writer waits out `busy_timeout` and then fails with
-    'database is locked' (R57). Rolling back one level below every caller —
-    including the modules that use `db._conn` directly — keeps the invariant
-    in one place instead of at 80 call sites.
+    'database is locked' (R57). Rolling back one level below every caller
+    keeps the invariant in one place instead of at each of the 45 statements
+    in `db.py` and the 58 in the eight store modules that use `db._conn`
+    directly (`artifacts`, `execution`, `memory`, `planning`, `projectnotes`,
+    `references`, `roadmap`, `semantic`).
+
+    `commit` is guarded for the same reason, and it is the path that actually
+    produced the reported symptom: a COMMIT that returns SQLITE_BUSY also
+    leaves the transaction open, and 29 call sites outside `db.py` commit
+    through `db._conn` rather than through `Database._commit`. Putting the
+    retry here — rather than in `Database._commit` — is what makes it reach
+    them; a rollback at this level and a retry one level up would instead
+    commit an empty transaction and lose the write.
     """
 
     def _rollback_quietly(self) -> None:
@@ -273,24 +294,54 @@ class _Connection(sqlite3.Connection):
             return
         try:
             self.rollback()
-        except sqlite3.Error:  # pragma: no cover - rollback of a broken conn
-            pass
+        except sqlite3.Error:
+            # The caller is about to receive the original failure, which is
+            # the actionable one; say that this connection is now dirty.
+            _logger.warning(
+                'rollback failed; connection left in a transaction', exc_info=True
+            )
 
-    def execute(self, sql, parameters=(), /):
+    def _commit_once(self) -> None:
+        """One COMMIT attempt. The seam the retry tests intercept."""
+        sqlite3.Connection.commit(self)
+
+    def commit(self) -> None:
+        """Commit, retrying while the database stays write-locked.
+
+        When the retries run out the transaction is rolled back before the
+        error propagates: a connection left mid-transaction holds SQLite's
+        write lock for the rest of the process's life (R57).
+        """
+        for attempt in range(_BUSY_RETRIES + 1):
+            try:
+                self._commit_once()
+                return
+            except sqlite3.OperationalError as exc:
+                if 'database is locked' not in str(exc) or attempt == _BUSY_RETRIES:
+                    self._rollback_quietly()
+                    raise
+                time.sleep(_BACKOFF_BASE * 2**attempt)
+
+    # BaseException is deliberate in all three: a Ctrl-C or a SystemExit
+    # mid-write must not leave the transaction (and its write lock) behind
+    # either. The error is always re-raised, so nothing is swallowed.
+    # `Any` on the parameters: sqlite3's own stub type for it is a long
+    # union of protocols, and this shim only forwards the value unchanged.
+    def execute(self, sql: str, parameters: Any = (), /) -> sqlite3.Cursor:
         try:
             return super().execute(sql, parameters)
         except BaseException:
             self._rollback_quietly()
             raise
 
-    def executemany(self, sql, parameters, /):
+    def executemany(self, sql: str, parameters: Any, /) -> sqlite3.Cursor:
         try:
             return super().executemany(sql, parameters)
         except BaseException:
             self._rollback_quietly()
             raise
 
-    def executescript(self, sql_script, /):
+    def executescript(self, sql_script: str, /) -> sqlite3.Cursor:
         try:
             return super().executescript(sql_script)
         except BaseException:
@@ -306,12 +357,6 @@ class Database:
     commit each other's half-written work — and CPython raises
     `InterfaceError: bad parameter or other API misuse` when it happens.
     """
-
-    # SQLITE_BUSY retry budget: server and worker processes share the DB
-    # file; a transient lock (busy_timeout exceeded) is retried instead of
-    # surfacing as 'database is locked' to the run. Fails loudly after.
-    _BUSY_RETRIES = 3
-    _BACKOFF_BASE = 0.05
 
     def __init__(self, home: Path):
         self._home = Path(home)
@@ -334,18 +379,23 @@ class Database:
             factory=_Connection,
         )
         conn.row_factory = sqlite3.Row
+        # busy_timeout first: the WAL switch and the legacy-table drop below
+        # can themselves hit another writer's lock, and would otherwise run
+        # with SQLite's default 5 s handler instead of the configured 15 s.
+        conn.execute('PRAGMA busy_timeout=15000')
         conn.execute('PRAGMA journal_mode=WAL')
         # migration: embeddings gained workdir scoping in 0.3.1 — the cache is
         # disposable, so recreate the legacy shape in place
         cols = [r[1] for r in conn.execute('PRAGMA table_info(embeddings)')]
         if cols and 'workdir' not in cols:
             conn.execute('DROP TABLE embeddings')
-        conn.execute('PRAGMA busy_timeout=15000')
         self._local.conn = conn
         if not self._schema_ready:
             conn.executescript(_SCHEMA)
             conn.commit()
             self._schema_ready = True
+        # set before migrating: _migrate() re-enters this property, so the flag
+        # is a re-entrancy guard, not a completion marker
         if not self._migrated:
             self._migrated = True
             self._migrate()
@@ -353,7 +403,7 @@ class Database:
 
     @_conn.setter
     def _conn(self, conn: sqlite3.Connection) -> None:
-        """Replace this thread's connection (test seam, and reconnect)."""
+        """Replace this thread's connection (test seam)."""
         self._local.conn = conn
 
     def _migrate(self) -> None:
@@ -394,23 +444,13 @@ class Database:
         self._commit()
 
     def _commit(self) -> None:
-        """Commit with bounded backoff retry while the DB is write-locked.
+        """Commit this thread's connection.
 
-        When the retries run out the transaction is rolled back before the
-        error propagates: a connection left mid-transaction holds SQLite's
-        write lock for the rest of the process's life (R57).
+        The retry-and-rollback lives in `_Connection.commit`, one level down,
+        so the 29 call sites in the store modules that commit through
+        `db._conn` directly get it too, not just the ones in this module.
         """
-        for attempt in range(self._BUSY_RETRIES + 1):
-            try:
-                self._conn.commit()
-                return
-            except sqlite3.OperationalError as exc:
-                if 'database is locked' not in str(exc) or attempt == self._BUSY_RETRIES:
-                    conn = self._conn
-                    if isinstance(conn, _Connection):
-                        conn._rollback_quietly()
-                    raise
-                time.sleep(self._BACKOFF_BASE * 2**attempt)
+        self._conn.commit()
 
     def update_session_context(
         self, session_id: str, total_tokens: int, model_limit: int
