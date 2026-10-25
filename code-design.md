@@ -613,6 +613,51 @@ as documented deviations (per-file detail fetches, not poll state). Vitest
 131/131 (two new store tests), eslint 0, build clean, dock smoke 20/20 exit 0,
 classic 16/16 exit 0.
 
+### R59 P3 - persistence, presets, palette (#244)
+
+The dock shell now remembers its arrangement and every move is reachable
+without a mouse. Three pure modules plus one component:
+
+| Module | Contents |
+|---|---|
+| `frontend/src/workspace/layoutStore.ts` | saved-layout load/save (`cd-layout-v1`, `{v, preset, layout}`), unknown-panel stripping, user-preset store (`cd-layout-presets-v1`), `createDebouncedSaver` |
+| `frontend/src/workspace/layoutStore.test.ts` | 17 tests: round-trip, corrupt/version/empty fallback, storage-throwing degradation, strip in grid + floating windows, preset name validation, debounce coalescing/cancel |
+| `frontend/src/workspace/catalogue.ts` | + `PRESETS` (default/debug/review/watching) as placements, same invariants as `DEFAULT_PRESET` (6 new tests) |
+| `frontend/src/workspace/commands.ts` + `.test.ts` | palette command list + dispatch over a narrowed `CommandApi`; 14 tests pin labels, guards and calls |
+| `frontend/src/workspace/CommandPalette.jsx` | `Ctrl+Shift+P`/`Ctrl+K` modal: filter, arrows, Enter; closes after run |
+| `frontend/src/workspace/Workspace.jsx` | restore-on-ready (try `fromJSON`, degrade to default preset with a dismissible `data-layout-notice`), debounced save on `onDidLayoutChange`, preset apply (placements or user-preset `fromJSON`), save-as; the P2 panel bar is deleted |
+
+**Decisions and why.**
+
+- **Presets are placements, not serialized JSON** — same reasoning as P1's
+  default preset: dockview's serialized shape is internal, a placement list is
+  readable and testable. User-saved presets are serialized layouts (that is
+  the point of saving), restored through `fromJSON` inside the same
+  degrade-to-default guard as boot restore.
+- **Unknown-panel stripping walks `panels`, grid leaves, floating and popout
+  windows** — panel ids live in four places in the serialized shape; missing
+  one would let `fromJSON` throw later and take the whole restore down.
+- **`createDebouncedSaver`'s default timer wraps `setTimeout`** rather than
+  passing it bare: detached from `window` it throws "Illegal invocation"
+  (found by the smoke gate's `page_errors`, not by reasoning).
+- **`applyPresetByName` cancels the pending save before mutating** — without
+  that, the debounced pre-apply snapshot lands after the apply and resurrects
+  the layout the user just left.
+- **The smoke gate now opens panels through the palette**, not the deleted
+  panel bar — proving REQ-5 (non-drag path) end-to-end and every catalogue
+  panel openable, in one walk. `catalogue_panels()` in `tools/ui_smoke.py`
+  parses only the `PANELS` array now: P3's `PRESETS` entries carry
+  `{ id, title }` in the same file and were counted as a phantom 21st panel.
+
+**Not yet verified / honest limits.** The reload proof mutates the layout via
+palette commands, never via an actual mouse drag — dockview's own drag
+internals are its code; our persistence contract (mutate → reload → same
+panels) is what the probe asserts (`.scratch/p3_persistence_probe.py`,
+untracked, 9/9: move survives reload, review preset round-trips, corrupt
+layout falls back with notice, palette reset). `Ctrl+K` intercepts the bare
+chord; Monaco's Ctrl+K-prefixed chords conflict and are not remapped. Popout
+windows, per-project layouts and float-geometry memory are P4.
+
 ## R60 — Claims must be checkable (`tools/claim_check.py`)
 
 **Problem it addresses.** Six consecutive commits carried a written claim the code

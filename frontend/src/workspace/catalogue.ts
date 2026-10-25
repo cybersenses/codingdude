@@ -115,3 +115,58 @@ export const DEFAULT_PRESET: readonly Placement[] = [
   { id: 'chat', direction: 'right', referencePanel: 'editor', initialWidth: PANE_SPECS.right.fallback },
   { id: 'diff', direction: 'below', referencePanel: 'editor', initialHeight: PANE_SPECS.dock.fallback },
 ]
+
+// R59 P3 (tech design §4.5): the other shipped presets. Every entry follows
+// DEFAULT_PRESET's rules — seed first, then references to earlier placements —
+// enforced by the preset tests below, because a forward reference throws at
+// mount time inside dockview.
+export interface NamedPreset {
+  id: string
+  title: string
+  placements: readonly Placement[]
+}
+
+export const PRESETS: readonly NamedPreset[] = [
+  { id: 'default', title: 'Default', placements: DEFAULT_PRESET },
+  {
+    id: 'debug',
+    title: 'Debug',
+    placements: [
+      { id: 'nav', initialWidth: PANE_SPECS.sidebar.min },
+      { id: 'editor', direction: 'right', referencePanel: 'nav' },
+      // Graph + Trace under the editor, Cost stacked below them.
+      { id: 'graph', direction: 'below', referencePanel: 'editor' },
+      { id: 'trace', direction: 'within', referencePanel: 'graph' },
+      { id: 'cost', direction: 'below', referencePanel: 'graph', initialHeight: PANE_SPECS.dock.min },
+      { id: 'chat', direction: 'right', referencePanel: 'editor', initialWidth: PANE_SPECS.right.min },
+    ],
+  },
+  {
+    id: 'review',
+    title: 'Review',
+    placements: [
+      { id: 'nav', initialWidth: PANE_SPECS.sidebar.min },
+      { id: 'editor', direction: 'right', referencePanel: 'nav' },
+      // Diff | Waterfall | Output three-up (tech design §4.5).
+      { id: 'diff', direction: 'below', referencePanel: 'editor' },
+      { id: 'waterfall', direction: 'right', referencePanel: 'diff' },
+      { id: 'output', direction: 'right', referencePanel: 'waterfall' },
+    ],
+  },
+  {
+    id: 'watching',
+    title: 'Watching',
+    placements: [
+      { id: 'nav', initialWidth: PANE_SPECS.sidebar.min },
+      { id: 'chat', direction: 'right', referencePanel: 'nav', initialWidth: PANE_SPECS.right.fallback },
+      // Editor + Diff centre, Processes bottom (tech design §4.5).
+      { id: 'editor', direction: 'right', referencePanel: 'chat' },
+      { id: 'diff', direction: 'below', referencePanel: 'editor' },
+      { id: 'processes', direction: 'below', referencePanel: 'diff', initialHeight: PANE_SPECS.dock.min },
+    ],
+  },
+]
+
+export function presetById(id: string): NamedPreset | undefined {
+  return PRESETS.find((p) => p.id === id)
+}

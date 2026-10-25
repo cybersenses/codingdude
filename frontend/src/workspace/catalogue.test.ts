@@ -18,7 +18,7 @@
 // placement names a panel that does not exist yet, and silently renders
 // nothing when a catalogue entry has no registered component.
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_PRESET, PANELS, isKnownPanel, panelSpec } from './catalogue'
+import { DEFAULT_PRESET, PANELS, PRESETS, isKnownPanel, panelSpec, presetById } from './catalogue'
 import { PANE_SPECS } from '../panes'
 
 // The component registry lives in Workspace.jsx; keep this list in step with it.
@@ -120,5 +120,70 @@ describe('default preset', () => {
         expect(p.initialHeight).toBeGreaterThanOrEqual(spec.minHeight)
       }
     }
+  })
+})
+
+// R59 P3: the shipped presets are placements, so every invariant the default
+// preset test asserts applies to each of them too — a forward reference or a
+// duplicate id in ANY preset would throw at mount time when the user applies
+// it from the palette.
+describe('shipped presets', () => {
+  const presetIds = ['default', 'debug', 'review', 'watching']
+
+  it('exposes the four documented presets with unique ids', () => {
+    expect(PRESETS.map((p) => p.id)).toEqual(presetIds)
+    expect(new Set(PRESETS.map((p) => p.id)).size).toBe(PRESETS.length)
+  })
+
+  it('resolves every preset id', () => {
+    for (const id of presetIds) expect(presetById(id)).toBeDefined()
+    expect(presetById('nope')).toBeUndefined()
+  })
+
+  it('only references panels placed before it, in every preset', () => {
+    for (const preset of PRESETS) {
+      const seen: string[] = []
+      for (const p of preset.placements) {
+        expect(isKnownPanel(p.id)).toBe(true)
+        if (p.referencePanel !== undefined) {
+          expect(seen).toContain(p.referencePanel)
+        }
+        seen.push(p.id)
+      }
+      expect(new Set(seen).size).toBe(seen.length) // no duplicates
+    }
+  })
+
+  it('seeds each preset grid with exactly one reference-free placement', () => {
+    for (const preset of PRESETS) {
+      expect(preset.placements[0].referencePanel).toBeUndefined()
+      expect(preset.placements[0].direction).toBeUndefined()
+      for (const p of preset.placements.slice(1)) expect(p.direction).toBeDefined()
+    }
+  })
+
+  it('never asks for a size below the panel minimum, in any preset', () => {
+    for (const preset of PRESETS) {
+      for (const p of preset.placements) {
+        const spec = panelSpec(p.id)
+        if (p.initialWidth !== undefined && spec?.minWidth !== undefined) {
+          expect(p.initialWidth).toBeGreaterThanOrEqual(spec.minWidth)
+        }
+        if (p.initialHeight !== undefined && spec?.minHeight !== undefined) {
+          expect(p.initialHeight).toBeGreaterThanOrEqual(spec.minHeight)
+        }
+      }
+    }
+  })
+
+  it('realises the documented review three-up and watching arrangement', () => {
+    const review = presetById('review')!.placements
+    const byId = new Map(review.map((p) => [p.id, p]))
+    expect(byId.get('diff')).toMatchObject({ direction: 'below', referencePanel: 'editor' })
+    expect(byId.get('waterfall')).toMatchObject({ direction: 'right', referencePanel: 'diff' })
+    expect(byId.get('output')).toMatchObject({ direction: 'right', referencePanel: 'waterfall' })
+    const watching = presetById('watching')!.placements
+    const wById = new Map(watching.map((p) => [p.id, p]))
+    expect(wById.get('processes')).toMatchObject({ direction: 'below', referencePanel: 'diff' })
   })
 })
