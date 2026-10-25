@@ -168,9 +168,10 @@ async def test_janitor_survives_a_failing_checkpoint(tmp_path, monkeypatch):
         await asyncio.sleep(0.02)
         if len(attempts) >= 2:
             break
+    alive = not task.done()  # still sweeping after ≥2 swallowed failures
     task.cancel()
     assert len(attempts) >= 2, 'janitor died after the first failing checkpoint'
-    assert not worker.terminated  # the sweep itself kept running
+    assert alive
 
 
 async def test_janitor_spares_healthy_booted_worker(tmp_path, monkeypatch):
