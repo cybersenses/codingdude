@@ -22,7 +22,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { DockviewReact, themeDark } from 'dockview-react'
 import 'dockview-react/dist/styles/dockview.css'
-import { DEFAULT_PRESET, PANELS, panelSpec } from './catalogue'
+import { DEFAULT_PRESET, panelSpec, presetById, isKnownPanel } from './catalogue'
 import { Sidebar } from '../chrome/Sidebar.jsx'
 import { AgentStrip } from '../chrome/AgentStrip.jsx'
 import { StatusFooter } from '../chrome/StatusFooter.jsx'
@@ -34,6 +34,14 @@ import { PendingArtifactCard } from '../cards/chatCards.jsx'
 import { WorkspaceContext, useShell } from './shellContext'
 import { createSessionStore } from '../store/sessionData'
 import { sessionTopics, requiresSession } from '../store/sessionTopics'
+import { CommandPalette } from './CommandPalette'
+import {
+  createDebouncedSaver,
+  loadSavedLayout,
+  loadUserPresets,
+  saveLayout,
+  saveUserPreset,
+} from './layoutStore'
 import {
   ArtifactsPanel,
   ConfigPanel,
@@ -188,16 +196,16 @@ const COMPONENTS = {
 // Preset application
 // ---------------------------------------------------------------------------
 
-// Builds the default arrangement through the public addPanel API (see the note
-// in catalogue.ts on why the preset is placements, not serialized grid JSON).
+// Builds an arrangement through the public addPanel API (see the note in
+// catalogue.ts on why presets are placements, not serialized grid JSON).
 //
 // addPanel's `initialWidth` alone does not reproduce the classic geometry: the
 // new group is created by splitting its reference and the sizes it lands on are
 // proportional, which left the editor column ~115px wide with two ~500px
 // columns beside it. So the fixed-size columns are pinned explicitly once the
 // layout exists; the flexible middle keeps whatever is left.
-function applyDefaultPreset(api) {
-  for (const placement of DEFAULT_PRESET) {
+function applyPresetPlacements(api, placements) {
+  for (const placement of placements) {
     const spec = panelSpec(placement.id)
     if (!spec) continue
     api.addPanel({
@@ -220,33 +228,27 @@ function applyDefaultPreset(api) {
   }
   // One frame later, so the groups have been laid out and setSize has actual
   // geometry to resize against.
-  requestAnimationFrame(() => pinSizes(api))
+  requestAnimationFrame(() => pinSizes(api, placements))
 }
 
-const PINNED_WIDTHS = DEFAULT_PRESET.filter((p) => p.initialWidth !== undefined)
-const PINNED_HEIGHTS = DEFAULT_PRESET.filter((p) => p.initialHeight !== undefined)
-
-function pinSizes(api) {
-  for (const { id, initialWidth } of PINNED_WIDTHS) {
-    api.getPanel(id)?.api.setSize({ width: initialWidth })
+function pinSizes(api, placements) {
+  for (const { id, initialWidth } of placements) {
+    if (initialWidth !== undefined) api.getPanel(id)?.api.setSize({ width: initialWidth })
   }
-  for (const { id, initialHeight } of PINNED_HEIGHTS) {
-    api.getPanel(id)?.api.setSize({ height: initialHeight })
+  for (const { id, initialHeight } of placements) {
+    if (initialHeight !== undefined) api.getPanel(id)?.api.setSize({ height: initialHeight })
   }
 }
 
 // Shown when every panel has been closed. REQ-8's escape hatch plus a way back
 // to a known-good arrangement once drag-and-drop is in the user's hands.
-function Watermark({ containerApi }) {
+function Watermark({ containerApi, onPreset }) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-2 text-xs text-ink-muted">
       <p>Every panel is closed.</p>
       <button
         className="rounded bg-brand-700 px-3 py-1 text-xs text-brand-fg hover:bg-brand-600"
-        onClick={() => {
-          containerApi.clear()
-          applyDefaultPreset(containerApi)
-        }}
+        onClick={() => onPreset(containerApi, 'default')}
       >
         Reset layout
       </button>
@@ -255,56 +257,21 @@ function Watermark({ containerApi }) {
 }
 
 // ---------------------------------------------------------------------------
-// Panel bar (P2 stopgap for the P3 command palette)
-// ---------------------------------------------------------------------------
-
-// The palette is P3; until it lands, closed panels are opened from this bar —
-// one button per catalogue entry not currently in the layout. Rebuilt on every
-// layout change (open/close/move) so the list never offers an open panel.
-function PanelBar({ api }) {
-  const [openIds, setOpenIds] = useState([])
-  useEffect(() => {
-    if (!api) return
-    const update = () => setOpenIds(api.panels.map((p) => p.id))
-    update()
-    const disp = api.onDidLayoutChange(update)
-    return () => disp.dispose()
-  }, [api])
-  const closed = PANELS.filter((p) => !openIds.includes(p.id))
-  if (!api || closed.length === 0) return null
-  return (
-    <div data-panel-bar className="flex flex-wrap gap-1 border-b border-line bg-neutral-900 px-2 py-1">
-      {closed.map((spec) => (
-        <button
-          key={spec.id}
-          title={`open the ${spec.title} panel`}
-          className="rounded px-2 py-0.5 text-[10px] text-ink-muted hover:bg-surface hover:text-ink"
-          onClick={() =>
-            api.addPanel({
-              id: spec.id,
-              component: spec.component,
-              title: spec.title,
-              renderer: spec.renderer,
-              ...(spec.minWidth !== undefined ? { minimumWidth: spec.minWidth } : {}),
-              ...(spec.minHeight !== undefined ? { minimumHeight: spec.minHeight } : {}),
-              position: { direction: 'within', referencePanel: api.activePanel?.id || 'diff' },
-            })
-          }
-        >
-          + {spec.title}
-        </button>
-      ))}
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
 // Shell
 // ---------------------------------------------------------------------------
+
+const SAVE_DEBOUNCE_MS = 400
 
 export function Workspace({ error, agentStrip, sidebar, fileWs, onAsk, sessionId, prompt, pending, chat, footer, onRefreshArtifacts, workdir, reviewDiff = 0 }) {
   const [api, setApi] = useState(null)
   const apiRef = useRef(null)
+  // "layout reset (…)" / "dropped panels …" — surfaced once, dismissed by click.
+  const [notice, setNotice] = useState(null)
+  // Which preset the current layout derives from; saved with the layout so a
+  // restore can label itself, and changed by any applyPreset.
+  const presetRef = useRef('default')
+  const [userPresets, setUserPresets] = useState(() => Object.keys(loadUserPresets(window.localStorage)))
+  const saverRef = useRef(null)
 
   // #75's "Review changes →" bumps a counter in App. The classic shell answers
   // it by switching DockPanel to the Diff tab; here it has to activate the
@@ -312,6 +279,55 @@ export function Workspace({ error, agentStrip, sidebar, fileWs, onAsk, sessionId
   useEffect(() => {
     if (reviewDiff > 0) apiRef.current?.getPanel('diff')?.api.setActive()
   }, [reviewDiff])
+
+  // P3: applying a preset (palette, watermark reset) is one operation — the
+  // pending debounced save must not resurrect the pre-apply snapshot after it.
+  // Shipped presets are placements; user presets are serialized layouts
+  // restored through fromJSON (with the same degrade-to-default guard).
+  function applyPresetByName(targetApi, presetId) {
+    saverRef.current?.cancel()
+    const preset = presetById(presetId)
+    if (preset) {
+      targetApi.clear()
+      applyPresetPlacements(targetApi, preset.placements)
+      presetRef.current = presetId
+    } else {
+      const saved = loadUserPresets(window.localStorage)[presetId]
+      if (!saved) return
+      try {
+        targetApi.clear()
+        targetApi.fromJSON(saved)
+        presetRef.current = `custom:${presetId}`
+      } catch {
+        setNotice(`layout reset (preset "${presetId}" was unreadable)`)
+        targetApi.clear()
+        applyPresetPlacements(targetApi, DEFAULT_PRESET)
+        presetRef.current = 'default'
+      }
+    }
+    saveLayout(window.localStorage, targetApi.toJSON(), presetRef.current)
+  }
+
+  function savePresetAs() {
+    const target = apiRef.current
+    if (!target) return
+    // prompt() is the pragmatic v1; the palette itself is keyboard-complete.
+    const name = window.prompt('Preset name (letters, digits, space, - _)')?.trim()
+    if (!name) return
+    if (!saveUserPreset(window.localStorage, name, target.toJSON())) {
+      setNotice(`could not save preset "${name}" (invalid name or storage full)`)
+      return
+    }
+    presetRef.current = `custom:${name}`
+    setUserPresets(Object.keys(loadUserPresets(window.localStorage)))
+    saveLayout(window.localStorage, target.toJSON(), presetRef.current)
+  }
+
+  const paletteCtx = {
+    applyPreset: (id) => apiRef.current && applyPresetByName(apiRef.current, id),
+    savePresetAs,
+    userPresets,
+  }
 
   const shell = {
     sidebar,
@@ -330,24 +346,69 @@ export function Workspace({ error, agentStrip, sidebar, fileWs, onAsk, sessionId
     activePath: fileWs.active?.path || '',
   }
 
+  function onDockReady(event) {
+    const dockApi = event.api
+    apiRef.current = dockApi
+    setApi(dockApi)
+
+    // REQ-2/REQ-8: restore the saved arrangement, degrading to the default
+    // preset — with a surfaced reason — whenever it cannot be trusted.
+    saverRef.current = createDebouncedSaver(() => {
+      if (!apiRef.current) return
+      saveLayout(window.localStorage, apiRef.current.toJSON(), presetRef.current)
+    }, SAVE_DEBOUNCE_MS)
+
+    const saved = loadSavedLayout(window.localStorage, isKnownPanel)
+    if (saved.ok) {
+      try {
+        dockApi.fromJSON(saved.layout)
+        presetRef.current = saved.preset
+        if (saved.dropped.length > 0) {
+          setNotice(`layout restored (dropped panels no longer shipped: ${saved.dropped.join(', ')})`)
+        }
+      } catch {
+        dockApi.clear()
+        applyPresetPlacements(dockApi, DEFAULT_PRESET)
+        presetRef.current = 'default'
+        setNotice('layout reset (saved layout was unreadable)')
+      }
+    } else {
+      applyPresetPlacements(dockApi, DEFAULT_PRESET)
+      presetRef.current = 'default'
+      if (saved.reason === 'corrupt') setNotice('layout reset (saved layout was corrupt)')
+      if (saved.reason === 'version') setNotice('layout reset (saved layout was from a newer version)')
+      if (saved.reason === 'empty') setNotice('layout reset (no known panels remained)')
+    }
+
+    // Debounced persistence rides dockview's own change event — every drag,
+    // close, resize and palette mutation funnels through it.
+    dockApi.onDidLayoutChange(() => saverRef.current?.schedule())
+  }
+
   return (
     <WorkspaceContext.Provider value={shell}>
       <div data-workspace="dock" className="flex h-screen flex-col bg-neutral-900 text-neutral-200">
         {error && <div className="shrink-0 bg-danger/15 px-4 py-1 text-xs text-danger">{error}</div>}
         <AgentStrip {...agentStrip} />
+        {notice && (
+          <button
+            data-layout-notice
+            className="shrink-0 bg-warning/15 px-4 py-1 text-left text-xs text-warning"
+            onClick={() => setNotice(null)}
+            title="click to dismiss"
+          >
+            {notice}
+          </button>
+        )}
         <div className="min-h-0 flex-1">
           <DockviewReact
             theme={themeDark}
             components={COMPONENTS}
-            watermarkComponent={Watermark}
-            onReady={(event) => {
-              apiRef.current = event.api
-              setApi(event.api)
-              applyDefaultPreset(event.api)
-            }}
+            watermarkComponent={(props) => <Watermark {...props} onPreset={applyPresetByName} />}
+            onReady={onDockReady}
           />
         </div>
-        <PanelBar api={api} />
+        <CommandPalette api={api} ctx={paletteCtx} />
         <StatusFooter {...footer} />
       </div>
     </WorkspaceContext.Provider>

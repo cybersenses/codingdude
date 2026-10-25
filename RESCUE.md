@@ -1,7 +1,7 @@
 # RESCUE.md — recovery sheet for the R59 P0/P1 frontend refactor
 
 **Read this first if a session died, the UI is broken, or you are an AI taking over with no context.**
-Owner: CodingDude. Last updated: R59 P1 — the dock shell behind `?layout=dock`.
+Owner: CodingDude. Last updated: R59 P3 — layout persistence, presets, command palette.
 
 ---
 
@@ -10,7 +10,7 @@ Owner: CodingDude. Last updated: R59 P1 — the dock shell behind `?layout=dock`
 | Item | Value |
 |---|---|
 | Repo | `G:\pydantic` (branch `main`) |
-| Last known-good commit | `c103d5c` — "fix(ui_smoke): the second shape I invented for the banner does not exist here", pushed, gates green |
+| Last known-good commit | `514441f` — R59 P2 review round 2 (pushed, gates green); P3 is the next commit |
 | Restore tag | `pre-r59-p0` → `0c2e58e` (created before any refactor; **do not delete**) |
 | Working tree at kickoff | clean except `M ROADMAP.md` (R59 item) |
 | Risk area | `frontend/src/` — React UI |
@@ -83,10 +83,9 @@ panels anywhere.
   container changes. It does **not** prove the hidden-then-revealed case: dockview's
   `DockviewPanelApi` omits `setVisible` and its group headers ship no actions, so hiding a
   panel needs P3 UI before a gate can test it. Do not read this as covered.
-- **P2 (complete, #243)** — all twenty catalogue panels in the dock shell; store-backed panels read one visibility-gated `sessionData` store (2 s tick, `document.hidden` pause, per-topic error capture, mount-parity first fetch) instead of per-tab polls; `+ Title` panel bar opens closed panels until P3's palette; dock walk opens and checks all 20. Known limits: Graph keeps a per-tab effect (fetch keyed on `activePath`); `/sessions/{id}/diff` is ~14 s server-side on long-lived sessions; App's footer-level processes poll still runs in dock mode alongside the store's processes topic.
-- **P3–P4** — persistence/presets/palette/keyboard *plus* two obligations deferred from P1: the
-  panel-hide control a reveal test needs, and the REQ-9 drag → reload → assert proof.
-  Then popouts. **Not started.**
+- **P2 (complete, #243)** — all twenty catalogue panels in the dock shell; store-backed panels read one visibility-gated `sessionData` store (2 s tick, `document.hidden` pause, per-topic error capture, mount-parity first fetch) instead of per-tab polls; dock walk opens and checks all 20. Known limits: Graph keeps a per-tab effect (fetch keyed on `activePath`); `/sessions/{id}/diff` is ~14 s server-side on long-lived sessions; App's footer-level processes poll still runs in dock mode alongside the store's processes topic.
+- **P3 (complete, #244)** — layout persists to `cd-layout-v1` (debounced 400 ms saves off `onDidLayoutChange`); defensive restore (unknown panels stripped from `panels`/grid/floating/popout; corrupt, future-version or empty saves fall back to the default preset with a dismissible `data-layout-notice`); shipped presets default/debug/review/watching (placements, invariant-tested) plus user-saved presets (serialized, restored via `fromJSON`); command palette on `Ctrl+Shift+P`/`Ctrl+K` (show/hide, move, float/dock, presets, save-as, reset) replaces the P2 `+ Title` panel bar — the dock walk now opens panels *through the palette* (REQ-5 proven end-to-end). Persistence probe: `.scratch/p3_persistence_probe.py` (untracked) 9/9 — palette move survives reload, review preset round-trips, corrupt layout falls back with notice, palette reset works. Honest limit: the reload proof mutates via palette commands, not a mouse drag; dockview's own drag internals are not re-proven. `Ctrl+K` intercepts the bare chord (Monaco chord conflicts, not remapped).
+- **P4** — popouts, per-project layouts, float-geometry memory; then delete `panes.ts` and the classic layout. **Not started.**
 
 **Rollback for P1 is one query parameter**: load the app without `?layout=dock` and the
 classic shell renders exactly as before. Nothing server-side changed, so no data migration
@@ -171,7 +170,8 @@ shows a "no session"/"loading…" placeholder until the session binds *and* `/se
 resolves, so without the wait a slow fetch reads as a missing `README.md` — one run recorded 17
 chars for Explorer, i.e. header plus "loading…", and the Monaco step called that a missing file),
 checks the `DOCK_PANELS` (the whole catalogue, 20 entries since P2; the five preset
-panels' tabs exist on boot, the rest are opened from the `+ Title` panel bar) against
+panels' tabs exist on boot, the rest are opened through the command palette via
+`Ctrl+Shift+P` → "Show <title>" since P3 replaced the panel bar) against
 `workspace/catalogue.ts` (a title mismatch, or a catalogue
 panel the walk never visits, fails the run), asserts each panel root marked `data-panel="<id>"`
 has a non-zero bounding box — recorded as `visible`, and a geometry check rather than CSS
@@ -244,7 +244,7 @@ it first. A blank page with a console error almost always means one of:
 ## 8. Where the plan and decisions live
 
 - `ROADMAP.md` → **R59**
-- Planning DB → tech design **#1**, design decision **#94**, ticket **#226** (P0), ticket **#236** (P1)
+- Planning DB → tech design **#1**, design decision **#94**, ticket **#226** (P0), ticket **#236** (P1), **#243** (P2), **#244** (P3)
 - `code-design.md` → §R59 (P0 structure) and §R59 P1 (the dock shell: decisions, evidence, deviations)
 - Artifact `R59-workspace-design` (rendered design + mock)
 - This file — **update section 1 and 2 at every milestone**, so a successor never has to

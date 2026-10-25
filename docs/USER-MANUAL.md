@@ -174,6 +174,23 @@ status `completed` / `interrupted` / `failed`.
   KEY/TOKEN/SECRET/PASSWORD/CREDENTIAL variables; keys are never printed.
 - **Budget cap.** Set a USD cap per run; the run hard-stops when reached.
 
+### 6.1 Arranging the workspace (dockable layout)
+
+Add `?layout=dock` to the URL for the dockable workspace (the default layout
+remains the classic fixed one while the dock shell matures):
+
+- **Every surface is a panel** — projects, explorer, editor, chat and all §7
+  tabs — draggable between groups, splittable on any edge, floatable.
+- **Arrangement persists** per browser (`cd-layout-v1` in localStorage) and
+  survives reload. Saves are debounced 400 ms.
+- **Command palette** — `Ctrl+Shift+P` (or `Ctrl+K`): Show/Hide any panel,
+  Move active panel left/right/above/below, Float/Dock, apply a preset
+  (Default, Debug, Review, Watching), save the current layout as a named
+  preset, or Reset layout. This is also the keyboard-only path for every move.
+- **Resilience** — a corrupt or future-versioned saved layout falls back to
+  the default preset with a dismissible notice; panels the current build no
+  longer ships are dropped from a restore while keeping the rest.
+
 ## 7. UI reference — right panel tabs
 
 | Tab | What it shows |

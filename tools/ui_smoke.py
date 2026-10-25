@@ -124,7 +124,12 @@ def app_tabs() -> list[str]:
 def catalogue_panels() -> dict[str, str]:
     """Panel id → title as declared in the dock catalogue, so DOCK_PANELS cannot drift."""
     text = CATALOGUE_TS.read_text(encoding="utf-8")
-    pairs = re.findall(r"\{ id: '([^']+)', title: '([^']+)'", text)
+    # Only the PANELS array declares panels. P3 added a PRESETS array whose
+    # entries carry `{ id: 'default', title: 'Default', … }` in the same file —
+    # parsing the whole file would count presets as panels.
+    start = text.index("export const PANELS")
+    end = text.index("export function panelSpec", start)
+    pairs = re.findall(r"\{ id: '([^']+)', title: '([^']+)'", text[start:end])
     return dict(pairs)
 
 
@@ -353,15 +358,19 @@ def _walk_dock(page, report: dict, base: str, workdir: str, shots: Path | None) 
 
     found = 0
     # The preset panels first (their tabs exist on boot); the rest are opened
-    # from the panel bar so the walk proves the P2 exit criterion — every
-    # catalogue panel can actually be opened and renders a body.
+    # through the command palette (P3) so the walk proves two exit criteria —
+    # every catalogue panel can actually be opened, and the non-drag path
+    # (tech design §4.6, REQ-5) really works.
     for panel_id, title in DOCK_PANELS.items():
         if panel_id not in PRESET_PANELS:
-            opener = page.locator(f'button[title="open the {title} panel"]')
-            if opener.count() == 0:
+            page.keyboard.press("Control+Shift+P")
+            box = page.locator("[data-palette-input]")
+            if box.count() == 0:
                 report["tabs"][title] = "MISSING"
                 continue
-            opener.first.click()
+            box.first.fill(f"Show {title}")
+            page.wait_for_timeout(100)
+            page.keyboard.press("Enter")
             page.wait_for_timeout(1500)  # data panels fetch on mount
         tab = _dock_tab(page, title)
         if tab is None:
