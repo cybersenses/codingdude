@@ -1021,3 +1021,8 @@ Shipped (ticket #240): `chrome-devtools` entry in `_default_mcp_servers()` (`mcp
 **Status:** done
 
 Six consecutive commits shipped failure-mode claims a reviewer could not back ("silently returns 0", "can't miss a banner", "hides nothing"). The arithmetic half is gated by tools/claim_check.py; the failure-mode half is not. This closes it mechanically (ticket #241, shipped `f051ad5`, tightened after post-push review): a sentence in a commit message (or doc, on request) containing a failure-mode verb must carry a `[probe: ...]` annotation naming the command that demonstrated it, or state "not yet verified" — otherwise the check fails and the message is not committed. Default: on for --message-file, opt-in for documents (historical docs would scream). Honest limit: the checker is run by the agent as its documented pre-commit step, not wired into a git hook — a hook is a separate decision. Post-push review found and closed four holes (empty `[probe: ]`, a probe on a neighbouring bullet, `pecan never` matching `can never`, and the message-file default leaking onto documents in the same run); tests 43 → 47. Design notes: code-design.md §R62.
+
+## R63 — Silent failure surfacing in dock panel mutations
+**Status:** open
+
+
