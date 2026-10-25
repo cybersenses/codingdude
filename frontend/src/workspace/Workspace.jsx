@@ -113,21 +113,31 @@ function ChatPanel() {
 // can see — this is true of EVERY store panel, not only the `renderer:'always'`
 // ones. dockview's onDidVisibilityChange flips the subscriber's visibility flag
 // instead, so only panels on screen are ever fetched.
+//
+// Post-push review fix: the flag is synced through a `countedRef` that mirrors
+// whether *this* subscriber is currently counted visible. The earlier version
+// decremented unconditionally on unmount, which — with two subscribers on one
+// topic (Output + Waterfall both read `output`) — subtracted twice and left a
+// still-visible sibling unpolled.
 function visible(topic, Panel) {
   function GatedPanel(props) {
     const { store: shellStore, sessionId } = useShell()
     const panelApi = props.api
+    const countedRef = useRef(true) // subscribe() counted this subscriber visible
     useEffect(() => {
       if (!panelApi || typeof panelApi.onDidVisibilityChange !== 'function') return
-      const disp = panelApi.onDidVisibilityChange((ev) =>
-        shellStore.setVisible(topic, sessionId, ev.isVisible),
-      )
-      // Subscribe already counted this subscriber visible; correct it if
-      // dockview mounted the panel hidden (a background tab).
-      if (panelApi.isVisible === false) shellStore.setVisible(topic, sessionId, false)
+      const sync = (isVisible) => {
+        if (isVisible === countedRef.current) return
+        shellStore.setVisible(topic, sessionId, isVisible)
+        countedRef.current = isVisible
+      }
+      const disp = panelApi.onDidVisibilityChange((ev) => sync(ev.isVisible))
+      // Correct the subscribe-time +1 if dockview mounted the panel hidden
+      // (a background tab).
+      sync(panelApi.isVisible !== false)
       return () => {
         disp.dispose()
-        shellStore.setVisible(topic, sessionId, false)
+        sync(false)
       }
     }, [shellStore, sessionId, panelApi])
     return <Panel {...props} />
@@ -289,7 +299,7 @@ function PanelBar({ api }) {
 // Shell
 // ---------------------------------------------------------------------------
 
-export function Workspace({ error, agentStrip, sidebar, fileWs, onAsk, sessionId, prompt, pending, chat, footer, onRefreshArtifacts, workdir, processes, reviewDiff = 0 }) {
+export function Workspace({ error, agentStrip, sidebar, fileWs, onAsk, sessionId, prompt, pending, chat, footer, onRefreshArtifacts, workdir, reviewDiff = 0 }) {
   const [api, setApi] = useState(null)
   const apiRef = useRef(null)
 
@@ -309,10 +319,11 @@ export function Workspace({ error, agentStrip, sidebar, fileWs, onAsk, sessionId
     pending,
     chat,
     onRefreshArtifacts,
-    // P2: store-backed panels + the wiring the new panels need.
+    // P2: store-backed panels + the wiring the new panels need. The footer's
+    // processes live in `footer` (App's own poll), not the shell — the
+    // Processes panel reads the store.
     store,
     workdir,
-    processes,
     activePath: fileWs.active?.path || '',
   }
 

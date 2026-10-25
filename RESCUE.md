@@ -15,7 +15,7 @@ Owner: CodingDude. Last updated: R59 P1 — the dock shell behind `?layout=dock`
 | Working tree at kickoff | clean except `M ROADMAP.md` (R59 item) |
 | Risk area | `frontend/src/` — React UI |
 | Backend | untouched by R59 (Python, `src/codingdude/`) |
-| `App.jsx` size | history row, all counts are as-of-then (historical): 3288 at kickoff → **1337** after P0 → **1439** after #233 → **1488** after P1 → **1501** after the lazy-import split → **1500** after review deleted a duplicated comment block → **1498** after #232 removed the inert `refreshKey` chain → **1501** after R59 P2 passed `workdir`/`processes` to the dock shell and moved `MEMORY_LIMIT` to `limits.ts`. Today's figure is the last one. P1 is additive: `workspace/` is 485 lines across three files — `Workspace.jsx` 274, `catalogue.ts` 96, `catalogue.test.ts` 115 — and `App.jsx` only gained the flag, the shared prop bags and `React.lazy`/`Suspense` |
+| `App.jsx` size | history row, all counts are as-of-then (historical): 3288 at kickoff → **1337** after P0 → **1439** after #233 → **1488** after P1 → **1501** after the lazy-import split → **1500** after review deleted a duplicated comment block → **1498** after #232 removed the inert `refreshKey` chain → **1500** after R59 P2 passed `workdir` to the dock shell and moved `MEMORY_LIMIT` to `limits.ts` (post-push review then removed the dead `processes` prop). Today's figure is the last one. P1 is additive: `workspace/` is 485 lines across three files — `Workspace.jsx` 274, `catalogue.ts` 96, `catalogue.test.ts` 115 — and `App.jsx` only gained the flag, the shared prop bags and `React.lazy`/`Suspense` |
 | **Two shells** | classic flexbox = default; `?layout=dock` = the dockview shell (P1) |
 
 ### Progress log (P0 steps, newest last)
@@ -48,7 +48,7 @@ Owner: CodingDude. Last updated: R59 P1 — the dock shell behind `?layout=dock`
 | P1 gate — `tools/ui_smoke.py --layout dock` + `data-panel` seam + Monaco reflow check | done | dock smoke exit 0, 5/5 · 23 gate unit tests |
 | P1 gate fixes — scoped banner selector (the descendant-only form found nothing of the root shape, so a failing panel read as clean); `expected_entries` no longer falling back to a number the walk agrees with by construction; `_no_readme_reason` separating a failed sessions fetch from an empty workspace; `playwright` imported inside `run()` so the gate's own tests cannot silently skip | done | pytest 807/1 skipped · dock 5/5 · classic 16/16 · 23 gate unit tests |
 
-`App.jsx` is now ~1501 lines: `DockPanel` (tab shell + the 9 inline bodies) and `App`
+`App.jsx` is now ~1500 lines: `DockPanel` (tab shell + the 9 inline bodies) and `App`
 (session/SSE state + layout). Eight of those nine bodies (Graph, Output, Waterfall, Trace,
 Cost, MCP, Renders, Memory) read `DockPanel`'s single shared poll (`data`, `setData`;
 `selRun` belongs to Output and Waterfall only). Only **Processes** is inline for a different
@@ -83,8 +83,8 @@ panels anywhere.
   container changes. It does **not** prove the hidden-then-revealed case: dockview's
   `DockviewPanelApi` omits `setVisible` and its group headers ship no actions, so hiding a
   panel needs P3 UI before a gate can test it. Do not read this as covered.
-- P2–P4 — remaining fifteen panels + the visibility-gated data store, then
-  persistence/presets/palette/keyboard *plus* two obligations deferred from P1: the
+- **P2 (complete, #243)** — all twenty catalogue panels in the dock shell; store-backed panels read one visibility-gated `sessionData` store (2 s tick, `document.hidden` pause, per-topic error capture, mount-parity first fetch) instead of per-tab polls; `+ Title` panel bar opens closed panels until P3's palette; dock walk opens and checks all 20. Known limits: Graph keeps a per-tab effect (fetch keyed on `activePath`); `/sessions/{id}/diff` is ~14 s server-side on long-lived sessions; App's footer-level processes poll still runs in dock mode alongside the store's processes topic.
+- **P3–P4** — persistence/presets/palette/keyboard *plus* two obligations deferred from P1: the
   panel-hide control a reveal test needs, and the REQ-9 drag → reload → assert proof.
   Then popouts. **Not started.**
 
@@ -170,16 +170,17 @@ testing the old bundle.
 shows a "no session"/"loading…" placeholder until the session binds *and* `/sessions/{id}/tree`
 resolves, so without the wait a slow fetch reads as a missing `README.md` — one run recorded 17
 chars for Explorer, i.e. header plus "loading…", and the Monaco step called that a missing file),
-checks the five `DOCK_PANELS` against `workspace/catalogue.ts` (a title mismatch, or a catalogue
+checks the `DOCK_PANELS` (the whole catalogue, 20 entries since P2; the five preset
+panels' tabs exist on boot, the rest are opened from the `+ Title` panel bar) against
+`workspace/catalogue.ts` (a title mismatch, or a catalogue
 panel the walk never visits, fails the run), asserts each panel root marked `data-panel="<id>"`
 has a non-zero bounding box — recorded as `visible`, and a geometry check rather than CSS
 visibility: a scrolled-away element still has one — and records each panel's width. It reads that
-panel's own #231 banner with a "root or descendant" selector, because the banner `DiffTabPanel`
-returns *is* the panel root (`data-panel` and `data-poll-error` on the same div), and a
-descendant-only search looks scoped-correct while matching nothing — which is how this gate once
-passed a failing panel. Only that root shape exists under this layout: `DockPanel` nests its
-banner in its body, but `DockPanel` is the classic shell and is never mounted behind
-`?layout=dock`, so it is the classic walk's page-wide read that sees it. A tab in the tab bar
+panel's own #231 banner with a "root or descendant" selector, because a panel's banner
+can *be* the panel root (`data-panel` and `data-poll-error` on the same div) or nested
+in its body (the store panels' `TopicPanel` does this) — a descendant-only search looks
+scoped-correct while matching nothing — which is how this gate once
+passed a failing panel. Both shapes are live under this layout since P2. A tab in the tab bar
 proves a tab exists, not that its body rendered; the geometry and the recorded text are what make
 that difference visible. It then opens `README.md` in the
 editor to confirm Monaco re-lays-out when the viewport changes. The hidden-then-revealed
@@ -193,7 +194,7 @@ projects/sessions · explorer tree · editor tabs + save/reload/diff · agent st
 prompt row · every dock tab renders (Diff, Graph, Planning, Artifacts, Notes, Renders,
 Terminal, **Processes**, Output, Waterfall, Trace, Cost, **Memory**, MCP, Config, Standards —
 16 tabs after #227/#228) · status footer. The smoke gate writes one screenshot per tab, which
-is usually enough to eyeball this. Repeat once with `?layout=dock`: the five panels should be
+is usually enough to eyeball this. Repeat once with `?layout=dock`: the five preset panels should be
 nav 256 px · explorer 208 px · editor + diff stacked in the middle · chat 384 px, i.e. the
 classic arrangement with draggable splitters. Those are the widths the preset requests, and the
 gate records the panel roots landing on them (`tabs[<title>].width`), with the middle column

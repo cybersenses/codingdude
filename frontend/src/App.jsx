@@ -1440,7 +1440,6 @@ export default function App() {
           footer={footerProps}
           reviewDiff={focusDiffTab}
           workdir={workdir}
-          processes={processes}
           onRefreshArtifacts={() => {
             call(`/sessions/${activeSession}/artifacts`).then(setArtifactsAll).catch(() => {})
           }}
