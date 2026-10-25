@@ -83,7 +83,9 @@ def _default_mcp_servers() -> dict:
             cdt_command, cdt_args = 'cmd', ['/c', npx, *cdt_args]
         # The Z.AI vision server (GLM coding plan): key referenced via env
         # expansion, never stored in the file. A missing key fails the server
-        # at connect; the MCP pre-flight drops it with a warning.
+        # at connect; spawn/connect failures the pre-flight recognises drop
+        # it for the run with a warning (same caveat as chrome-devtools:
+        # toolset shapes it cannot verify are kept).
         servers['zai-vision'] = {
             'type': 'stdio',
             'command': command,

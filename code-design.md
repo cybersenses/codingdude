@@ -599,7 +599,9 @@ every caller: `Database` connects through a `sqlite3.Connection` subclass
 The alternative — a `try/except` at each write site — would have had to cover the
 45 statements in `db.py` *plus* the 58 in the eight modules that reach
 `db._conn` directly (`artifacts`, `execution`, `memory`, `planning`,
-`projectnotes`, `references`, `roadmap`, `semantic`), and any new caller added
+`projectnotes`, `references`, `roadmap`, `semantic`) — 58 by the `db._conn`
+attribute path alone; six more in `references.py` reach the same connection
+through a local alias (counted with the commit sites below) — and any new caller added
 later would have re-opened the hole. Defect 2 becomes one statement: `INSERT ... SELECT
 COALESCE(MAX(seq), -1) + 1`, which computes the sequence under the write lock.
 Defect 3 becomes one connection per thread, created lazily through a

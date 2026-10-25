@@ -994,6 +994,6 @@ Whether a mechanism works, whether a shape exists, and why an observation happen
 ## R61 — chrome-devtools-mcp as a standard default MCP server
 **Status:** done
 
-Add Google's chrome-devtools-mcp (Apache-2.0, npm `chrome-devtools-mcp`) as a seeded default MCP server so automated browser testing (screenshots, console, network, performance traces) is a standard capability. Spawn via npx with `--no-usage-statistics` and `--no-update-checks` (Google telemetry is on by default; opt out for a personal agent). Requires Chrome on the machine; absent npx means no entry, same as codegraph/zai-vision.
+Add Google's chrome-devtools-mcp (Apache-2.0, npm `chrome-devtools-mcp`) as a seeded default MCP server so automated browser testing (screenshots, console, network, performance traces) is a standard capability. Spawn via npx with `--no-usage-statistics` and `--no-update-checks` (Google telemetry is on by default; opt out for a personal agent). Requires Chrome on the machine; absent npx means no entry, same as zai-vision (codegraph is gated on the codegraph binary instead).
 
 Shipped (ticket #240): `chrome-devtools` entry in `_default_mcp_servers()` (`mcp_config.py`), seeded additively by `ensure_default_mcp` (user edits to an existing entry win; absent npx means no entry). Behaviour without Chrome on the machine: not yet verified (see code-design R61). NOTICE.md records the dependency (not vendored, so no Apache-2.0 redistribution obligation). Tests: `tests/test_mcp.py` seeding/skip tests.

@@ -335,9 +335,9 @@ def test_giving_up_on_commit_rolls_the_transaction_back(home, workdir, monkeypat
 
 def test_commit_does_not_retry_other_operational_errors(home, workdir, monkeypatch):
     """Only SQLITE_BUSY is retried — a non-lock OperationalError raises on the
-    first attempt instead of burning the backoff budget on e.g. 'no such table'
-    (each lock-blocked COMMIT can also wait out the 15 s busy_timeout, so
-    retrying those is a run-killing hang)."""
+    first attempt instead of burning the retry budget on e.g. 'no such table',
+    whose outcome cannot change; each lock-blocked attempt can additionally
+    wait out the 15 s busy_timeout, so a full budget is a ~60 s hang."""
     db = Database.connect(home)
     sid = db.create_session(workdir)
     calls = {'n': 0}

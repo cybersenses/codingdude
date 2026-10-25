@@ -144,8 +144,6 @@ def test_ensure_default_mcp_adds_zai_vision_with_env_expansion(home, monkeypatch
     never stored in the file."""
     from codingdude.mcp_config import ensure_default_mcp, merged_mcp_config
 
-    monkeypatch.setattr('codingdude.mcp_config.shutil.which', lambda name: 'C:/bin/codegraph.CMD')
-
     def which(name: str):
         if name == 'npx':
             return 'C:/Program Files/nodejs/npx.CMD'
@@ -222,7 +220,7 @@ def test_ensure_default_mcp_skips_when_binary_missing(home, monkeypatch):
     assert merged_mcp_config(home, home)['mcpServers'] == {}
 
 
-def test_verify_drops_broken_server_keeps_healthy(home, tmp_path, monkeypatch):
+def test_verify_drops_broken_server_keeps_healthy(home, tmp_path):
     """A flaky MCP spawn must be dropped for the run, never raise."""
     import asyncio
 
