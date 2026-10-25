@@ -429,6 +429,71 @@ def test_interrupt_during_backoff_sleep_rolls_back(home, workdir, monkeypatch):
     assert db._conn.in_transaction is False
 
 
+def test_wal_autocheckpoint_is_bounded(home):
+    """#238: passive autocheckpoint runs every 256 pages (~1 MB) instead of
+    SQLite's 1000-page (~4 MB) default, so the WAL stays cheap to rewind."""
+    db = Database.connect(home)
+    pages = db._conn.execute('PRAGMA wal_autocheckpoint').fetchone()[0]
+    assert pages == 256
+
+
+def test_checkpoint_idle_truncates_when_wal_exceeds_threshold(home, workdir):
+    """#238: an explicit TRUNCATE checkpoint on idle bounds the WAL even when
+    passive autocheckpoint was starved by long-lived readers."""
+    db = Database.connect(home)
+    sid = db.create_session(workdir)
+    for _ in range(20):
+        db._conn.execute(
+            "INSERT INTO session_notes (session_id, content, created_at)"
+            " VALUES (?, ?, 'x')",
+            (sid, 'x' * 400),
+        )
+        db._conn.commit()
+    wal = home / 'codingdude.db-wal'
+    assert wal.exists() and wal.stat().st_size > 0
+
+    result = db.checkpoint_idle(threshold_bytes=1)
+
+    assert result['ran'] is True
+    assert result['busy'] == 0
+    assert wal.stat().st_size == 0, 'WAL was not truncated'
+
+
+def test_checkpoint_idle_skips_below_threshold(home, workdir):
+    """#238: the idle checkpoint is a no-op while the WAL is under the soft
+    threshold — every sweep must not pay a checkpoint."""
+    db = Database.connect(home)
+    sid = db.create_session(workdir)
+    db.add_session_note(sid, 'tiny')
+
+    result = db.checkpoint_idle(threshold_bytes=64 * 1024 * 1024)
+
+    assert result['ran'] is False
+
+
+def test_checkpoint_idle_survives_busy_readers(home, workdir):
+    """#238: a reader pinning the WAL makes TRUNCATE return busy — that must
+    surface in the result, not raise into the janitor loop. The attempt also
+    runs under a short busy_timeout so a held write lock cannot stall a sweep."""
+    db = Database.connect(home)
+    sid = db.create_session(workdir)
+    db._conn.execute(
+        "INSERT INTO session_notes (session_id, content, created_at)"
+        " VALUES (?, ?, 'x')",
+        (sid, 'x' * 400),
+    )
+    db._conn.commit()
+    reader = sqlite3.connect(home / 'codingdude.db')
+    reader.execute('BEGIN')
+    reader.execute('SELECT COUNT(*) FROM session_notes').fetchone()
+
+    result = db.checkpoint_idle(threshold_bytes=1)  # must not raise
+
+    assert result['ran'] is True
+    assert result['busy'] == 1
+    reader.close()
+
+
 def test_run_lifecycle_start_then_end(home, workdir):
     """R31: runs are persisted so run end-state survives a server bounce."""
     db = Database.connect(home)

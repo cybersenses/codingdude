@@ -725,3 +725,11 @@ between naming a command and writing `not yet verified`.
 
 **Impact.** `tests/test_claim_check.py` 43 → 47 tests; the living-docs sweep is
 unchanged (paths/refs/counts only). Shipped in `f051ad5`, tightened after review.
+
+## R57 addendum — bounding the WAL (#238)
+
+**What.** `db.py` sets `PRAGMA wal_autocheckpoint=256` (≈1 MB, down from SQLite's 1000-page default) and gains `Database.checkpoint_idle()`: past a 4 MB soft threshold it runs `PRAGMA wal_checkpoint(TRUNCATE)` on a dedicated connection with a 1 s `busy_timeout`. The #148 janitor calls it every sweep via `asyncio.to_thread`, so a busy lock can never block the event loop for the worker connections' 15 s. Busy readers surface as `busy=1` in the returned dict (logged at INFO, retried next sweep); a WAL past a 64 MB documented warning ceiling logs at WARNING — growth beyond it means readers pin the log faster than sweeps can truncate.
+
+**Why a second mechanism.** Autocheckpoint (passive) cannot advance past the oldest reader's snapshot; with the pre-#223 single shared connection a pinned snapshot starved checkpoints indefinitely, which is how the WAL reached 25.5 MB in the wild. Per-thread connections (#223) fixed the pinning source; the janitor-driven TRUNCATE bounds the WAL even if a new pinning pattern appears.
+
+**Impact.** Red-first tests: `test_wal_autocheckpoint_is_bounded`, `test_checkpoint_idle_truncates_when_wal_exceeds_threshold`, `test_checkpoint_idle_skips_below_threshold`, `test_checkpoint_idle_survives_busy_readers` (tests/test_db.py), `test_janitor_checkpoints_idle_wal` (tests/test_run_janitor.py). Full suite 870 passed / 1 skipped; ruff + mypy clean. R57 acceptance is now fully met — the item is closed.

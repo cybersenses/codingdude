@@ -244,6 +244,12 @@ async def _run_janitor(channels: dict, db: Database) -> None:
     log = logging.getLogger('codingdude.server')
     while True:
         await asyncio.sleep(_JANITOR_INTERVAL_S)
+        # #238: bound the WAL each sweep — TRUNCATE-checkpoint past 4 MB on a
+        # short-timeout connection so busy locks can't stall the loop.
+        try:
+            await asyncio.to_thread(db.checkpoint_idle)
+        except Exception:  # noqa: BLE001 -- housekeeping must never kill the janitor
+            log.warning('idle WAL checkpoint failed', exc_info=True)
         for channel in list(channels.values()):
             worker = channel.worker
             if worker is None:
