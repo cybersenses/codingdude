@@ -16,6 +16,19 @@
 import React, { useEffect, useState } from 'react'
 import CodeEditor from '../../CodeEditor.jsx'
 import { call } from '../../api'
+import { errMsg } from '../../pollErrors'
+
+// #234: a failed fetch must not look like an empty panel. Each of the three
+// loads keeps its own failure line (one shared banner cannot say which mode
+// is broken) and clears it on the next successful fetch.
+function Failure({ children }) {
+  return (
+    <div
+      data-poll-error="Standards"
+      className="rounded border border-danger/40 bg-danger/10 p-2 text-xs text-danger"
+    >{children}</div>
+  )
+}
 
 // R59 P0: lifted out of DockPanel's `tab === 'Standards'` branch with its own
 // state, unchanged. It never read the dock's shared `data`, so it becomes a
@@ -27,16 +40,19 @@ export function Standards({ sessionId }) {
   const [reviewChecklist, setReviewChecklist] = useState(null)
   const [editingSkill, setEditingSkill] = useState(null)
   const [savedMsg, setSavedMsg] = useState('')
+  const [errors, setErrors] = useState({})
 
   useEffect(() => {
     if (!sessionId) return
     call(`/sessions/${sessionId}/standards`)
-      .then((d) => setReviewChecklist(d.review_checklist))
-      .catch(() => setReviewChecklist('unavailable'))
-    call('/skills/detail').then(setSkillList).catch(() => setSkillList([]))
+      .then((d) => { setReviewChecklist(d.review_checklist); setErrors((e) => ({ ...e, checklist: null })) })
+      .catch((err) => setErrors((e) => ({ ...e, checklist: errMsg(err) })))
+    call('/skills/detail')
+      .then((l) => { setSkillList(l); setErrors((e) => ({ ...e, skills: null })) })
+      .catch((err) => setErrors((e) => ({ ...e, skills: errMsg(err) })))
     call('/directives')
-      .then((d) => setDirectivesDraft((cur) => cur ?? d.content))
-      .catch(() => setDirectivesDraft(''))
+      .then((d) => { setDirectivesDraft((cur) => cur ?? d.content); setErrors((e) => ({ ...e, directives: null })) })
+      .catch((err) => { setDirectivesDraft(''); setErrors((e) => ({ ...e, directives: errMsg(err) })) })
   }, [sessionId])
 
   async function saveDirectives() {
@@ -81,6 +97,9 @@ export function Standards({ sessionId }) {
         ))}
       </div>
       {savedMsg && <div className="rounded bg-success/15 px-2 py-1 text-[10px] text-brand-300">{savedMsg}</div>}
+      {errors.directives && <Failure>could not load directives: {errors.directives}</Failure>}
+      {errors.skills && <Failure>could not load skills: {errors.skills}</Failure>}
+      {errors.checklist && <Failure>could not load review checklist: {errors.checklist}</Failure>}
 
       {stdMode === 'directives' && (
         <div className="flex min-h-0 flex-1 flex-col gap-1">
@@ -154,7 +173,7 @@ export function Standards({ sessionId }) {
 
       {stdMode === 'checklist' && (
         <pre className="min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap rounded bg-neutral-900 p-2 text-[11px] text-neutral-400">
-          {reviewChecklist ?? 'loading…'}
+          {reviewChecklist ?? (errors.checklist ? '' : 'loading…')}
         </pre>
       )}
     </div>

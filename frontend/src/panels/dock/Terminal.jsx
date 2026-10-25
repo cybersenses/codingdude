@@ -15,6 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import React, { useState } from 'react'
 import { call } from '../../api'
+import { errMsg } from '../../pollErrors'
 
 // R59 P0: moved verbatim out of App.jsx's DockPanel tab body. Session shell
 // access; becomes the `terminal` panel in P2.
@@ -31,7 +32,12 @@ export function Terminal({ sessionId }) {
         body: JSON.stringify({ command: cmd.trim() }),
       })
       setOutput((o) => [...o, { cmd: cmd.trim(), exit: r.exit, out: r.output }])
-    } catch { /* transient */ }
+    } catch (err) {
+      // #234: a failed exec must not vanish — the command stays on screen with
+      // its error so the user knows it never ran. Transient data-poll-error so
+      // the smoke gate sees it while it is the latest entry.
+      setOutput((o) => [...o, { cmd: cmd.trim(), exit: null, out: `could not run: ${errMsg(err)}` }])
+    }
     setBusy(false)
     setCmd('')
   }
@@ -40,7 +46,7 @@ export function Terminal({ sessionId }) {
       <div className="min-h-0 flex-1 overflow-auto rounded bg-canvas p-2 font-mono text-[11px]">
         {output.length === 0 && <div className="text-ink-muted">no commands yet</div>}
         {output.map((o, i) => (
-          <div key={i} className="mb-2">
+          <div key={i} className="mb-2" data-poll-error={o.exit == null ? 'Terminal' : undefined}>
             <div className="text-accent">$ {o.cmd}</div>
             <pre className="whitespace-pre-wrap text-ink-muted">{o.out || '(no output)'}</pre>
             <div className={o.exit === 0 ? 'text-success' : 'text-danger'}>exit {o.exit}</div>

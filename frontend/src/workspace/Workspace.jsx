@@ -32,6 +32,7 @@ import { EditorPane } from '../panels/Editor.jsx'
 import { Chat } from '../panels/Chat.jsx'
 import { Prompt } from '../panels/Prompt.jsx'
 import { DiffPanel } from '../panels/dock/Diff.jsx'
+import { errMsg } from '../pollErrors'
 import { PendingArtifactCard } from '../cards/chatCards.jsx'
 
 // Panel components read their data from this context rather than from dockview
@@ -121,7 +122,7 @@ function DiffTabPanel() {
         setFailure(null)
       } catch (err) {
         // #234: a failed fetch must not look like "no changes yet".
-        if (!stop) setFailure(String(err instanceof Error ? err.message : err))
+        if (!stop) setFailure(errMsg(err))
       }
       if (!stop) setTimeout(poll, DIFF_POLL_MS)
     }
