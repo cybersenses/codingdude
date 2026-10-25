@@ -76,8 +76,11 @@ def _default_mcp_servers() -> dict:
     npx = shutil.which('npx')
     if npx:
         command, npx_args = npx, ['-y', '@z_ai/mcp-server@latest']
+        cdt_command, cdt_args = npx, ['-y', 'chrome-devtools-mcp@latest',
+                                      '--no-usage-statistics', '--no-update-checks']
         if npx.lower().endswith(('.cmd', '.bat')):
             command, npx_args = 'cmd', ['/c', npx, *npx_args]
+            cdt_command, cdt_args = 'cmd', ['/c', npx, *cdt_args]
         # The Z.AI vision server (GLM coding plan): key referenced via env
         # expansion, never stored in the file. A missing key fails the server
         # at connect; the MCP pre-flight drops it with a warning.
@@ -86,6 +89,16 @@ def _default_mcp_servers() -> dict:
             'command': command,
             'args': npx_args,
             'env': {'Z_AI_API_KEY': '${ZAI_API_KEY:-}', 'Z_AI_MODE': 'ZAI'},
+        }
+        # Chrome DevTools for agents (R61): browser automation, console,
+        # network, and performance traces for automated testing. Google's
+        # usage statistics and update checks are on by default; both are
+        # disabled here. A missing Chrome install fails at connect and the
+        # pre-flight drops the server with a warning.
+        servers['chrome-devtools'] = {
+            'type': 'stdio',
+            'command': cdt_command,
+            'args': cdt_args,
         }
     return servers
 

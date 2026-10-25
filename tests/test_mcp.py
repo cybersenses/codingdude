@@ -161,6 +161,28 @@ def test_ensure_default_mcp_adds_zai_vision_with_env_expansion(home, monkeypatch
     assert entry['env']['Z_AI_MODE'] == 'ZAI'
 
 
+def test_ensure_default_mcp_adds_chrome_devtools_with_telemetry_off(home, monkeypatch):
+    """npx present -> chrome-devtools seeded via the cmd wrapper, with
+    Google's usage-statistics and update checks explicitly disabled (R61)."""
+    from codingdude.mcp_config import ensure_default_mcp, merged_mcp_config
+
+    def which(name: str):
+        if name == 'npx':
+            return 'C:/Program Files/nodejs/npx.CMD'
+        return 'C:/bin/codegraph.CMD'
+
+    monkeypatch.setattr('codingdude.mcp_config.shutil.which', which)
+    ensure_default_mcp(home)
+    entry = merged_mcp_config(home, home)['mcpServers']['chrome-devtools']
+    assert entry['command'] == 'cmd'
+    assert entry['args'][:2] == ['/c', 'C:/Program Files/nodejs/npx.CMD']
+    args = ' '.join(entry['args'])
+    assert 'chrome-devtools-mcp@latest' in args
+    assert '--no-usage-statistics' in args
+    assert '--no-update-checks' in args
+    assert 'env' not in entry  # no secrets to expand
+
+
 def test_ensure_default_mcp_skips_zai_vision_without_npx(home, monkeypatch):
     """No npx on PATH -> zai-vision is not seeded (codegraph still is)."""
     from codingdude.mcp_config import ensure_default_mcp, merged_mcp_config
@@ -173,6 +195,7 @@ def test_ensure_default_mcp_skips_zai_vision_without_npx(home, monkeypatch):
     servers = merged_mcp_config(home, home)['mcpServers']
     assert 'codegraph' in servers
     assert 'zai-vision' not in servers
+    assert 'chrome-devtools' not in servers  # same npx gate (R61)
 
 
 def test_ensure_default_mcp_preserves_existing_zai_vision(home, monkeypatch):

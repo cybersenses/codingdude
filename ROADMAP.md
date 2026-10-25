@@ -991,3 +991,9 @@ Also corrected by the sweep: a stale `App.jsx` size in `RESCUE.md` (~1488 → 15
 
 Whether a mechanism works, whether a shape exists, and why an observation happened — five of the six original failures. Those need a probe, which no tool can supply.
 
+## R61 — chrome-devtools-mcp as a standard default MCP server
+**Status:** done
+
+Add Google's chrome-devtools-mcp (Apache-2.0, npm `chrome-devtools-mcp`) as a seeded default MCP server so automated browser testing (screenshots, console, network, performance traces) is a standard capability. Spawn via npx with `--no-usage-statistics` and `--no-update-checks` (Google telemetry is on by default; opt out for a personal agent). Requires Chrome on the machine; absent npx means no entry, same as codegraph/zai-vision.
+
+Shipped (ticket #240): `chrome-devtools` entry in `_default_mcp_servers()` (`mcp_config.py`), seeded additively by `ensure_default_mcp` (user edits to an existing entry win; a missing Chrome install fails at connect and the pre-flight drops the server with a warning). NOTICE.md records the dependency (not vendored, so no Apache-2.0 redistribution obligation). Tests: `tests/test_mcp.py` seeding/skip tests.
