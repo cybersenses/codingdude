@@ -22,7 +22,12 @@ import { DEFAULT_PRESET, PANELS, isKnownPanel, panelSpec } from './catalogue'
 import { PANE_SPECS } from '../panes'
 
 // The component registry lives in Workspace.jsx; keep this list in step with it.
-const REGISTERED = ['nav', 'explorer', 'editor', 'chat', 'diff']
+const REGISTERED = [
+  'nav', 'explorer', 'editor', 'chat', 'diff',
+  // R59 P2
+  'graph', 'planning', 'artifacts', 'notes', 'renders', 'terminal', 'output',
+  'waterfall', 'trace', 'cost', 'memory', 'mcp', 'config', 'standards', 'processes',
+]
 
 describe('panel catalogue', () => {
   it('has unique panel ids', () => {
@@ -54,14 +59,18 @@ describe('panel catalogue', () => {
 
   it('resolves known ids and rejects unknown ones', () => {
     expect(isKnownPanel('chat')).toBe(true)
-    expect(isKnownPanel('processes')).toBe(false) // P2
+    expect(isKnownPanel('processes')).toBe(true) // P2
     expect(panelSpec('nope')).toBeUndefined()
   })
 })
 
 describe('default preset', () => {
-  it('places exactly the five panels P1 ships, once each', () => {
-    expect(DEFAULT_PRESET.map((p) => p.id).sort()).toEqual([...REGISTERED].sort())
+  // The preset places the five first-boot panels (REQ-7); the P2 catalogue
+  // entries are opened on demand from the panel bar, not on boot.
+  const PRESET_IDS = ['nav', 'explorer', 'editor', 'chat', 'diff']
+
+  it('places exactly the five boot panels, once each', () => {
+    expect(DEFAULT_PRESET.map((p) => p.id).sort()).toEqual([...PRESET_IDS].sort())
   })
 
   it('seeds the grid with a reference-free first placement', () => {

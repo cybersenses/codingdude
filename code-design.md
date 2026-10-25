@@ -507,6 +507,71 @@ describe something no user can reach from the UI; both land when the dock
 becomes the default (P4) or the moment the flag is flipped, whichever comes
 first. Recorded here so the omission is a decision rather than an oversight.
 
+### R59 P2 — the full catalogue and the visibility-gated store (#243)
+
+All twenty panels are registered in the dock shell behind `?layout=dock`, and
+the store-backed ones no longer poll of their own accord: a single
+`createSessionStore` (module state in `Workspace.jsx`, one scheduler loop per
+browser, 2 s tick) fetches only the `(topic, session)` keys that have at least
+one subscriber dockview reports visible, pauses entirely while
+`document.hidden`, keeps the last successful data beside a failure, and
+re-fetches immediately on first subscribe (mount parity with the classic
+per-tab poll, which fired on mount rather than at the next tick).
+
+**Files.**
+
+| Module | Contents |
+|---|---|
+| `frontend/src/store/sessionData.ts` | framework-free store: subscribe/getSnapshot/setVisible/refresh/dispose + `useSessionData` hook |
+| `frontend/src/store/sessionData.test.ts` | 12 tests under fake timers: visible-only fetch, hidden-doc pause, unsubscribe stop, error capture, in-flight dedupe, refresh |
+| `frontend/src/store/sessionTopics.ts` | one fetcher per topic, payload shapes identical to the classic `DockPanel` poll branches |
+| `frontend/src/workspace/panels.jsx` | the sixteen new dock panels; bodies are the classic tab bodies, data source swapped |
+| `frontend/src/workspace/shellContext.jsx` | context + `useShell` extracted (avoids a Workspace↔panels import cycle) |
+| `frontend/src/workspace/catalogue.ts` | 15 new entries; `renderer:'always'` on artifacts/renders/terminal/config/standards |
+| `frontend/src/workspace/Workspace.jsx` | store instance, `visible()` gating wrapper, panel bar, extended shell context |
+| `frontend/src/limits.ts` | `MEMORY_LIMIT` shared by both shells (was an App.jsx local) |
+| `tools/ui_smoke.py` | dock walk now opens all 20 panels from the panel bar and checks each |
+
+**Decisions and why.**
+
+- **Every store panel is visibility-gated, not only `renderer:'always'` ones.**
+  P1's note above assumed dockview's default renderer unmounts a hidden tab.
+  Measured, it does not: the gate walk reads background tabs' DOM (their
+  panels stay mounted), and a four-panel budget probe recorded 31 `/api`
+  requests per 10 s — every mounted panel's topic polling. Wrapping every
+  store panel in a `visible(topic, …)` HOC that follows
+  `onDidVisibilityChange` brought the same probe to 15 per 10 s: the active
+  panel's topic plus App's own session-level polls. The probe is
+  `.scratch/probe_budget.py`, untracked; the numbers are from this session.
+- **`useSessionData` memoizes its subscribe/getSnapshot closures** (`useCallback`
+  on `[store, topic, sessionId]`). A fresh arrow per render makes React
+  resubscribe every render, which with mount-parity fetching became a
+  fetch-per-render storm — the bug that first showed as a diff panel stuck on
+  "loading…" while `/diff` requests piled up. Found with store debug logging,
+  not by reasoning.
+- **The "stuck on loading" red herring:** `/sessions/{id}/diff` takes ~14 s for
+  the long-lived development session (measured in-browser:
+  `.scratch/probe_store5.py`), so the diff panel legitimately shows `loading…` for a
+  long time. That is server latency, not a store defect; classic has the same
+  latency. A fast-diff endpoint is a separate, unlogged problem.
+- **Graph is not a store topic.** Its fetch depends on `activePath`, which a
+  `(topic, session)` key cannot express; it keeps the classic per-tab effect
+  until the store grows a parametric key. Deliberate deviation from "retire
+  the per-tab polls", visible in `frontend/src/workspace/panels.jsx` (`GraphPanel`).
+- **The panel bar is a P3 stopgap.** The palette is P3; until then closed
+  panels open from a `+ Title` button bar under the dock. It exists because
+  P2's exit criterion ("every panel openable") needs a UI path that does not
+  arrive until P3.
+- **MCP/config mutations refetch through the store** (`store.refresh`) instead
+  of each panel re-implementing DockPanel's `toggleServer` data merge.
+
+**Not yet verified / honest limits.** The visibility gating's *unhide* path
+(visible → hidden → visible) is unit-tested at the store level but not
+exercised in a browser — the gate clicks tabs open, never stacks and hides.
+Floating/popout panels are P4. The classic shell is untouched: `DockPanel`
+keeps its per-tab poll until P4 deletes it, so classic behaviour and its gate
+are unchanged (16/16, exit 0).
+
 ## R60 — Claims must be checkable (`tools/claim_check.py`)
 
 **Problem it addresses.** Six consecutive commits carried a written claim the code

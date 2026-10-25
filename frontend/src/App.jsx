@@ -69,7 +69,8 @@ const Workspace = lazy(() =>
 // #229: how many memory entries the dock renders. The table grows forever
 // (one entry per remembered fact/solution), and the whole list is rebuilt on
 // every 4s poll — 2,144 entries meant 15.8k DOM nodes versus 810 for Diff.
-const MEMORY_LIMIT = 200
+// Shared with the dock workspace's memory panel (one source of truth).
+import { MEMORY_LIMIT } from './limits'
 
 // R59 P1: which shell to render. Read once per page load — the query string
 // cannot change without a reload, and App must not re-read it per render.
@@ -1438,6 +1439,8 @@ export default function App() {
           chat={chatProps}
           footer={footerProps}
           reviewDiff={focusDiffTab}
+          workdir={workdir}
+          processes={processes}
           onRefreshArtifacts={() => {
             call(`/sessions/${activeSession}/artifacts`).then(setArtifactsAll).catch(() => {})
           }}

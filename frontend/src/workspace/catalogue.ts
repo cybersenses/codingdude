@@ -18,13 +18,15 @@
 // (P3) and saved-layout validation (P3) all read this file rather than
 // carrying their own copy of the panel list.
 //
-// Scope note: only panels that P1 actually ships a component for are listed.
-// The remaining fifteen dock tabs are registered here as their components move
-// onto the dock in P2 — a spec with no registered component would be a panel
-// the UI offers and then fails to render.
+// Scope note: every catalogue entry has a registered component — a spec with
+// no component would be a panel the UI offers and then fails to render
+// (enforced by catalogue.test.ts against the Workspace registry list).
 import { PANE_SPECS } from '../panes'
 
-export type PanelId = 'nav' | 'explorer' | 'editor' | 'chat' | 'diff'
+export type PanelId = 'nav' | 'explorer' | 'editor' | 'chat' | 'diff' | 'graph'
+  | 'planning' | 'artifacts' | 'notes' | 'renders' | 'terminal' | 'output'
+  | 'waterfall' | 'trace' | 'cost' | 'memory' | 'mcp' | 'config' | 'standards'
+  | 'processes'
 
 export interface PanelSpec {
   /** Stable id: persisted in saved layouts (P3) and used as the dockview panel id. */
@@ -52,6 +54,25 @@ export const PANELS: readonly PanelSpec[] = [
   // Prompt draft + streaming transcript + scroll position must survive a move.
   { id: 'chat', title: 'Chat', component: 'chat', renderer: 'always', minWidth: PANE_SPECS.right.min },
   { id: 'diff', title: 'Diff', component: 'diff', minHeight: PANE_SPECS.dock.min },
+  // R59 P2: the remaining dock tabs, all closable-but-not-in-the-default-
+  // preset; they are opened from the Workspace panel bar (palette lands in
+  // P3). renderer:'always' marks stateful/iframe panels whose DOM must
+  // survive being hidden (tech design §3, §4.1).
+  { id: 'graph', title: 'Graph', component: 'graph' },
+  { id: 'planning', title: 'Planning', component: 'planning' },
+  { id: 'artifacts', title: 'Artifacts', component: 'artifacts', renderer: 'always' },
+  { id: 'notes', title: 'Notes', component: 'notes' },
+  { id: 'renders', title: 'Renders', component: 'renders', renderer: 'always' },
+  { id: 'terminal', title: 'Terminal', component: 'terminal', renderer: 'always' },
+  { id: 'output', title: 'Output', component: 'output' },
+  { id: 'waterfall', title: 'Waterfall', component: 'waterfall' },
+  { id: 'trace', title: 'Trace', component: 'trace' },
+  { id: 'cost', title: 'Cost', component: 'cost' },
+  { id: 'memory', title: 'Memory', component: 'memory' },
+  { id: 'mcp', title: 'MCP', component: 'mcp' },
+  { id: 'config', title: 'Config', component: 'config', renderer: 'always' },
+  { id: 'standards', title: 'Standards', component: 'standards', renderer: 'always' },
+  { id: 'processes', title: 'Processes', component: 'processes' },
 ]
 
 export function panelSpec(id: string): PanelSpec | undefined {
