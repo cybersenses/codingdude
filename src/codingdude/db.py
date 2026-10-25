@@ -278,7 +278,9 @@ class _Connection(sqlite3.Connection):
     keeps the invariant in one place instead of at each of the 45 statements
     in `db.py` and the 58 in the eight store modules that use `db._conn`
     directly (`artifacts`, `execution`, `memory`, `planning`, `projectnotes`,
-    `references`, `roadmap`, `semantic`).
+    `references`, `roadmap`, `semantic`) — 58 by the `db._conn` attribute
+    path alone; six more in `references.py` reach the same connection
+    through a local alias and are counted with the commit sites below.
 
     `commit` is guarded for the same reason, and it is the path that actually
     produced the reported symptom: a COMMIT that returns SQLITE_BUSY also
