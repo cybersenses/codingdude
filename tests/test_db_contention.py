@@ -17,12 +17,15 @@
 
 Three properties the store must hold when server, worker, CLI and eval
 processes write the same database at the same time. Each test asserts the
-user-visible symptom ("database is locked" / a wedged store), never an
-implementation detail, and each is deterministic and sub-second.
+user-visible symptom ("database is locked" / a wedged store); the first also
+pins the mechanism (`in_transaction`), because an open transaction *is* what
+holds the write lock. The third depends on two threads interleaving to go red
+before the fix, so it is the weakest of the three.
 
-Diagnosis (`.scratch/db_contention.py`, `.scratch/db_minimise.py`): a write that
-raises never rolls back, so the connection keeps the SQLite write lock and
-every other writer waits out `busy_timeout` (15 s) and then fails with
+Diagnosis (`.scratch/db_contention.py` and `.scratch/db_minimise.py` — local,
+gitignored, not shipped): a write that raises never rolls back, so the
+connection keeps the SQLite write lock and every other writer waits out
+`busy_timeout` (15 s) and then fails with
 `sqlite3.OperationalError: database is locked`.
 """
 
@@ -37,7 +40,7 @@ THREADS = 4
 ITERS = 20
 
 
-def _race(db: Database, fn) -> list[str]:
+def _race(fn) -> list[str]:
     """Run `fn(i)` on THREADS threads released together; return failures."""
     errors: list[str] = []
     guard = threading.Lock()
@@ -48,7 +51,7 @@ def _race(db: Database, fn) -> list[str]:
         for _ in range(ITERS):
             try:
                 fn(i)
-            except Exception as exc:  # noqa: BLE001 - the failure *is* the signal
+            except Exception as exc:  # the failure *is* the signal
                 with guard:
                     errors.append(f'{type(exc).__name__}: {exc}')
                 return
@@ -96,7 +99,7 @@ def test_concurrent_message_appends_do_not_collide(home):
     sid = seed.create_session(home, 'race')
     writers = [Database.connect(home) for _ in range(THREADS)]
 
-    errors = _race(None, lambda i: writers[i].append_messages(sid, '{"m":1}'))
+    errors = _race(lambda i: writers[i].append_messages(sid, '{"m":1}'))
     assert errors == [], f'concurrent appends failed: {errors}'
 
     rows = seed._conn.execute(
@@ -106,16 +109,18 @@ def test_concurrent_message_appends_do_not_collide(home):
 
 
 def test_one_database_shared_by_threads_stays_consistent(home):
-    """The server serves requests from threadpool threads on one connection.
+    """The server serves requests from threadpool threads, each on its own.
 
     A single sqlite3 connection is not a thread-safe transaction boundary:
-    interleaved statements raise 'cannot start a transaction within a
-    transaction' and commit each other's half-written work.
+    interleaved statements let two threads commit each other's half-written
+    work, and CPython raises `InterfaceError: bad parameter or other API
+    misuse` (the observed pre-fix error). The row count would hold either
+    way; it is the absence of errors that goes red.
     """
     db = Database.connect(home)
     sid = db.create_session(home, 'threads')
 
-    errors = _race(db, lambda i: db.record_usage(sid, model=f'm{i}', requests=1))
+    errors = _race(lambda i: db.record_usage(sid, model=f'm{i}', requests=1))
     assert errors == [], f'shared connection failed under threads: {errors}'
 
     total = db._conn.execute(

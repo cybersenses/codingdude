@@ -15,12 +15,13 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """Database: schema created on first use, sessions and messages roundtrip."""
 
+import sqlite3
 from pathlib import Path
 
 import pytest
 from pydantic_ai.messages import ModelResponse, TextPart
 
-from codingdude.db import Database
+from codingdude.db import Database, _Connection
 from codingdude.messages import decode_messages, encode_messages
 
 
@@ -222,65 +223,113 @@ def test_busy_timeout_is_15s(home):
     assert timeout == 15_000
 
 
-def _flaky_conn(real, fail_times, calls):
-    """Proxy exposing the seam Database writes go through (execute/commit)."""
-    import sqlite3 as _sq
+def _flaky_conn(home, fail_times, calls):
+    """A real connection whose COMMIT fails `fail_times` times (test seam).
 
-    class FlakyConn:
-        def execute(self, sql, params=()):
-            return real.execute(sql, params)
+    `_commit_once` is the single attempt, so the retry loop above it stays
+    under test; overriding `commit` itself would bypass the code being tested.
+    """
 
-        def executescript(self, script):
-            return real.executescript(script)
-
-        def commit(self):
+    class Flaky(_Connection):
+        def _commit_once(self) -> None:
             calls['n'] += 1
             if calls['n'] <= fail_times:
-                raise _sq.OperationalError('database is locked')
-            real.commit()
+                raise sqlite3.OperationalError('database is locked')
+            super()._commit_once()
 
-        def __getattr__(self, name):
-            return getattr(real, name)
-
-    return FlakyConn()
+    conn = sqlite3.connect(home / 'codingdude.db', factory=Flaky)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
 def test_commit_retries_on_database_locked(home, workdir, monkeypatch):
     """A transient SQLITE_BUSY during commit is retried with backoff
     instead of surfacing as 'database is locked' to the run."""
-    import time as _time
-
     db = Database.connect(home)
     sid = db.create_session(workdir)
     calls = {'n': 0}
     sleeps: list[float] = []
 
-    db._conn = _flaky_conn(db._conn, fail_times=2, calls=calls)
-    monkeypatch.setattr(db, '_BACKOFF_BASE', 0.001)
-    monkeypatch.setattr(_time, 'sleep', sleeps.append)
+    db._conn = _flaky_conn(home, fail_times=2, calls=calls)
+    monkeypatch.setattr('codingdude.db._BACKOFF_BASE', 0.001)
+    monkeypatch.setattr('codingdude.db.time.sleep', sleeps.append)
 
     db.add_session_note(sid, 'written despite lock contention')
 
-    assert calls['n'] == 3  # two retries then success
+    assert calls['n'] == 3  # two failures then success
     assert sleeps == [0.001, 0.002]
 
 
 def test_commit_gives_up_after_max_retries(home, workdir, monkeypatch):
     """A lock held beyond the retry budget still raises — fails loudly,
     never silently drops the write."""
-    import sqlite3 as _sq
-
     db = Database.connect(home)
     sid = db.create_session(workdir)
     calls = {'n': 0}
 
-    db._conn = _flaky_conn(db._conn, fail_times=999, calls=calls)
-    monkeypatch.setattr(db, '_BACKOFF_BASE', 0.001)
+    db._conn = _flaky_conn(home, fail_times=999, calls=calls)
+    monkeypatch.setattr('codingdude.db._BACKOFF_BASE', 0.001)
     monkeypatch.setattr('codingdude.db.time.sleep', lambda _s: None)
 
-    with pytest.raises(_sq.OperationalError, match='database is locked'):
+    with pytest.raises(sqlite3.OperationalError, match='database is locked'):
         db.add_session_note(sid, 'lost write')
     assert calls['n'] == 4  # initial attempt + 3 retries
+
+
+def test_direct_connection_commit_retries_too(home, workdir, monkeypatch):
+    """`db._conn.commit()` — the path 29 store call sites use — also retries.
+
+    Guarding only `Database._commit` left every module that commits through
+    the raw connection unprotected, which is where the reported lockup came
+    from (R57 review).
+    """
+    db = Database.connect(home)
+    sid = db.create_session(workdir)
+    calls = {'n': 0}
+
+    db._conn = _flaky_conn(home, fail_times=2, calls=calls)
+    monkeypatch.setattr('codingdude.db._BACKOFF_BASE', 0.001)
+    monkeypatch.setattr('codingdude.db.time.sleep', lambda _s: None)
+
+    db._conn.execute(
+        "INSERT INTO session_notes (session_id, content, created_at)"
+        " VALUES (?, 'direct', 'x')",
+        (sid,),
+    )
+    db._conn.commit()
+
+    assert calls['n'] == 3
+    assert db._conn.execute(
+        'SELECT COUNT(*) FROM session_notes WHERE session_id = ?', (sid,)
+    ).fetchone()[0] == 1
+
+
+def test_giving_up_on_commit_rolls_the_transaction_back(home, workdir, monkeypatch):
+    """A COMMIT that never succeeds must not leave the write lock held.
+
+    A COMMIT returning SQLITE_BUSY leaves the transaction open; without a
+    rollback the connection keeps SQLite's write lock for the life of the
+    process, which is the reported lockup.
+    """
+    db = Database.connect(home)
+    sid = db.create_session(workdir)
+    calls = {'n': 0}
+
+    db._conn = _flaky_conn(home, fail_times=999, calls=calls)
+    monkeypatch.setattr('codingdude.db._BACKOFF_BASE', 0.001)
+    monkeypatch.setattr('codingdude.db.time.sleep', lambda _s: None)
+
+    db._conn.execute(
+        "INSERT INTO session_notes (session_id, content, created_at)"
+        " VALUES (?, 'doomed', 'x')",
+        (sid,),
+    )
+    with pytest.raises(sqlite3.OperationalError, match='database is locked'):
+        db._conn.commit()
+
+    assert db._conn.in_transaction is False, (
+        'a failed COMMIT left an open transaction holding the write lock'
+    )
 
 
 def test_run_lifecycle_start_then_end(home, workdir):

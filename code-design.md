@@ -569,14 +569,15 @@ rather than the cause addressed.
 shapes against the real `Database`. Four connections — the server/worker/CLI/eval
 process model — produced a lock after 16.4 s. Four threads on one shared connection
 produced corrupted transactions in 0.1 s. A deliberate 17 s lock holder produced two
-locks after 16.7 s. Cutting it down (`db_minimise.py`) left three load-bearing
+locks after 16.7 s. Cutting it down (`.scratch/db_minimise.py`) left three load-bearing
 elements: `record_usage` alone never failed; `append_messages` alone did; and after
 the failure `holder.in_transaction` was `True`, after which a different connection
 failed with `database is locked after 16.4 s`.
 
 **Three defects, not one.**
 
-1. *No rollback, anywhere.* `grep` over `src/` finds no `rollback()` call. Python's
+1. *No rollback, anywhere.* Before this fix, `grep` over `src/` found no
+   `rollback()` call — today the only one is the guard in `_Connection`. Python's
    `sqlite3` opens a transaction before DML and leaves it open when a statement
    raises, so the doomed transaction keeps SQLite's write lock. Every other writer
    then waits out `busy_timeout` and fails — and because the wedged connection
@@ -596,22 +597,44 @@ failed with `database is locked after 16.4 s`.
 every caller: `Database` connects through a `sqlite3.Connection` subclass
 (`_Connection`) whose `execute`/`executemany`/`executescript` roll back and re-raise.
 The alternative — a `try/except` at each write site — would have had to cover the
-roughly eighty statements in `db.py` *plus* the seven modules that reach
+45 statements in `db.py` *plus* the 58 in the eight modules that reach
 `db._conn` directly (`artifacts`, `execution`, `memory`, `planning`,
 `projectnotes`, `references`, `roadmap`, `semantic`), and any new caller added
-later would have re-opened the hole. `_commit` also rolls back when its retry
-budget is exhausted. Defect 2 becomes one statement: `INSERT ... SELECT
+later would have re-opened the hole. Defect 2 becomes one statement: `INSERT ... SELECT
 COALESCE(MAX(seq), -1) + 1`, which computes the sequence under the write lock.
 Defect 3 becomes one connection per thread, created lazily through a
 `threading.local`, with schema and migration run once on the calling thread.
 
+**The guard had a hole, found by the post-push review of `229f96c`.** The first
+version guarded `execute`, `executemany` and `executescript` but not `commit`,
+while `Database._commit` — then the only place that retried — is bypassed by 29
+call sites in those eight modules, which call `db._conn.commit()` directly. A
+`COMMIT` returning `SQLITE_BUSY` leaves the transaction open exactly as a failed
+`INSERT` does, so the reported lockup was still reachable from the write path
+that matters most. Retry and rollback now live in `_Connection.commit`, and
+`Database._commit` delegates to it, so both paths get them. The layering is
+deliberate and the two cannot be split: a rollback inside `commit` combined with
+a retry one level up would retry a COMMIT whose statements are already gone,
+commit an empty transaction, and lose the write silently. Red-verified by
+deleting the override — the direct path then commits without a single retry, and
+a failing `COMMIT` neither raises nor rolls back.
+
 **Evidence.** `tests/test_db_contention.py` (3 tests) asserts the user-visible
-symptom, not the implementation: a rejected write leaves `in_transaction` false and
-another connection can write immediately; concurrent appends neither collide nor lose
-rows; a shared `Database` survives four threads. All three failed before the change
-(`IntegrityError`, `OperationalError: database is locked`, `InterfaceError`) and pass
-after. The loop is deterministic and sub-second, so it runs on every `pytest`:
-`uv run pytest tests/test_db_contention.py -q`.
+symptom, plus the mechanism where the mechanism *is* the symptom: a rejected write
+leaves `in_transaction` false and another connection can write immediately;
+concurrent appends neither collide nor lose rows; a shared `Database` survives four
+threads. All three failed before the change (`IntegrityError`,
+`OperationalError: database is locked`, `InterfaceError`) and pass after — the third
+because two threads interleaved, so it is the weakest of the three rather than a
+guaranteed red. Four commit-path tests sit in `tests/test_db.py` alongside them:
+retry-then-succeed, give-up-after-budget, the direct `db._conn.commit()` path, and
+rollback when a `COMMIT` never succeeds. `uv run pytest tests/test_db.py
+tests/test_db_contention.py -q` runs them in about a second.
+
+The measurements above come from `.scratch/db_contention.py` and
+`.scratch/db_minimise.py`, which are gitignored and therefore **not** reproducible
+from a checkout — the committed tests are the durable half of the evidence, and the
+timings are the record of the diagnosis.
 
 **What this does not claim.** Two shapes still produce the error and are expected to:
 a writer that holds the write lock past `busy_timeout` (17 s in the probe) is by

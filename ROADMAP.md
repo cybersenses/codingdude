@@ -883,7 +883,8 @@ backoff. This only *widens the window*; it does not serialize writers.
   invisible after the fact. Diagnosability gap.
 
 ## Findings (measured by the #223 harness; supersedes the suspicions below)
-1. **No rollback, anywhere.** No `rollback()` call exists in `src/`. Python's `sqlite3`
+1. **No rollback, anywhere.** At diagnosis time no `rollback()` call existed in
+   `src/`. Python's `sqlite3`
    opens a transaction before DML and leaves it open when a statement raises, so the
    doomed transaction keeps SQLite's write lock. Measured: after a rejected write
    `in_transaction` was `True`, and a second connection then failed with
@@ -901,11 +902,13 @@ backoff. This only *widens the window*; it does not serialize writers.
 
 ## Progress
 Phase 1 + fix landed with ticket #223. `Database` now connects through a
-`sqlite3.Connection` subclass whose `execute`/`executemany`/`executescript` roll back and
-re-raise, which covers `db.py` and every module that reaches `db._conn` directly;
-`_commit` rolls back when its retries are exhausted; sequence allocation is a single
+`sqlite3.Connection` subclass whose `execute`/`executemany`/`executescript` roll back
+and re-raise, and whose `commit` retries while write-locked then rolls back — between
+them covering `db.py` and every module that reaches `db._conn` directly, including the
+29 call sites that commit through the raw connection; sequence allocation is a single
 `INSERT ... SELECT`; and each thread gets its own connection via `threading.local`.
-`tests/test_db_contention.py` asserts the three symptoms (red before, green after).
+`tests/test_db_contention.py` asserts the three symptoms (red before, green after), and
+`tests/test_db.py` covers the commit path (retry, give up, direct commit, rollback).
 Remaining: WAL ceiling/checkpoint policy, and persisting server errors to
 `logs/server.log`.
 
@@ -926,7 +929,8 @@ Remaining: WAL ceiling/checkpoint policy, and persisting server errors to
 - A repeatable stress harness that reproduces the lock red (concurrency ≥4 writers against
   a temp DB) — the diagnosing-bugs feedback loop. **Done (#223).**
 - Single writer seam (connection-level lock or a write queue) so no two threads share an
-  in-flight transaction. **Done (#223): per-thread connections plus rollback-on-error.**
+  in-flight transaction. **Done (#223): per-thread connections, plus
+  rollback-and-retry on both a failed statement and a failed COMMIT.**
 - WAL bounded (autocheckpoint + explicit checkpoint on idle); documented ceiling.
 - Server errors persisted to `logs/server.log`, not just stdout.
 
