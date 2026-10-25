@@ -276,11 +276,10 @@ the #228 class:
   response with a 5xx status and on the presence of the dock's error banner
   (`[data-poll-error]`) — one hook and one attribute, rather than trusting each
   tab to look broken in a way the gate recognises.
-- **Logged, not fixed** (#232): `refreshKey` is declared, passed to
-  `DockPanel`, and never read — `setRefreshKey` is never called. Pre-existing
-  (identical at `0c2e58e`), inert, and worth a decision rather than a silent
-  deletion: the dock already refetches on `activePath`, so the prop is
-  redundant rather than broken.
+- **Fixed** (#232): `refreshKey` was declared, passed to
+  `DockPanel`, and never read — `setRefreshKey` was never called. Removed
+  (commit under #232): the dock refetches on `activePath` and its own 4s
+  poll, so the prop was redundant, not merely unread.
 
 ### R59 P1 — the dock shell behind `?layout=dock` (#236)
 
