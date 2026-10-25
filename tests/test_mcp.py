@@ -184,7 +184,7 @@ def test_ensure_default_mcp_adds_chrome_devtools_with_telemetry_off(home, monkey
 
 
 def test_ensure_default_mcp_skips_zai_vision_without_npx(home, monkeypatch):
-    """No npx on PATH -> zai-vision is not seeded (codegraph still is)."""
+    """No npx on PATH -> neither npx-gated server is seeded (codegraph still is)."""
     from codingdude.mcp_config import ensure_default_mcp, merged_mcp_config
 
     def which(name: str):
