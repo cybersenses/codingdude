@@ -77,7 +77,7 @@ const USE_DOCK = new URLSearchParams(window.location.search).get('layout') === '
 
 // R35 #72: bottom dock — VS Code panel position. Processes comes in as a
 // prop (App polls it); it used to be a bare-identifier crash in this scope.
-function DockPanel({ sessionId, refreshKey, diffBadge, artifactsPending = 0, workdir, processes, height, onResizeHeight, focusDiff = 0, activePath = '', onAsk }) {
+function DockPanel({ sessionId, diffBadge, artifactsPending = 0, workdir, processes, height, onResizeHeight, focusDiff = 0, activePath = '', onAsk }) {
   const [repoQuestion, setRepoQuestion] = useState('')
   // #227: Processes was wired (prop + body) but missing from this list, so its
   // body was unreachable. It renders from App's 3s poll, not DockPanel's.
@@ -782,7 +782,6 @@ export default function App() {
   const [quietSeconds, setQuietSeconds] = useState(0) // seconds since last run event (watchdog)
   const [processes, setProcesses] = useState([]) // R31 #63: every spawned process, tracked until exit
   const [error, setError] = useState('')
-  const [refreshKey, setRefreshKey] = useState(0)
   const [diffBadge, setDiffBadge] = useState(false)
   // #189: pending choice/spec artifacts surface in the chat, not just the dock.
   const [artifactsAll, setArtifactsAll] = useState([])
@@ -1482,7 +1481,6 @@ export default function App() {
       </div>
       <DockPanel
         sessionId={activeSession}
-        refreshKey={refreshKey}
         diffBadge={diffBadge}
         artifactsPending={pending.length}
         workdir={workdir}
