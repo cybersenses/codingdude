@@ -660,6 +660,12 @@ now has a regression test.
 
 **Rationale.** Automated browser testing (screenshots, console, network, performance traces) becomes a standard capability instead of a per-project setup step. Not vendored: npx fetches at spawn, so no Apache-2.0 redistribution obligation; NOTICE.md records the dependency.
 
-**Impact.** `ensure_default_mcp` seeds the entry additively — user edits win, and a machine without Chrome fails at connect where `verify_mcp_toolsets` drops the server for the run with a warning (no run ever dies from it). Absent npx, no entry. Existing installs pick it up on next bounce via the additive seed.
+**Impact.** `ensure_default_mcp` seeds the entry additively — user edits win, and any
+spawn/initialise failure is caught by `verify_mcp_toolsets`, which drops the server for the
+run with a warning (no run ever dies from it). Absent npx, no entry. Existing installs pick
+it up on next bounce via the additive seed. Cost: each run pre-flights a second `npx -y`
+process (the first also downloads the package) — accepted, same trade as zai-vision.
+Not yet verified: behaviour on a machine without Chrome (whether pre-flight drops it or it
+survives to fail at first tool call).
 
 **Verified.** `npx -y chrome-devtools-mcp@latest --version` → 1.12.0; seeded entry inspected live (cmd wrapper + both flags); tests in `tests/test_mcp.py` (seeding with flags, absent without npx).

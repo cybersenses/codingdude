@@ -333,6 +333,32 @@ def test_giving_up_on_commit_rolls_the_transaction_back(home, workdir, monkeypat
     )
 
 
+def test_commit_does_not_retry_other_operational_errors(home, workdir, monkeypatch):
+    """Only SQLITE_BUSY is retried — a non-lock OperationalError raises on the
+    first attempt instead of burning four 15 s waits on e.g. 'no such table'."""
+    db = Database.connect(home)
+    sid = db.create_session(workdir)
+    calls = {'n': 0}
+
+    class Broken(_Connection):
+        def _commit_once(self) -> None:
+            calls['n'] += 1
+            raise sqlite3.OperationalError('no such table: nope')
+
+    db._conn = sqlite3.connect(home / 'codingdude.db', factory=Broken)
+    db._conn.row_factory = sqlite3.Row
+    db._conn.execute(
+        "INSERT INTO session_notes (session_id, content, created_at)"
+        " VALUES (?, 'x', 'x')",
+        (sid,),
+    )
+    monkeypatch.setattr('codingdude.db._BACKOFF_BASE', 0.001)
+
+    with pytest.raises(sqlite3.OperationalError, match='no such table'):
+        db._conn.commit()
+    assert calls['n'] == 1  # no retries for non-lock errors
+
+
 def _interrupting_conn(home) -> _Connection:
     """A real connection whose COMMIT is interrupted rather than locked."""
 
