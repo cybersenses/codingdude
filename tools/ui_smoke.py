@@ -13,8 +13,10 @@ Designed console noise (the auth-cookie 401) is reported, not fatal.
 Two layouts:
 
 * `--layout classic` (default) walks the sixteen `DockPanel` tabs.
-* `--layout dock` opens `?layout=dock` (R59 P1) and checks the five dockable
-  panels, their visible geometry, and that Monaco reflows with its container:
+* `--layout dock` opens `?layout=dock` (R59) and checks the five preset
+  dockable panels' geometry, then opens every remaining catalogue panel from
+  the panel bar and checks it renders (the P2 exit criterion), and finally
+  that Monaco reflows with its container:
   the window is narrowed and restored and the editor must narrow with it and
   come back. Nothing is hidden or moved, so `renderer: 'always'` — which only
   matters for a hidden panel — is not what this exercises. The
@@ -63,17 +65,38 @@ DOCK_TABS = [
     "Processes", "Output", "Waterfall", "Trace", "Cost", "Memory", "MCP",
     "Config", "Standards",
 ]
-# R59 P1: the dockable shell's panels, as (data-panel attribute → tab title).
+# R59: the dockable shell's panels, as (data-panel attribute → tab title).
 # The attribute is the seam the shell puts on each panel root, so the gate can
 # assert a panel is really on screen rather than trusting the tab bar.
+# P2: the five preset panels are walked as tabs; the remaining fifteen are
+# opened from the panel bar (`+ Title`) in `_walk_dock` — that is the P2 exit
+# criterion (every panel openable), not a nicety.
 DOCK_PANELS = {
     "nav": "Projects & sessions",
     "explorer": "Explorer",
     "editor": "Editor",
     "chat": "Chat",
     "diff": "Diff",
+    "graph": "Graph",
+    "planning": "Planning",
+    "artifacts": "Artifacts",
+    "notes": "Notes",
+    "renders": "Renders",
+    "terminal": "Terminal",
+    "output": "Output",
+    "waterfall": "Waterfall",
+    "trace": "Trace",
+    "cost": "Cost",
+    "memory": "Memory",
+    "mcp": "MCP",
+    "config": "Config",
+    "standards": "Standards",
+    "processes": "Processes",
 }
 PLACEHOLDER = "Select a session to see diffs, files, cost and trace."
+# The panels the default preset mounts on boot (catalogue.ts DEFAULT_PRESET);
+# every other catalogue panel is opened from the panel bar during the walk.
+PRESET_PANELS = {"nav", "explorer", "editor", "chat", "diff"}
 # The dock's own error banner (#231): present means the tab's fetch failed. The
 # classic walk reads it page-wide, where one tab body is mounted at a time; the
 # dock walk joins this attribute to a panel id via `_panel_banner_selector`.
@@ -329,7 +352,17 @@ def _walk_dock(page, report: dict, base: str, workdir: str, shots: Path | None) 
     report["tree_ready"] = _wait_for_tree(page)
 
     found = 0
+    # The preset panels first (their tabs exist on boot); the rest are opened
+    # from the panel bar so the walk proves the P2 exit criterion — every
+    # catalogue panel can actually be opened and renders a body.
     for panel_id, title in DOCK_PANELS.items():
+        if panel_id not in PRESET_PANELS:
+            opener = page.locator(f'button[title="open the {title} panel"]')
+            if opener.count() == 0:
+                report["tabs"][title] = "MISSING"
+                continue
+            opener.first.click()
+            page.wait_for_timeout(1500)  # data panels fetch on mount
         tab = _dock_tab(page, title)
         if tab is None:
             report["tabs"][title] = "MISSING"

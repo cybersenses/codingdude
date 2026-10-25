@@ -19,11 +19,10 @@
 //
 // Fixed chrome stays outside the dock — the error banner, AgentStrip and status
 // footer describe the shell, not a panel, and every phase keeps them there.
-import React, { createContext, useContext, useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { DockviewReact, themeDark } from 'dockview-react'
 import 'dockview-react/dist/styles/dockview.css'
-import { call } from '../api'
-import { DEFAULT_PRESET, panelSpec } from './catalogue'
+import { DEFAULT_PRESET, PANELS, panelSpec } from './catalogue'
 import { Sidebar } from '../chrome/Sidebar.jsx'
 import { AgentStrip } from '../chrome/AgentStrip.jsx'
 import { StatusFooter } from '../chrome/StatusFooter.jsx'
@@ -31,25 +30,33 @@ import { FileTree } from '../panels/Explorer.jsx'
 import { EditorPane } from '../panels/Editor.jsx'
 import { Chat } from '../panels/Chat.jsx'
 import { Prompt } from '../panels/Prompt.jsx'
-import { DiffPanel } from '../panels/dock/Diff.jsx'
-import { errMsg } from '../pollErrors'
 import { PendingArtifactCard } from '../cards/chatCards.jsx'
+import { WorkspaceContext, useShell } from './shellContext'
+import { createSessionStore } from '../store/sessionData'
+import { sessionTopics } from '../store/sessionTopics'
+import {
+  ArtifactsPanel,
+  ConfigPanel,
+  CostPanel,
+  DiffStorePanel,
+  GraphPanel,
+  McpPanel,
+  MemoryPanel,
+  NotesPanel,
+  OutputPanel,
+  PlanningPanel,
+  ProcessesPanel,
+  RendersPanel,
+  StandardsPanel,
+  TerminalPanel,
+  TracePanel,
+  WaterfallPanel,
+} from './panels.jsx'
 
-// Panel components read their data from this context rather than from dockview
-// `params`: params are serialized into the saved layout, so they cannot carry
-// callbacks or live state. React portals keep the dock's panels inside this
-// tree, so context reaches them wherever they are docked.
-//
-// P4 caveat: a POPOUT panel is a separate document with its own React root and
-// will not see this provider. Popout support must move these bags into a
-// module-level store at that point (tech design §4.3/§4.7).
-const WorkspaceContext = createContext(null)
-
-function useShell() {
-  const shell = useContext(WorkspaceContext)
-  if (!shell) throw new Error('workspace panel rendered outside the shell provider')
-  return shell
-}
+// One store per browser: the scheduler loop and its subscriber bookkeeping
+// are module state, not React state. Disposal is unnecessary for a store that
+// lives as long as the document does.
+const store = createSessionStore(sessionTopics)
 
 // ---------------------------------------------------------------------------
 // Panels
@@ -97,74 +104,71 @@ function ChatPanel() {
   )
 }
 
-// The dock's own poll, not DockPanel's: P1 runs both shells side by side, so the
-// classic dock keeps its shared poll while this panel fetches what it shows.
-// P2 retires both into the visibility-gated store (tech design §4.3).
-const DIFF_POLL_MS = 4000
+// ---------------------------------------------------------------------------
+// Visibility gating for store panels
+// ---------------------------------------------------------------------------
 
-function DiffTabPanel() {
-  const { sessionId } = useShell()
-  const [data, setData] = useState({ diff: undefined, diffSummary: [], impact: null })
-  const [failure, setFailure] = useState(null)
-
-  useEffect(() => {
-    if (!sessionId) {
-      setData({ diff: undefined, diffSummary: [], impact: null })
-      setFailure(null)
-      return
-    }
-    let stop = false
-    async function poll() {
-      try {
-        const r = await call(`/sessions/${sessionId}/diff`)
-        if (stop) return
-        setData({ diff: r.diff, diffSummary: r.summary || [], impact: r.impact || null })
-        setFailure(null)
-      } catch (err) {
-        // #234: a failed fetch must not look like "no changes yet".
-        if (!stop) setFailure(errMsg(err))
+// dockview keeps a background tab's panel mounted (its DOM stays in the
+// document), so a panel's store subscription would keep polling a panel nobody
+// can see — this is true of EVERY store panel, not only the `renderer:'always'`
+// ones. dockview's onDidVisibilityChange flips the subscriber's visibility flag
+// instead, so only panels on screen are ever fetched.
+function visible(topic, Panel) {
+  function GatedPanel(props) {
+    const { store: shellStore, sessionId } = useShell()
+    const panelApi = props.api
+    useEffect(() => {
+      if (!panelApi || typeof panelApi.onDidVisibilityChange !== 'function') return
+      const disp = panelApi.onDidVisibilityChange((ev) =>
+        shellStore.setVisible(topic, sessionId, ev.isVisible),
+      )
+      // Subscribe already counted this subscriber visible; correct it if
+      // dockview mounted the panel hidden (a background tab).
+      if (panelApi.isVisible === false) shellStore.setVisible(topic, sessionId, false)
+      return () => {
+        disp.dispose()
+        shellStore.setVisible(topic, sessionId, false)
       }
-      if (!stop) setTimeout(poll, DIFF_POLL_MS)
-    }
-    poll()
-    return () => { stop = true }
-  }, [sessionId])
-
-  if (!sessionId) {
-    return (
-      <div data-panel="diff" className="p-2 text-xs text-ink-muted">
-        Select a session to see diffs, files, cost and trace.
-      </div>
-    )
+    }, [shellStore, sessionId, panelApi])
+    return <Panel {...props} />
   }
-  if (failure) {
-    return (
-      // `data-poll-error` is the same seam DockPanel's banner exposes: without
-      // it, tools/ui_smoke.py's banner check finds nothing under `--layout
-      // dock` and a panel whose fetch is failing passes the gate.
-      <div
-        data-panel="diff"
-        data-poll-error="diff"
-        className="m-2 rounded border border-danger/40 bg-danger/10 p-3 text-xs text-danger"
-      >
-        could not load this tab: {failure}
-      </div>
-    )
-  }
-  return (
-    <div data-panel="diff" className="h-full overflow-y-auto p-2">
-      <DiffPanel {...data} />
-    </div>
-  )
+  return GatedPanel
 }
 
-// Module-level so the registry identity is stable across renders.
+const GatedRendersPanel = visible('renders', RendersPanel)
+const GatedConfigPanel = visible('config', ConfigPanel)
+const GatedDiffPanel = visible('diff', DiffStorePanel)
+const GatedCostPanel = visible('cost', CostPanel)
+const GatedMemoryPanel = visible('memory', MemoryPanel)
+const GatedMcpPanel = visible('mcp', McpPanel)
+const GatedTracePanel = visible('trace', TracePanel)
+const GatedOutputPanel = visible('output', OutputPanel)
+const GatedWaterfallPanel = visible('output', WaterfallPanel)
+const GatedProcessesPanel = visible('processes', ProcessesPanel)
+
+// Module-level so the registry identity is stable across renders. Every key
+// must have a catalogue entry and vice versa (catalogue.test.ts enforces it).
 const COMPONENTS = {
   nav: NavPanel,
   explorer: ExplorerPanel,
   editor: EditorPanel,
   chat: ChatPanel,
-  diff: DiffTabPanel,
+  diff: GatedDiffPanel,
+  graph: GraphPanel,
+  planning: PlanningPanel,
+  artifacts: ArtifactsPanel,
+  notes: NotesPanel,
+  renders: GatedRendersPanel,
+  terminal: TerminalPanel,
+  output: GatedOutputPanel,
+  waterfall: GatedWaterfallPanel,
+  trace: GatedTracePanel,
+  cost: GatedCostPanel,
+  memory: GatedMemoryPanel,
+  mcp: GatedMcpPanel,
+  config: GatedConfigPanel,
+  standards: StandardsPanel,
+  processes: GatedProcessesPanel,
 }
 
 // ---------------------------------------------------------------------------
@@ -238,11 +242,55 @@ function Watermark({ containerApi }) {
 }
 
 // ---------------------------------------------------------------------------
+// Panel bar (P2 stopgap for the P3 command palette)
+// ---------------------------------------------------------------------------
+
+// The palette is P3; until it lands, closed panels are opened from this bar —
+// one button per catalogue entry not currently in the layout. Rebuilt on every
+// layout change (open/close/move) so the list never offers an open panel.
+function PanelBar({ api }) {
+  const [openIds, setOpenIds] = useState([])
+  useEffect(() => {
+    if (!api) return
+    const update = () => setOpenIds(api.panels.map((p) => p.id))
+    update()
+    const disp = api.onDidLayoutChange(update)
+    return () => disp.dispose()
+  }, [api])
+  const closed = PANELS.filter((p) => !openIds.includes(p.id))
+  if (!api || closed.length === 0) return null
+  return (
+    <div data-panel-bar className="flex flex-wrap gap-1 border-b border-line bg-neutral-900 px-2 py-1">
+      {closed.map((spec) => (
+        <button
+          key={spec.id}
+          title={`open the ${spec.title} panel`}
+          className="rounded px-2 py-0.5 text-[10px] text-ink-muted hover:bg-surface hover:text-ink"
+          onClick={() =>
+            api.addPanel({
+              id: spec.id,
+              component: spec.component,
+              title: spec.title,
+              renderer: spec.renderer,
+              ...(spec.minWidth !== undefined ? { minimumWidth: spec.minWidth } : {}),
+              ...(spec.minHeight !== undefined ? { minimumHeight: spec.minHeight } : {}),
+              position: { direction: 'within', referencePanel: api.activePanel?.id || 'diff' },
+            })
+          }
+        >
+          + {spec.title}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Shell
 // ---------------------------------------------------------------------------
 
-export function Workspace({ error, agentStrip, sidebar, fileWs, onAsk, sessionId, prompt, pending, chat, footer, onRefreshArtifacts, reviewDiff = 0 }) {
-  const shell = { sidebar, fileWs, onAsk, sessionId, prompt, pending, chat, onRefreshArtifacts }
+export function Workspace({ error, agentStrip, sidebar, fileWs, onAsk, sessionId, prompt, pending, chat, footer, onRefreshArtifacts, workdir, processes, reviewDiff = 0 }) {
+  const [api, setApi] = useState(null)
   const apiRef = useRef(null)
 
   // #75's "Review changes →" bumps a counter in App. The classic shell answers
@@ -251,6 +299,22 @@ export function Workspace({ error, agentStrip, sidebar, fileWs, onAsk, sessionId
   useEffect(() => {
     if (reviewDiff > 0) apiRef.current?.getPanel('diff')?.api.setActive()
   }, [reviewDiff])
+
+  const shell = {
+    sidebar,
+    fileWs,
+    onAsk,
+    sessionId,
+    prompt,
+    pending,
+    chat,
+    onRefreshArtifacts,
+    // P2: store-backed panels + the wiring the new panels need.
+    store,
+    workdir,
+    processes,
+    activePath: fileWs.active?.path || '',
+  }
 
   return (
     <WorkspaceContext.Provider value={shell}>
@@ -264,10 +328,12 @@ export function Workspace({ error, agentStrip, sidebar, fileWs, onAsk, sessionId
             watermarkComponent={Watermark}
             onReady={(event) => {
               apiRef.current = event.api
+              setApi(event.api)
               applyDefaultPreset(event.api)
             }}
           />
         </div>
+        <PanelBar api={api} />
         <StatusFooter {...footer} />
       </div>
     </WorkspaceContext.Provider>
