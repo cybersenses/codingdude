@@ -547,15 +547,17 @@ the failure mode to avoid.
    `--message-file` covers all five. Digit-bearing tokens are not symbols
    (`G0SUN1seqSI` is a run id).
 
-**Impact.** `tests/test_claim_check.py` (31 tests) rides on `pytest`, so a stale
+**Impact.** `tests/test_claim_check.py` (47 tests) rides on `pytest`, so a stale
 count or a renamed file fails the suite instead of waiting for a reviewer.
 `gates.bat` now runs `ruff` over `tools/` too: a new tool outside the linter is a
 file that rots. `main` delegates to `run`, so there is one definition of the check
 set and its order.
 
-**What it cannot do.** A claim phrased in prose — "the step hides the editor" — is
-invisible to it. That half stays a rule in the `RESCUE.md` trap table: a claim about
-behaviour, measurement or absence carries its probe, or says *unverified*.
+**What it could not do, and what R62 took over.** A claim phrased in prose — "the
+step hides the editor" — was invisible to it. That half moved from a `RESCUE.md`
+rule into the checker's sixth check under R62 (see below), gated to commit
+messages by default: living documents narrate history in prose, and gating them
+retroactively would scream on correct text.
 
 ## R57 — The database lockup, and where it actually came from
 
@@ -659,7 +661,7 @@ now has a regression test.
 
 ## R61 — chrome-devtools-mcp as a default MCP server
 
-**Structure.** One entry in `_default_mcp_servers()` (`src/codingdude/mcp_config.py`), behind the same `shutil.which('npx')` gate as zai-vision. The Windows `.cmd/.bat` shim handling is repeated per-server (separate `command`/`args` pairs for zai-vision and chrome-devtools) rather than factored, because each server's args differ; the existing pattern is one branch per server. Spawn: `npx -y chrome-devtools-mcp@latest --no-usage-statistics --no-update-checks` — Google's telemetry and update checks default to on and are explicitly opted out.
+**Structure.** One entry in `_default_mcp_servers()` (`src/codingdude/mcp_config.py`), behind the same `shutil.which('npx')` gate as zai-vision. The Windows `.cmd/.bat` shim handling is one shared branch that rewrites both npx servers' `command`/`args` pairs (codegraph has its own branch, because its command differs) — the duplication is the two arg-lists, not the shim detection. Spawn: `npx -y chrome-devtools-mcp@latest --no-usage-statistics --no-update-checks` — Google's telemetry and update checks default to on and are explicitly opted out.
 
 **Rationale.** Automated browser testing (screenshots, console, network, performance traces) becomes a standard capability instead of a per-project setup step. Not vendored: npx fetches at spawn, so no Apache-2.0 redistribution obligation; NOTICE.md records the dependency.
 
@@ -672,3 +674,38 @@ Not yet verified: behaviour on a machine without Chrome (whether pre-flight drop
 survives to fail at first tool call).
 
 **Verified.** `npx -y chrome-devtools-mcp@latest --version` → 1.12.0; seeded entry inspected live (cmd wrapper + both flags); tests in `tests/test_mcp.py` (seeding with flags, absent without npx).
+
+## R62 — Claim gate: failure-mode prose must carry probe evidence (#241)
+
+**Problem.** The R60 half of the claim gate settles arithmetic (paths, refs,
+counts). The four other findings in the six-commit pattern were sentences about
+what happens when something goes wrong — "silently returns 0", "can't miss a
+banner", "hides nothing" — written from the diff, never executed. R60 recorded
+that half as a human rule; this makes it mechanical.
+
+**Design.** `check_failure_modes` in `tools/claim_check.py`: a sentence
+containing a failure-mode verb (`raises`, `silently`, `can never`, `cannot miss`,
+`can't miss`, `always`, `unreachable`, `hides`, `prevents`, `guarantees`) must
+carry a `[probe: ...]` annotation with at least one non-space character inside
+the brackets, or contain `not yet verified`; anything else is a finding. The verb
+list is small on purpose — a check that fires on ordinary prose gets ignored.
+Scope: on by default for `--message-file`, opt-in (`--failure-modes`) for
+documents, and the two defaults are per-source so mixing a message file with
+documents in one run does not leak the strict default onto the docs.
+
+**Four holes found by the post-push review, each red-verified before fixing.**
+Empty `[probe: ]` counted as a vouch; a probe on a neighbouring bullet vouched
+for the claim on the previous line (bullets are separate claims, so sentence
+splitting now breaks on any newline, not just blank ones); `pecan never` matched
+`can never` (multiword verbs gained word boundaries); and a document named in the
+same run as a `--message-file` inherited the message's failure-mode default.
+
+**What this does not do.** Nothing runs the checker at commit time — no hook,
+no `gates.bat` step — so "rejected" means "the check fails when run with
+`--message-file`, which is this agent's documented pre-commit step", not a
+mechanical git-level block. Wiring a commit-msg hook is a separate decision.
+And the gate cannot force the probe to be honest; it forces the author to choose
+between naming a command and writing `not yet verified`.
+
+**Impact.** `tests/test_claim_check.py` 43 → 47 tests; the living-docs sweep is
+unchanged (paths/refs/counts only). Shipped in `f051ad5`, tightened after review.
