@@ -220,7 +220,7 @@ def _walk_classic(page, report: dict, base: str, workdir: str, shots: Path | Non
         # #231: the tab's own error banner, which the placeholder and console
         # checks both miss. Page-wide is correct here: the classic dock mounts
         # one tab body at a time, so the only banner in the document is the
-        # active tab's. The dock shell mounts all five — hence the scoped,
+        # active tab's. The dock shell mounts many panels at once — hence the scoped,
         # root-or-descendant search in `_panel_banner_selector`.
         err = page.locator(POLL_ERROR_SELECTOR)
         poll_error = _banner_text(err)
@@ -261,11 +261,11 @@ def _panel_banner_selector(panel_id: str) -> str:
     clean. The comma is an "or" — either shape, and still nothing belonging to
     another panel.
 
-    Only the root shape exists under this layout today: `DiffTabPanel` is the one
-    panel that arms a banner. The descendant half is a guard, not coverage —
-    `DockPanel` does nest its banner in its body, but `DockPanel` is the *classic*
-    shell and is never mounted behind `?layout=dock`, so it is the classic walk's
-    page-wide read that sees that one.
+    Only the root shape existed under this layout in P1; since P2 the
+    descendant shape is the live one — every store-backed panel
+    (`TopicPanel` in workspace/panels.jsx) renders its banner *inside* the
+    `data-panel` root — and the root shape remains for panels whose banner is
+    the whole body. The comma covers both.
     """
     return (
         f'[data-panel="{panel_id}"]{POLL_ERROR_SELECTOR}, '
@@ -378,9 +378,9 @@ def _walk_dock(page, report: dict, base: str, workdir: str, shots: Path | None) 
         first = panel.first if present else None
         box = first.bounding_box() if first else None
         text = first.inner_text() if first else ""
-        # All five panels are mounted at once under this layout, so a page-wide
-        # locator reports whichever banner it finds first for every tab — a single
-        # failing Diff fetch once labelled all five panels as failing. Scoping is
+        # Many panels are mounted at once under this layout, so a page-wide
+        # locator reports whichever banner it finds first for every panel — a single
+        # failing Diff fetch once labelled every panel as failing. Scoping is
         # only half the job: see `_panel_banner_selector` for why the search has
         # to match the panel root as well as its descendants.
         banner = page.locator(_panel_banner_selector(panel_id))
@@ -548,8 +548,8 @@ def verdict(report: dict) -> int:
         )
 
     # The expected entry count comes from the walk: sixteen dock tabs in the
-    # classic shell, five panels in the dock shell. Defaulting to the classic
-    # count keeps a hand-built report meaningful.
+    # classic shell, the whole catalogue in the dock shell. Defaulting to the
+    # classic count keeps a hand-built report meaningful.
     expected_entries = report.get("expected_entries", len(DOCK_TABS))
     monaco = report.get("monaco")
     monaco_failed = monaco is not None and not _monaco_followed_its_container(monaco)

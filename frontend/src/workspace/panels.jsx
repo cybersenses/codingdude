@@ -22,7 +22,7 @@
 // renders through `data-poll-error` (the same attribute tools/ui_smoke.py
 // gates on), and the last successful data is kept beside it, so a failed
 // refresh never looks like "no data yet" (#231/#234).
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { api, call } from '../api'
 import { activeProcesses, mergeProcesses } from '../processes'
 import { groupEventsByRun, pickRunId } from '../runs'
@@ -189,14 +189,24 @@ export function MemoryPanel() {
 
 export function McpPanel() {
   const { store, sessionId } = useShell()
+  // #242 (R63): a failed enable/disable must not silently re-show the old
+  // state — the same mutation-failure class fixed for Notes/Standards.
+  const [mutError, setMutError] = useState(null)
   async function toggleServer(name, disabled) {
-    await api.toggleMcp(sessionId, name, disabled).catch(() => {})
+    setMutError(null)
+    try {
+      await api.toggleMcp(sessionId, name, disabled)
+    } catch (err) {
+      setMutError(err instanceof Error ? err.message : String(err))
+      return // the refresh below would just re-show the unchanged state
+    }
     store.refresh('mcp', sessionId)
   }
   return (
     <TopicPanel topic="mcp">
       {(mcp) => (
         <div className="space-y-1">
+          {mutError && <PollErrorBanner topic="mcp" error={mutError} />}
           {mcp.length === 0 && <div className="text-neutral-600">no MCP servers configured</div>}
           {mcp.map((s) => (
             <div key={s.name} className="flex items-center justify-between rounded bg-neutral-900 p-1">
@@ -307,6 +317,8 @@ export function RendersPanel() {
 
 export function TracePanel() {
   const { sessionId } = useShell()
+  // #242 (R63): a failed rewind is a user mutation, not a transient poll.
+  const [rewindError, setRewindError] = useState(null)
   return (
     <TopicPanel topic="trace">
       {({ trace, checkpoints }) => {
@@ -318,6 +330,7 @@ export function TracePanel() {
         }
         return (
           <div className="space-y-2">
+            {rewindError && <PollErrorBanner topic="trace" error={rewindError} />}
             <div className="space-y-0.5 font-mono text-[10px]">
               {(trace || []).slice().reverse().map((e, i) => (
                 <div key={i} className={`truncate rounded px-1 hover:bg-surface ${colors[e.type] || 'text-ink-muted'}`}>
@@ -337,7 +350,9 @@ export function TracePanel() {
                       <div className="flex gap-1">
                         <button
                           className="rounded bg-accent px-1.5 py-0.5 text-[9px] text-accent-fg"
-                          onClick={() => call(`/checkpoints/${sessionId}/${c.id}/rewind`, { method: 'POST', body: '{}' }).catch(() => {})}
+                          onClick={() => call(`/checkpoints/${sessionId}/${c.id}/rewind`, { method: 'POST', body: '{}' })
+                            .then(() => setRewindError(null))
+                            .catch((err) => setRewindError(err instanceof Error ? err.message : String(err)))}
                         >rewind</button>
                       </div>
                     </div>
@@ -501,9 +516,14 @@ export function ProcessesPanel() {
   const { store, sessionId } = useShell()
   const snap = useSessionData(store, 'processes', sessionId)
   // App's poll merged each fetch into the previous list so an exited process
-  // stays visible until the session changes; the store replaces wholesale, so
-  // the merge lives here now.
+  // stays visible until the session changes, where classic *clears* the list;
+  // the store replaces wholesale, so the merge — and the reset on a session
+  // switch — live here now (post-push review: the reset was missing, bleeding
+  // one project's exited rows into the next).
   const [merged, setMerged] = useState([])
+  useEffect(() => {
+    setMerged([])
+  }, [sessionId])
   useEffect(() => {
     if (snap.data) setMerged((prev) => mergeProcesses(prev, snap.data))
   }, [snap.data])

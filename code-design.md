@@ -568,9 +568,27 @@ per-tab poll, which fired on mount rather than at the next tick).
 **Not yet verified / honest limits.** The visibility gating's *unhide* path
 (visible → hidden → visible) is unit-tested at the store level but not
 exercised in a browser — the gate clicks tabs open, never stacks and hides.
-Floating/popout panels are P4. The classic shell is untouched: `DockPanel`
-keeps its per-tab poll until P4 deletes it, so classic behaviour and its gate
-are unchanged (16/16, exit 0).
+Floating/popout panels are P4. The classic shell is behaviourally untouched:
+`DockPanel` keeps its per-tab poll until P4 deletes it (the only classic edit
+is the `MEMORY_LIMIT` extraction to `limits.ts`, listed above), so classic
+behaviour and its gate are unchanged (16/16, exit 0). Two known duplicates
+accepted for now: App's footer-level 3 s `/processes` poll still runs in dock
+mode beside the store's processes topic (the footer needs it; retiring it is
+P3 scheduler work), and the self-fetching Artifacts panel keeps its own 4 s
+poll fallback alongside its SSE push (pre-existing, not store-backed).
+
+**Post-push review fixes** (delegates, both findings verified against code):
+the gating wrapper's unmount no longer double-decrements the topic's visible
+count — with two subscribers on the `output` topic (Output + Waterfall),
+closing one used to stop the still-visible sibling's polls; the wrapper now
+syncs through a `countedRef` so each subscriber flips exactly its own flag.
+Also: `ProcessesPanel` resets its merged list on session switch (classic
+cleared it; the port leaked one project's rows into the next), the MCP
+toggle and Trace rewind failures surface through the `data-poll-error` seam
+instead of silent catches (the #242 class), the dead `processes` prop
+threaded into the shell was removed, a dead `useMemo` import dropped, and
+the stale "only the root banner shape exists" / "five panels" claims in
+`tools/ui_smoke.py` and `RESCUE.md` corrected.
 
 ## R60 — Claims must be checkable (`tools/claim_check.py`)
 
