@@ -61,7 +61,19 @@ export function graphView(
   error?: string,
 ): GraphView {
   if (error) return { kind: 'error', error }
-  if (!graph || callgraphPath !== activePath) return { kind: 'loading' }
+  if (!hasGraphFor(graph, callgraphPath, activePath)) return { kind: 'loading' }
   if (graph.nodes.length === 0) return { kind: 'empty' }
   return { kind: 'graph' }
+}
+
+/** True when the stored callgraph belongs to activePath and a fetch
+ * succeeded for it — i.e. a transient poll failure must not blank what is
+ * rendered (R59 P4 round 6). Lives here, beside graphView and free of
+ * React, so the panel's error guard is unit-testable. */
+export function hasGraphFor(
+  graph: CallGraph | undefined,
+  callgraphPath: string | undefined,
+  activePath: string,
+): boolean {
+  return !!graph && callgraphPath === activePath
 }
