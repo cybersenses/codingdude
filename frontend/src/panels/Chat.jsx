@@ -22,13 +22,31 @@ import {
 // R59 P0: moved verbatim out of App.jsx. Becomes the `chat` panel in P1; the
 // prompt row is a separate panel (Prompt.jsx).
 export function Chat({ messages, streaming, onStop, onDecide, sessionId, suggestMode, onEditRevert, runId }) {
-  const bottomRef = useRef(null)
+  // R67 #254: stick-to-bottom autoscroll. The old bottomRef.scrollIntoView()
+  // fired on EVERY messages change - i.e. on every streaming delta - and
+  // yanked the scroller to the bottom no matter where the user had scrolled
+  // to read, pinning them to the tail of the conversation ("every activity
+  // forces it up again"). scrollIntoView also walks ALL scrollable ancestors,
+  // so it must never be used here. Instead: scroll the chat's own scroller,
+  // and only while the user is at (or within 24px of) the bottom. Scrolling
+  // up to read disarms it; scrolling back to the bottom re-arms it. Sending
+  // your own message always re-arms it (the last message is then yours).
+  const scrollRef = useRef(null)
+  const stickRef = useRef(true)
+  useEffect(() => { stickRef.current = true }, [sessionId])
+  const onScroll = () => {
+    const el = scrollRef.current
+    if (el) stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24
+  }
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const el = scrollRef.current
+    if (!el) return
+    const userJustSent = messages.length > 0 && messages[messages.length - 1].role === 'user'
+    if (stickRef.current || userJustSent) el.scrollTop = el.scrollHeight
   }, [messages])
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex-1 space-y-3 overflow-y-auto p-4">
+      <div ref={scrollRef} onScroll={onScroll} className="flex-1 space-y-3 overflow-y-auto p-4">
         {messages.map((m, i) => (
           <div key={i} className={m.role === 'user' ? 'text-right' : ''}>
             <div
@@ -75,7 +93,6 @@ export function Chat({ messages, streaming, onStop, onDecide, sessionId, suggest
             ■ Stop
           </button>
         )}
-        <div ref={bottomRef} />
       </div>
     </div>
   )
