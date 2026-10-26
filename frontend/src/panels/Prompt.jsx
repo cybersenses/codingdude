@@ -55,7 +55,10 @@ export function Prompt({ onSend, disabled, running = false, suggestMode, setSugg
     >
       <div className="flex items-end gap-2">
         <textarea
-          className="min-w-0 flex-1 resize-none rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
+          // R67 #254: resize-y so a long prompt can be grown to read in full
+          // (the user request behind R65) - bounded so the composer cannot
+          // eat the chat. rows={2} is the initial height.
+          className="min-h-[3.25rem] max-h-64 min-w-0 flex-1 resize-y rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
           rows={2}
           value={text}
           onChange={(e) => setText(e.target.value)}

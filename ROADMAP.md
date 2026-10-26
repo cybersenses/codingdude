@@ -1077,3 +1077,12 @@ Accepted trade-off (no ticket): token in query param for EventSource; verified a
 False positives verified and closed: config.py ShellConfig kwarg collision; roadmap.py/db.py/projectnotes.py SQL identifiers code-controlled/regex-validated with parameterized values; langs.py importlib internal mapping; server.py Host-check is the DNS-rebinding/CSRF defense itself; insecure-websocket loopback-by-design; restart.py urlopen hardcoded loopback; 78 LOW bandit agent-idiom findings.
 
 pip-audit gap closed: ran via `uv run --with pip-audit pip-audit` (finding 1b).
+
+## R67 — Chat autoscroll hijacks the view during runs; input box not resizable
+**Status:** open
+
+User report (post-R65 "resize the chat window" work): while a chat runs, every activity in the chat window forces the view to the bottom — the user is pinned seeing only the bottom of the conversation and cannot hold an earlier position to read. What the user actually wanted: resize the input textarea so they can see more of their own text while composing.
+
+Findings (probe, 2026-10-26): the document never scrolls (docH == viewport, dock root exactly 100vh) — the moving thing is the chat's own messages scroller. `Chat.jsx` calls `bottomRef.scrollIntoView({behavior:'smooth'})` on EVERY `messages` change (every streaming delta), unconditionally — the classic sticky-autoscroll-without-user-override bug. Fix: scroll the chat's own scroller directly (never `scrollIntoView`, which can walk ancestors), and only when the user is already at the bottom (stick-to-bottom pattern; resume when they return to bottom; reset on session switch). Plus: make the Prompt textarea vertically resizable (native `resize-y`, bounded max height).
+
+Adjacent finding logged, not fixed here: `streaming` state leaks across session switches (a live run in session A disables the prompt and shows Stop in fresh session B until A's SSE closes).
