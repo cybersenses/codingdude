@@ -14,11 +14,11 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 // R59 P2: the dock panels for topics served by the visibility-gated store
-// (tech design #1 §4.3). Each body is the classic DockPanel tab body from
-// App.jsx, unchanged in what it renders; what changed is the data source —
+// (tech design #1 §4.3). Each body was ported from the retired DockPanel
+// tab body, unchanged in what it renders; what changed is the data source —
 // useSessionData(store, topic, sessionId) instead of the per-tab 4s poll.
 //
-// The store's error model replaces DockPanel's banner seam: a snapshot error
+// The store's error model replaced DockPanel's banner seam: a snapshot error
 // renders through `data-poll-error` (the same attribute tools/ui_smoke.py
 // gates on), and the last successful data is kept beside it, so a failed
 // refresh never looks like "no data yet" (#231/#234).
@@ -626,9 +626,9 @@ export function StandardsPanel() {
 
 // ---------------------------------------------------------------------------
 // Graph — not yet a store topic: its fetch depends on activePath, which the
-// store keys (topic, session) cannot express. It keeps DockPanel's effect
-// until the store grows a parametric key (P3 follow-up, noted in
-// code-design.md). Body is the classic Graph tab body, verbatim.
+// store keys (topic, session) cannot express. It keeps the retired DockPanel's
+// effect until the store grows a parametric key (P3 follow-up, noted in
+// code-design.md); the body is that tab body, verbatim.
 // ---------------------------------------------------------------------------
 
 const GRAPH_POLL_MS = 4000

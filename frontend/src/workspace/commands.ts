@@ -91,18 +91,17 @@ export function commandList(api: CommandApi, ctx: CommandCtx): PaletteCommand[] 
     }
     const location = api.getPanel(activeId)?.group.api.location.type
     const docked = location === 'floating' || location === 'popout'
+    const activeTitle = panelSpec(activeId)?.title ?? activeId
     cmds.push({
       id: docked ? `dock:${activeId}` : `float:${activeId}`,
-      label: docked
-        ? `Dock ${panelSpec(activeId)?.title ?? activeId}`
-        : `Float ${panelSpec(activeId)?.title ?? activeId}`,
+      label: docked ? `Dock ${activeTitle}` : `Float ${activeTitle}`,
       group: 'move',
     })
     // R59 P4: pop the panel out to its own window (keyboard/drag-free path).
     if (location !== 'popout') {
       cmds.push({
         id: `popout:${activeId}`,
-        label: `Pop out ${panelSpec(activeId)?.title ?? activeId} to a window`,
+        label: `Pop out ${activeTitle} to a window`,
         group: 'move',
       })
     }

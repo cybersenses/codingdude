@@ -113,7 +113,7 @@ describe('default preset', () => {
     for (const p of DEFAULT_PRESET.slice(1)) expect(p.direction).toBeDefined()
   })
 
-  it('reproduces the classic column widths on first boot (REQ-7)', () => {
+  it('boots with the geometry constants as its column widths (REQ-7)', () => {
     const width = (id: string) => DEFAULT_PRESET.find((p) => p.id === id)?.initialWidth
     expect(width('nav')).toBe(GEOMETRY.sidebar.fallback)
     expect(width('explorer')).toBe(GEOMETRY.rail.fallback)

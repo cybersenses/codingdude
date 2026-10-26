@@ -43,11 +43,11 @@ from ui_smoke import (  # noqa: E402
 
 
 def test_panel_banner_selector_matches_the_root_and_nested_shapes():
-    """Under `?layout=dock` the panel's banner *is* the panel root, not a child.
+    """A panel's banner can *be* the panel root, not a child.
 
     `Locator.locator()` matches descendants only, so the scoped search that
-    looked correct matched zero against `DiffTabPanel`'s failure state — where
-    `data-panel` and `data-poll-error` sit on the same div — and the gate
+    looked correct matched zero against the root shape — where `data-panel`
+    and `data-poll-error` sit on the same div — and the gate
     reported a failing panel as clean. Pins both alternatives so that form
     cannot quietly come back.
 
@@ -160,7 +160,7 @@ def test_placeholder_fails_only_with_a_session():
 
 
 def test_drift_and_boot_crash_fail():
-    assert verdict(clean(tab_drift={"smoke_only": ["X"]})) == 1
+    assert verdict(clean(panel_drift={"nav": {"smoke": "X", "catalogue": "Y"}})) == 1
     assert verdict(clean(crashed="on boot")) == 1
 
 

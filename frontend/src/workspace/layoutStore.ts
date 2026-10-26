@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  <https://www.gnu.org/licenses/>.
 // R59 P3 (tech design #1 §4.4): persisted layouts. Pure logic only — the
-// storage is injected so tests (and the popout path, later) never need a
+// storage is injected so tests (and the popout path) never need a
 // browser localStorage. Workspace.jsx owns the try/catch around `fromJSON`;
 // everything here either returns a decision or throws nothing.
 //

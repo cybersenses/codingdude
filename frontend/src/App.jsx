@@ -16,20 +16,10 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { api, authLocal, call, checkAuth } from './api'
 import { SSE_MAX_RETRIES, runToReattach, sseRetryDelayMs } from './reattach'
-import { activeProcesses, mergeProcesses } from './processes'
-import { groupEventsByRun, pickRunId } from './runs'
+import { mergeProcesses } from './processes'
 import { pickPending } from './pending'
 import { clearPendingPrompts } from './askUser'
 import { pendingArtifacts } from './artifacts'
-import { buildSpans } from './waterfall'
-import { buildTour } from './tour'
-import { buildDesignDocPrompt } from './designdoc'
-import { callgraphMermaid, graphView } from './callgraph'
-import { cfgMermaid } from './cfgView'
-import { pollCleared, pollFailure, tabError as tabErrorFor } from './pollErrors'
-import { buildRepoQuestionPrompt } from './repoqa'
-import { structureRows } from './structure'
-import { Mermaid } from './ui.jsx'
 
 // Chrome (fixed surfaces) and panels (dockable in P1). App keeps only the
 // session/SSE state machine and the layout; every visible surface lives in
@@ -555,9 +545,8 @@ export default function App() {
     if (runRef.current) api.approve(runRef.current, decision).catch((e) => setError(String(e.message)))
   }
 
-  // R59 P1: prop bags shared by both shells. The classic layout and the dock
-  // get identical wiring from one place, so the two can be compared without a
-  // divergence bug hiding in the differences between two prop lists.
+  // R59 P1: prop bags for the dock shell (historically shared with the
+  // classic layout so the two could be compared). The dock is the only shell.
   const agentStripProps = {
     status: streaming ? status : 'idle',
     quietSeconds,

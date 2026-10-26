@@ -749,6 +749,25 @@ from git and redone with `edit_file`; a later single-file replace in
 `catalogue.test.ts` used `[IO.File]::WriteAllText` (BOM-free) and verified
 clean, but the no-bulk-edit rule was bent twice — recorded, not repeated.
 
+**Post-push review round 1.** Two delegates over `d8c566f..887f657`; every
+finding verified in-place before fixing. Applied: 15 dead DockPanel-era
+imports removed from `App.jsx` (685 -> 674 lines; `no-unused-vars` is off in
+`eslint.config.mjs`, which is why the gate stayed green — that config gap
+stands); stale two-shell / `?layout=dock` / `panes.ts` (removed) prose corrected in
+`Workspace.jsx`, `App.jsx`, `panels.jsx`, `sessionTopics.ts`, `waterfall.ts`,
+`layoutStore.ts`, ui_smoke.py and test_ui_smoke_verdict.py and RESCUE.md,
+whose recovery command still passed the deleted `--layout` flag (it exits 2);
+the dead `tab_drift` verdict branch (no writer of that key remains) removed
+with its test; the vestigial
+`walk =` indirection in `run()` removed; `activeTitle` hoisted in
+`commands.ts`; USER-MANUAL no longer claims drag-to-popout (matches the honest
+limit above); RESCUE vitest count 115 -> 170 and ticket list gains #245.
+Waived: `catalogue.test.ts` comparing `DEFAULT_PRESET` to `GEOMETRY` (it pins
+the two constants to each other — meaningful, docstring fixed), the popout
+`addPopoutGroup` resolving-false case being panel-side untested (the shell's
+notice handler is the seam; no jsdom in this repo), and historical P1/P2
+narration in RESCUE/code-design (as-of-then rows, labelled as such).
+
 ## R60 — Claims must be checkable (`tools/claim_check.py`)
 
 **Problem it addresses.** Six consecutive commits carried a written claim the code
