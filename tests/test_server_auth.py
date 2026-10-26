@@ -20,11 +20,10 @@ repair commit."""
 from pathlib import Path
 
 import httpx
-
 from test_server import server  # noqa: F401 — pytest fixture
 
 
-def test_non_ascii_credentials_fail_closed_not_500(server):
+def test_non_ascii_credentials_fail_closed_not_500(server):  # noqa: F811 — pytest fixture param shadows the import
     """SEC #250: compare_digest only accepts ASCII strings — every auth seam
     must fail closed (401), never blow up, on non-ASCII candidates. (Header
     values can't carry non-ASCII at all — httpx/h11 reject them client-side —
@@ -42,15 +41,26 @@ def test_non_ascii_credentials_fail_closed_not_500(server):
 
 def test_auth_seams_use_constant_time_compare():
     """SEC #250 tripwire (source-parse, R64/R65 precedent): token compares in
-    authorize/auth_check/login must go through secrets.compare_digest — a
-    plain ==/!= would reintroduce the timing side channel silently."""
+    authorize/auth_check/login AND the two inline-auth endpoints (run_events,
+    run_ws) must go through _ct_eq/secrets.compare_digest — a plain ==/!=
+    would reintroduce the timing side channel silently (review round 1 found
+    exactly that on the two inline seams)."""
     src = Path(__file__).parent.parent / 'src' / 'codingdude' / 'server.py'
     text = src.read_text(encoding='utf-8')
+    helper = text[text.index('def _ct_eq'):text.index('def authorize')]
+    assert 'compare_digest' in helper  # the one constant-time primitive
     authorize = text[text.index('def authorize'):text.index('def _session_cookie')]
-    assert 'compare_digest' in authorize
+    assert '_ct_eq' in authorize
     assert '!= token' not in authorize and '== token' not in authorize
     auth_check = text[text.index('def auth_check'):text.index('def auth_local')]
-    assert 'compare_digest' in auth_check
+    assert '_ct_eq' in auth_check
+    assert '== token' not in auth_check
     login = text[text.index('def login'):text.index('class SessionIn')]
-    assert 'compare_digest' in login
+    assert '_ct_eq' in login
     assert '!= token' not in login
+    run_events = text[text.index('def run_events'):text.index('@app.websocket')]
+    assert '_ct_eq' in run_events
+    assert '== token' not in run_events
+    run_ws = text[text.index('async def run_ws'):text.index('await ws.accept()')]
+    assert '_ct_eq' in run_ws
+    assert '!= token' not in run_ws

@@ -323,19 +323,22 @@ def create_app(
         except OSError:
             pass
 
+    def _ct_eq(candidate: str, expected: str) -> bool:
+        """#250: constant-time secret compare on UTF-8 bytes — the encode()
+        form needs no isascii guard (non-ASCII candidates simply mismatch)."""
+        return secrets.compare_digest(candidate.encode(), expected.encode())
+
     def authorize(request: Request) -> None:
         """Bearer header (headless/tests), session cookie (browser login),
         or query param (EventSource) all authenticate. #250: every token
-        compare is constant-time (the token is a long-lived secret), and
-        non-ASCII candidates fail closed — compare_digest only accepts
-        ASCII strings."""
+        compare is constant-time (the token is a long-lived secret)."""
         auth_header = request.headers.get('authorization', '')
         cookie = request.cookies.get('cd_session', '')
         query_token = request.query_params.get('token', '')
         ok = (
-            (auth_header.isascii() and secrets.compare_digest(auth_header, f'Bearer {token}'))
-            or (cookie.isascii() and secrets.compare_digest(cookie, token))
-            or (query_token.isascii() and secrets.compare_digest(query_token, token))
+            _ct_eq(auth_header, f'Bearer {token}')
+            or _ct_eq(cookie, token)
+            or _ct_eq(query_token, token)
         )
         if not ok:
             raise HTTPException(status_code=401, detail='invalid token')
@@ -382,7 +385,7 @@ def create_app(
     @app.get('/auth/check')
     def auth_check(request: Request) -> dict:
         cookie = request.cookies.get('cd_session', '')
-        if cookie.isascii() and secrets.compare_digest(cookie, token):
+        if _ct_eq(cookie, token):
             return {'ok': True}
         raise HTTPException(status_code=401, detail='not logged in')
 
@@ -395,7 +398,7 @@ def create_app(
 
     @app.post('/login')
     def login(body: LoginIn) -> Response:
-        if not (body.password.isascii() and secrets.compare_digest(body.password, token)):
+        if not _ct_eq(body.password, token):
             raise HTTPException(status_code=401, detail='wrong password')
         # The cookie holds the same secret as the bearer token: localhost-only,
         # HttpOnly so page JS can't read it, same-origin by construction.
@@ -1582,13 +1585,14 @@ def create_app(
     async def run_events(
         run_id: str, request: Request, token_q: str = Query('', alias='token')
     ) -> StreamingResponse:
-        # Cookie (browser login), bearer header, or query token all authenticate.
+        # Cookie (browser login), bearer header, or query token all
+        # authenticate — #250: constant-time, same as authorize.
         cookie = request.cookies.get('cd_session', '')
         auth_header = request.headers.get('authorization', '')
         ok = (
-            cookie == token
-            or auth_header == f'Bearer {token}'
-            or token_q == token
+            _ct_eq(cookie, token)
+            or _ct_eq(auth_header, f'Bearer {token}')
+            or _ct_eq(token_q, token)
         )
         if not ok:
             raise HTTPException(status_code=401, detail='invalid token')
@@ -1609,7 +1613,7 @@ def create_app(
     ):
         host = ws.client.host if ws.client else ''
         local = ('127.0.0.1', '::1') + (('testclient',) if allow_testclient else ())
-        if ws_token != token or host not in local:
+        if not _ct_eq(ws_token, token) or host not in local:
             await ws.close(code=4401)
             return
         await ws.accept()
