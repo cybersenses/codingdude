@@ -29,7 +29,7 @@ import { groupEventsByRun, pickRunId } from '../runs'
 import { buildSpans } from '../waterfall'
 import { buildTour } from '../tour'
 import { buildDesignDocPrompt } from '../designdoc'
-import { callgraphMermaid, graphView } from '../callgraph'
+import { callgraphMermaid, graphView, hasGraphFor } from '../callgraph'
 import { cfgMermaid } from '../cfgView'
 import { buildRepoQuestionPrompt } from '../repoqa'
 import { structureRows } from '../structure'
@@ -678,7 +678,7 @@ export function GraphPanel() {
           } catch (err) {
             // A transient poll failure must not blank an already-rendered
             // graph for this path; only paths with no graph show the error.
-            if (live()) setData((d) => (d.callgraphPath === activePath && d.callgraph ? d : { ...d, graphError: errMsg(err) }))
+            if (live()) setData((d) => (hasGraphFor(d.callgraph, d.callgraphPath, activePath) ? d : { ...d, graphError: errMsg(err) }))
           }
           try {
             const t = await call(`/sessions/${sessionId}/trust?path=${encodeURIComponent(activePath)}`)
@@ -688,9 +688,11 @@ export function GraphPanel() {
             try {
               const cf = await call(`/sessions/${sessionId}/cfg?path=${encodeURIComponent(activePath)}`)
               // Do not clear cfg/cfgFn here: this runs every poll and would
-              // wipe the user's function selection every 4 s. Path changes are
-              // handled by the effect-start reset.
-              if (live()) setData((d) => ({ ...d, cfgFunctions: cf.functions || [], cfgFunctionsPath: activePath }))
+              // wipe the user's function selection every 4 s. cfgError IS
+              // cleared — a transient list failure must not render forever
+              // (round 7; #231 class). Path changes are handled by the
+              // effect-start reset.
+              if (live()) setData((d) => ({ ...d, cfgFunctions: cf.functions || [], cfgFunctionsPath: activePath, cfgError: undefined }))
             } catch (err) {
               if (live()) setData((d) => ({ ...d, cfgFunctions: [], cfgFunctionsPath: activePath, cfgError: errMsg(err) }))
             }

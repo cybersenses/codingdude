@@ -15,7 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import { describe, expect, it } from 'vitest'
 
-import { callgraphMermaid, graphView } from './callgraph'
+import { callgraphMermaid, graphView, hasGraphFor } from './callgraph'
 
 describe('callgraphMermaid', () => {
   it('renders nodes and edges', () => {
@@ -71,5 +71,25 @@ describe('graphView', () => {
   it('error beats everything: the message must reach the user', () => {
     const v = graphView(undefined, 'm.py', 'm.py', 'cannot analyze m.py: bad utf-8')
     expect(v).toEqual({ kind: 'error', error: 'cannot analyze m.py: bad utf-8' })
+  })
+})
+
+describe('hasGraphFor', () => {
+  const graph = { nodes: [{ id: 'a', name: 'a', line: 1, orphan: false }], edges: [] }
+
+  it('true when a graph is stored for the active path', () => {
+    expect(hasGraphFor(graph, 'm.py', 'm.py')).toBe(true)
+  })
+
+  it('true for an empty-node graph: a success is a success', () => {
+    expect(hasGraphFor({ nodes: [], edges: [] }, 'm.py', 'm.py')).toBe(true)
+  })
+
+  it('false when the stored graph belongs to another path', () => {
+    expect(hasGraphFor(graph, 'old.py', 'm.py')).toBe(false)
+  })
+
+  it('false with no graph yet', () => {
+    expect(hasGraphFor(undefined, undefined, 'm.py')).toBe(false)
   })
 })
