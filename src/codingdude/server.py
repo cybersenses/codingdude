@@ -761,10 +761,12 @@ def create_app(
         if not workdir:
             raise HTTPException(status_code=404, detail='no such session')
         root = Path(workdir)
+        # .venv* (not just .venv): side venvs like .venv-verify hold a full
+        # site-packages tree and made this walk take ~38s (#255).
         skip = {'.git', '.venv', 'node_modules', '__pycache__', '.mypy_cache', '.pytest_cache'}
         out = []
         for p in sorted(root.rglob('*')):
-            if any(part in skip for part in p.relative_to(root).parts):
+            if any(part in skip or part.startswith('.venv') for part in p.relative_to(root).parts):
                 continue
             out.append(
                 ('d ' if p.is_dir() else '  ') + str(p.relative_to(root)).replace('\\', '/')
@@ -780,6 +782,9 @@ def create_app(
         if not workdir:
             raise HTTPException(status_code=404, detail='no such session')
         root = Path(workdir)
+        # .venv* (not just .venv): side venvs like .venv-verify hold a full
+        # site-packages tree — the Explorer's tree fetch took ~38s until
+        # they were skipped (#255).
         skip = {'.git', '.venv', 'node_modules', '__pycache__', '.mypy_cache', '.pytest_cache', 'dist', '.next'}
 
         def build(directory: Path, depth: int) -> list[dict]:
@@ -791,7 +796,7 @@ def create_app(
             except OSError:
                 return []
             for entry in entries:
-                if entry.name in skip:
+                if entry.name in skip or entry.name.startswith('.venv'):
                     continue
                 rel = entry.relative_to(root).as_posix()
                 if entry.is_dir():
@@ -1005,12 +1010,14 @@ def create_app(
                 break
         root = Path(workdir)
         exts = {'.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg'}
+        # .venv* prefix: side venvs (.venv-verify) otherwise add thousands of
+        # files to every renders scan (#255).
         skip = {'.git', '.venv', 'node_modules', '__pycache__', '.mypy_cache', '.pytest_cache'}
         rendered: list[tuple[int, dict]] = []
         for p in sorted(root.rglob('*')):
             if not p.is_file() or p.suffix.lower() not in exts:
                 continue
-            if any(part in skip for part in p.relative_to(root).parts):
+            if any(part in skip or part.startswith('.venv') for part in p.relative_to(root).parts):
                 continue
             st = p.stat()
             rendered.append((
