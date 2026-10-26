@@ -1061,7 +1061,7 @@ The user reports the chat "window" as not resizable. Probe (2026-10-26, .scratch
 Fix: index.css — ±4px transparent hit-area skirt on fine pointers, immediate hover highlight (--dv-active-sash-transition-delay: 0s), resting line one step brighter than the border. Guard: ui_smoke.py gains a chat-resize step that drags the sash from 5px OFF centre (outside the bare 4px element, inside the expanded hit area), so the gate goes red if the CSS regression returns.
 
 ## R66 — R66 — Security scan remediation (2025 scan findings)
-**Status:** in_progress
+**Status:** done
 
 Full security scan (bandit, semgrep auto, npm audit, pip-audit, manual auth/path/XSS review) tracks remediation here, highest risk first.
 
