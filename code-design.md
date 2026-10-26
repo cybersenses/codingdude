@@ -621,7 +621,7 @@ without a mouse. Three pure modules plus one component:
 | Module | Contents |
 |---|---|
 | `frontend/src/workspace/layoutStore.ts` | saved-layout load/save (`cd-layout-v1`, `{v, preset, layout}`), unknown-panel stripping, user-preset store (`cd-layout-presets-v1`), `createDebouncedSaver` |
-| `frontend/src/workspace/layoutStore.test.ts` | 18 tests: round-trip, corrupt/version/empty fallback, storage-throwing degradation, strip in grid + floating windows, preset name validation (incl. reserved ids), clear-reads-as-missing, debounce coalescing/cancel |
+| `frontend/src/workspace/layoutStore.test.ts` | 19 tests: round-trip, corrupt/version/empty fallback, storage-throwing degradation, strip in grid + floating windows, preset name validation (incl. reserved ids and a `__proto__` round-trip), clear-reads-as-missing, debounce coalescing/cancel |
 | `frontend/src/workspace/catalogue.ts` | + `PRESETS` (default/debug/review/watching) as placements, same invariants as `DEFAULT_PRESET` (6 new tests); + `panelOptions(spec)` — the single source of the per-spec `addPanel` option clump (id/component/title/renderer/minimums) shared by the palette's `show:` command and preset application |
 | `frontend/src/workspace/commands.ts` + `commands.test.ts` | palette command list + dispatch over a narrowed `CommandApi`; 14 tests pin labels, guards and calls |
 | `frontend/src/workspace/CommandPalette.jsx` | `Ctrl+Shift+P`/`Ctrl+K` modal: filter, arrows, Enter; closes after run |

@@ -51,8 +51,6 @@ function fakeApi(overrides: Partial<CommandApi> = {}): CommandApi & { calls: str
       return opts
     },
     addFloatingGroup: (item: unknown) => calls.push(`float:${String((item as { id: string }).id)}`),
-    toJSON: () => ({}),
-    clear: () => calls.push('clear'),
     removePanel: (p: unknown) => {
       calls.push(`removePanel:${String((p as { id: string }).id)}`)
       const i = panels.findIndex((x) => x.id === (p as { id: string }).id)
