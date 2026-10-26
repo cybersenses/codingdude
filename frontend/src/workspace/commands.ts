@@ -35,8 +35,6 @@ export interface CommandApi {
   } | undefined
   addPanel(opts: Record<string, unknown>): unknown
   addFloatingGroup(item: unknown, opts?: Record<string, unknown>): void
-  toJSON(): unknown
-  clear(): void
 }
 
 export interface CommandCtx {
@@ -112,7 +110,7 @@ export function commandList(api: CommandApi, ctx: CommandCtx): PaletteCommand[] 
   return cmds
 }
 
-/** Substring (word-boundary-tolerant) filter for the palette list. */
+/** Case-insensitive substring filter for the palette list. */
 export function filterCommands(cmds: PaletteCommand[], query: string): PaletteCommand[] {
   const q = query.trim().toLowerCase()
   if (!q) return cmds

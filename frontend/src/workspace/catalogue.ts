@@ -55,8 +55,8 @@ export const PANELS: readonly PanelSpec[] = [
   { id: 'chat', title: 'Chat', component: 'chat', renderer: 'always', minWidth: PANE_SPECS.right.min },
   { id: 'diff', title: 'Diff', component: 'diff', minHeight: PANE_SPECS.dock.min },
   // R59 P2: the remaining dock tabs, all closable-but-not-in-the-default-
-  // preset; they are opened from the Workspace panel bar (palette lands in
-  // P3). renderer:'always' marks stateful/iframe panels whose DOM must
+  // preset; they are opened on demand from the command palette (P3), not on
+  // boot. renderer:'always' marks stateful/iframe panels whose DOM must
   // survive being hidden (tech design §3, §4.1).
   { id: 'graph', title: 'Graph', component: 'graph' },
   { id: 'planning', title: 'Planning', component: 'planning' },

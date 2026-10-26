@@ -26,6 +26,10 @@
 // partially-unknown layout must degrade — strip what the catalogue no longer
 // knows and keep the rest — and only fall back to the default preset when
 // nothing usable remains.
+// The catalogue's PRESETS are the source of truth for shipped preset ids
+// (used by the reserved-name guard below).
+import { PRESETS } from './catalogue'
+
 export const LAYOUT_KEY = 'cd-layout-v1'
 export const PRESETS_KEY = 'cd-layout-presets-v1'
 export const LAYOUT_VERSION = 1
@@ -239,8 +243,6 @@ export function clearSavedLayout(storage: KVStorage): void {
 // User presets
 // ---------------------------------------------------------------------------
 
-import { PRESETS } from './catalogue'
-
 const NAME_RE = /^[\w][\w -]{0,31}$/
 
 // A user preset name that collides with a shipped preset id (or the palette's
@@ -253,11 +255,17 @@ export function presetNameValid(name: string): boolean {
 }
 
 export function loadUserPresets(storage: KVStorage): Record<string, SerializedLayout> {
+  // Null prototype: a stored "__proto__" key (the name guard lets it through —
+  // NAME_RE matches it) must not hit Object.prototype's setter when
+  // saveUserPreset assigns, which would silently drop the preset.
+  const dict = Object.create(null) as Record<string, SerializedLayout>
   try {
     const parsed = JSON.parse(storage.getItem(PRESETS_KEY) ?? '{}')
-    return isRecord(parsed) ? (parsed as Record<string, SerializedLayout>) : {}
+    if (!isRecord(parsed)) return dict
+    for (const [k, v] of Object.entries(parsed)) dict[k] = v
+    return dict
   } catch {
-    return {}
+    return dict
   }
 }
 

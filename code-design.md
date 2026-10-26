@@ -669,7 +669,10 @@ user's own reset); `''` now reads as `missing`. Cleanup, each verified dead
 or duplicated first: the never-true `disabled` flag removed from
 `PaletteCommand` and the palette render/exec; the per-spec `addPanel` option
 clump extracted to `panelOptions` (catalogue) and reused in both call sites;
-Workspace's three degrade-to-default blocks collapsed into `resetToDefault`;
+Workspace's degrade-to-default blocks collapsed into `resetToDefault` (two
+call sites; the boot fallback routes through it with a `reasons` map, and
+`resetToDefault` takes an optional reason so the `missing` first-run path
+stays silent);
 `countPanels` renamed `panelIds` (it returns ids); the version-mismatch
 notice says "different version", not "newer"; `tools/ui_smoke.py`'s docstring
 no longer cites the deleted P2 panel bar. Waived with reasons: committed
@@ -678,6 +681,28 @@ recorded above), coarse keyboard moves (spec-accepted interpretation),
 layoutStore's two similar tree walkers (one tested module; refactor risk over
 value), saver disposal on unmount (the shell lives as long as the document),
 and the uncalled `deleteUserPreset` (P4 preset management needs it).
+
+**Second review round** (two delegates, findings verified in code before
+fixing). Two real defects: `loadUserPresets` returned a plain object, so a
+preset legitimately named `__proto__` (NAME_RE matches it) hit
+Object.prototype's setter on save — the store wrote `{}` while reporting
+success and delete could not remove it; the dict is now null-prototype,
+under test. And a corrupt/version/empty layout stayed in `cd-layout-v1`,
+so the reset notice repeated on every boot — the boot fallback now calls
+`clearSavedLayout` (which also makes that helper reachable from
+production), reading back as `missing` on the next boot. Cleanup: the
+reserved-name test derives its list from `PRESETS` instead of hardcoding
+five ids; `CommandApi` lost the `toJSON`/`clear` members nothing in the
+commands module calls; `filterCommands`' docstring says "case-insensitive
+substring" (it never did word-boundary handling); the catalogue and its
+test no longer cite the P2 panel bar; `tools/ui_smoke.py`'s scope note no
+longer claims ruff skips `tools/` (gates.bat lints it, R60); the
+`PRESETS` import in layoutStore moved to the top; `panelOptions`' mapping
+is pinned by its own catalogue test (the extraction was previously tested
+only through callers' payloads). Waived: the license-header wording drift
+in the P3 files (pre-existing, cosmetic) and `initialWidth: undefined`
+keys reaching `addPanel` (dockview ignores undefined; the conditional
+spread buys nothing at the call site).
 
 ## R60 — Claims must be checkable (`tools/claim_check.py`)
 
