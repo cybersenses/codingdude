@@ -1,9 +1,36 @@
 # RESCUE.md — recovery sheet for the R59 P0/P1 frontend refactor
 
 **Read this first if a session died, the UI is broken, or you are an AI taking over with no context.**
-Owner: CodingDude. Last updated: R59 P4 — popout windows; classic shell retired (dock is the only shell).
+Owner: CodingDude. Last updated: R66 — security scan remediation (backend; see handback note below). UI state is unchanged since R59 P4.
 
 ---
+
+## 0. Handback note — R66 security overhaul (2026-10-26)
+
+Read this before the R59 sections below; the backend moved on while the UI did not.
+
+**What happened.** A full security scan (bandit, semgrep, npm audit, pip-audit, manual
+auth/path/XSS review) was remediated under roadmap item **R66**, issues #248–#252, with
+follow-up #253 still open (pydantic-ai ≥2.54 adaptation). Per-finding status lives in
+`ROADMAP.md` under `## R66`; the commits are `c261807` (dompurify pin), `733aa10` (dep
+floors raised, pydantic-ai pinned `>=2.53,<2.54`), `8c03183` (gh tools argv-only, no
+shell), `479fcc4` (mermaid `securityLevel: 'strict'`), `32bce1e` + `161ee61`
+(constant-time token compares in the server auth seams). `test_server.py` auth tests
+moved to `tests/test_server_auth.py`.
+
+**The breakage this caused (and its fix).** The dep bump could not be applied to the
+live `.venv` because the running server held `.pyd` file locks, so 733aa10 validated
+against a side venv and left the note *"needs one user bounce + uv sync to finish that
+env"*. The bounce + sync did not happen until 2026-10-26, and until then `python -m
+codingdude.cli serve` died with `ModuleNotFoundError: No module named 'codingdude'`
+(probe: `.venv/Scripts/python.exe -c "import codingdude"` failed before `uv sync`,
+succeeds after). **Fix: stop any running server, run `uv sync`, start again.** Verified
+2026-10-26: server on port 8765 answered `/health` with `{"ok":true,"version":"0.4.0",
+"git_sha":"161ee61"}` [probe: Invoke-RestMethod http://127.0.0.1:8765/health, re-probed
+at handback]. If the server will not start after a dependency change, check this
+first — the code is usually fine; the venv is stale.
+
+
 
 ## 1. Snapshot (update this table every time the state moves)
 
