@@ -10,7 +10,7 @@ Owner: CodingDude. Last updated: R59 P4 — popout windows; classic shell retire
 | Item | Value |
 |---|---|
 | Repo | `G:\pydantic` (branch `main`) |
-| Last known-good commit | `5b58bdb` — R64 sidebar panel list + review round 1 (pushed, gates green: vitest 175, pytest 873/1, smoke 20/20) |
+| Last known-good commit | `d6a121f` — R65 sash affordance: resize handles findable/grabbable (±4px hit-area skirt, instant hover, visible resting line); dock gate chat_resize probe red→green (gates: vitest 175, pytest 875/1, smoke 20/20 exit 0) |
 | Restore tag | `pre-r59-p0` → `0c2e58e` (created before any refactor; **do not delete**) |
 | Working tree at kickoff | clean except `M ROADMAP.md` (R59 item) |
 | Risk area | `frontend/src/` — React UI |
