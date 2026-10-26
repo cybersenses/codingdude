@@ -35,7 +35,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
 from ui_smoke import (  # noqa: E402
     DOCK_PANELS,
-    DOCK_TABS,
     _no_readme_reason,
     _panel_banner_selector,
     catalogue_panels,
@@ -52,10 +51,10 @@ def test_panel_banner_selector_matches_the_root_and_nested_shapes():
     reported a failing panel as clean. Pins both alternatives so that form
     cannot quietly come back.
 
-    Only the root alternative is reachable today: `DiffTabPanel` is the one panel
-    that arms a banner, and the nested alternative belongs to the classic shell's
-    `DockPanel`, which is never mounted behind `?layout=dock`. It is pinned as a
-    guard, not as coverage.
+    The nested alternative is the live shape — every store-backed panel
+    (`TopicPanel` in workspace/panels.jsx) renders its banner inside the
+    `data-panel` root — and the root shape remains for panels whose banner is
+    the whole body. Both are pinned.
 
     This pins the selector *string*; it does not run a browser. What it does
     guarantee is that the attribute is not retyped here: the halves are built
@@ -115,7 +114,7 @@ def test_no_readme_reason_does_not_call_a_failed_fetch_no_sessions():
 
 def clean(**overrides) -> dict:
     """A passing report; override one key to make exactly one check fail."""
-    report = {"tab_count": len(DOCK_TABS), "tabs": {}}
+    report = {"tab_count": len(DOCK_PANELS), "tabs": {}}
     report.update(overrides)
     return report
 
@@ -125,7 +124,7 @@ def test_clean_report_passes():
 
 
 def test_tab_count_mismatch_fails():
-    assert verdict(clean(tab_count=len(DOCK_TABS) - 1)) == 1
+    assert verdict(clean(tab_count=len(DOCK_PANELS) - 1)) == 1
 
 
 def test_missing_tab_count_fails():
@@ -161,7 +160,7 @@ def test_placeholder_fails_only_with_a_session():
 
 
 def test_drift_and_boot_crash_fail():
-    assert verdict(clean(tab_drift={"app_jsx_only": ["X"], "smoke_only": []})) == 1
+    assert verdict(clean(tab_drift={"smoke_only": ["X"]})) == 1
     assert verdict(clean(crashed="on boot")) == 1
 
 
@@ -184,17 +183,16 @@ def test_partial_report_does_not_raise():
     assert verdict({"api_5xx": [{"status": 503}]}) == 1
 
 
-# --- R59 P1: the dock shell's checks ----------------------------------------
+# --- R59: the dock shell's checks --------------------------------------------
 
 
 def dock_report(**overrides) -> dict:
-    """A passing `--layout dock` report: five visible panels, monaco reflow."""
+    """A passing dock report: five visible preset panels, monaco reflow."""
     panels = {
         title: {"crashed": False, "placeholder": False, "poll_error": None, "chars": 40, "visible": True}
         for title in ("Projects & sessions", "Explorer", "Editor", "Chat", "Diff")
     }
     report = {
-        "layout": "dock",
         "expected_entries": 5,
         "tab_count": 5,
         "tabs": panels,
@@ -209,8 +207,7 @@ def test_dock_report_passes():
 
 
 def test_dock_expected_count_comes_from_the_report():
-    # Five panels is not sixteen: the count check must follow the walk, not the
-    # classic tab list.
+    # The count check must follow the walk's own report, not a hardcoded list.
     assert verdict(dock_report(tab_count=4)) == 1
     assert verdict(dock_report(expected_entries=4)) == 1
 
@@ -257,10 +254,11 @@ def test_catalogue_is_readable_so_the_count_has_a_source():
     assert set(catalogue_panels()) == set(DOCK_PANELS)
 
 
-def test_classic_report_unaffected_by_the_dock_keys():
-    # `visible` is absent from classic tab reports; absent must not read as
-    # False, or every classic run would fail. The tab entry is what makes this
-    # a test rather than a repeat of `test_clean_report_passes`: without one,
-    # the `visible` branch is never reached and the assertion cannot fail.
-    classic_tab = {"crashed": False, "placeholder": False, "poll_error": None, "chars": 40}
-    assert verdict(clean(tabs={"Diff": classic_tab})) == 0
+def test_visible_key_absence_does_not_fail_a_tab():
+    # `visible` is absent from a bare tab report; absent must not read as
+    # False, or every hand-built report would fail. The tab entry is what
+    # makes this a test rather than a repeat of `test_clean_report_passes`:
+    # without one, the `visible` branch is never reached and the assertion
+    # cannot fail.
+    bare_tab = {"crashed": False, "placeholder": False, "poll_error": None, "chars": 40}
+    assert verdict(clean(tabs={"Diff": bare_tab})) == 0

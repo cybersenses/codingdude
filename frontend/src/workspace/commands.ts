@@ -35,6 +35,10 @@ export interface CommandApi {
   } | undefined
   addPanel(opts: Record<string, unknown>): unknown
   addFloatingGroup(item: unknown, opts?: Record<string, unknown>): void
+  /** R59 P4: pop the panel out to its own OS window. Resolves false when the
+   * window could not be opened (popup blocker etc.); the shell also receives
+   * the failure via onDidOpenPopoutWindowFail. */
+  addPopoutGroup(item: unknown, opts?: Record<string, unknown>): Promise<boolean>
 }
 
 export interface CommandCtx {
@@ -86,14 +90,22 @@ export function commandList(api: CommandApi, ctx: CommandCtx): PaletteCommand[] 
       })
     }
     const location = api.getPanel(activeId)?.group.api.location.type
+    const docked = location === 'floating' || location === 'popout'
     cmds.push({
-      id: location === 'floating' ? `dock:${activeId}` : `float:${activeId}`,
-      label:
-        location === 'floating'
-          ? `Dock ${panelSpec(activeId)?.title ?? activeId}`
-          : `Float ${panelSpec(activeId)?.title ?? activeId}`,
+      id: docked ? `dock:${activeId}` : `float:${activeId}`,
+      label: docked
+        ? `Dock ${panelSpec(activeId)?.title ?? activeId}`
+        : `Float ${panelSpec(activeId)?.title ?? activeId}`,
       group: 'move',
     })
+    // R59 P4: pop the panel out to its own window (keyboard/drag-free path).
+    if (location !== 'popout') {
+      cmds.push({
+        id: `popout:${activeId}`,
+        label: `Pop out ${panelSpec(activeId)?.title ?? activeId} to a window`,
+        group: 'move',
+      })
+    }
   }
 
   for (const preset of PRESETS) {
@@ -127,7 +139,15 @@ export function runCommand(
     const pid = id.slice(5)
     const spec = panelSpec(pid)
     if (!spec || openIds.includes(pid)) return false
-    const reference = api.activePanel?.id ?? openIds[0]
+    // Reference the active panel *unless it lives outside the grid* — a
+    // floating or popped-out active panel would otherwise pull the new panel
+    // into its floating overlay / OS window, which reads as "Show did
+    // nothing" in the main window (probed in .scratch/p4_popout_probe.py).
+    const activeId = api.activePanel?.id
+    const activeInGrid =
+      activeId !== undefined &&
+      api.getPanel(activeId)?.group.api.location.type === 'grid'
+    const reference = activeInGrid ? activeId : openIds.find((oid) => api.getPanel(oid)?.group.api.location.type === 'grid')
     api.addPanel({
       ...panelOptions(spec),
       // An empty layout has no reference: dockview seeds the first group.
@@ -167,12 +187,21 @@ export function runCommand(
   if (id.startsWith('dock:')) {
     const panel = api.getPanel(id.slice(5))
     if (!panel) return false
-    // Re-docking a floating panel: moving it 'center' into the first grid
-    // group merges it back as a tab. The group here is the live
+    // Re-docking a floating or popped-out panel: moving it 'center' into the
+    // first grid group merges it back as a tab (dockview closes the popout
+    // window / floating overlay it came from). The group here is the live
     // DockviewGroupPanel from api.groups, narrowed to this module's view.
     const gridGroup = api.groups.find((g) => g.api.location.type === 'grid')
     if (!gridGroup) return false
     panel.api.moveTo({ group: gridGroup as unknown as { id: string }, position: 'center' })
+    return true
+  }
+  if (id.startsWith('popout:')) {
+    const panel = api.getPanel(id.slice(7))
+    if (!panel) return false
+    // Failure is surfaced by the shell's onDidOpenPopoutWindowFail notice; the
+    // promise is fire-and-forget so the palette stays synchronous.
+    void api.addPopoutGroup(panel).then(() => panel.api.setActive())
     return true
   }
   if (id.startsWith('preset:')) {

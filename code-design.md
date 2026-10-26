@@ -704,6 +704,51 @@ in the P3 files (pre-existing, cosmetic) and `initialWidth: undefined`
 keys reaching `addPanel` (dockview ignores undefined; the conditional
 spread buys nothing at the call site).
 
+### R59 P4 — popouts + retiring the classic shell (#245)
+
+Popout windows shipped and the classic layout is deleted — the dock shell is
+the only shell.
+
+**Popouts.** `api.addPopoutGroup(panel)` (dockview-core 8.6.1, verified from
+the installed typings) opens `/popout.html` — a deliberately near-empty page
+in `frontend/public/` — moves the panel's DOM into it, and copies the main
+document's stylesheets over (verified by reading dockview-core's `PopoutWindow.open`
+in the installed package: `document.styleSheets` + `adoptedStyleSheets` are cloned
+on load; `styleRoot` is only for shadow roots, which we do not use). The
+palette gains `Pop out <panel> to a window` (hidden when the active panel is
+already popped out; `Dock <panel>` covers both floating and popout return),
+and `onDidOpenPopoutWindowFail` surfaces a dismissible notice (popup blockers
+resolve `false`/`blocked`, they do not throw). Probed end-to-end
+(`.scratch/p4_popout_probe.py`, untracked: window opens, the cost panel's DOM
+appears in the popout document with its tab, and the main window's palette
+still works while the popout is open). The probe found one real defect:
+`show:` referenced the *active* panel, so showing a new panel while the active
+one sat in a popout pulled the new panel into that OS window — `show:` now
+falls back to the first grid-resident panel, under unit test.
+
+**Classic retirement.** `App.jsx` renders `Workspace` unconditionally (still
+`React.lazy` — the split now buys login-first startup order, not a second
+shell); `USE_DOCK`, the classic flex JSX, the classic fifteen-tab `DockPanel`,
+the resizable-pane state/`dividerFor`, `panes.ts` (removed) + `panes.test.ts` (removed)
+are deleted. The catalogue keeps the classic geometry inline as `GEOMETRY`
+(min clamps + the classic default widths, so REQ-7's first-boot proportions
+survive without the module); `catalogue.test.ts` pins widths against it. The
+smoke gate lost its classic walk (`--layout`, `_walk_classic`, `app_tabs`,
+`DOCK_TABS`, `_dock_url` all gone) and runs the dock walk at the bare URL;
+`tests/test_ui_smoke_verdict.py` follows (23 tests, `DOCK_PANELS`-keyed).
+
+**Honest limits.** Drag-to-popout (tab dragged out of the window) is
+dockview's own gesture and was not re-probed; only the palette path is.
+Popout window *position/size* are not persisted (dockview restores popouts in
+`toJSON`, but geometry memory was scoped out). Per-project layouts, panel
+density and a tab-overflow menu remain unimplemented (phase-4 options, tech
+design §4.4/§6). One process disclosure: a first attempt at the mechanical
+`PANE_SPECS` -> `GEOMETRY` rename in `catalogue.ts` went through a PowerShell
+bulk replace and mojibake'd the file (the known PS 5.1 trap); it was restored
+from git and redone with `edit_file`; a later single-file replace in
+`catalogue.test.ts` used `[IO.File]::WriteAllText` (BOM-free) and verified
+clean, but the no-bulk-edit rule was bent twice — recorded, not repeated.
+
 ## R60 — Claims must be checkable (`tools/claim_check.py`)
 
 **Problem it addresses.** Six consecutive commits carried a written claim the code

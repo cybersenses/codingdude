@@ -18,8 +18,7 @@
 // placement names a panel that does not exist yet, and silently renders
 // nothing when a catalogue entry has no registered component.
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_PRESET, PANELS, PRESETS, isKnownPanel, panelOptions, panelSpec, presetById } from './catalogue'
-import { PANE_SPECS } from '../panes'
+import { DEFAULT_PRESET, GEOMETRY, PANELS, PRESETS, isKnownPanel, panelOptions, panelSpec, presetById } from './catalogue'
 
 // The component registry lives in Workspace.jsx; keep this list in step with it.
 const REGISTERED = [
@@ -45,7 +44,7 @@ describe('panel catalogue', () => {
       id: 'nav',
       component: 'nav',
       title: 'Projects & sessions',
-      minimumWidth: PANE_SPECS.sidebar.min,
+      minimumWidth: GEOMETRY.sidebar.min,
     })
   })
 
@@ -116,9 +115,9 @@ describe('default preset', () => {
 
   it('reproduces the classic column widths on first boot (REQ-7)', () => {
     const width = (id: string) => DEFAULT_PRESET.find((p) => p.id === id)?.initialWidth
-    expect(width('nav')).toBe(PANE_SPECS.sidebar.fallback)
-    expect(width('explorer')).toBe(PANE_SPECS.rail.fallback)
-    expect(width('chat')).toBe(PANE_SPECS.right.fallback)
+    expect(width('nav')).toBe(GEOMETRY.sidebar.fallback)
+    expect(width('explorer')).toBe(GEOMETRY.rail.fallback)
+    expect(width('chat')).toBe(GEOMETRY.right.fallback)
   })
 
   it('realises the documented arrangement: diff under the editor, chat on the right', () => {

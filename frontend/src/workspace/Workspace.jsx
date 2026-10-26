@@ -383,6 +383,12 @@ export function Workspace({ error, agentStrip, sidebar, fileWs, onAsk, sessionId
     // Debounced persistence rides dockview's own change event — every drag,
     // close, resize and palette mutation funnels through it.
     dockApi.onDidLayoutChange(() => saverRef.current?.schedule())
+
+    // R59 P4: a popout the browser refused (usually a popup blocker) must not
+    // look like the command silently did nothing.
+    dockApi.onDidOpenPopoutWindowFail((f) => {
+      setNotice(`could not open popout window (${f.reason} — popup blocker?)`)
+    })
   }
 
   return (

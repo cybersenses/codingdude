@@ -4,26 +4,21 @@ Covers the part of R59 that tests cannot reach — no vitest file imports App.js
 so a moved component that renders nothing is invisible to `npm test`. This
 drives the real bundle in Chromium and fails on: a render crash reaching
 ErrorBoundary, an uncaught page error, an unexpected console error, a missing
-dock tab, DOCK_TABS drifting from the list in App.jsx, a non-OK /api/sessions
-response, any /api/ response with a 5xx status, a tab showing the dock's
-"could not load this tab" banner (#231), or — when the workspace has a session —
-a tab still showing the "select a session" placeholder (the #228 symptom).
-Designed console noise (the auth-cookie 401) is reported, not fatal.
+panel, a catalogue panel missing from the gate's own table, a non-OK
+/api/sessions response, any /api/ response with a 5xx status, a panel showing
+the "could not load this tab" banner (#231), or — when the workspace has a
+session — a panel still showing the "select a session" placeholder (the #228
+symptom). Designed console noise (the auth-cookie 401) is reported, not fatal.
 
-Two layouts:
-
-* `--layout classic` (default) walks the sixteen `DockPanel` tabs.
-* `--layout dock` opens `?layout=dock` (R59) and checks the five preset
-  dockable panels' geometry, then opens every remaining catalogue panel from
-  the command palette (Ctrl+Shift+P; the P2 panel bar was removed in P3) and
-  checks it renders, and finally
-  that Monaco reflows with its container:
-  the window is narrowed and restored and the editor must narrow with it and
-  come back. Nothing is hidden or moved, so `renderer: 'always'` — which only
-  matters for a hidden panel — is not what this exercises. The
-  hidden-then-revealed variant is NOT covered — see
-  `_monaco_reflow` for why the dock cannot hide a panel without UI it has not
-  been given yet, and do not describe this gate as covering it.
+The walk (R59 P4: the dock shell is the only shell): it checks the five preset
+panels' geometry, then opens every remaining catalogue panel from the command
+palette (Ctrl+Shift+P) and checks it renders, and finally that Monaco reflows
+with its container: the window is narrowed and restored and the editor must
+narrow with it and come back. Nothing is hidden or moved, so
+`renderer: 'always'` — which only matters for a hidden panel — is not what this
+exercises. The hidden-then-revealed variant is NOT covered — see
+`_monaco_reflow` for why the dock cannot hide a panel without UI it has not
+been given yet, and do not describe this gate as covering it.
 
 The 5xx and banner checks are what make a broken data tab fail here: a tab that
 cannot load renders its own error text, which is neither the placeholder nor a
@@ -35,7 +30,7 @@ It does not judge what a tab says beyond that: `chars` is recorded per tab and
 Usage (server must already be running; default http://127.0.0.1:8765):
 
     uv run python tools/ui_smoke.py
-    uv run python tools/ui_smoke.py --layout dock --shots .scratch/shots
+    uv run python tools/ui_smoke.py --shots .scratch/shots
     uv run python tools/ui_smoke.py --base http://127.0.0.1:8765 --shots .scratch/shots
 
 Exit code 0 = every check passed. 1 = at least one failed. Requires the
@@ -61,17 +56,13 @@ from urllib.parse import quote
 # exercises, and a module-level import would make that file skip — silently
 # unproving the gate's failure branches — on any checkout without the dev extra.
 
-DOCK_TABS = [
-    "Diff", "Graph", "Planning", "Artifacts", "Notes", "Renders", "Terminal",
-    "Processes", "Output", "Waterfall", "Trace", "Cost", "Memory", "MCP",
-    "Config", "Standards",
-]
 # R59: the dockable shell's panels, as (data-panel attribute → tab title).
 # The attribute is the seam the shell puts on each panel root, so the gate can
 # assert a panel is really on screen rather than trusting the tab bar.
-# P2: the five preset panels are walked as tabs; the remaining fifteen are
-# opened via the command palette in `_walk_dock` (the P2 panel bar was
-# removed in P3) — every panel openable remains the exit criterion.
+# The five preset panels are walked as tabs; the remaining fifteen are opened
+# via the command palette in `_walk_dock` — every panel openable remains the
+# exit criterion. (R59 P4: this is the only shell; the classic sixteen-tab
+# DockPanel and its walk were retired.)
 DOCK_PANELS = {
     "nav": "Projects & sessions",
     "explorer": "Explorer",
@@ -98,13 +89,11 @@ PLACEHOLDER = "Select a session to see diffs, files, cost and trace."
 # The panels the default preset mounts on boot (catalogue.ts DEFAULT_PRESET);
 # every other catalogue panel is opened via the command palette during the walk.
 PRESET_PANELS = {"nav", "explorer", "editor", "chat", "diff"}
-# The dock's own error banner (#231): present means the tab's fetch failed. The
-# classic walk reads it page-wide, where one tab body is mounted at a time; the
-# dock walk joins this attribute to a panel id via `_panel_banner_selector`.
+# The panel's own error banner (#231): present means the panel's fetch failed.
+# The walk joins this attribute to a panel id via `_panel_banner_selector`.
 POLL_ERROR_SELECTOR = "[data-poll-error]"
 CRASH_MARKER = "UI crashed"
 REPO = Path(__file__).resolve().parents[1]
-APP_JSX = REPO / "frontend" / "src" / "App.jsx"
 CATALOGUE_TS = REPO / "frontend" / "src" / "workspace" / "catalogue.ts"
 # Console errors that are the app working as designed, not defects: the boot
 # probes the auth cookie first and logs the 401 before falling back to
@@ -114,12 +103,6 @@ BENIGN_CONSOLE = ("the server responded with a status of 401",)
 # one for every non-2xx fetch, and the real verdict comes from the 5xx response
 # hook and the tab's own error banner below — not from this string.
 NETWORK_NOISE = "Failed to load resource"
-
-
-def app_tabs() -> list[str]:
-    """The dock tab list as declared in App.jsx, so DOCK_TABS cannot drift."""
-    match = re.search(r"const tabs = \[([^\]]+)\]", APP_JSX.read_text(encoding="utf-8"))
-    return re.findall(r"'([^']+)'", match.group(1)) if match else []
 
 
 def catalogue_panels() -> dict[str, str]:
@@ -134,10 +117,9 @@ def catalogue_panels() -> dict[str, str]:
     return dict(pairs)
 
 
-def run(base: str, shots: Path | None, workdir: str, layout: str = "classic") -> tuple[dict, int]:
+def run(base: str, shots: Path | None, workdir: str) -> tuple[dict, int]:
     report: dict = {
         "base": base,
-        "layout": layout,
         "workdir": workdir,
         "tabs": {},
         "console_errors": [],
@@ -166,7 +148,7 @@ def run(base: str, shots: Path | None, workdir: str, layout: str = "classic") ->
                 if "/api/" in r.url and r.status >= 500
                 else None,
             )
-            walk = _walk_dock if layout == "dock" else _walk_classic
+            walk = _walk_dock
             walk(page, report, base, workdir, shots)
         finally:
             browser.close()
@@ -182,70 +164,6 @@ def _record_sessions(page, report: dict, base: str, workdir: str) -> None:
         report["sessions"] = None
     else:
         report["sessions"] = len(sessions.json())
-
-
-def _walk_classic(page, report: dict, base: str, workdir: str, shots: Path | None) -> None:
-    expected = app_tabs()
-    drift = (sorted(set(expected) - set(DOCK_TABS)), sorted(set(DOCK_TABS) - set(expected)))
-    if any(drift):
-        report["tab_drift"] = {"app_jsx_only": drift[0], "smoke_only": drift[1]}
-
-    # The app holds an EventSource open and polls every 3-5s, so
-    # "networkidle" is slow and flaky here — wait for the dock itself.
-    page.goto(base, wait_until="domcontentloaded", timeout=60_000)
-    page.get_by_role("button", name="Diff", exact=True).first.wait_for(timeout=30_000)
-    page.wait_for_timeout(1500)  # let the initial session/config fetches settle
-    if shots:
-        page.screenshot(path=str(shots / "01-boot.png"))
-
-    # The app auto-resumes a session when the workspace has one. With none,
-    # every session-scoped tab correctly shows the placeholder, so that check
-    # only means something when a session exists.
-    _record_sessions(page, report, base, workdir)
-
-    if CRASH_MARKER in page.content():
-        report["crashed"] = "on boot"
-        return  # the verdict still comes from run(), one exit shape for both walks
-
-    found = 0
-    for name in DOCK_TABS:
-        button = page.get_by_role("button", name=name, exact=True)
-        if button.count() == 0:
-            report["tabs"][name] = "MISSING"
-            continue
-        found += 1
-        button.first.click()
-        # Tab bodies fetch on mount; /memory is ~800 KB of JSON, so a shorter
-        # settle leaves data tabs on "loading…" and the gate would report an
-        # empty-looking tab that is merely in flight.
-        page.wait_for_timeout(2000)
-        crashed = CRASH_MARKER in page.content()
-        # The dock is the section that owns the Diff tab button.
-        dock = page.locator("section", has=page.get_by_role("button", name="Diff", exact=True))
-        text = dock.first.inner_text() if dock.count() else page.inner_text("body")
-        # #231: the tab's own error banner, which the placeholder and console
-        # checks both miss. Page-wide is correct here: the classic dock mounts
-        # one tab body at a time, so the only banner in the document is the
-        # active tab's. The dock shell mounts many panels at once — hence the scoped,
-        # root-or-descendant search in `_panel_banner_selector`.
-        err = page.locator(POLL_ERROR_SELECTOR)
-        poll_error = _banner_text(err)
-        report["tabs"][name] = {
-            "crashed": crashed,
-            "placeholder": PLACEHOLDER in text,
-            "poll_error": poll_error,
-            "chars": len(text),
-        }
-        if shots:
-            page.screenshot(path=str(shots / f"tab-{name}.png"))
-        if crashed:
-            break
-
-    report["tab_count"] = found
-
-
-def _dock_url(base: str) -> str:
-    return f"{base}{'&' if '?' in base else '?'}layout=dock"
 
 
 def _dock_tab(page, title: str):
@@ -312,7 +230,7 @@ def _wait_for_tree(page, timeout_ms: int = 15_000) -> bool:
 
 
 def _walk_dock(page, report: dict, base: str, workdir: str, shots: Path | None) -> None:
-    """R59 P1: the dockable shell behind `?layout=dock`."""
+    """R59: the dockable shell — the only shell since P4 retired the classic one."""
     declared = catalogue_panels()
     if not declared:
         # The catalogue is the source of truth for how many panels exist. An
@@ -341,7 +259,7 @@ def _walk_dock(page, report: dict, base: str, workdir: str, shots: Path | None) 
     if declared:
         report["expected_entries"] = len(declared)
 
-    page.goto(_dock_url(base), wait_until="domcontentloaded", timeout=60_000)
+    page.goto(base, wait_until="domcontentloaded", timeout=60_000)
     page.locator(".dv-default-tab").first.wait_for(timeout=30_000)
     page.wait_for_timeout(1500)
     if shots:
@@ -557,10 +475,10 @@ def verdict(report: dict) -> int:
             or v.get("visible") is False
         )
 
-    # The expected entry count comes from the walk: sixteen dock tabs in the
-    # classic shell, the whole catalogue in the dock shell. Defaulting to the
-    # classic count keeps a hand-built report meaningful.
-    expected_entries = report.get("expected_entries", len(DOCK_TABS))
+    # The expected entry count comes from the walk: the whole catalogue in the
+    # dock shell. Defaulting to the gate's own table keeps a hand-built report
+    # meaningful.
+    expected_entries = report.get("expected_entries", len(DOCK_PANELS))
     monaco = report.get("monaco")
     monaco_failed = monaco is not None and not _monaco_followed_its_container(monaco)
     failed = (
@@ -583,12 +501,6 @@ def main() -> int:
     parser.add_argument("--base", default="http://127.0.0.1:8765", help="running app URL")
     parser.add_argument("--shots", default="", help="directory for screenshots (omit to skip)")
     parser.add_argument(
-        "--layout",
-        default="classic",
-        choices=["classic", "dock"],
-        help="classic = the sixteen-tab dock; dock = ?layout=dock (R59 P1)",
-    )
-    parser.add_argument(
         "--workdir", default=str(REPO), help="workspace to query sessions for (default: this repo)"
     )
     args = parser.parse_args()
@@ -597,7 +509,6 @@ def main() -> int:
         args.base,
         Path(args.shots) if args.shots else None,
         str(Path(args.workdir).resolve()),
-        args.layout,
     )
     print(json.dumps(report, indent=2))
     return code

@@ -1,0 +1,18 @@
+<!doctype html>
+<!-- R59 P4: target document for dockview popout panels (dockview-core's
+     PopoutWindow opens this same-origin URL, then moves the panel's DOM into
+     it and copies the main document's stylesheets over). Deliberately empty:
+     everything is injected by the opener. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CodingDude</title>
+    <style>
+      /* The panel is appended to <body>; give it the app's base colours so
+           the frame never flashes white before the copied stylesheets land. */
+      html, body { margin: 0; height: 100%; background: #060301; }
+    </style>
+  </head>
+  <body></body>
+</html>
