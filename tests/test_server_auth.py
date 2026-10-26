@@ -13,9 +13,9 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-"""SEC #250 auth-seam tests. Lives in its own file because test_server.py
-has mixed line endings and the edit tool normalizes it — see the R66
-repair commit."""
+"""SEC #250 auth-seam tests. Lives in its own file because test_server.py's
+line endings are inconsistent (the R66 repair left them mixed), so editing
+that file risks EOL churn — see code-design.md #250."""
 
 from pathlib import Path
 
@@ -24,11 +24,12 @@ from test_server import server  # noqa: F401 — pytest fixture
 
 
 def test_non_ascii_credentials_fail_closed_not_500(server):  # noqa: F811 — pytest fixture param shadows the import
-    """SEC #250: compare_digest only accepts ASCII strings — every auth seam
-    must fail closed (401), never blow up, on non-ASCII candidates. (Header
-    values can't carry non-ASCII at all — httpx/h11 reject them client-side —
-    so the reachable seams are the query param and the login body.) The
-    candidates are built at runtime so no literal looks like a secret."""
+    """SEC #250: non-ASCII candidates must fail closed (401), never 500 —
+    _ct_eq compares UTF-8 bytes, so non-ASCII simply mismatches (no
+    TypeError to dodge). (Header values can't carry non-ASCII at all —
+    httpx/h11 reject them client-side — so the reachable seams are the
+    query param and the login body.) The candidates are built at runtime
+    so no literal looks like a secret."""
     app, base = server
     umlaut_o = chr(246)
     non_ascii_query = f'workdir=/&token=caf{umlaut_o}'
@@ -40,27 +41,45 @@ def test_non_ascii_credentials_fail_closed_not_500(server):  # noqa: F811 — py
 
 
 def test_auth_seams_use_constant_time_compare():
-    """SEC #250 tripwire (source-parse, R64/R65 precedent): token compares in
-    authorize/auth_check/login AND the two inline-auth endpoints (run_events,
-    run_ws) must go through _ct_eq/secrets.compare_digest — a plain ==/!=
-    would reintroduce the timing side channel silently (review round 1 found
-    exactly that on the two inline seams)."""
+    """SEC #250 tripwire (source-parse, R64/R65 precedent): every token
+    compare routes through _ct_eq/secrets.compare_digest. Round 1 found
+    the bug shape "2 of 3 transports migrated", so counts are pinned, not
+    just membership; negatives catch both operand orders (`== token` and
+    `token ==`) so a plain compare can't sneak back in reversed."""
     src = Path(__file__).parent.parent / 'src' / 'codingdude' / 'server.py'
     text = src.read_text(encoding='utf-8')
-    helper = text[text.index('def _ct_eq'):text.index('def authorize')]
-    assert 'compare_digest' in helper  # the one constant-time primitive
-    authorize = text[text.index('def authorize'):text.index('def _session_cookie')]
-    assert '_ct_eq' in authorize
-    assert '!= token' not in authorize and '== token' not in authorize
-    auth_check = text[text.index('def auth_check'):text.index('def auth_local')]
-    assert '_ct_eq' in auth_check
-    assert '== token' not in auth_check
-    login = text[text.index('def login'):text.index('class SessionIn')]
-    assert '_ct_eq' in login
-    assert '!= token' not in login
-    run_events = text[text.index('def run_events'):text.index('@app.websocket')]
-    assert '_ct_eq' in run_events
-    assert '== token' not in run_events
-    run_ws = text[text.index('async def run_ws'):text.index('await ws.accept()')]
-    assert '_ct_eq' in run_ws
-    assert '!= token' not in run_ws
+
+    def segment(start: str, end: str) -> str:
+        return text[text.index(start):text.index(end)]
+
+    # The one constant-time primitive lives in _ct_eq and nowhere else.
+    helper = segment('def _ct_eq', 'def _authed')
+    assert helper.count('compare_digest') == 1
+
+    # The shared transport check: exactly one _ct_eq per transport (Bearer,
+    # cookie, query). 2-of-3 here was the round-1 bug shape.
+    authed = segment('def _authed', 'def authorize')
+    assert authed.count('_ct_eq(') == 3
+
+    # authorize and run_events delegate to _authed and keep no private
+    # token compare (the round-1 duplication finding).
+    for start, end in [
+        ('def authorize', 'def _session_cookie'),
+        ('async def run_events', '@app.websocket'),
+    ]:
+        seg = segment(start, end)
+        assert '_authed(request)' in seg
+        assert '_ct_eq(' not in seg
+
+    # The single-compare seams: exactly one _ct_eq each.
+    for start, end in [
+        ('def auth_check', 'def auth_local'),
+        ('def login', 'class SessionIn'),
+        ('async def run_ws', 'await ws.accept()'),
+    ]:
+        assert segment(start, end).count('_ct_eq(') == 1
+
+    # No plain token compare anywhere in the auth region, either order.
+    auth_region = segment('def _ct_eq', "app.get('/models')")
+    for bad in ('== token', '!= token', 'token ==', 'token !='):
+        assert bad not in auth_region, bad

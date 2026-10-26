@@ -15,8 +15,9 @@ follow-up #253 still open (pydantic-ai ≥2.54 adaptation). Per-finding status l
 `ROADMAP.md` under `## R66`; the commits are `c261807` (dompurify pin), `733aa10` (dep
 floors raised, pydantic-ai pinned `>=2.53,<2.54`), `8c03183` (gh tools argv-only, no
 shell), `479fcc4` (mermaid `securityLevel: 'strict'`), `32bce1e` + `161ee61`
-(constant-time token compares in the server auth seams). `test_server.py` auth tests
-moved to `tests/test_server_auth.py`.
+(constant-time token compares in the server auth seams). The `#250` auth-seam
+tests moved from `test_server.py` to `tests/test_server_auth.py` (four broader
+auth tests remain in `test_server.py`).
 
 **The breakage this caused (and its fix).** The dep bump could not be applied to the
 live `.venv` because the running server held `.pyd` file locks, so 733aa10 validated
@@ -27,8 +28,10 @@ codingdude.cli serve` died with `ModuleNotFoundError: No module named 'codingdud
 succeeds after). **Fix: stop any running server, run `uv sync`, start again.** Verified
 2026-10-26: server on port 8765 answered `/health` with `{"ok":true,"version":"0.4.0",
 "git_sha":"161ee61"}` [probe: Invoke-RestMethod http://127.0.0.1:8765/health, re-probed
-at handback]. If the server will not start after a dependency change, check this
-first — the code is usually fine; the venv is stale.
+at handback — point-in-time reading: `_git_sha()` reports live HEAD, so the sha advances
+with every commit; the number above is the sha the rescue validated]. If the server will
+not start after a dependency change, check this first — the code is usually fine; the
+venv is stale.
 
 
 
@@ -37,7 +40,7 @@ first — the code is usually fine; the venv is stale.
 | Item | Value |
 |---|---|
 | Repo | `G:\pydantic` (branch `main`) |
-| Last known-good commit | `d6a121f` — R65 sash affordance: resize handles findable/grabbable (±4px hit-area skirt, instant hover, visible resting line); dock gate chat_resize probe red→green (gates: vitest 175, pytest 875/1, smoke 20/20 exit 0) |
+| Last known-good commit | `161ee61` — R66 security overhaul complete (#248–#252: dep floors raised with pydantic-ai `<2.54`, gh argv-only, constant-time auth); venv re-synced after the breakage below, server healthy on `/health` (gates: pytest 878/1 skipped, ruff, mypy clean). Last UI known-good is unchanged: `d6a121f` — R65 sash affordance (gates: vitest 175, pytest 875/1, smoke 20/20 exit 0) |
 | Restore tag | `pre-r59-p0` → `0c2e58e` (created before any refactor; **do not delete**) |
 | Working tree at kickoff | clean except `M ROADMAP.md` (R59 item) |
 | Risk area | `frontend/src/` — React UI |
