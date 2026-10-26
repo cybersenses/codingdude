@@ -15,7 +15,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """Dead-code detection across languages: vulture (Python) + tree-sitter (all registered languages).
 
-`find_dead_code` reports symbols that are defined but never referenced â€”
+`find_dead_code` reports symbols that are defined but never referenced —
 execution-level dead weight that test coverage cannot see. Confidence and
 formatting are per-language; results are merged into one report.
 """
