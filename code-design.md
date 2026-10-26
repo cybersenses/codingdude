@@ -621,9 +621,9 @@ without a mouse. Three pure modules plus one component:
 | Module | Contents |
 |---|---|
 | `frontend/src/workspace/layoutStore.ts` | saved-layout load/save (`cd-layout-v1`, `{v, preset, layout}`), unknown-panel stripping, user-preset store (`cd-layout-presets-v1`), `createDebouncedSaver` |
-| `frontend/src/workspace/layoutStore.test.ts` | 17 tests: round-trip, corrupt/version/empty fallback, storage-throwing degradation, strip in grid + floating windows, preset name validation, debounce coalescing/cancel |
-| `frontend/src/workspace/catalogue.ts` | + `PRESETS` (default/debug/review/watching) as placements, same invariants as `DEFAULT_PRESET` (6 new tests) |
-| `frontend/src/workspace/commands.ts` + `.test.ts` | palette command list + dispatch over a narrowed `CommandApi`; 14 tests pin labels, guards and calls |
+| `frontend/src/workspace/layoutStore.test.ts` | 18 tests: round-trip, corrupt/version/empty fallback, storage-throwing degradation, strip in grid + floating windows, preset name validation (incl. reserved ids), clear-reads-as-missing, debounce coalescing/cancel |
+| `frontend/src/workspace/catalogue.ts` | + `PRESETS` (default/debug/review/watching) as placements, same invariants as `DEFAULT_PRESET` (6 new tests); + `panelOptions(spec)` — the single source of the per-spec `addPanel` option clump (id/component/title/renderer/minimums) shared by the palette's `show:` command and preset application |
+| `frontend/src/workspace/commands.ts` + `commands.test.ts` | palette command list + dispatch over a narrowed `CommandApi`; 14 tests pin labels, guards and calls |
 | `frontend/src/workspace/CommandPalette.jsx` | `Ctrl+Shift+P`/`Ctrl+K` modal: filter, arrows, Enter; closes after run |
 | `frontend/src/workspace/Workspace.jsx` | restore-on-ready (try `fromJSON`, degrade to default preset with a dismissible `data-layout-notice`), debounced save on `onDidLayoutChange`, preset apply (placements or user-preset `fromJSON`), save-as; the P2 panel bar is deleted |
 
@@ -657,6 +657,27 @@ untracked, 9/9: move survives reload, review preset round-trips, corrupt
 layout falls back with notice, palette reset). `Ctrl+K` intercepts the bare
 chord; Monaco's Ctrl+K-prefixed chords conflict and are not remapped. Popout
 windows, per-project layouts and float-geometry memory are P4.
+
+**Post-push review fixes** (two delegates, findings verified in code before
+fixing). One correctness defect: `presetNameValid` accepted shipped preset ids
+(`review`, `debug`, …) and the reserved `save-as` verb as user preset names,
+which would emit a duplicate `preset:<name>` palette command id and leave the
+user's preset unreachable (`presetById` wins on apply) — reserved names are
+now rejected, under test. `clearSavedLayout` stores `''` and that used to
+reload as `corrupt` (a false "saved layout was corrupt" notice after the
+user's own reset); `''` now reads as `missing`. Cleanup, each verified dead
+or duplicated first: the never-true `disabled` flag removed from
+`PaletteCommand` and the palette render/exec; the per-spec `addPanel` option
+clump extracted to `panelOptions` (catalogue) and reused in both call sites;
+Workspace's three degrade-to-default blocks collapsed into `resetToDefault`;
+`countPanels` renamed `panelIds` (it returns ids); the version-mismatch
+notice says "different version", not "newer"; `tools/ui_smoke.py`'s docstring
+no longer cites the deleted P2 panel bar. Waived with reasons: committed
+persistence wiring (the probe is deliberately untracked; the limitation is
+recorded above), coarse keyboard moves (spec-accepted interpretation),
+layoutStore's two similar tree walkers (one tested module; refactor risk over
+value), saver disposal on unmount (the shell lives as long as the document),
+and the uncalled `deleteUserPreset` (P4 preset management needs it).
 
 ## R60 — Claims must be checkable (`tools/claim_check.py`)
 

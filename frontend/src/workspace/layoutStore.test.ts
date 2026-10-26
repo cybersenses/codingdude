@@ -22,11 +22,11 @@ import {
   LAYOUT_VERSION,
   PRESETS_KEY,
   clearSavedLayout,
-  countPanels,
   createDebouncedSaver,
   deleteUserPreset,
   loadSavedLayout,
   loadUserPresets,
+  panelIds,
   presetNameValid,
   saveLayout,
   saveUserPreset,
@@ -78,7 +78,7 @@ describe('loadSavedLayout', () => {
     expect(res.ok).toBe(true)
     if (res.ok) {
       expect(res.preset).toBe('custom')
-      expect(countPanels(res.layout).sort()).toEqual(['diff', 'editor', 'nav', 'terminal'])
+      expect(panelIds(res.layout).sort()).toEqual(['diff', 'editor', 'nav', 'terminal'])
     }
   })
 
@@ -133,7 +133,7 @@ describe('loadSavedLayout', () => {
     expect(res.ok).toBe(true)
     if (res.ok) {
       expect(res.dropped).toEqual(['oldpanel'])
-      expect(countPanels(res.layout).sort()).toEqual(['diff', 'editor', 'nav', 'terminal'])
+      expect(panelIds(res.layout).sort()).toEqual(['diff', 'editor', 'nav', 'terminal'])
       expect(Object.keys(res.layout.panels!)).not.toContain('oldpanel')
     }
   })
@@ -161,14 +161,14 @@ describe('loadSavedLayout', () => {
     expect(loadSavedLayout(storage, isKnownPanel)).toEqual({ ok: false, reason: 'empty' })
   })
 
-  it('clear writes a value that loads as missing-ish fallback, not corrupt', () => {
+  it('clear loads as missing (silent default), never corrupt', () => {
     const storage = memStorage()
     saveLayout(storage, sampleLayout(), 'x')
     clearSavedLayout(storage)
-    // An empty string parses to nothing usable; treat as corrupt is fine as
-    // long as it never loads successfully.
-    const res = loadSavedLayout(storage, isKnownPanel)
-    expect(res.ok).toBe(false)
+    // clearSavedLayout stores '' (the KVStorage seam has no removeItem); it
+    // must read as "nothing saved", not as corruption (post-push review:
+    // a user-initiated reset must not claim the layout was corrupt).
+    expect(loadSavedLayout(storage, isKnownPanel)).toEqual({ ok: false, reason: 'missing' })
   })
 })
 
@@ -194,6 +194,15 @@ describe('user presets', () => {
     expect(presetNameValid('my-preset_x')).toBe(true)
     expect(presetNameValid('')).toBe(false)
     expect(presetNameValid('a/b')).toBe(false)
+  })
+
+  it('rejects names that collide with shipped preset ids or the reserved verb', () => {
+    // A user preset named like a shipped id would emit a duplicate
+    // `preset:<name>` command id and be unreachable (`presetById` wins).
+    for (const reserved of ['default', 'debug', 'review', 'watching', 'save-as']) {
+      expect(presetNameValid(reserved)).toBe(false)
+      expect(saveUserPreset(memStorage(), reserved, sampleLayout())).toBe(false)
+    }
   })
 
   it('returns {} on corrupt preset storage', () => {
