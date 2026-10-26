@@ -216,7 +216,7 @@ need — #228). Both are behaviour changes, so they are separate commits from
 the move-only ones and both got a full build/lint/91-test pass.
 
 **UI smoke gate.** `tools/ui_smoke.py` renders the running bundle in Chromium
-and walks all 16 dock tabs, failing on an ErrorBoundary crash, an uncaught page
+and walks every catalogue panel (16 in the classic dock era, 20 since P4), failing on an ErrorBoundary crash, an uncaught page
 error, a missing tab, or a leftover placeholder. It exists because nothing in
 `frontend/src/*.test.ts` imports `App.jsx` — the build and the tests cannot see
 a component that renders nothing. It found two further defects:
@@ -1062,3 +1062,9 @@ unchanged (paths/refs/counts only). Shipped in `f051ad5`, tightened after review
 **Why.** Nine mutation paths swallowed failures (`catch { /* transient */ }` or no catch at all), so failed saves looked successful or silently discarded input - logged as ticket #242 during the #234 review.
 
 **Impact / honesty.** Vitest 117/117, build clean, eslint 0 (frontend-only change; pytest/ruff/mypy unaffected). The failure path renders through the same banner mechanism the smoke gate fails on, but the live-browser mutation-failure path itself was not re-probed this cycle - the banner seam was force-probed end-to-end in #234.
+
+### R59 P4 - post-push review round 5 (GraphPanel response ownership)
+
+Round 4's stored-value guards still had a hole, found by both review delegates: the effect-start reset writes `callgraphPath: undefined`, and `undefined` is a wildcard that every path's writer matches, so an in-flight fetch from the *previous* path could land after the switch, stamp `callgraphPath` back to the old path and leave the panel on "Analyzing..." forever - the exact symptom round 4 claimed closed. Round 4's commit message also claimed an `errMsg` import that was never added.
+
+Round 5 replaces inference-from-stored-value with an effect-generation token: each effect run increments `graphRun.current`, every fetch write is gated on `live()`, and the effect-start reset is unconditional (which also stops the previous session's graph/trust/cfg bleeding across a session switch with the same path - delegate hole 3). `errMsg` is now genuinely imported from `../pollErrors` and dedupes all five inline error-string copies in panels.jsx. code-design.md line 219's "16 dock tabs" present-tense count corrected. Verification: review-only against the state machine plus vitest/build/eslint; no jsdom, the guard is not executed under test.
