@@ -13,9 +13,8 @@
 //
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
-// R59 P1 (tech design #1 §4.2): the dockable shell, reached with
-// `?layout=dock`. The classic flexbox layout in App.jsx stays the default while
-// the phases land, so either shell can be compared side by side.
+// R59 (tech design #1 §4.2): the dockable shell — the only shell since P4
+// retired the classic flexbox layout.
 //
 // Fixed chrome stays outside the dock — the error banner, AgentStrip and status
 // footer describe the shell, not a panel, and every phase keeps them there.
@@ -265,9 +264,8 @@ export function Workspace({ error, agentStrip, sidebar, fileWs, onAsk, sessionId
   const [userPresets, setUserPresets] = useState(() => Object.keys(loadUserPresets(window.localStorage)))
   const saverRef = useRef(null)
 
-  // #75's "Review changes →" bumps a counter in App. The classic shell answers
-  // it by switching DockPanel to the Diff tab; here it has to activate the
-  // `diff` panel instead, or the button silently does nothing in this shell.
+  // #75's "Review changes →" bumps a counter in App; the shell answers it by
+  // activating the `diff` panel, or the button would silently do nothing.
   useEffect(() => {
     if (reviewDiff > 0) apiRef.current?.getPanel('diff')?.api.setActive()
   }, [reviewDiff])

@@ -148,8 +148,7 @@ def run(base: str, shots: Path | None, workdir: str) -> tuple[dict, int]:
                 if "/api/" in r.url and r.status >= 500
                 else None,
             )
-            walk = _walk_dock
-            walk(page, report, base, workdir, shots)
+            _walk_dock(page, report, base, workdir, shots)
         finally:
             browser.close()
 
@@ -178,18 +177,15 @@ def _dock_tab(page, title: str):
 def _panel_banner_selector(panel_id: str) -> str:
     """A panel's own error banner, whether it *is* the panel root or nested in it.
 
-    `Locator.locator()` matches descendants only, which is a trap here: when
-    `DiffTabPanel`'s fetch fails it returns the banner element as the panel root
-    (`data-panel` and `data-poll-error` on the same div, `Workspace.jsx`), so a
-    scoped descendant search finds nothing and reports the failing panel as
-    clean. The comma is an "or" — either shape, and still nothing belonging to
-    another panel.
+    `Locator.locator()` matches descendants only, which is a trap here: some
+    panels render the banner as the panel root itself (`data-panel` and
+    `data-poll-error` on the same div), so a scoped descendant search finds
+    nothing and reports the failing panel as clean. The comma is an "or" —
+    either shape, and still nothing belonging to another panel.
 
-    Only the root shape existed under this layout in P1; since P2 the
-    descendant shape is the live one — every store-backed panel
-    (`TopicPanel` in workspace/panels.jsx) renders its banner *inside* the
-    `data-panel` root — and the root shape remains for panels whose banner is
-    the whole body. The comma covers both.
+    Both shapes are live: the store-backed panels (`TopicPanel` in
+    workspace/panels.jsx) render their banner *inside* the `data-panel` root,
+    and the root shape remains for panels whose banner is the whole body.
     """
     return (
         f'[data-panel="{panel_id}"]{POLL_ERROR_SELECTOR}, '
@@ -470,8 +466,8 @@ def verdict(report: dict) -> int:
             v.get("crashed")
             or v.get("poll_error")
             or (has_session and v.get("placeholder"))
-            # R59 P1: the dock gate reports whether the panel body was really on
-            # screen; `is False` so the classic walk (no such key) is unaffected.
+            # R59: the gate reports whether the panel body was really on
+            # screen; a report entry without the key (hand-built) is exempt.
             or v.get("visible") is False
         )
 
@@ -486,7 +482,6 @@ def verdict(report: dict) -> int:
         or report.get("page_errors")
         or unexpected
         or report.get("api_5xx")
-        or report.get("tab_drift") is not None
         or report.get("panel_drift") is not None
         or report.get("sessions_error") is not None
         or report.get("tab_count", 0) != expected_entries

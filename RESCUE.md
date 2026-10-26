@@ -10,12 +10,12 @@ Owner: CodingDude. Last updated: R59 P4 — popout windows; classic shell retire
 | Item | Value |
 |---|---|
 | Repo | `G:\pydantic` (branch `main`) |
-| Last known-good commit | `d8c566f` — R59 P3 review round 2 (pushed, gates green); P4 is the next commit |
+| Last known-good commit | `887f657` — R59 P4 (pushed, gates green) |
 | Restore tag | `pre-r59-p0` → `0c2e58e` (created before any refactor; **do not delete**) |
 | Working tree at kickoff | clean except `M ROADMAP.md` (R59 item) |
 | Risk area | `frontend/src/` — React UI |
 | Backend | untouched by R59 (Python, `src/codingdude/`) |
-| `App.jsx` size | history row, all counts are as-of-then (historical): 3288 at kickoff → **1337** after P0 → **1439** after #233 → **1488** after P1 → **1501** after the lazy-import split → **1500** after review deleted a duplicated comment block → **1498** after #232 removed the inert `refreshKey` chain → **1500** (historical) after R59 P2 passed `workdir` to the dock shell and moved `MEMORY_LIMIT` to `limits.ts` (post-push review then removed the dead `processes` prop). Today's figure is the last one. P1 is additive: `workspace/` is 485 lines across three files — `Workspace.jsx` 274, `catalogue.ts` 96, `catalogue.test.ts` 115 — and `App.jsx` only gained the flag, the shared prop bags and `React.lazy`/`Suspense` (historical: all counts as-of-then). P4 then deleted the classic shell — `App.jsx` is now 685 lines, session/SSE state machine only |
+| `App.jsx` size | history row, all counts are as-of-then (historical): 3288 at kickoff → **1337** after P0 → **1439** after #233 → **1488** after P1 → **1501** after the lazy-import split → **1500** after review deleted a duplicated comment block → **1498** after #232 removed the inert `refreshKey` chain → **1500** (historical) after R59 P2 passed `workdir` to the dock shell and moved `MEMORY_LIMIT` to `limits.ts` (post-push review then removed the dead `processes` prop). Today's figure is the last one. P1 is additive: `workspace/` is 485 lines across three files — `Workspace.jsx` 274, `catalogue.ts` 96, `catalogue.test.ts` 115 — and `App.jsx` only gained the flag, the shared prop bags and `React.lazy`/`Suspense` (historical: all counts as-of-then). P4 then deleted the classic shell — `App.jsx` is now 674 lines (post-push review removed the DockPanel-era dead imports), session/SSE state machine only |
 | **Shell** | since P4 there is exactly one shell: the dockview dock (`src/workspace/`); the fifteen-tab DockPanel and `panes.ts` (removed) are deleted. Escape hatch if a saved layout breaks: the boot restore degrades to the default preset; `localStorage.removeItem('cd-layout-v1')` resets by hand |
 
 ### Progress log (P0 steps, newest last)
@@ -128,7 +128,7 @@ expected `version` / `git_sha`.
 ```powershell
 cd G:\pydantic\frontend
 npm run build      # must exit 0; watch for a chunk-size or unresolved-import warning
-npx vitest run     # must be 115 passed (no test imports App.jsx — they cover pure helpers)
+npx vitest run     # must be 170 passed (no test imports App.jsx — they cover pure helpers)
 npm run lint       # eslint src, must be clean
 ```
 
@@ -143,17 +143,16 @@ uv run mypy
 
 **Machine-checked parity (do this first — it catches what the build cannot).** No vitest file
 imports `App.jsx`, so a moved component that renders *nothing* still builds clean. The smoke
-gate drives the real bundle in Chromium and walks all 16 dock tabs, failing on an
-ErrorBoundary crash, an uncaught page error, an unexpected console error, a missing tab,
-`DOCK_TABS` drifting from the tab list in `App.jsx`, a non-OK `/api/sessions` response, any
+gate drives the real bundle in Chromium and walks every catalogue panel, failing on an
+ErrorBoundary crash, an uncaught page error, an unexpected console error, a missing panel,
+`DOCK_PANELS` drifting from the catalogue in `workspace/catalogue.ts`, a non-OK `/api/sessions` response, any
 `/api/` response with a 5xx status, a tab showing the dock's "could not load this tab"
 banner (#231), or — when
 the workspace has a session — a tab still showing the "select a session" placeholder:
 
 ```powershell
 cd G:\pydantic
-uv run python tools\ui_smoke.py --shots .scratch\shots                 # classic shell
-uv run python tools\ui_smoke.py --layout dock --shots .scratch\dock-shots   # R59 P1 shell
+uv run python tools\ui_smoke.py --shots .scratch\shots   # the dock shell (only shell since P4)
 ```
 
 Exit 0 = every check passed; a JSON report of per-tab findings prints either way. It does *not*
@@ -162,7 +161,7 @@ passes — that is what the screenshots and the manual pass are for. It needs th
 dev dependency plus `playwright install chromium`. Rebuild `frontend/dist` first or you are
 testing the old bundle.
 
-`--layout dock` is the P1 gate: it reads `?layout=dock`, waits for the explorer's file rows (it
+The gate is the P1+ gate: it loads the app, waits for the explorer's file rows (it
 shows a "no session"/"loading…" placeholder until the session binds *and* `/sessions/{id}/tree`
 resolves, so without the wait a slow fetch reads as a missing `README.md` — one run recorded 17
 chars for Explorer, i.e. header plus "loading…", and the Monaco step called that a missing file),
@@ -191,7 +190,7 @@ projects/sessions · explorer tree · editor tabs + save/reload/diff · agent st
 prompt row · every dock tab renders (Diff, Graph, Planning, Artifacts, Notes, Renders,
 Terminal, **Processes**, Output, Waterfall, Trace, Cost, **Memory**, MCP, Config, Standards —
 16 tabs after #227/#228) · status footer. The smoke gate writes one screenshot per tab, which
-is usually enough to eyeball this. Repeat once with `?layout=dock`: the five preset panels should be
+is usually enough to eyeball this. The five preset panels should be
 nav 256 px · explorer 208 px · editor + diff stacked in the middle · chat 384 px, i.e. the
 classic arrangement with draggable splitters. Those are the widths the preset requests, and the
 gate records the panel roots landing on them (`tabs[<title>].width`), with the middle column
@@ -210,7 +209,7 @@ it first. A blank page with a console error almost always means one of:
    likely false alarm.
 3. **A named export went missing** — `App.jsx` imports from each new module; check the
    import list at the top of `App.jsx` against the exports in the moved file.
-4. **`?layout=dock` shows "loading workspace…" forever** — the dock shell is a `React.lazy`
+4. **The app shows "loading workspace…" forever** — the dock shell is a `React.lazy`
    chunk; a stale `frontend/dist/` can leave `index.html` pointing at a bundle that requests
    a chunk the server no longer has. Rebuild.
 
@@ -241,7 +240,7 @@ it first. A blank page with a console error almost always means one of:
 ## 8. Where the plan and decisions live
 
 - `ROADMAP.md` → **R59**
-- Planning DB → tech design **#1**, design decision **#94**, ticket **#226** (P0), ticket **#236** (P1), **#243** (P2), **#244** (P3)
+- Planning DB → tech design **#1**, design decision **#94**, ticket **#226** (P0), ticket **#236** (P1), **#243** (P2), **#244** (P3), **#245** (P4)
 - `code-design.md` → §R59 (P0 structure) and §R59 P1 (the dock shell: decisions, evidence, deviations)
 - Artifact `R59-workspace-design` (rendered design + mock)
 - This file — **update section 1 and 2 at every milestone**, so a successor never has to

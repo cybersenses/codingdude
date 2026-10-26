@@ -15,7 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 // #84 (R38 phase 1): turn a run's trace events into spans for the waterfall
 // timeline. Pure module — no React, no deps — so it stays unit-testable
-// (panes.ts/runs.ts pattern).
+// (runs.ts pattern).
 
 import type { TraceEvent } from './runs'
 

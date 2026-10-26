@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 // R59 P2: the topic fetchers for the visibility-gated store. Each entry
-// mirrors the corresponding branch of the classic DockPanel's per-tab poll
+// mirrors the corresponding branch of the retired DockPanel's per-tab poll
 // (App.jsx), so a panel renders the same payload shape it always did — the
 // store changes WHO fetches and WHEN, not WHAT comes back.
 //
