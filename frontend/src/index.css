@@ -147,6 +147,23 @@
     outline: 2px solid var(--ss-focus);
     outline-offset: 2px;
   }
+  /* R67 (#254 follow-up): the app's scroll containers (chat, rails, dock
+     panels, textareas) shipped no scrollbar styling, so Windows Chrome drew
+     its classic ~17px light-grey scrollbar - a massive slab flush against
+     the window's right edge in the chat pane (probe:
+     .scratch/probe_chat_scrollbar.py - document never scrolls; the chat
+     scroller is the only scrollbar at the viewport edge). One rule,
+     app-wide: thin scrollbars, thumb = muted foreground, track transparent,
+     both themes via tokens. Chrome 121+ and Firefox honour
+     scrollbar-width/scrollbar-color; older Chromium falls back to the
+     classic bar. Monaco and xterm draw their own scrollbars and ignore
+     this. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color:
+      color-mix(in srgb, var(--ss-muted-foreground) 55%, transparent)
+      transparent;
+  }
   @media (prefers-reduced-motion: reduce) {
     *,
     *::before,
