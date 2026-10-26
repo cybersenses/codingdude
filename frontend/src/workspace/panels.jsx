@@ -22,7 +22,7 @@
 // renders through `data-poll-error` (the same attribute tools/ui_smoke.py
 // gates on), and the last successful data is kept beside it, so a failed
 // refresh never looks like "no data yet" (#231/#234).
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { api, call } from '../api'
 import { activeProcesses, mergeProcesses } from '../processes'
 import { groupEventsByRun, pickRunId } from '../runs'
@@ -35,6 +35,7 @@ import { buildRepoQuestionPrompt } from '../repoqa'
 import { structureRows } from '../structure'
 import { Mermaid } from '../ui.jsx'
 import { useSessionData } from '../store/sessionData'
+import { errMsg } from '../pollErrors'
 import { MEMORY_LIMIT } from '../limits'
 import { Terminal } from '../panels/dock/Terminal.jsx'
 import { Notes } from '../panels/dock/Notes.jsx'
@@ -197,7 +198,7 @@ export function McpPanel() {
     try {
       await api.toggleMcp(sessionId, name, disabled)
     } catch (err) {
-      setMutError(err instanceof Error ? err.message : String(err))
+      setMutError(errMsg(err))
       return // the refresh below would just re-show the unchanged state
     }
     store.refresh('mcp', sessionId)
@@ -352,7 +353,7 @@ export function TracePanel() {
                           className="rounded bg-accent px-1.5 py-0.5 text-[9px] text-accent-fg"
                           onClick={() => call(`/checkpoints/${sessionId}/${c.id}/rewind`, { method: 'POST', body: '{}' })
                             .then(() => setRewindError(null))
-                            .catch((err) => setRewindError(err instanceof Error ? err.message : String(err)))}
+                            .catch((err) => setRewindError(errMsg(err)))}
                         >rewind</button>
                       </div>
                     </div>
@@ -637,52 +638,58 @@ export function GraphPanel() {
   const { sessionId, activePath, onAsk } = useShell()
   const [data, setData] = useState({})
   const [repoQuestion, setRepoQuestion] = useState('')
+  const graphRun = useRef(0)
   useEffect(() => {
     if (!sessionId) return
     let stop = false
-    // Reset graph state for the new path: graphView keeps showing "loading"
-    // while callgraphPath !== activePath, so a prior path's success must not
-    // block the new path's failures from stamping graphError.
-    setData((d) => (d.callgraphPath === undefined || d.callgraphPath === activePath
-      ? d
-      : { ...d, callgraph: undefined, callgraphPath: undefined, graphError: undefined }))
+    // Effect-generation token: when sessionId/activePath changes, a new
+    // effect increments this ref, so a still-in-flight fetch from the old
+    // effect fails live() and never writes. The stored-value path guards of
+    // earlier review rounds could not do this — the reset writes
+    // callgraphPath: undefined, which every path's writer matched.
+    const run = ++graphRun.current
+    const live = () => graphRun.current === run
+    // Reset graph state for this effect unconditionally: the previous
+    // path/session's graph, error and trust evidence must not render for
+    // the new one while its first fetch is in flight.
+    setData((d) => ({
+      ...d,
+      callgraph: undefined,
+      callgraphPath: undefined,
+      graphError: undefined,
+      trust: undefined,
+      trustPath: undefined,
+      cfgFunctions: [],
+      cfgFunctionsPath: undefined,
+      cfg: undefined,
+      cfgFn: undefined,
+      cfgError: undefined,
+    }))
     async function poll() {
       try {
         if (activePath) {
           try {
             const g = await call(`/sessions/${sessionId}/callgraph?path=${encodeURIComponent(activePath)}`)
-            // Same guard as the error path: a slow older fetch (success or
-            // failure) must not overwrite a newer path's result. The checks
-            // read live state inside the updater — `data` is frozen in this
-            // effect's closure.
-            setData((d) => (d.callgraphPath === undefined || d.callgraphPath === activePath
-              ? { ...d, callgraph: g, callgraphPath: activePath, graphError: undefined }
-              : d))
+            if (live()) setData((d) => ({ ...d, callgraph: g, callgraphPath: activePath, graphError: undefined }))
           } catch (err) {
-            // Stamp graphError unless a newer path has succeeded since (the
-            // reset above keeps callgraphPath undefined while only this path
-            // has been attempted, so a file failing on every poll still gets
-            // its error, and a same-path success above clears it).
-            setData((d) => (d.callgraphPath === undefined || d.callgraphPath === activePath
-              ? { ...d, graphError: String(err instanceof Error ? err.message : err) }
-              : d))
+            if (live()) setData((d) => ({ ...d, graphError: errMsg(err) }))
           }
           try {
             const t = await call(`/sessions/${sessionId}/trust?path=${encodeURIComponent(activePath)}`)
-            setData((d) => ({ ...d, trust: t, trustPath: activePath }))
+            if (live()) setData((d) => ({ ...d, trust: t, trustPath: activePath }))
           } catch { /* supplementary: leaves the trust bar empty */ }
           if (activePath.endsWith('.py')) {
             try {
               const cf = await call(`/sessions/${sessionId}/cfg?path=${encodeURIComponent(activePath)}`)
-              setData((d) => ({ ...d, cfgFunctions: cf.functions || [], cfgFunctionsPath: activePath, cfg: undefined, cfgFn: undefined, cfgError: undefined }))
+              if (live()) setData((d) => ({ ...d, cfgFunctions: cf.functions || [], cfgFunctionsPath: activePath, cfg: undefined, cfgFn: undefined, cfgError: undefined }))
             } catch (err) {
-              setData((d) => ({ ...d, cfgFunctions: [], cfgFunctionsPath: activePath, cfgError: String(err instanceof Error ? err.message : err) }))
+              if (live()) setData((d) => ({ ...d, cfgFunctions: [], cfgFunctionsPath: activePath, cfgError: errMsg(err) }))
             }
           }
         } else {
           const s = await call(`/sessions/${sessionId}/structure`)
           const a = await call(`/sessions/${sessionId}/archmap`)
-          setData((d) => ({ ...d, structure: s, archmap: a }))
+          if (live()) setData((d) => ({ ...d, structure: s, archmap: a }))
         }
       } catch { /* transient; next poll retries */ }
       if (!stop) setTimeout(poll, GRAPH_POLL_MS)
@@ -723,7 +730,7 @@ export function GraphPanel() {
                       const c = await call(`/sessions/${sessionId}/cfg?path=${encodeURIComponent(activePath)}&function=${encodeURIComponent(fn)}`)
                       setData((d) => ({ ...d, cfgFn: fn, cfg: c, cfgError: undefined }))
                     } catch (err) {
-                      setData((d) => ({ ...d, cfgFn: fn, cfg: undefined, cfgError: String(err instanceof Error ? err.message : err) }))
+                      setData((d) => ({ ...d, cfgFn: fn, cfg: undefined, cfgError: errMsg(err) }))
                     }
                   }}
                 >
