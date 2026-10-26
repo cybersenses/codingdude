@@ -28,7 +28,9 @@ export function Mermaid({ code }) {
     ;(async () => {
       try {
         const mermaid = (await import('mermaid')).default
-        mermaid.initialize({ startOnLoad: false, theme: 'dark' })
+        // SEC #251: agent-generated fences render here — the sandbox level is
+        // pinned, not inherited from whatever the installed mermaid defaults to.
+        mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'strict' })
         const { svg } = await mermaid.render(`mmd-${Math.random().toString(36).slice(2)}`, code)
         if (!cancelled && ref.current) {
           ref.current.innerHTML = svg
