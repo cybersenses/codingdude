@@ -34,7 +34,7 @@ import {
   type KVStorage,
   type SerializedLayout,
 } from './layoutStore'
-import { isKnownPanel } from './catalogue'
+import { isKnownPanel, PRESETS } from './catalogue'
 
 function memStorage(initial: Record<string, string> = {}): KVStorage {
   const map = new Map(Object.entries(initial))
@@ -166,8 +166,8 @@ describe('loadSavedLayout', () => {
     saveLayout(storage, sampleLayout(), 'x')
     clearSavedLayout(storage)
     // clearSavedLayout stores '' (the KVStorage seam has no removeItem); it
-    // must read as "nothing saved", not as corruption (post-push review:
-    // a user-initiated reset must not claim the layout was corrupt).
+    // must read as "nothing saved", not as corruption. Workspace writes this
+    // after a corrupt/version fallback so the reset notice shows once.
     expect(loadSavedLayout(storage, isKnownPanel)).toEqual({ ok: false, reason: 'missing' })
   })
 })
@@ -199,7 +199,9 @@ describe('user presets', () => {
   it('rejects names that collide with shipped preset ids or the reserved verb', () => {
     // A user preset named like a shipped id would emit a duplicate
     // `preset:<name>` command id and be unreachable (`presetById` wins).
-    for (const reserved of ['default', 'debug', 'review', 'watching', 'save-as']) {
+    // Derived, not hardcoded: a future shipped preset must be covered here
+    // the day it lands, not the day someone remembers this list.
+    for (const reserved of [...PRESETS.map((p) => p.id), 'save-as']) {
       expect(presetNameValid(reserved)).toBe(false)
       expect(saveUserPreset(memStorage(), reserved, sampleLayout())).toBe(false)
     }
@@ -208,6 +210,17 @@ describe('user presets', () => {
   it('returns {} on corrupt preset storage', () => {
     const storage = memStorage({ [PRESETS_KEY]: 'zzz' })
     expect(loadUserPresets(storage)).toEqual({})
+  })
+
+  it('a preset named __proto__ round-trips instead of vanishing', () => {
+    // NAME_RE legitimately matches "__proto__"; on a plain object the
+    // assignment would hit Object.prototype's setter and save an empty
+    // record while reporting success (post-push review finding).
+    const storage = memStorage()
+    expect(saveUserPreset(storage, '__proto__', sampleLayout())).toBe(true)
+    expect(Object.keys(loadUserPresets(storage))).toEqual(['__proto__'])
+    deleteUserPreset(storage, '__proto__')
+    expect(Object.keys(loadUserPresets(storage))).toEqual([])
   })
 })
 

@@ -18,7 +18,7 @@
 // placement names a panel that does not exist yet, and silently renders
 // nothing when a catalogue entry has no registered component.
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_PRESET, PANELS, PRESETS, isKnownPanel, panelSpec, presetById } from './catalogue'
+import { DEFAULT_PRESET, PANELS, PRESETS, isKnownPanel, panelOptions, panelSpec, presetById } from './catalogue'
 import { PANE_SPECS } from '../panes'
 
 // The component registry lives in Workspace.jsx; keep this list in step with it.
@@ -30,6 +30,25 @@ const REGISTERED = [
 ]
 
 describe('panel catalogue', () => {
+  it('panelOptions maps a spec to addPanel options', () => {
+    // The extraction exists so minimums reach dockview's resize clamp —
+    // pin the mapping itself, not just the callers' payloads.
+    const editor = panelOptions(panelSpec('editor')!)
+    expect(editor).toEqual({
+      id: 'editor',
+      component: 'editor',
+      title: 'Editor',
+      renderer: 'always',
+    })
+    const nav = panelOptions(panelSpec('nav')!)
+    expect(nav).toEqual({
+      id: 'nav',
+      component: 'nav',
+      title: 'Projects & sessions',
+      minimumWidth: PANE_SPECS.sidebar.min,
+    })
+  })
+
   it('has unique panel ids', () => {
     const ids = PANELS.map((p) => p.id)
     expect(new Set(ids).size).toBe(ids.length)
@@ -66,7 +85,7 @@ describe('panel catalogue', () => {
 
 describe('default preset', () => {
   // The preset places the five first-boot panels (REQ-7); the P2 catalogue
-  // entries are opened on demand from the panel bar, not on boot.
+  // entries are opened on demand from the command palette, not on boot.
   const PRESET_IDS = ['nav', 'explorer', 'editor', 'chat', 'diff']
 
   it('places exactly the five boot panels, once each', () => {

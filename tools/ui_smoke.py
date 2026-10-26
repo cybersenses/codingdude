@@ -41,9 +41,9 @@ Usage (server must already be running; default http://127.0.0.1:8765):
 Exit code 0 = every check passed. 1 = at least one failed. Requires the
 `playwright` dev dependency and `playwright install chromium`.
 
-Note: `tools/` is outside the repo's ruff/mypy scope (`ruff check src tests`,
-`[tool.mypy] packages = ["codingdude"]`), so this file is held to the same
-standard by convention, not by CI.
+Note: `tools/` is outside the repo's mypy scope (`[tool.mypy] packages =
+["codingdude"]`); ruff covers it via gates.bat, so this file is linted by CI
+convention, not type-checked.
 """
 
 from __future__ import annotations

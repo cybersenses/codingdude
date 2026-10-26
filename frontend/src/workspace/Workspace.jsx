@@ -36,6 +36,7 @@ import { createSessionStore } from '../store/sessionData'
 import { sessionTopics, requiresSession } from '../store/sessionTopics'
 import { CommandPalette } from './CommandPalette'
 import {
+  clearSavedLayout,
   createDebouncedSaver,
   loadSavedLayout,
   loadUserPresets,
@@ -275,11 +276,13 @@ export function Workspace({ error, agentStrip, sidebar, fileWs, onAsk, sessionId
   // pending debounced save must not resurrect the pre-apply snapshot after it.
   // Shipped presets are placements; user presets are serialized layouts
   // restored through fromJSON (with the same degrade-to-default guard).
+  // `notice` may be null: the boot fallback for a *missing* layout is the
+  // ordinary first-run path and must stay silent.
   function resetToDefault(targetApi, reason) {
     targetApi.clear()
     applyPresetPlacements(targetApi, DEFAULT_PRESET)
     presetRef.current = 'default'
-    setNotice(`layout reset (${reason})`)
+    if (reason) setNotice(`layout reset (${reason})`)
   }
 
   function applyPresetByName(targetApi, presetId) {
@@ -365,11 +368,16 @@ export function Workspace({ error, agentStrip, sidebar, fileWs, onAsk, sessionId
         resetToDefault(dockApi, 'saved layout was unreadable')
       }
     } else {
-      applyPresetPlacements(dockApi, DEFAULT_PRESET)
-      presetRef.current = 'default'
-      if (saved.reason === 'corrupt') setNotice('layout reset (saved layout was corrupt)')
-      if (saved.reason === 'version') setNotice('layout reset (saved layout was from a different version)')
-      if (saved.reason === 'empty') setNotice('layout reset (no known panels remained)')
+      // A layout that cannot be restored is also cleared from storage, so the
+      // notice surfaces once — not again on every boot against the same bad
+      // blob. ('missing' is the ordinary first run: silent, nothing to clear.)
+      if (saved.reason !== 'missing') clearSavedLayout(window.localStorage)
+      const reasons = {
+        corrupt: 'saved layout was corrupt',
+        version: 'saved layout was from a different version',
+        empty: 'no known panels remained',
+      }
+      resetToDefault(dockApi, reasons[saved.reason] ?? null)
     }
 
     // Debounced persistence rides dockview's own change event — every drag,
