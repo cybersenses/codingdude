@@ -640,18 +640,29 @@ export function GraphPanel() {
   useEffect(() => {
     if (!sessionId) return
     let stop = false
+    // Reset graph state for the new path: graphView keeps showing "loading"
+    // while callgraphPath !== activePath, so a prior path's success must not
+    // block the new path's failures from stamping graphError.
+    setData((d) => (d.callgraphPath === undefined || d.callgraphPath === activePath
+      ? d
+      : { ...d, callgraph: undefined, callgraphPath: undefined, graphError: undefined }))
     async function poll() {
       try {
         if (activePath) {
           try {
             const g = await call(`/sessions/${sessionId}/callgraph?path=${encodeURIComponent(activePath)}`)
-            setData((d) => ({ ...d, callgraph: g, callgraphPath: activePath, graphError: undefined }))
+            // Same guard as the error path: a slow older fetch (success or
+            // failure) must not overwrite a newer path's result. The checks
+            // read live state inside the updater — `data` is frozen in this
+            // effect's closure.
+            setData((d) => (d.callgraphPath === undefined || d.callgraphPath === activePath
+              ? { ...d, callgraph: g, callgraphPath: activePath, graphError: undefined }
+              : d))
           } catch (err) {
-            // Guard: only stamp graphError when there is no successful
-            // callgraph for this path (a success for the same path clears it;
-            // a success for a newer path must not be overwritten by this
-            // older failure). The test must read the live state inside the
-            // updater — `data` is frozen in this effect's closure.
+            // Stamp graphError unless a newer path has succeeded since (the
+            // reset above keeps callgraphPath undefined while only this path
+            // has been attempted, so a file failing on every poll still gets
+            // its error, and a same-path success above clears it).
             setData((d) => (d.callgraphPath === undefined || d.callgraphPath === activePath
               ? { ...d, graphError: String(err instanceof Error ? err.message : err) }
               : d))

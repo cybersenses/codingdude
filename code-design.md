@@ -523,7 +523,7 @@ per-tab poll, which fired on mount rather than at the next tick).
 | Module | Contents |
 |---|---|
 | `frontend/src/store/sessionData.ts` | framework-free store: subscribe/getSnapshot/setVisible/refresh/dispose + `useSessionData` hook |
-| `frontend/src/store/sessionData.test.ts` | 12 tests under fake timers: visible-only fetch, hidden-doc pause, unsubscribe stop, error capture, in-flight dedupe, refresh |
+| `frontend/src/store/sessionData.test.ts` | 14 tests under fake timers: visible-only fetch, hidden-doc pause, unsubscribe stop, error capture, in-flight dedupe, refresh, shared-topic visibility, session-scoped topics |
 | `frontend/src/store/sessionTopics.ts` | one fetcher per topic, payload shapes identical to the classic `DockPanel` poll branches |
 | `frontend/src/workspace/panels.jsx` | the sixteen new dock panels; bodies are the classic tab bodies, data source swapped |
 | `frontend/src/workspace/shellContext.jsx` | context + `useShell` extracted (avoids a Workspace↔panels import cycle) |
@@ -810,6 +810,24 @@ em-dash, and `deadcode.py:18` another run; both now byte-fixed (BOM
 stripped, em-dash restored; a byte-scan over both files shows zero
 `C3 xx`-prefixed mojibake runs). Also: the `fifteen-tab` remnant at the top
 of the P4 section reconciled to sixteen. Waived: none.
+
+**Post-push review round 4** (two delegates over `64564d1..9dabc19`; both
+found the same blocker). Round 3's live-`d` guard fixed the stale-closure
+half but left two holes: switching from a path whose callgraph succeeded to
+a path whose callgraph fails on every poll left `callgraphPath` at the old
+path, so the guard (`undefined || === activePath`) never matched and the
+panel sat on "Analyzing…" indefinitely; and the *success* setter had no
+guard at all, so a slow older fetch's success could regress
+`callgraphPath` after a newer path's success. Fix: the effect resets the
+callgraph state when `activePath` changes (undefined unless the path is
+unchanged), and both the success and error updaters apply the same
+`d.callgraphPath === undefined || d.callgraphPath === activePath` guard.
+Not unit-tested: the repo has no jsdom, so the guard lives only in the
+component; the two delegates verified the scenario by reading the guard
+against `graphView`'s machine, not by execution. Also fixed: the stale
+12-test count for `sessionData.test.ts` (14 since round 2's shared-topic
+and session-scope tests), and ROADMAP.md:980's remaining `fifteen-tab`
+remnant (sixteen).
 
 ## R60 — Claims must be checkable (`tools/claim_check.py`)
 
