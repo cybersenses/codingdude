@@ -146,7 +146,7 @@ export function stripUnknownPanels(
 }
 
 /** The panel ids a stripped layout still refers to. */
-export function countPanels(layout: SerializedLayout): string[] {
+export function panelIds(layout: SerializedLayout): string[] {
   const found = new Set<string>()
   const collect = (views: unknown): void => {
     if (Array.isArray(views)) {
@@ -175,7 +175,10 @@ export function countPanels(layout: SerializedLayout): string[] {
 // ---------------------------------------------------------------------------
 
 function parseSaved(raw: string | null, isKnown: (id: string) => boolean): LoadResult {
-  if (raw === null) return { ok: false, reason: 'missing' }
+  // `clearSavedLayout` stores '' (the KVStorage seam has no removeItem) — an
+  // intentional reset must read as "nothing saved" (silent default), not
+  // "corrupt" (which would surface a false reset notice).
+  if (raw === null || raw === '') return { ok: false, reason: 'missing' }
   let parsed: unknown
   try {
     parsed = JSON.parse(raw)
@@ -188,7 +191,7 @@ function parseSaved(raw: string | null, isKnown: (id: string) => boolean): LoadR
   const layout = parsed.layout as SerializedLayout
   const dropped = stripUnknownPanels(layout, isKnown)
   if (dropped === null) return { ok: false, reason: 'corrupt' }
-  if (countPanels(layout).length === 0) return { ok: false, reason: 'empty' }
+  if (panelIds(layout).length === 0) return { ok: false, reason: 'empty' }
   return {
     ok: true,
     preset: typeof parsed.preset === 'string' ? parsed.preset : 'custom',
@@ -236,10 +239,17 @@ export function clearSavedLayout(storage: KVStorage): void {
 // User presets
 // ---------------------------------------------------------------------------
 
+import { PRESETS } from './catalogue'
+
 const NAME_RE = /^[\w][\w -]{0,31}$/
 
+// A user preset name that collides with a shipped preset id (or the palette's
+// reserved "save-as" verb) would emit a duplicate `preset:<name>` command id
+// and leave the user's preset unreachable — `presetById` wins on apply.
+const RESERVED_PRESET_NAMES = new Set<string>([...PRESETS.map((p) => p.id), 'save-as'])
+
 export function presetNameValid(name: string): boolean {
-  return NAME_RE.test(name)
+  return NAME_RE.test(name) && !RESERVED_PRESET_NAMES.has(name)
 }
 
 export function loadUserPresets(storage: KVStorage): Record<string, SerializedLayout> {

@@ -22,7 +22,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { DockviewReact, themeDark } from 'dockview-react'
 import 'dockview-react/dist/styles/dockview.css'
-import { DEFAULT_PRESET, panelSpec, presetById, isKnownPanel } from './catalogue'
+import { DEFAULT_PRESET, panelSpec, presetById, isKnownPanel, panelOptions } from './catalogue'
 import { Sidebar } from '../chrome/Sidebar.jsx'
 import { AgentStrip } from '../chrome/AgentStrip.jsx'
 import { StatusFooter } from '../chrome/StatusFooter.jsx'
@@ -209,18 +209,9 @@ function applyPresetPlacements(api, placements) {
     const spec = panelSpec(placement.id)
     if (!spec) continue
     api.addPanel({
-      id: spec.id,
-      component: spec.component,
-      title: spec.title,
-      renderer: spec.renderer,
+      ...panelOptions(spec),
       initialWidth: placement.initialWidth,
       initialHeight: placement.initialHeight,
-      // `AddPanelOptions` extends `Partial<Constraints>`, so the catalogue's
-      // minimums land on dockview's own resize clamp instead of being inert
-      // data. Without them a docked panel could be dragged below the size the
-      // classic layout's PANE_SPECS clamp allows.
-      ...(spec.minWidth !== undefined ? { minimumWidth: spec.minWidth } : {}),
-      ...(spec.minHeight !== undefined ? { minimumHeight: spec.minHeight } : {}),
       ...(placement.referencePanel
         ? { position: { direction: placement.direction, referencePanel: placement.referencePanel } }
         : {}),
@@ -284,6 +275,13 @@ export function Workspace({ error, agentStrip, sidebar, fileWs, onAsk, sessionId
   // pending debounced save must not resurrect the pre-apply snapshot after it.
   // Shipped presets are placements; user presets are serialized layouts
   // restored through fromJSON (with the same degrade-to-default guard).
+  function resetToDefault(targetApi, reason) {
+    targetApi.clear()
+    applyPresetPlacements(targetApi, DEFAULT_PRESET)
+    presetRef.current = 'default'
+    setNotice(`layout reset (${reason})`)
+  }
+
   function applyPresetByName(targetApi, presetId) {
     saverRef.current?.cancel()
     const preset = presetById(presetId)
@@ -299,10 +297,7 @@ export function Workspace({ error, agentStrip, sidebar, fileWs, onAsk, sessionId
         targetApi.fromJSON(saved)
         presetRef.current = `custom:${presetId}`
       } catch {
-        setNotice(`layout reset (preset "${presetId}" was unreadable)`)
-        targetApi.clear()
-        applyPresetPlacements(targetApi, DEFAULT_PRESET)
-        presetRef.current = 'default'
+        resetToDefault(targetApi, `preset "${presetId}" was unreadable`)
       }
     }
     saveLayout(window.localStorage, targetApi.toJSON(), presetRef.current)
@@ -367,16 +362,13 @@ export function Workspace({ error, agentStrip, sidebar, fileWs, onAsk, sessionId
           setNotice(`layout restored (dropped panels no longer shipped: ${saved.dropped.join(', ')})`)
         }
       } catch {
-        dockApi.clear()
-        applyPresetPlacements(dockApi, DEFAULT_PRESET)
-        presetRef.current = 'default'
-        setNotice('layout reset (saved layout was unreadable)')
+        resetToDefault(dockApi, 'saved layout was unreadable')
       }
     } else {
       applyPresetPlacements(dockApi, DEFAULT_PRESET)
       presetRef.current = 'default'
       if (saved.reason === 'corrupt') setNotice('layout reset (saved layout was corrupt)')
-      if (saved.reason === 'version') setNotice('layout reset (saved layout was from a newer version)')
+      if (saved.reason === 'version') setNotice('layout reset (saved layout was from a different version)')
       if (saved.reason === 'empty') setNotice('layout reset (no known panels remained)')
     }
 

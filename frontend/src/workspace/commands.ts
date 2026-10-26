@@ -19,7 +19,7 @@
 // ("Hide Graph" while Graph is closed). Pure enough to unit test against a
 // recorded-shape fake api; the Workspace wires the same commands to the real
 // DockviewApi.
-import { PANELS, PRESETS, panelSpec } from './catalogue'
+import { PANELS, PRESETS, panelSpec, panelOptions } from './catalogue'
 
 /** The api surface the commands touch — DockviewApi satisfies this. */
 export interface CommandApi {
@@ -52,7 +52,6 @@ export interface PaletteCommand {
   label: string
   /** Grouping prefix in the palette list. */
   group: 'panel' | 'move' | 'preset' | 'layout'
-  disabled: boolean
 }
 
 // dockview Position uses top/bottom/left/right/center; palette directions map
@@ -74,7 +73,6 @@ export function commandList(api: CommandApi, ctx: CommandCtx): PaletteCommand[] 
       id: open ? `hide:${spec.id}` : `show:${spec.id}`,
       label: open ? `Hide ${spec.title}` : `Show ${spec.title}`,
       group: 'panel',
-      disabled: false,
     })
   }
 
@@ -87,7 +85,6 @@ export function commandList(api: CommandApi, ctx: CommandCtx): PaletteCommand[] 
         id: `move:${activeId}:${t.key}`,
         label: t.label.replace('{p}', panelSpec(activeId)?.title ?? activeId),
         group: 'move',
-        disabled: false,
       })
     }
     const location = api.getPanel(activeId)?.group.api.location.type
@@ -98,21 +95,20 @@ export function commandList(api: CommandApi, ctx: CommandCtx): PaletteCommand[] 
           ? `Dock ${panelSpec(activeId)?.title ?? activeId}`
           : `Float ${panelSpec(activeId)?.title ?? activeId}`,
       group: 'move',
-      disabled: false,
     })
   }
 
   for (const preset of PRESETS) {
     if (preset.id !== 'default') {
-      cmds.push({ id: `preset:${preset.id}`, label: `Apply preset: ${preset.title}`, group: 'preset', disabled: false })
+      cmds.push({ id: `preset:${preset.id}`, label: `Apply preset: ${preset.title}`, group: 'preset' })
     }
   }
   for (const name of ctx.userPresets) {
-    cmds.push({ id: `preset:${name}`, label: `Apply preset: ${name}`, group: 'preset', disabled: false })
+    cmds.push({ id: `preset:${name}`, label: `Apply preset: ${name}`, group: 'preset' })
   }
-  cmds.push({ id: 'preset:save-as', label: 'Save layout as preset…', group: 'preset', disabled: false })
+  cmds.push({ id: 'preset:save-as', label: 'Save layout as preset…', group: 'preset' })
 
-  cmds.push({ id: 'layout:reset', label: 'Reset layout (default preset)', group: 'layout', disabled: false })
+  cmds.push({ id: 'layout:reset', label: 'Reset layout (default preset)', group: 'layout' })
   return cmds
 }
 
@@ -135,12 +131,7 @@ export function runCommand(
     if (!spec || openIds.includes(pid)) return false
     const reference = api.activePanel?.id ?? openIds[0]
     api.addPanel({
-      id: spec.id,
-      component: spec.component,
-      title: spec.title,
-      renderer: spec.renderer,
-      ...(spec.minWidth !== undefined ? { minimumWidth: spec.minWidth } : {}),
-      ...(spec.minHeight !== undefined ? { minimumHeight: spec.minHeight } : {}),
+      ...panelOptions(spec),
       // An empty layout has no reference: dockview seeds the first group.
       ...(reference !== undefined
         ? { position: { direction: 'within', referencePanel: reference } }

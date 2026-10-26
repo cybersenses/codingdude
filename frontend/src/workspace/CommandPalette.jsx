@@ -68,7 +68,7 @@ export function CommandPalette({ api, ctx }) {
 
   function exec(i) {
     const cmd = visible[i]
-    if (!cmd || cmd.disabled || !api) return
+    if (!cmd || !api) return
     runCommand(cmd.id, api, ctx)
     setOpen(false)
     setQuery('')
@@ -122,7 +122,7 @@ export function CommandPalette({ api, ctx }) {
               data-palette-item={cmd.id}
               className={`block w-full px-3 py-1.5 text-left text-xs ${
                 i === safeIndex ? 'bg-brand-700/60 text-ink' : 'text-neutral-300 hover:bg-surface'
-              } ${cmd.disabled ? 'opacity-40' : ''}`}
+              }`}
               onMouseEnter={() => setIndex(i)}
               onClick={() => exec(i)}
             >

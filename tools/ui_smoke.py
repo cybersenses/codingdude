@@ -15,7 +15,8 @@ Two layouts:
 * `--layout classic` (default) walks the sixteen `DockPanel` tabs.
 * `--layout dock` opens `?layout=dock` (R59) and checks the five preset
   dockable panels' geometry, then opens every remaining catalogue panel from
-  the panel bar and checks it renders (the P2 exit criterion), and finally
+  the command palette (Ctrl+Shift+P; the P2 panel bar was removed in P3) and
+  checks it renders, and finally
   that Monaco reflows with its container:
   the window is narrowed and restored and the editor must narrow with it and
   come back. Nothing is hidden or moved, so `renderer: 'always'` — which only
@@ -69,8 +70,8 @@ DOCK_TABS = [
 # The attribute is the seam the shell puts on each panel root, so the gate can
 # assert a panel is really on screen rather than trusting the tab bar.
 # P2: the five preset panels are walked as tabs; the remaining fifteen are
-# opened from the panel bar (`+ Title`) in `_walk_dock` — that is the P2 exit
-# criterion (every panel openable), not a nicety.
+# opened via the command palette in `_walk_dock` (the P2 panel bar was
+# removed in P3) — every panel openable remains the exit criterion.
 DOCK_PANELS = {
     "nav": "Projects & sessions",
     "explorer": "Explorer",
@@ -95,7 +96,7 @@ DOCK_PANELS = {
 }
 PLACEHOLDER = "Select a session to see diffs, files, cost and trace."
 # The panels the default preset mounts on boot (catalogue.ts DEFAULT_PRESET);
-# every other catalogue panel is opened from the panel bar during the walk.
+# every other catalogue panel is opened via the command palette during the walk.
 PRESET_PANELS = {"nav", "explorer", "editor", "chat", "diff"}
 # The dock's own error banner (#231): present means the tab's fetch failed. The
 # classic walk reads it page-wide, where one tab body is mounted at a time; the

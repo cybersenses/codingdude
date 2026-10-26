@@ -79,6 +79,28 @@ export function panelSpec(id: string): PanelSpec | undefined {
   return PANELS.find((p) => p.id === id)
 }
 
+/**
+ * The addPanel options every spec contributes (id/component/title/renderer plus
+ * the size-clamp minimums). Single source for the palette's `show:` command and
+ * the preset placements in Workspace — both previously rebuilt this clump by
+ * hand (post-push review: Duplicated Code).
+ *
+ * `AddPanelOptions` extends `Partial<Constraints>`, so the catalogue's
+ * minimums land on dockview's own resize clamp instead of being inert data —
+ * without them a docked panel could be dragged below the size the classic
+ * layout's PANE_SPECS clamp allows.
+ */
+export function panelOptions(spec: PanelSpec): Record<string, unknown> {
+  return {
+    id: spec.id,
+    component: spec.component,
+    title: spec.title,
+    ...(spec.renderer !== undefined ? { renderer: spec.renderer } : {}),
+    ...(spec.minWidth !== undefined ? { minimumWidth: spec.minWidth } : {}),
+    ...(spec.minHeight !== undefined ? { minimumHeight: spec.minHeight } : {}),
+  }
+}
+
 export function isKnownPanel(id: string): boolean {
   return panelSpec(id) !== undefined
 }
