@@ -180,6 +180,9 @@ The workspace is a single dockable shell — every surface is a panel:
 
 - **Every surface is a panel** — projects, explorer, editor, chat and all §7
   tabs — draggable between groups, splittable on any edge, floatable.
+- **Resize any column or row** by dragging the divider between panels — the
+  grabbable strip is wider than the visible line, so widen Chat or shrink the
+  explorer freely. Sizes persist with the layout.
 - **Popout windows** — pop any panel out to its own OS window (palette:
   "Pop out <panel> to a window") — e.g. Cost on a second
   monitor. "Dock <panel>" in the palette brings it back. A blocked popout
