@@ -10,9 +10,9 @@ the "could not load this tab" banner (#231), or — when the workspace has a
 session — a panel still showing the "select a session" placeholder (the #228
 symptom). Designed console noise (the auth-cookie 401) is reported, not fatal.
 
-The walk (R59 P4: the dock shell is the only shell): it checks the five preset
-panels' geometry, then opens every remaining catalogue panel from the command
-palette (Ctrl+Shift+P) and checks it renders, and finally that Monaco reflows
+The walk (R59 P4: the dock shell is the only shell): it records the five preset
+panels' geometry (recorded, not asserted), then opens every remaining catalogue
+panel from the command palette (Ctrl+Shift+P) and checks it renders, and finally that Monaco reflows
 with its container: the window is narrowed and restored and the editor must
 narrow with it and come back. Nothing is hidden or moved, so
 `renderer: 'always'` — which only matters for a hidden panel — is not what this
@@ -183,9 +183,12 @@ def _panel_banner_selector(panel_id: str) -> str:
     nothing and reports the failing panel as clean. The comma is an "or" —
     either shape, and still nothing belonging to another panel.
 
-    Both shapes are live: the store-backed panels (`TopicPanel` in
-    workspace/panels.jsx) render their banner *inside* the `data-panel` root,
-    and the root shape remains for panels whose banner is the whole body.
+    The descendant form is the live shape: the store-backed panels
+    (`TopicPanel` in workspace/panels.jsx) render their banner *inside* the
+    `data-panel` root. The root form is kept so a future or self-fetching
+    panel that mounts the banner as its whole body is still caught, and so
+    the historical regression cannot quietly come back by dropping the
+    alternative.
     """
     return (
         f'[data-panel="{panel_id}"]{POLL_ERROR_SELECTOR}, '
@@ -374,9 +377,10 @@ def _monaco_reflow(page, report: dict, shots: Path | None) -> None:
     `setVisible` — dockview's `DockviewPanelApi` omits it, only gridview panels
     have it — or a group action to click, and the group header renders
     `.dv-right-actions-container` with no children unless the app supplies
-    actions (verified live: five containers, none populated). Adding a hide
-    control to the UI so a test can click it is P3's work, so this asserts the
-    reflow it can actually reach and records the gap instead of faking it.
+    actions (verified live: five containers, none populated). The palette
+    (P3) now offers Hide commands, but this smoke does not drive it, so it
+    asserts the reflow it can actually reach and records the gap instead of
+    faking it.
     """
     tab = _dock_tab(page, "Editor")
     if tab is not None:

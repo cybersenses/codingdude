@@ -35,7 +35,7 @@ const Workspace = lazy(() =>
 
 // R35 #72: bottom dock — VS Code panel position. Processes comes in as a
 // prop (App polls it); it used to be a bare-identifier crash in this scope.
-// R59 P4: the classic fifteen-tab DockPanel lived here. Every panel it
+// R59 P4: the classic sixteen-tab DockPanel lived here. Every panel it
 // hosted now ships in the dock shell (src/workspace/); its error seam
 // survives as the per-panel [data-poll-error] banner and the store's
 // per-topic errors.

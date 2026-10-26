@@ -768,6 +768,34 @@ the two constants to each other — meaningful, docstring fixed), the popout
 notice handler is the seam; no jsdom in this repo), and historical P1/P2
 narration in RESCUE/code-design (as-of-then rows, labelled as such).
 
+**Post-push review round 2** (two delegates over `887f657..243d7d2`;
+findings verified in-place before fixing). All five round-1 claims held.
+Applied: `GraphPanel`'s callgraph-failure guard was a tautology
+(`activePath === (data.callgraphPath || activePath)` is always true), so the
+stale-error guard never guarded — it now only stamps `graphError` when there
+is no successful callgraph for that path; the double-encoded `Â§` in
+`sessionData.test.ts`'s header fixed (byte-scanned: the only mojibake run in
+tracked source); `shellContext.jsx`'s P4 caveat claimed popouts "will not see
+this provider" — wrong in direction, dockview reparents the React-owned DOM
+into the popout so context survives (the P4 popout probe rendered
+store-backed panels without crashing), and `layoutStore.ts`'s "(and the
+popout path)" storage claim removed with it (Workspace uses
+`window.localStorage` directly); the "both banner shapes are live" claim in
+`ui_smoke.py`/`test_ui_smoke_verdict.py`/RESCUE corrected (the descendant
+form is the only live shape since P4; the root form is tolerance, kept so a
+future root-shaped panel is still caught); the classic shell's tab count
+reconciled to sixteen in App.jsx/RESCUE (the classic gate walked 16/16);
+`ui_smoke.py`'s "checks the five preset panels' geometry" → records (nothing
+asserts geometry) and its "hide control is P3's work" note updated (the
+palette ships Hide commands; the smoke just does not drive them);
+`panels.jsx`'s "(P3 follow-up…)" pointer de-staled; RESCUE's second vitest
+count 115 → 170, its 16-tab parity list → all 20 catalogue panels, its
+hidden-variant reason updated, and its known-good commit bumped. Waived:
+`deleteUserPreset` + `createDebouncedSaver().pending()` remaining
+production-unused (P4 shipped without preset management; the P3 waiver
+stands, narrowed), and the license-header wording drift in the P3/P4 files
+(pre-existing, cosmetic).
+
 ## R60 — Claims must be checkable (`tools/claim_check.py`)
 
 **Problem it addresses.** Six consecutive commits carried a written claim the code
