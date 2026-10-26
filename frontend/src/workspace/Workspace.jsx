@@ -21,7 +21,8 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { DockviewReact, themeDark } from 'dockview-react'
 import 'dockview-react/dist/styles/dockview.css'
-import { DEFAULT_PRESET, panelSpec, presetById, isKnownPanel, panelOptions } from './catalogue'
+import { DEFAULT_PRESET, panelSpec, presetById, isKnownPanel, panelListFor, panelOptions } from './catalogue'
+import { runCommand } from './commands'
 import { Sidebar } from '../chrome/Sidebar.jsx'
 import { AgentStrip } from '../chrome/AgentStrip.jsx'
 import { StatusFooter } from '../chrome/StatusFooter.jsx'
@@ -70,14 +71,31 @@ const store = createSessionStore(sessionTopics, { requiresSession })
 // Panels
 // ---------------------------------------------------------------------------
 
-function NavPanel() {
-  const { sidebar } = useShell()
+function NavPanel({ containerApi }) {
+  const { sidebar, showPanel } = useShell()
+  // R64: the panel list's open flags ride dockview's own add/remove events —
+  // no polling, and a panel closed anywhere in the shell updates its row.
+  const [openIds, setOpenIds] = useState(() => containerApi.panels.map((p) => p.id))
+  useEffect(() => {
+    const sync = () => setOpenIds(containerApi.panels.map((p) => p.id))
+    const added = containerApi.onDidAddPanel(sync)
+    const removed = containerApi.onDidRemovePanel(sync)
+    return () => {
+      added.dispose()
+      removed.dispose()
+    }
+  }, [containerApi])
   // The dock owns the width now; Sidebar still wants an explicit one.
   // `data-panel` is what tools/ui_smoke.py asserts on — the tab bar existing is
   // not proof that a panel body rendered.
   return (
     <div data-panel="nav" className="flex h-full min-h-0 flex-col">
-      <Sidebar width="100%" {...sidebar} />
+      <Sidebar
+        width="100%"
+        {...sidebar}
+        panels={panelListFor(openIds)}
+        onShowPanel={showPanel}
+      />
     </div>
   )
 }
@@ -325,10 +343,25 @@ export function Workspace({ error, agentStrip, sidebar, fileWs, onAsk, sessionId
     userPresets,
   }
 
+  // R64: the sidebar's panel rows call this. One source of truth for "show":
+  // the palette command itself, so the sidebar cannot grow a second placement
+  // policy (floating-reference guard included). An open panel just focuses.
+  function showPanel(id) {
+    const target = apiRef.current
+    if (!target) return
+    const open = target.getPanel(id)
+    if (open) {
+      open.api.setActive()
+      return
+    }
+    runCommand(`show:${id}`, target, paletteCtx)
+  }
+
   const shell = {
     sidebar,
     fileWs,
     onAsk,
+    showPanel,
     sessionId,
     prompt,
     pending,

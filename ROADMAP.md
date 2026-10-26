@@ -1042,3 +1042,13 @@ list). Failure rendering reuses the existing smoke-gate seam; the live-browser
 failure path was not re-probed (the banner mechanism was probe-verified in
 #234). Gates: vitest 117/117, build clean, eslint 0.
 
+## R64 — Sidebar panel list — advertise every dock panel from the nav panel
+**Status:** open
+
+**Problem.** R59 P4 made the dock shell the only layout; the default preset mounts five panels and the other fifteen (Graph, Waterfall, Trace, Terminal, Processes, …) are reachable only through the command palette (Ctrl+K). Nothing on the default screen advertises that they exist — a user who does not know a panel exists cannot discover it.
+
+**Fix.** The `nav` panel (Sidebar) gains a "Panels" section listing every catalogue panel except itself, each flagged open/closed from the live dockview api. Clicking a row shows an unknown panel through the same `runCommand('show:…')` path the palette uses (one source of truth for placement), and focuses an already-open one. Reactivity rides `onDidAddPanel`/`onDidRemovePanel`.
+
+**Verification.** Pure seams under vitest/pytest (`panelListFor` derivation; verdict key for the new smoke probe), plus the dock smoke gate gains an end-to-end probe: click the Waterfall row in the sidebar and require the panel to render.
+
+**Non-goals.** No hiding affordance per row (palette keeps that), no drag source from the sidebar, no reordering.
