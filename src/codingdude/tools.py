@@ -1175,11 +1175,22 @@ def build_git_toolset(workdir: Path, policy) -> FunctionToolset:
     """Git/GitHub tools under the tier table: reads auto, commit/branch gated,
     push/PR always-gated (never pattern-unlockable)."""
 
-    async def _run(argv: list[str], timeout: int = 60, use_shell: bool = False) -> str:
-        cap = await run_captured(argv, cwd=workdir, timeout=timeout, shell=use_shell)
+    async def _run(argv: list[str], timeout: int = 60) -> str:
+        cap = await run_captured(argv, cwd=workdir, timeout=timeout)
         if cap is None:
             return f'exit -1\n timed out after {timeout}s'
         return f'exit {cap.code}\n{cap.combined}' if cap.combined else f'exit {cap.code}'
+
+    async def _gh(args: list[str]) -> str:
+        """Run gh with an argv list, never through a shell (#249): PR
+        title/body are agent-generated, and the old ' '.join(argv) +
+        shell=True let cmd metacharacters in them execute as extra
+        commands. gh_mirror._git_origin is the precedent: resolve the
+        executable once with shutil.which, pass a fixed argument list."""
+        gh = shutil.which('gh')
+        if gh is None:
+            return 'gh not found on PATH — install the GitHub CLI: https://cli.github.com/'
+        return await _run([gh, *args])
 
     async def git_status() -> str:
         return await _run(['git', 'status', '--porcelain', '-b'])
@@ -1238,15 +1249,13 @@ def build_git_toolset(workdir: Path, policy) -> FunctionToolset:
 
     async def gh_pr_create(title: str, body: str) -> str:
         await _gate('gh pr create', always=True)
-        # shell=True so Windows resolves gh (and test stubs) via PATH
-        return await _run(
-            ['gh', 'pr', 'create', '--title', title, '--body', body, '--fill'],
-            use_shell=True,
+        return await _gh(
+            ['pr', 'create', '--title', title, '--body', body, '--fill'],
         )
 
     async def gh_pr_view(number: int) -> str:
         await _gate('gh pr view', always=True)
-        return await _run(['gh', 'pr', 'view', str(number)], use_shell=True)
+        return await _gh(['pr', 'view', str(number)])
 
     async def pr_summary(base: str = 'origin/main') -> str:
         """Compose a PR body from commits, diff stat, and AST summaries."""
