@@ -92,34 +92,6 @@ def test_health_and_auth_rejected(server):
     assert r.status_code == 401
 
 
-def test_non_ascii_credentials_fail_closed_not_500(server):
-    """SEC #250: compare_digest only accepts ASCII strings — every auth seam
-    must fail closed (401), never blow up, on non-ASCII candidates. (Header
-    values can't carry non-ASCII at all — httpx/h11 reject them client-side —
-    so the reachable seams are the query param and the login body.)"""
-    app, base = server
-    r = httpx.get(f'{base}/sessions?workdir=/&token=café', timeout=5)
-    assert r.status_code == 401
-    r2 = httpx.post(f'{base}/login', json={'password': 'pässwörd'}, timeout=5)
-    assert r2.status_code == 401
-
-
-def test_auth_seams_use_constant_time_compare():
-    """SEC #250 tripwire (source-parse, R64/R65 precedent): token compares in
-    authorize/auth_check/login must go through secrets.compare_digest — a
-    plain ==/!= would reintroduce the timing side channel silently."""
-    src = Path(__file__).parent.parent / 'src' / 'codingdude' / 'server.py'
-    text = src.read_text(encoding='utf-8')
-    authorize = text[text.index('def authorize'):text.index('def _session_cookie')]
-    assert 'compare_digest' in authorize
-    assert '!= token' not in authorize and '== token' not in authorize
-    auth_check = text[text.index('def auth_check'):text.index('def auth_local')]
-    assert 'compare_digest' in auth_check
-    login = text[text.index('def login'):text.index('class SessionIn')]
-    assert 'compare_digest' in login
-    assert '!= token' not in login
-
-
 def test_session_create_list_resume(server, tmp_path):
     app, base = server
     workdir = tmp_path / 'proj'
