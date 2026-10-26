@@ -1059,3 +1059,20 @@ failure path was not re-probed (the banner mechanism was probe-verified in
 The user reports the chat "window" as not resizable. Probe (2026-10-26, .scratch/probe_chat_resize.py) shows the dockview sash drag DOES work — chat 384 → 280 → 480px, persisted across reload — but the sash is a 4px element, resting colour = --ss-border (invisible), hover highlight delayed 0.5s, and dockview ships hit-area expansion only for `pointer: coarse` (touch). With a mouse the handle is effectively ungrabbable, which reads as "not resizable".
 
 Fix: index.css — ±4px transparent hit-area skirt on fine pointers, immediate hover highlight (--dv-active-sash-transition-delay: 0s), resting line one step brighter than the border. Guard: ui_smoke.py gains a chat-resize step that drags the sash from 5px OFF centre (outside the bare 4px element, inside the expanded hit area), so the gate goes red if the CSS regression returns.
+
+## R66 — R66 — Security scan remediation (2025 scan findings)
+**Status:** open
+
+Full security scan (bandit, semgrep auto, npm audit, manual auth/path/XSS review) produced four real findings. This item tracks their remediation, highest risk first.
+
+Findings and risk order:
+1. HIGH (frontend) — dompurify 3.4.8/3.4.15 (via monaco-editor 0.56.0, mermaid 12.0.0) carry critical XSS bypass advisories (GHSA-cmwh-pvxp-8882 and ~8 more); katex prototype-pollution bypass and lodash-es (via chevrotain) high. Live chain: repo content -> agent mermaid fence -> Mermaid component (ui.jsx) -> mermaid->dompurify sanitize -> innerHTML. The sanitizer is the vulnerable component. Fix: npm audit fix (semver-range bumps).
+2. MEDIUM — command-injection surface in gh_pr_create (tools.py run_captured: ' '.join(argv) + shell=True). title/body are agent-generated from repo content, unescaped into a shell string. Fix precedent: gh_mirror._git_origin resolves executables via shutil.which -> shell=False.
+3. LOW — non-constant-time token comparison (server.py:332 Bearer/cookie/query token; :390 password). Fix: secrets.compare_digest.
+4. LOW — mermaid securityLevel not pinned (ui.jsx initialize()); v12 defaults to strict but the guarantee should not rest on a library default. Fix: explicit securityLevel: 'strict'.
+
+Accepted trade-off (no ticket): token in query param for EventSource; verified absent from server.log; loopback-only.
+
+False positives verified and closed: config.py ShellConfig kwarg collision; roadmap.py/db.py/projectnotes.py SQL identifiers code-controlled/regex-validated with parameterized values; langs.py importlib internal mapping; server.py Host-check is the DNS-rebinding/CSRF defense itself; insecure-websocket loopback-by-design; restart.py urlopen hardcoded loopback; 78 LOW bandit agent-idiom findings.
+
+Known gap: pip-audit not installed (Python dep CVE scan outstanding).
