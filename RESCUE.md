@@ -129,7 +129,7 @@ expected `version` / `git_sha`.
 ```powershell
 cd G:\pydantic\frontend
 npm run build      # must exit 0; watch for a chunk-size or unresolved-import warning
-npx vitest run     # must be 170 passed (no test imports App.jsx — they cover pure helpers)
+npx vitest run     # must be 175 passed (no test imports App.jsx — they cover pure helpers)
 npm run lint       # eslint src, must be clean
 ```
 
@@ -168,7 +168,7 @@ resolves, so without the wait a slow fetch reads as a missing `README.md` — on
 chars for Explorer, i.e. header plus "loading…", and the Monaco step called that a missing file),
 checks the `DOCK_PANELS` (the whole catalogue, 20 entries since P2; the five preset
 panels' tabs exist on boot, the rest are opened through the command palette via
-`Ctrl+Shift+P` → "Show <title>" since P3 replaced the panel bar) against
+`Ctrl+Shift+P` → "Show <title>" since P3 replaced the panel bar; since R64, Waterfall is opened by the sidebar's panel-list row instead, proving that path too) against
 `workspace/catalogue.ts` (a title mismatch, or a catalogue
 panel the walk never visits, fails the run), asserts each panel root marked `data-panel="<id>"`
 has a non-zero bounding box — recorded as `visible`, and a geometry check rather than CSS
@@ -183,7 +183,7 @@ proves a tab exists, not that its body rendered; the geometry and the recorded t
 that difference visible. It then opens `README.md` in the
 editor to confirm Monaco re-lays-out when the viewport changes. The hidden-then-revealed
 variant is **not** covered — see §2 — because this smoke does not drive the palette's Hide commands. Its
-verdict has unit tests (`tests/test_ui_smoke_verdict.py`, 23) because a gate nobody exercises
+verdict has unit tests (`tests/test_ui_smoke_verdict.py`, 25 — 24 verdict branches plus the R64 probe-presence pin) because a gate nobody exercises
 is a gate nobody knows works.
 
 **Manual parity check (the last gate).** `npm run build` + the smoke gate passing does not
@@ -222,7 +222,7 @@ it first. A blank page with a console error almost always means one of:
 - Python tooling is venv-scoped: `uv run pytest` / `ruff` / `mypy`. Never assume global PATH.
 - Frontend is Vite + React 18.3.1, Tailwind v4, vitest 5. `node_modules` is present.
 - `frontend/dist` is gitignored and served from disk by the Python server.
-- No test imports `App.jsx`; the 170 vitest tests exercise `src/*.ts` pure logic only. So the
+- No test imports `App.jsx`; the 175 vitest tests exercise `src/*.ts` pure logic only. So the
   refactor cannot be caught by tests — **the build + manual parity check are the real gate.**
 
 ## 7. Traps that have bitten before

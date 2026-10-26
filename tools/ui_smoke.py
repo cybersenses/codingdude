@@ -1,3 +1,18 @@
+# CodingDude - a personal coding agent.
+# Copyright (C) 2025 Cyberflex (https://www.cyberflex.io)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """UI smoke gate: render the running app and walk its panels.
 
 Covers the part of R59 that tests cannot reach — no vitest file imports App.jsx,
@@ -12,7 +27,8 @@ symptom). Designed console noise (the auth-cookie 401) is reported, not fatal.
 
 The walk (R59 P4: the dock shell is the only shell): it records the five preset
 panels' geometry (recorded, not asserted), then opens every remaining catalogue
-panel from the command palette (Ctrl+Shift+P) and checks it renders, and finally that Monaco reflows
+panel (fourteen through the command palette, Waterfall by clicking its row in
+the sidebar's panel list - R64) and checks it renders, and finally that Monaco reflows
 with its container: the window is narrowed and restored and the editor must
 narrow with it and come back. Nothing is hidden or moved, so
 `renderer: 'always'` — which only matters for a hidden panel — is not what this
@@ -60,7 +76,8 @@ from urllib.parse import quote
 # The attribute is the seam the shell puts on each panel root, so the gate can
 # assert a panel is really on screen rather than trusting the tab bar.
 # The five preset panels are walked as tabs; the remaining fifteen are opened
-# via the command palette in `_walk_dock` — every panel openable remains the
+# in `_walk_dock` — fourteen via the command palette, Waterfall via the
+# sidebar's panel list (R64) — so every panel openable remains the
 # exit criterion. (R59 P4: this is the only shell; the classic sixteen-tab
 # DockPanel and its walk were retired.)
 DOCK_PANELS = {
@@ -91,8 +108,9 @@ PLACEHOLDER = "Select a session to see diffs, files, cost and trace."
 PRESET_PANELS = {"nav", "explorer", "editor", "chat", "diff"}
 # R64: this panel is opened by clicking its row in the sidebar's panel list
 # instead, so the gate proves that click path too. The palette walk skips it:
-# an open panel's command is "Hide", so filling "Show Waterfall" would match
-# nothing and time out.
+# an open panel's command is "Hide", so the palette step would run no command
+# and the walk would keep passing on the sidebar-opened tab - proving nothing
+# about the palette path for this panel.
 SIDEBAR_PROBE_PANEL = "waterfall"
 # The panel's own error banner (#231): present means the panel's fetch failed.
 # The walk joins this attribute to a panel id via `_panel_banner_selector`.
