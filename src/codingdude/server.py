@@ -325,11 +325,19 @@ def create_app(
 
     def authorize(request: Request) -> None:
         """Bearer header (headless/tests), session cookie (browser login),
-        or query param (EventSource) all authenticate."""
+        or query param (EventSource) all authenticate. #250: every token
+        compare is constant-time (the token is a long-lived secret), and
+        non-ASCII candidates fail closed — compare_digest only accepts
+        ASCII strings."""
         auth_header = request.headers.get('authorization', '')
         cookie = request.cookies.get('cd_session', '')
         query_token = request.query_params.get('token', '')
-        if auth_header != f'Bearer {token}' and cookie != token and query_token != token:
+        ok = (
+            (auth_header.isascii() and secrets.compare_digest(auth_header, f'Bearer {token}'))
+            or (cookie.isascii() and secrets.compare_digest(cookie, token))
+            or (query_token.isascii() and secrets.compare_digest(query_token, token))
+        )
+        if not ok:
             raise HTTPException(status_code=401, detail='invalid token')
         host = request.client.host if request.client else ''
         local = ('127.0.0.1', '::1') + (('testclient',) if allow_testclient else ())
@@ -374,7 +382,7 @@ def create_app(
     @app.get('/auth/check')
     def auth_check(request: Request) -> dict:
         cookie = request.cookies.get('cd_session', '')
-        if cookie == token:
+        if cookie.isascii() and secrets.compare_digest(cookie, token):
             return {'ok': True}
         raise HTTPException(status_code=401, detail='not logged in')
 
@@ -387,7 +395,7 @@ def create_app(
 
     @app.post('/login')
     def login(body: LoginIn) -> Response:
-        if body.password != token:
+        if not (body.password.isascii() and secrets.compare_digest(body.password, token)):
             raise HTTPException(status_code=401, detail='wrong password')
         # The cookie holds the same secret as the bearer token: localhost-only,
         # HttpOnly so page JS can't read it, same-origin by construction.
