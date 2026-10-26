@@ -10,7 +10,7 @@ Owner: CodingDude. Last updated: R59 P4 — popout windows; classic shell retire
 | Item | Value |
 |---|---|
 | Repo | `G:\pydantic` (branch `main`) |
-| Last known-good commit | `9dabc19` — R59 P4 + post-push review fixes through round 3 (pushed, gates green) |
+| Last known-good commit | `5b58bdb` — R64 sidebar panel list + review round 1 (pushed, gates green: vitest 175, pytest 873/1, smoke 20/20) |
 | Restore tag | `pre-r59-p0` → `0c2e58e` (created before any refactor; **do not delete**) |
 | Working tree at kickoff | clean except `M ROADMAP.md` (R59 item) |
 | Risk area | `frontend/src/` — React UI |
