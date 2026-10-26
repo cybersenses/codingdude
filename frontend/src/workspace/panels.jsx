@@ -640,15 +640,17 @@ export function GraphPanel() {
   const [repoQuestion, setRepoQuestion] = useState('')
   const graphRun = useRef(0)
   useEffect(() => {
-    if (!sessionId) return
-    let stop = false
     // Effect-generation token: when sessionId/activePath changes, a new
     // effect increments this ref, so a still-in-flight fetch from the old
     // effect fails live() and never writes. The stored-value path guards of
     // earlier review rounds could not do this — the reset writes
     // callgraphPath: undefined, which every path's writer matched.
+    // Bumped before the no-session early return so a switch to "no session"
+    // also invalidates in-flight fetches.
     const run = ++graphRun.current
     const live = () => graphRun.current === run
+    if (!sessionId) return
+    let stop = false
     // Reset graph state for this effect unconditionally: the previous
     // path/session's graph, error and trust evidence must not render for
     // the new one while its first fetch is in flight.
@@ -664,6 +666,8 @@ export function GraphPanel() {
       cfg: undefined,
       cfgFn: undefined,
       cfgError: undefined,
+      structure: undefined,
+      archmap: undefined,
     }))
     async function poll() {
       try {
@@ -672,7 +676,9 @@ export function GraphPanel() {
             const g = await call(`/sessions/${sessionId}/callgraph?path=${encodeURIComponent(activePath)}`)
             if (live()) setData((d) => ({ ...d, callgraph: g, callgraphPath: activePath, graphError: undefined }))
           } catch (err) {
-            if (live()) setData((d) => ({ ...d, graphError: errMsg(err) }))
+            // A transient poll failure must not blank an already-rendered
+            // graph for this path; only paths with no graph show the error.
+            if (live()) setData((d) => (d.callgraphPath === activePath && d.callgraph ? d : { ...d, graphError: errMsg(err) }))
           }
           try {
             const t = await call(`/sessions/${sessionId}/trust?path=${encodeURIComponent(activePath)}`)
@@ -681,7 +687,10 @@ export function GraphPanel() {
           if (activePath.endsWith('.py')) {
             try {
               const cf = await call(`/sessions/${sessionId}/cfg?path=${encodeURIComponent(activePath)}`)
-              if (live()) setData((d) => ({ ...d, cfgFunctions: cf.functions || [], cfgFunctionsPath: activePath, cfg: undefined, cfgFn: undefined, cfgError: undefined }))
+              // Do not clear cfg/cfgFn here: this runs every poll and would
+              // wipe the user's function selection every 4 s. Path changes are
+              // handled by the effect-start reset.
+              if (live()) setData((d) => ({ ...d, cfgFunctions: cf.functions || [], cfgFunctionsPath: activePath }))
             } catch (err) {
               if (live()) setData((d) => ({ ...d, cfgFunctions: [], cfgFunctionsPath: activePath, cfgError: errMsg(err) }))
             }
@@ -726,11 +735,15 @@ export function GraphPanel() {
                   onChange={async (e) => {
                     const fn = e.target.value
                     if (!fn) { setData((d) => ({ ...d, cfgFn: '', cfg: undefined, cfgError: undefined })); return }
+                    // User-triggered fetch, outside the poll effect: gate on
+                    // the generation token so a response landing after a
+                    // path/session switch is discarded like the poll's are.
+                    const run = graphRun.current
                     try {
                       const c = await call(`/sessions/${sessionId}/cfg?path=${encodeURIComponent(activePath)}&function=${encodeURIComponent(fn)}`)
-                      setData((d) => ({ ...d, cfgFn: fn, cfg: c, cfgError: undefined }))
+                      if (run === graphRun.current) setData((d) => ({ ...d, cfgFn: fn, cfg: c, cfgError: undefined }))
                     } catch (err) {
-                      setData((d) => ({ ...d, cfgFn: fn, cfg: undefined, cfgError: errMsg(err) }))
+                      if (run === graphRun.current) setData((d) => ({ ...d, cfgFn: fn, cfg: undefined, cfgError: errMsg(err) }))
                     }
                   }}
                 >
