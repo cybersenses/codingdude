@@ -1,4 +1,4 @@
-﻿// CodingDude â€” a personal coding agent.
+// CodingDude — a personal coding agent.
 // Copyright (C) 2025 Cyberflex (https://www.cyberflex.io)
 //
 // This program is free software: you can redistribute it and/or modify

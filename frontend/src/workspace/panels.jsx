@@ -650,10 +650,11 @@ export function GraphPanel() {
             // Guard: only stamp graphError when there is no successful
             // callgraph for this path (a success for the same path clears it;
             // a success for a newer path must not be overwritten by this
-            // older failure).
-            if (data.callgraphPath === undefined || data.callgraphPath === activePath) {
-              setData((d) => ({ ...d, graphError: String(err instanceof Error ? err.message : err) }))
-            }
+            // older failure). The test must read the live state inside the
+            // updater — `data` is frozen in this effect's closure.
+            setData((d) => (d.callgraphPath === undefined || d.callgraphPath === activePath
+              ? { ...d, graphError: String(err instanceof Error ? err.message : err) }
+              : d))
           }
           try {
             const t = await call(`/sessions/${sessionId}/trust?path=${encodeURIComponent(activePath)}`)

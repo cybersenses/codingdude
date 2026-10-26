@@ -728,7 +728,7 @@ falls back to the first grid-resident panel, under unit test.
 
 **Classic retirement.** `App.jsx` renders `Workspace` unconditionally (still
 `React.lazy` — the split now buys login-first startup order, not a second
-shell); `USE_DOCK`, the classic flex JSX, the classic fifteen-tab `DockPanel`,
+shell); `USE_DOCK`, the classic flex JSX, the classic sixteen-tab `DockPanel`,
 the resizable-pane state/`dividerFor`, `panes.ts` (removed) + `panes.test.ts` (removed)
 are deleted. The catalogue keeps the classic geometry inline as `GEOMETRY`
 (min clamps + the classic default widths, so REQ-7's first-boot proportions
@@ -795,6 +795,21 @@ hidden-variant reason updated, and its known-good commit bumped. Waived:
 production-unused (P4 shipped without preset management; the P3 waiver
 stands, narrowed), and the license-header wording drift in the P3/P4 files
 (pre-existing, cosmetic).
+
+**Post-push review round 3** (two delegates over `243d7d2..64564d1`; both
+found the same two defects, verified in-place). First: round 2's
+`GraphPanel` guard fix still read the effect-closure-captured `data`, which
+React freezes when the `[sessionId, activePath]` effect starts — so the
+guarded condition tested stale state, an older path's failure could still
+overwrite a newer path's success, and a switch to an always-failing file
+never stamped its error (back to "loading…" masquerading). The test now
+lives inside the `setData` updater, reading live `d`. Second: round 2's
+"the only mojibake run in tracked source" claim was false —
+`sessionData.test.ts`'s own line 1 still carried a BOM plus a double-encoded
+em-dash, and `deadcode.py:18` another run; both now byte-fixed (BOM
+stripped, em-dash restored; a byte-scan over both files shows zero
+`C3 xx`-prefixed mojibake runs). Also: the `fifteen-tab` remnant at the top
+of the P4 section reconciled to sixteen. Waived: none.
 
 ## R60 — Claims must be checkable (`tools/claim_check.py`)
 
