@@ -1069,7 +1069,7 @@ Findings and risk order:
 1. HIGH (frontend) — dompurify 3.4.8/3.4.15 (via monaco-editor 0.56.0, mermaid 12.0.0) carry critical XSS bypass advisories (GHSA-cmwh-pvxp-8882 and ~8 more); katex prototype-pollution bypass and lodash-es (via chevrotain) high. Live chain: repo content -> agent mermaid fence -> Mermaid component (ui.jsx) -> mermaid->dompurify sanitize -> innerHTML. The sanitizer is the vulnerable component. Fix: npm audit fix (semver-range bumps). [FIXED #248, c261807]
 1b. HIGH (python deps) — pip-audit (gap closed this scan): 36 advisories across 8 runtime deps. pyjwt 2.13.0 (14 advisories; fix 2.14.0/2.15.0), pydantic-ai + pydantic-ai-slim 2.40.0 (11; fix 2.53.0), mcp 2.1.1 (CVE-2026-59951; fix 2.2.0), urllib3 2.7.0 (3; fix 2.8.0), fastmcp 4.0.3 (2 GHSA; fix 4.1.2), filelock 3.32.6 (3; fix 4.2.1), certifi 2026.7.22 (fix 2026.10.19), opentelemetry-api 1.44.0 (fix 1.45.1). Fix: raise direct floors (fastmcp>=4.1.2, pydantic-ai>=2.53.0,<2.54) + uv lock --upgrade for transitives. The <2.54 ceiling is deliberate: pydantic-ai 2.54+ surfaces tool ModelRetry as ToolReturnPart instead of RetryPromptPart, breaking the R25 tool-error feedback loop; 2.53.0 already carries all 11 fixes. Adaptation tracked as ticket #253. [FIXED #252, 733aa10]
 2. MEDIUM — command-injection surface in gh_pr_create (tools.py run_captured: ' '.join(argv) + shell=True). title/body are agent-generated from repo content, unescaped into a shell string. Fix precedent: gh_mirror._git_origin resolves executables via shutil.which -> shell=False. [FIXED #249, 8c03183]
-3. LOW — non-constant-time token comparison in SIX seams: authorize (Bearer/cookie/query), /auth/check, /login, /runs/{id}/events (inline cookie/bearer/query), and the /runs/{id}/ws handshake. The first review round caught the last two surviving as plain ==/!= after the initial fix covered only three. Fix: one _ct_eq helper (secrets.compare_digest over UTF-8 bytes) used everywhere. [FIXED #250, 32bce1e + review round]
+3. LOW — non-constant-time token comparison in five seams (nine compares): authorize (Bearer/cookie/query), /auth/check, /login, /runs/{id}/events (inline cookie/bearer/query), and the /runs/{id}/ws handshake. The first review round caught the last two surviving as plain ==/!= after the initial fix covered only three. Fix: one _ct_eq helper (secrets.compare_digest over UTF-8 bytes) used everywhere. [FIXED #250, 32bce1e + review rounds]
 4. LOW — mermaid securityLevel not pinned (ui.jsx initialize()); v12 defaults to strict but the guarantee should not rest on a library default. Fix: explicit securityLevel: 'strict'. [FIXED #251, 479fcc4]
 
 Accepted trade-off (no ticket): token in query param for EventSource; verified absent from server.log; loopback-only.
@@ -1077,32 +1077,3 @@ Accepted trade-off (no ticket): token in query param for EventSource; verified a
 False positives verified and closed: config.py ShellConfig kwarg collision; roadmap.py/db.py/projectnotes.py SQL identifiers code-controlled/regex-validated with parameterized values; langs.py importlib internal mapping; server.py Host-check is the DNS-rebinding/CSRF defense itself; insecure-websocket loopback-by-design; restart.py urlopen hardcoded loopback; 78 LOW bandit agent-idiom findings.
 
 pip-audit gap closed: ran via `uv run --with pip-audit pip-audit` (finding 1b).
-
-Full security scan (bandit, semgrep auto, npm audit, pip-audit, manual auth/path/XSS review) tracks remediation here, highest risk first.
-
-Findings and risk order:
-1. HIGH (frontend) — dompurify 3.4.8/3.4.15 (via monaco-editor 0.56.0, mermaid 12.0.0) carry critical XSS bypass advisories (GHSA-cmwh-pvxp-8882 and ~8 more); katex prototype-pollution bypass and lodash-es (via chevrotain) high. Live chain: repo content -> agent mermaid fence -> Mermaid component (ui.jsx) -> mermaid->dompurify sanitize -> innerHTML. The sanitizer is the vulnerable component. Fix: npm audit fix (semver-range bumps). [FIXED #248, c261807]
-1b. HIGH (python deps) — pip-audit (gap closed this scan): 36 advisories across 8 runtime deps. pyjwt 2.13.0 (14 advisories; fix 2.14.0/2.15.0), pydantic-ai + pydantic-ai-slim 2.40.0 (11; fix 2.53.0), mcp 2.1.1 (CVE-2026-59951; fix 2.2.0), urllib3 2.7.0 (3; fix 2.8.0), fastmcp 4.0.3 (2 GHSA; fix 4.1.2), filelock 3.32.6 (3; fix 4.2.1), certifi 2026.7.22 (fix 2026.10.19), opentelemetry-api 1.44.0 (fix 1.45.1). Fix: raise direct floors (fastmcp>=4.1.2, pydantic-ai>=2.53.0) + uv lock --upgrade for transitives; verify with pip-audit re-run + full gates.
-2. MEDIUM — command-injection surface in gh_pr_create (tools.py run_captured: ' '.join(argv) + shell=True). title/body are agent-generated from repo content, unescaped into a shell string. Fix precedent: gh_mirror._git_origin resolves executables via shutil.which -> shell=False.
-3. LOW — non-constant-time token comparison (server.py authorize Bearer/cookie/query token; /auth/check cookie; /login password). Fix: secrets.compare_digest.
-4. LOW — mermaid securityLevel not pinned (ui.jsx initialize()); v12 defaults to strict but the guarantee should not rest on a library default. Fix: explicit securityLevel: 'strict'.
-
-Accepted trade-off (no ticket): token in query param for EventSource; verified absent from server.log; loopback-only.
-
-False positives verified and closed: config.py ShellConfig kwarg collision; roadmap.py/db.py/projectnotes.py SQL identifiers code-controlled/regex-validated with parameterized values; langs.py importlib internal mapping; server.py Host-check is the DNS-rebinding/CSRF defense itself; insecure-websocket loopback-by-design; restart.py urlopen hardcoded loopback; 78 LOW bandit agent-idiom findings.
-
-pip-audit gap closed: ran via `uv run --with pip-audit pip-audit` (finding 1b).
-
-Full security scan (bandit, semgrep auto, npm audit, manual auth/path/XSS review) produced four real findings. This item tracks their remediation, highest risk first.
-
-Findings and risk order:
-1. HIGH (frontend) — dompurify 3.4.8/3.4.15 (via monaco-editor 0.56.0, mermaid 12.0.0) carry critical XSS bypass advisories (GHSA-cmwh-pvxp-8882 and ~8 more); katex prototype-pollution bypass and lodash-es (via chevrotain) high. Live chain: repo content -> agent mermaid fence -> Mermaid component (ui.jsx) -> mermaid->dompurify sanitize -> innerHTML. The sanitizer is the vulnerable component. Fix: npm audit fix (semver-range bumps).
-2. MEDIUM — command-injection surface in gh_pr_create (tools.py run_captured: ' '.join(argv) + shell=True). title/body are agent-generated from repo content, unescaped into a shell string. Fix precedent: gh_mirror._git_origin resolves executables via shutil.which -> shell=False.
-3. LOW — non-constant-time token comparison (server.py:332 Bearer/cookie/query token; :390 password). Fix: secrets.compare_digest.
-4. LOW — mermaid securityLevel not pinned (ui.jsx initialize()); v12 defaults to strict but the guarantee should not rest on a library default. Fix: explicit securityLevel: 'strict'.
-
-Accepted trade-off (no ticket): token in query param for EventSource; verified absent from server.log; loopback-only.
-
-False positives verified and closed: config.py ShellConfig kwarg collision; roadmap.py/db.py/projectnotes.py SQL identifiers code-controlled/regex-validated with parameterized values; langs.py importlib internal mapping; server.py Host-check is the DNS-rebinding/CSRF defense itself; insecure-websocket loopback-by-design; restart.py urlopen hardcoded loopback; 78 LOW bandit agent-idiom findings.
-
-Known gap: pip-audit not installed (Python dep CVE scan outstanding).

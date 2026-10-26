@@ -328,19 +328,21 @@ def create_app(
         form needs no isascii guard (non-ASCII candidates simply mismatch)."""
         return secrets.compare_digest(candidate.encode(), expected.encode())
 
+    def _authed(request: Request) -> bool:
+        """#250: the three token transports (Bearer header, session cookie,
+        query param for EventSource) share this one constant-time check —
+        one implementation means no auth seam can drift from the others."""
+        return (
+            _ct_eq(request.headers.get('authorization', ''), f'Bearer {token}')
+            or _ct_eq(request.cookies.get('cd_session', ''), token)
+            or _ct_eq(request.query_params.get('token', ''), token)
+        )
+
     def authorize(request: Request) -> None:
         """Bearer header (headless/tests), session cookie (browser login),
-        or query param (EventSource) all authenticate. #250: every token
-        compare is constant-time (the token is a long-lived secret)."""
-        auth_header = request.headers.get('authorization', '')
-        cookie = request.cookies.get('cd_session', '')
-        query_token = request.query_params.get('token', '')
-        ok = (
-            _ct_eq(auth_header, f'Bearer {token}')
-            or _ct_eq(cookie, token)
-            or _ct_eq(query_token, token)
-        )
-        if not ok:
+        or query param (EventSource) all authenticate — constant-time
+        (#250: the token is a long-lived secret)."""
+        if not _authed(request):
             raise HTTPException(status_code=401, detail='invalid token')
         host = request.client.host if request.client else ''
         local = ('127.0.0.1', '::1') + (('testclient',) if allow_testclient else ())
@@ -1583,18 +1585,11 @@ def create_app(
 
     @app.get('/runs/{run_id}/events')
     async def run_events(
-        run_id: str, request: Request, token_q: str = Query('', alias='token')
+        run_id: str, request: Request
     ) -> StreamingResponse:
-        # Cookie (browser login), bearer header, or query token all
-        # authenticate — #250: constant-time, same as authorize.
-        cookie = request.cookies.get('cd_session', '')
-        auth_header = request.headers.get('authorization', '')
-        ok = (
-            _ct_eq(cookie, token)
-            or _ct_eq(auth_header, f'Bearer {token}')
-            or _ct_eq(token_q, token)
-        )
-        if not ok:
+        # Same auth as authorize (Bearer header, cookie, or query token —
+        # EventSource can't set headers, hence the query transport).
+        if not _authed(request):
             raise HTTPException(status_code=401, detail='invalid token')
         host = request.client.host if request.client else ''
         local = ('127.0.0.1', '::1') + (('testclient',) if allow_testclient else ())
