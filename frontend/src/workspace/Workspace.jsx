@@ -354,6 +354,14 @@ export function Workspace({ error, agentStrip, sidebar, fileWs, onAsk, sessionId
       open.api.setActive()
       return
     }
+    // The click happens inside the nav panel, so nav is active and the show
+    // command would dock the new panel *within* nav's group — a tab in the
+    // 256 px sidebar column. Activating the editor first makes the main area
+    // the reference (exactly what a user clicking the editor, then the
+    // palette, produces); if the editor is closed the command's own reference
+    // logic takes over. Still one placement policy — this only picks which
+    // panel is active.
+    target.getPanel('editor')?.api.setActive()
     runCommand(`show:${id}`, target, paletteCtx)
   }
 

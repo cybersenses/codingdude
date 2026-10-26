@@ -237,6 +237,26 @@ def test_sidebar_panel_probe_failure_fails_and_absence_is_exempt():
     assert verdict(dock_report()) == 0
 
 
+def test_walk_dock_still_writes_the_sidebar_probe():
+    """R64: a walk that lost the probe would read clean.
+
+    `verdict()` exempts an absent `sidebar_panel_open` (partial and pre-R64
+    reports must not fail on it), so deleting the probe from `_walk_dock`
+    would pass every check silently - the "gate nobody exercises" failure
+    this file exists for. The live walk writing the key is pinned here the
+    same way the catalogue parse is pinned against drift: by reading the
+    gate's own source. Not a proof the probe runs; a proof it still exists.
+    """
+    src = (Path(__file__).resolve().parents[1] / "tools" / "ui_smoke.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'report["sidebar_panel_open"]' in src
+    assert "SIDEBAR_PROBE_PANEL" in src
+    # The exclusion must stay paired with the probe: a panel skipped by the
+    # palette loop with no sidebar click opening it would just go missing.
+    assert "panel_id != SIDEBAR_PROBE_PANEL" in src
+
+
 def test_panel_drift_fails():
     drift = {"nav": {"smoke": "Projects & sessions", "catalogue": "Projects"}}
     assert verdict(dock_report(panel_drift=drift)) == 1
