@@ -18,8 +18,12 @@ import logoUrl from '../assets/logo.png'
 
 // R59 P0: moved verbatim out of App.jsx. Projects + sessions navigator; becomes
 // the `nav` panel in P1, so its state stays local to the component.
-export function Sidebar({ workdir, setWorkdir, sessions, activeSession, onSelect, onNewSession, width, runningSessions, projects, activeProject, onSelectProject, onAddProject, onDeleteProject }) {
+// R64: also carries the panel list — the dock shell's only always-visible
+// catalogue of what can be put on screen (the palette knows, but only once
+// opened).
+export function Sidebar({ workdir, setWorkdir, sessions, activeSession, onSelect, onNewSession, width, runningSessions, projects, activeProject, onSelectProject, onAddProject, onDeleteProject, panels = null, onShowPanel }) {
   const [newProjectName, setNewProjectName] = useState(null)
+  const [panelsOpen, setPanelsOpen] = useState(true)
   return (
     <aside className="flex shrink-0 flex-col gap-3 border-r border-neutral-800 bg-neutral-950 p-3" style={{ width }}>
       <div className="flex items-center gap-2">
@@ -99,6 +103,37 @@ export function Sidebar({ workdir, setWorkdir, sessions, activeSession, onSelect
       >
         + New session
       </button>
+      {panels && (
+        <div className="flex min-h-0 flex-col gap-1">
+          <button
+            data-panel-list-toggle
+            className="self-start text-[10px] font-semibold uppercase tracking-wide text-neutral-500 hover:text-neutral-300"
+            onClick={() => setPanelsOpen((v) => !v)}
+          >
+            Panels {panelsOpen ? '▾' : '▸'}
+          </button>
+          {panelsOpen && (
+            <div className="min-h-0 flex-1 overflow-y-auto" data-panel-list>
+              {panels.map((p) => (
+                <button
+                  key={p.id}
+                  data-panel-row={p.id}
+                  className={`block w-full truncate rounded px-2 py-1 text-left text-[11px] ${
+                    p.open
+                      ? 'text-brand-300'
+                      : 'text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200'
+                  }`}
+                  onClick={() => onShowPanel?.(p.id)}
+                  title={p.open ? `${p.title} — open (click to focus)` : `Show ${p.title}`}
+                >
+                  <span className={p.open ? 'text-success' : 'text-neutral-600'}>{p.open ? '●' : '○'}</span>{' '}
+                  {p.title}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       <div className="flex-1 overflow-y-auto">
         {sessions.map((s) => (
           <button

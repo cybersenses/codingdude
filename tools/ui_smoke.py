@@ -89,6 +89,11 @@ PLACEHOLDER = "Select a session to see diffs, files, cost and trace."
 # The panels the default preset mounts on boot (catalogue.ts DEFAULT_PRESET);
 # every other catalogue panel is opened via the command palette during the walk.
 PRESET_PANELS = {"nav", "explorer", "editor", "chat", "diff"}
+# R64: this panel is opened by clicking its row in the sidebar's panel list
+# instead, so the gate proves that click path too. The palette walk skips it:
+# an open panel's command is "Hide", so filling "Show Waterfall" would match
+# nothing and time out.
+SIDEBAR_PROBE_PANEL = "waterfall"
 # The panel's own error banner (#231): present means the panel's fetch failed.
 # The walk joins this attribute to a panel id via `_panel_banner_selector`.
 POLL_ERROR_SELECTOR = "[data-poll-error]"
@@ -274,13 +279,27 @@ def _walk_dock(page, report: dict, base: str, workdir: str, shots: Path | None) 
     # missing file when it is a session fetch still in flight.
     report["tree_ready"] = _wait_for_tree(page)
 
+    # R64: the sidebar's panel list is the dock shell's only always-visible
+    # catalogue of panels, so its click path is a gate criterion, not a
+    # nicety. The row lives inside the nav panel; the probe requires the panel
+    # body to mount (data-panel exists), not just the row click to succeed.
+    try:
+        page.locator(f'[data-panel="nav"] [data-panel-row="{SIDEBAR_PROBE_PANEL}"]').first.click()
+        page.wait_for_timeout(1500)
+        report["sidebar_panel_open"] = {
+            "panel": SIDEBAR_PROBE_PANEL,
+            "opened": page.locator(f'[data-panel="{SIDEBAR_PROBE_PANEL}"]').count() > 0,
+        }
+    except Exception:  # the gate reports the miss, it does not raise
+        report["sidebar_panel_open"] = {"panel": SIDEBAR_PROBE_PANEL, "opened": False}
+
     found = 0
     # The preset panels first (their tabs exist on boot); the rest are opened
     # through the command palette (P3) so the walk proves two exit criteria —
     # every catalogue panel can actually be opened, and the non-drag path
     # (tech design §4.6, REQ-5) really works.
     for panel_id, title in DOCK_PANELS.items():
-        if panel_id not in PRESET_PANELS:
+        if panel_id not in PRESET_PANELS and panel_id != SIDEBAR_PROBE_PANEL:
             page.keyboard.press("Control+Shift+P")
             box = page.locator("[data-palette-input]")
             if box.count() == 0:
@@ -481,6 +500,11 @@ def verdict(report: dict) -> int:
     expected_entries = report.get("expected_entries", len(DOCK_PANELS))
     monaco = report.get("monaco")
     monaco_failed = monaco is not None and not _monaco_followed_its_container(monaco)
+    # R64: the sidebar panel list's click probe. Present-but-not-opened is a
+    # defect; absent is exempt - reports the walk cannot reach (boot crash,
+    # hand-built) fail through their own keys, like `visible`.
+    sidebar = report.get("sidebar_panel_open")
+    sidebar_failed = isinstance(sidebar, dict) and sidebar.get("opened") is not True
     failed = (
         report.get("crashed") is not None
         or report.get("page_errors")
@@ -490,6 +514,7 @@ def verdict(report: dict) -> int:
         or report.get("sessions_error") is not None
         or report.get("tab_count", 0) != expected_entries
         or monaco_failed
+        or sidebar_failed
         or any(tab_failed(v) for v in (report.get("tabs") or {}).values())
     )
     return 1 if failed else 0

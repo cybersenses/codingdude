@@ -223,6 +223,20 @@ def test_dock_missing_or_invisible_panel_fails():
     assert verdict(hidden) == 1
 
 
+def test_sidebar_panel_probe_failure_fails_and_absence_is_exempt():
+    """R64: the sidebar's panel list is the click path the gate must prove.
+
+    A row click that does not open the panel is a defect only when the probe
+    ran; the key is absent from every report the walk cannot reach (a boot
+    crash, a hand-built one), and those fail through their own keys - the same
+    exemption `visible` carries.
+    """
+    assert verdict(dock_report(sidebar_panel_open={"panel": "waterfall", "opened": True})) == 0
+    assert verdict(dock_report(sidebar_panel_open={"panel": "waterfall", "opened": False})) == 1
+    # Absent: exempt (pre-R64 reports and hand-built ones).
+    assert verdict(dock_report()) == 0
+
+
 def test_panel_drift_fails():
     drift = {"nav": {"smoke": "Projects & sessions", "catalogue": "Projects"}}
     assert verdict(dock_report(panel_drift=drift)) == 1

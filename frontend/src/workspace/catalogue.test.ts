@@ -18,7 +18,7 @@
 // placement names a panel that does not exist yet, and silently renders
 // nothing when a catalogue entry has no registered component.
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_PRESET, GEOMETRY, PANELS, PRESETS, isKnownPanel, panelOptions, panelSpec, presetById } from './catalogue'
+import { DEFAULT_PRESET, GEOMETRY, PANELS, PRESETS, isKnownPanel, panelListFor, panelOptions, panelSpec, presetById } from './catalogue'
 
 // The component registry lives in Workspace.jsx; keep this list in step with it.
 const REGISTERED = [
@@ -51,6 +51,22 @@ describe('panel catalogue', () => {
   it('has unique panel ids', () => {
     const ids = PANELS.map((p) => p.id)
     expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  // R64: the sidebar's panel list is a derivation, not a second copy of the
+  // catalogue. The worked example names its ids literally so the expected
+  // shape does not come from re-reading PANELS.
+  it('panelListFor lists every panel except nav, flagged from the given open ids', () => {
+    const list = panelListFor(['chat', 'trace', 'processes', 'gone'])
+    expect(list.map((p) => p.id)).toEqual([
+      'explorer', 'editor', 'chat', 'diff', 'graph', 'planning', 'artifacts',
+      'notes', 'renders', 'terminal', 'output', 'waterfall', 'trace', 'cost',
+      'memory', 'mcp', 'config', 'standards', 'processes',
+    ])
+    expect(list.filter((p) => p.open).map((p) => p.id)).toEqual(['chat', 'trace', 'processes'])
+    // 'gone' is not a catalogue panel: an unknown id must not grow the list.
+    expect(list).toHaveLength(19)
+    expect(list.every((p) => typeof p.title === 'string' && p.title.length > 0)).toBe(true)
   })
 
   it('has unique component names', () => {

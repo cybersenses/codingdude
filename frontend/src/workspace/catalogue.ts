@@ -116,6 +116,19 @@ export function isKnownPanel(id: string): boolean {
   return panelSpec(id) !== undefined
 }
 
+/** R64: the sidebar's panel list. Every catalogue panel except the nav panel
+ * itself (the list lives *in* nav — listing it would be a row that opens the
+ * list), flagged with whether it is currently open. Pure derivation from the
+ * catalogue + a snapshot of open ids, so the row rendering stays dumb and the
+ * unknown-id case (a saved layout naming a retired panel) cannot grow the
+ * list. */
+export function panelListFor(openIds: readonly string[]): Array<PanelSpec & { open: boolean }> {
+  return PANELS.filter((p) => p.id !== 'nav').map((p) => ({
+    ...p,
+    open: openIds.includes(p.id),
+  }))
+}
+
 export type PlacementDirection = 'left' | 'right' | 'above' | 'below' | 'within'
 
 export interface Placement {
