@@ -15,6 +15,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """Engine seam: git/gh tools — reads auto, commit/branch gated, push/PR always-gated."""
 
+import os
 import subprocess
 
 from helpers import scripted
@@ -143,6 +144,8 @@ async def test_push_and_pr_always_gated(engine, workdir):
 async def test_gh_pr_reports_stub(engine, workdir, monkeypatch):
     """The gh PR flow works end-to-end against a stubbed gh binary."""
     (workdir / 'gh.bat').write_text('@echo off\necho PR 42: https://example.com/pr/42\n')
+    # #249: gh resolves via PATH (shutil.which), not cmd's cwd search.
+    monkeypatch.setenv('PATH', str(workdir) + os.pathsep + os.environ['PATH'])
 
     git_repo(workdir)
     engine.approve_pattern(engine._db.create_session(workdir, title='t'), 'gh_pr_create')
@@ -172,3 +175,25 @@ async def test_gh_pr_reports_stub(engine, workdir, monkeypatch):
         ),
     )
     assert outcome2.output == 'pr-ok'
+
+
+async def test_gh_pr_create_shell_metacharacters_never_execute(engine, workdir, monkeypatch):
+    """SEC #249: title/body are agent-generated, so they must reach gh as
+    single argv entries. The old ' '.join(argv) + shell=True handed them to
+    cmd, which executed `& echo PWNED` as a second command — real command
+    injection from repo content into the PR title."""
+    (workdir / 'gh.bat').write_text('@echo off\necho PR 42\n')
+    monkeypatch.setenv('PATH', str(workdir) + os.pathsep + os.environ['PATH'])
+
+    git_repo(workdir)
+    outcome = await engine.run(
+        prompt='make a pr',
+        workdir=workdir,
+        approvals=ApprovalPolicy(yolo=True),
+        model=tool_then_answer(
+            'gh_pr_create',
+            {'title': 'T & echo PWNED', 'body': 'B'},
+            lambda r: 'injected' if 'PWNED' in r else 'clean',
+        ),
+    )
+    assert outcome.output == 'clean'
