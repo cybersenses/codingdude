@@ -10,13 +10,13 @@ Owner: CodingDude. Last updated: R59 P4 — popout windows; classic shell retire
 | Item | Value |
 |---|---|
 | Repo | `G:\pydantic` (branch `main`) |
-| Last known-good commit | `887f657` — R59 P4 (pushed, gates green) |
+| Last known-good commit | `243d7d2` — R59 P4 + post-push review fixes (pushed, gates green) |
 | Restore tag | `pre-r59-p0` → `0c2e58e` (created before any refactor; **do not delete**) |
 | Working tree at kickoff | clean except `M ROADMAP.md` (R59 item) |
 | Risk area | `frontend/src/` — React UI |
 | Backend | untouched by R59 (Python, `src/codingdude/`) |
 | `App.jsx` size | history row, all counts are as-of-then (historical): 3288 at kickoff → **1337** after P0 → **1439** after #233 → **1488** after P1 → **1501** after the lazy-import split → **1500** after review deleted a duplicated comment block → **1498** after #232 removed the inert `refreshKey` chain → **1500** (historical) after R59 P2 passed `workdir` to the dock shell and moved `MEMORY_LIMIT` to `limits.ts` (post-push review then removed the dead `processes` prop). Today's figure is the last one. P1 is additive: `workspace/` is 485 lines across three files — `Workspace.jsx` 274, `catalogue.ts` 96, `catalogue.test.ts` 115 — and `App.jsx` only gained the flag, the shared prop bags and `React.lazy`/`Suspense` (historical: all counts as-of-then). P4 then deleted the classic shell — `App.jsx` is now 674 lines (post-push review removed the DockPanel-era dead imports), session/SSE state machine only |
-| **Shell** | since P4 there is exactly one shell: the dockview dock (`src/workspace/`); the fifteen-tab DockPanel and `panes.ts` (removed) are deleted. Escape hatch if a saved layout breaks: the boot restore degrades to the default preset; `localStorage.removeItem('cd-layout-v1')` resets by hand |
+| **Shell** | since P4 there is exactly one shell: the dockview dock (`src/workspace/`); the sixteen-tab DockPanel and `panes.ts` (removed) are deleted. Escape hatch if a saved layout breaks: the boot restore degrades to the default preset; `localStorage.removeItem('cd-layout-v1')` resets by hand |
 
 ### Progress log (P0 steps, newest last)
 
@@ -85,7 +85,7 @@ panels anywhere.
   panel needs P3 UI before a gate can test it. Do not read this as covered.
 - **P2 (complete, #243)** — all twenty catalogue panels in the dock shell; store-backed panels read one visibility-gated `sessionData` store (2 s tick, `document.hidden` pause, per-topic error capture, mount-parity first fetch) instead of per-tab polls; dock walk opens and checks all 20. Known limits: Graph keeps a per-tab effect (fetch keyed on `activePath`); `/sessions/{id}/diff` is ~14 s server-side on long-lived sessions; App's footer-level processes poll still runs in dock mode alongside the store's processes topic.
 - **P3 (complete, #244)** — layout persists to `cd-layout-v1` (debounced 400 ms saves off `onDidLayoutChange`); defensive restore (unknown panels stripped from `panels`/grid/floating/popout; corrupt, future-version or empty saves fall back to the default preset with a dismissible `data-layout-notice`); shipped presets default/debug/review/watching (placements, invariant-tested) plus user-saved presets (serialized, restored via `fromJSON`); command palette on `Ctrl+Shift+P`/`Ctrl+K` (show/hide, move, float/dock, presets, save-as, reset) replaces the P2 `+ Title` panel bar — the dock walk now opens panels *through the palette* (REQ-5 proven end-to-end). Persistence probe: `.scratch/p3_persistence_probe.py` (untracked) 9/9 — palette move survives reload, review preset round-trips, corrupt layout falls back with notice, palette reset works. Honest limit: the reload proof mutates via palette commands, not a mouse drag; dockview's own drag internals are not re-proven. `Ctrl+K` intercepts the bare chord (Monaco chord conflicts, not remapped).
-- **P4 (complete, #245)** — popout windows via `api.addPopoutGroup` over `/popout.html` (palette "Pop out <panel> to a window" / "Dock <panel>" back; blocked popups surface a notice; probed in `.scratch/p4_popout_probe.py`, which caught `show:` landing new panels inside a popout — fixed); the classic shell is deleted (flag, flex JSX, fifteen-tab DockPanel, `panes.ts` (removed)) and the dock shell is the only shell. Not done, by scope: per-project layouts, float/popout geometry memory, drag-to-popout re-probe.
+- **P4 (complete, #245)** — popout windows via `api.addPopoutGroup` over `/popout.html` (palette "Pop out <panel> to a window" / "Dock <panel>" back; blocked popups surface a notice; probed in `.scratch/p4_popout_probe.py`, which caught `show:` landing new panels inside a popout — fixed); the classic shell is deleted (flag, flex JSX, sixteen-tab DockPanel, `panes.ts` (removed)) and the dock shell is the only shell. Not done, by scope: per-project layouts, float/popout geometry memory, drag-to-popout re-probe.
 - **Rollback since P4** is git-level (revert the P4 commit); the `?layout=dock` escape hatch no longer exists because there is no second shell. A broken saved layout still degrades to the default preset at boot; `localStorage.removeItem('cd-layout-v1')` resets by hand.
 
 P0 is safe to abandon at any moment: nothing is deployed, nothing is pushed until the
@@ -176,11 +176,12 @@ panel's own #231 banner with a "root or descendant" selector, because a panel's 
 can *be* the panel root (`data-panel` and `data-poll-error` on the same div) or nested
 in its body (the store panels' `TopicPanel` does this) — a descendant-only search looks
 scoped-correct while matching nothing — which is how this gate once
-passed a failing panel. Both shapes are live under this layout since P2. A tab in the tab bar
+passed a failing panel. The descendant form is the live shape since P2; the
+root form is kept as tolerance. A tab in the tab bar
 proves a tab exists, not that its body rendered; the geometry and the recorded text are what make
 that difference visible. It then opens `README.md` in the
 editor to confirm Monaco re-lays-out when the viewport changes. The hidden-then-revealed
-variant is **not** covered — see §2 — because the dock has no control that hides a panel. Its
+variant is **not** covered — see §2 — because this smoke does not drive the palette's Hide commands. Its
 verdict has unit tests (`tests/test_ui_smoke_verdict.py`, 23) because a gate nobody exercises
 is a gate nobody knows works.
 
@@ -189,7 +190,7 @@ prove the UI looks *the same*. Load the app and confirm layout visually: login c
 projects/sessions · explorer tree · editor tabs + save/reload/diff · agent strip · chat +
 prompt row · every dock tab renders (Diff, Graph, Planning, Artifacts, Notes, Renders,
 Terminal, **Processes**, Output, Waterfall, Trace, Cost, **Memory**, MCP, Config, Standards —
-16 tabs after #227/#228) · status footer. The smoke gate writes one screenshot per tab, which
+all 20 catalogue panels) · status footer. The smoke gate writes one screenshot per tab, which
 is usually enough to eyeball this. The five preset panels should be
 nav 256 px · explorer 208 px · editor + diff stacked in the middle · chat 384 px, i.e. the
 classic arrangement with draggable splitters. Those are the widths the preset requests, and the
@@ -220,7 +221,7 @@ it first. A blank page with a console error almost always means one of:
 - Python tooling is venv-scoped: `uv run pytest` / `ruff` / `mypy`. Never assume global PATH.
 - Frontend is Vite + React 18.3.1, Tailwind v4, vitest 5. `node_modules` is present.
 - `frontend/dist` is gitignored and served from disk by the Python server.
-- No test imports `App.jsx`; the 115 vitest tests exercise `src/*.ts` pure logic only. So the
+- No test imports `App.jsx`; the 170 vitest tests exercise `src/*.ts` pure logic only. So the
   refactor cannot be caught by tests — **the build + manual parity check are the real gate.**
 
 ## 7. Traps that have bitten before

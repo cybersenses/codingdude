@@ -13,7 +13,7 @@
 //
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
-// R59 P2 (tech design #1 Â§4.3): the visibility-gated data store. One
+// R59 P2 (tech design #1 §4.3): the visibility-gated data store. One
 // scheduler loop per browser; on each tick it fetches only topics that have
 // at least one visible subscriber, pauses entirely while the document is
 // hidden, and captures per-topic errors in the snapshot so a failed fetch can

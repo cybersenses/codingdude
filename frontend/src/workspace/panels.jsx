@@ -627,7 +627,7 @@ export function StandardsPanel() {
 // ---------------------------------------------------------------------------
 // Graph — not yet a store topic: its fetch depends on activePath, which the
 // store keys (topic, session) cannot express. It keeps the retired DockPanel's
-// effect until the store grows a parametric key (P3 follow-up, noted in
+// effect until the store grows a parametric key (deviation noted in
 // code-design.md); the body is that tab body, verbatim.
 // ---------------------------------------------------------------------------
 
@@ -647,7 +647,13 @@ export function GraphPanel() {
             const g = await call(`/sessions/${sessionId}/callgraph?path=${encodeURIComponent(activePath)}`)
             setData((d) => ({ ...d, callgraph: g, callgraphPath: activePath, graphError: undefined }))
           } catch (err) {
-            if (activePath === (data.callgraphPath || activePath)) setData((d) => ({ ...d, graphError: String(err instanceof Error ? err.message : err) }))
+            // Guard: only stamp graphError when there is no successful
+            // callgraph for this path (a success for the same path clears it;
+            // a success for a newer path must not be overwritten by this
+            // older failure).
+            if (data.callgraphPath === undefined || data.callgraphPath === activePath) {
+              setData((d) => ({ ...d, graphError: String(err instanceof Error ? err.message : err) }))
+            }
           }
           try {
             const t = await call(`/sessions/${sessionId}/trust?path=${encodeURIComponent(activePath)}`)

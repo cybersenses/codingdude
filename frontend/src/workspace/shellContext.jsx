@@ -24,9 +24,10 @@ import { createContext, useContext } from 'react'
 // panels inside the provider's tree, so context reaches them wherever they
 // are docked.
 //
-// P4 caveat: a POPOUT panel is a separate document with its own React root
-// and will not see this provider. Popout support must move this to a
-// module-level store at that point (tech design §4.3/§4.7).
+// P4 note: popout panels keep this context. Dockview reparents the
+// React-owned DOM into the popout window rather than mounting a new React
+// root, so the provider still reaches them (verified by the P4 popout probe,
+// which rendered store-backed panels inside a popout without crashing).
 export const WorkspaceContext = createContext(null)
 
 export function useShell() {

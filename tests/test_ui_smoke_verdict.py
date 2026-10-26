@@ -53,8 +53,8 @@ def test_panel_banner_selector_matches_the_root_and_nested_shapes():
 
     The nested alternative is the live shape — every store-backed panel
     (`TopicPanel` in workspace/panels.jsx) renders its banner inside the
-    `data-panel` root — and the root shape remains for panels whose banner is
-    the whole body. Both are pinned.
+    `data-panel` root. The root shape is kept as tolerance for a panel that
+    mounts the banner as its whole body. Both forms are pinned.
 
     This pins the selector *string*; it does not run a browser. What it does
     guarantee is that the attribute is not retyped here: the halves are built
