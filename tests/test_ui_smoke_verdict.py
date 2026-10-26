@@ -257,6 +257,44 @@ def test_walk_dock_still_writes_the_sidebar_probe():
     assert "panel_id != SIDEBAR_PROBE_PANEL" in src
 
 
+def test_chat_resize_probe_failure_fails_and_absence_is_exempt():
+    """R65: the off-centre sash drag is the check that keeps the hit area real.
+
+    `resized: False` means the drag moved nothing — either the sash is gone or
+    the CSS hit-area skirt regressed. Absent is exempt for the same reason as
+    the sidebar probe: reports the walk cannot reach fail through their own
+    keys, not through this one.
+    """
+    ok = {"width_before": 384, "width_after": 504, "resized": True}
+    assert verdict(dock_report(chat_resize=ok)) == 0
+    stuck = {"width_before": 384, "width_after": 384, "resized": False}
+    assert verdict(dock_report(chat_resize=stuck)) == 1
+    missing = {"resized": False, "reason": "chat panel not found"}
+    assert verdict(dock_report(chat_resize=missing)) == 1
+    # Absent: exempt (pre-R65 reports and hand-built ones).
+    assert verdict(dock_report()) == 0
+
+
+def test_walk_dock_still_writes_the_resize_probe_and_drags_off_centre():
+    """R65: deleting the probe — or centring its drag — would read clean.
+
+    `verdict()` exempts an absent `chat_resize`, so removing the probe from
+    `_walk_dock` passes silently. Worse, the probe only guards the *hit-area*
+    affordance while its drag starts at the sash centre: the bare 4px element
+    is grabbable there, so a centred drag passes even with the CSS gone. The
+    off-centre offset is therefore pinned too — it is the part that makes the
+    probe a test of R65 rather than of dockview.
+    """
+    src = (Path(__file__).resolve().parents[1] / "tools" / "ui_smoke.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'report["chat_resize"]' in src
+    assert "_panel_resize(page, report)" in src
+    # The off-centre start: 5px right of the sash centre — outside the bare
+    # 4px element, inside the ±4px skirt.
+    assert '+ 5' in src
+
+
 def test_panel_drift_fails():
     drift = {"nav": {"smoke": "Projects & sessions", "catalogue": "Projects"}}
     assert verdict(dock_report(panel_drift=drift)) == 1

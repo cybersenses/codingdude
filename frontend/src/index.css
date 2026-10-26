@@ -188,8 +188,17 @@
 
   --dv-separator-border: var(--ss-border);
   --dv-tab-divider-color: var(--ss-border);
-  --dv-sash-color: var(--ss-border);
+  /* R65: the resting sash was --ss-border, i.e. the same colour as the 1px
+     separator it sits on — the resize handle was invisible, and a 4px
+     grabbable strip nobody can see reads, in use, as "the column is not
+     resizable". One step brighter than the border: findable, not loud. */
+  --dv-sash-color: color-mix(in srgb, var(--ss-muted-foreground) 35%, transparent);
   --dv-active-sash-color: var(--ss-primary);
+  /* dockview's hover highlight waits 0.5s before showing (its own default
+     delay) — a full second-class citizen of an affordance. Immediate: the
+     highlight is the "you found the handle" feedback. */
+  --dv-active-sash-transition-delay: 0s;
+  --dv-active-sash-transition-duration: 120ms;
   --dv-scrollbar-background-color: var(--ss-border);
   --dv-icon-hover-background-color: var(--ss-chrome);
   --dv-floating-group-border: 1px solid var(--ss-border);
@@ -198,5 +207,34 @@
 
   /* The dock is themed by tokens, not by a fixed colour scheme. */
   color-scheme: inherit;
+}
+
+/* R65: the sash hit area. dockview ships a ±4px ::before skirt only under
+   `@media (pointer: coarse)` — touch. With a mouse the grabbable strip is the
+   bare 4px element, which is why the chat column read as un-resizable: the
+   drag works, the target does not. A matching ::after skirt for fine pointers
+   (pseudo-element hits count as hits on the element itself). :not() on both
+   spellings of dockview's disabled class, so a locked sash stays inert. */
+@media (pointer: fine) {
+  [data-workspace='dock'] .dv-split-view-container .dv-sash-container .dv-sash:not(.disabled):not(.dv-disabled)::after {
+    content: '';
+    position: absolute;
+  }
+  /* dv-horizontal container = columns side by side, sash is a vertical bar:
+     widen left/right. */
+  [data-workspace='dock'] .dv-split-view-container.dv-horizontal > .dv-sash-container > .dv-sash:not(.disabled):not(.dv-disabled)::after {
+    top: 0;
+    bottom: 0;
+    left: -4px;
+    right: -4px;
+  }
+  /* dv-vertical container = rows stacked, sash is a horizontal bar: widen
+     top/bottom. */
+  [data-workspace='dock'] .dv-split-view-container.dv-vertical > .dv-sash-container > .dv-sash:not(.disabled):not(.dv-disabled)::after {
+    left: 0;
+    right: 0;
+    top: -4px;
+    bottom: -4px;
+  }
 }
 

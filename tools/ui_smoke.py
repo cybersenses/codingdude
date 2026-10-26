@@ -311,6 +311,11 @@ def _walk_dock(page, report: dict, base: str, workdir: str, shots: Path | None) 
     except Exception:  # the gate reports the miss, it does not raise
         report["sidebar_panel_open"] = {"panel": SIDEBAR_PROBE_PANEL, "opened": False}
 
+    # R65: run before the palette walk opens more panels — after it the chat
+    # column may share its group with a palette-docked tab and its bounding
+    # box is the wrong thing to measure.
+    _panel_resize(page, report)
+
     found = 0
     # The preset panels first (their tabs exist on boot); the rest are opened
     # through the command palette (P3) so the walk proves two exit criteria —
@@ -368,6 +373,64 @@ def _walk_dock(page, report: dict, base: str, workdir: str, shots: Path | None) 
     report["tab_count"] = found
     if not report.get("crashed"):
         _monaco_reflow(page, report, shots)
+
+
+def _panel_resize(page, report: dict) -> None:
+    """R65: a column must widen by dragging its sash — from off-centre.
+
+    dockview's sash is a 4px element with no hit-area expansion for fine
+    pointers (its stylesheet only expands the touch case), and the resting
+    colour this app maps to --ss-border is invisible on the dark theme — in
+    use that read as "the chat column is not resizable". index.css adds a
+    ±4px transparent skirt around the bar, so the drag below starts 5px off
+    the sash centre: outside the bare 4px element, inside the expanded hit
+    area. Without the skirt the mousedown lands on the panel body, nothing
+    drags, the width does not change, and the gate goes red — which is the
+    regression this step exists to catch (the drag itself was probed working
+    first: .scratch/probe_chat_resize.py, 384 → 280 → 480, persisted).
+
+    Chat is the panel the request named; the sash it shares with the editor
+    column is the same mechanism every column uses, so one probe covers the
+    affordance without walking all splitters.
+    """
+    tab = _dock_tab(page, "Chat")
+    if tab is not None:
+        tab.click()  # its group may hold a palette-docked sibling by now
+        page.wait_for_timeout(300)
+    chat = page.locator('[data-panel="chat"]')
+    before = chat.first.bounding_box() if chat.count() else None
+    if not before:
+        report["chat_resize"] = {"resized": False, "reason": "chat panel not found"}
+        return
+    sashes = [
+        b
+        for b in (page.locator(".dv-sash").nth(i).bounding_box() for i in range(page.locator(".dv-sash").count()))
+        # A vertical bar (4px wide) at or left of the chat column's left edge;
+        # the rightmost such bar is the editor/chat divider.
+        if b and b["width"] < 20 and b["x"] <= before["x"] + 5
+    ]
+    if not sashes:
+        report["chat_resize"] = {"resized": False, "reason": "no sash left of chat"}
+        return
+    sash = max(sashes, key=lambda b: b["x"])
+    x = sash["x"] + sash["width"] / 2 + 5  # off-centre on purpose — see above
+    y = sash["y"] + sash["height"] / 2
+    page.mouse.move(x, y)
+    page.wait_for_timeout(150)
+    page.mouse.down()
+    for step in range(1, 13):  # 120px left, in steps so the sash logic follows
+        page.mouse.move(x - 10 * step, y)
+        page.wait_for_timeout(30)
+    page.mouse.up()
+    page.wait_for_timeout(600)
+    after = chat.first.bounding_box()
+    report["chat_resize"] = {
+        "width_before": round(before["width"]),
+        "width_after": round(after["width"]) if after else None,
+        # Half the drag distance, not all of it: the editor column and the
+        # remainder absorb part of the move, so an exact delta would flake.
+        "resized": bool(after and after["width"] - before["width"] >= 60),
+    }
 
 
 def _no_readme_reason(report: dict) -> str:
@@ -523,6 +586,11 @@ def verdict(report: dict) -> int:
     # hand-built) fail through their own keys, like `visible`.
     sidebar = report.get("sidebar_panel_open")
     sidebar_failed = isinstance(sidebar, dict) and sidebar.get("opened") is not True
+    # R65: the off-centre sash drag. Same exemption pattern as the sidebar
+    # probe: absent means the step could not run, which fails through its own
+    # reason key when it ran and did not pass.
+    resize = report.get("chat_resize")
+    resize_failed = isinstance(resize, dict) and resize.get("resized") is not True
     failed = (
         report.get("crashed") is not None
         or report.get("page_errors")
@@ -533,6 +601,7 @@ def verdict(report: dict) -> int:
         or report.get("tab_count", 0) != expected_entries
         or monaco_failed
         or sidebar_failed
+        or resize_failed
         or any(tab_failed(v) for v in (report.get("tabs") or {}).values())
     )
     return 1 if failed else 0
