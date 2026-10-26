@@ -211,12 +211,19 @@ Notes:
 
 ## 6. Frontend (frontend/src)
 
-React + Vite + Tailwind SPA; `api.ts` is the typed HTTP layer. Chat pane with
-approval/plan/choice/spec/artifact cards; left rail: sessions, file tree,
-Monaco editor (save honors the mtime staleness guard). Right panel tabs
-(listed in USER-MANUAL §7) consume the endpoints in §3.3 one-to-one. SSE is
-used for run events and artifact deltas. Tests: vitest; build output is
-`frontend/dist`, served by the server.
+React + Vite + Tailwind SPA; `api.ts` is the typed HTTP layer. The workspace is
+a single dockable shell (`src/workspace/`, dockview-react 8.6.1 pinned): every
+surface is a panel registered in `workspace/catalogue.ts` (single source of
+truth for panels and presets), arranged by `Workspace.jsx`, moved via the
+command palette (`Ctrl+Shift+P`) or drag, persistable to localStorage
+(`layoutStore.ts`), and poppable to OS windows (`/popout.html` +
+`api.addPopoutGroup`). Data flows through the visibility-gated store
+(`store/sessionData.ts`, one 2 s scheduler, visible topics only) rather than
+per-tab polls; chat approval/plan/choice/spec/artifact cards render in the Chat
+panel. SSE is used for run events and artifact deltas. `App.jsx` keeps only the
+session/SSE state machine and login. Tests: vitest; a Playwright smoke gate
+(`tools/ui_smoke.py`) walks every catalogue panel against the live bundle;
+build output is `frontend/dist`, served by the server.
 
 ## 7. Security architecture
 

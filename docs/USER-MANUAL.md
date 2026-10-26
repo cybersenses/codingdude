@@ -174,24 +174,28 @@ status `completed` / `interrupted` / `failed`.
   KEY/TOKEN/SECRET/PASSWORD/CREDENTIAL variables; keys are never printed.
 - **Budget cap.** Set a USD cap per run; the run hard-stops when reached.
 
-### 6.1 Arranging the workspace (dockable layout)
+### 6.1 Arranging the workspace (dockable panels)
 
-Add `?layout=dock` to the URL for the dockable workspace (the default layout
-remains the classic fixed one while the dock shell matures):
+The workspace is a single dockable shell — every surface is a panel:
 
 - **Every surface is a panel** — projects, explorer, editor, chat and all §7
   tabs — draggable between groups, splittable on any edge, floatable.
+- **Popout windows** — pop any panel out to its own OS window (palette:
+  "Pop out <panel> to a window", or drag the tab out) — e.g. Cost on a second
+  monitor. "Dock <panel>" in the palette brings it back. A blocked popout
+  (usually a popup blocker) surfaces a dismissible notice.
 - **Arrangement persists** per browser (`cd-layout-v1` in localStorage) and
   survives reload. Saves are debounced 400 ms.
 - **Command palette** — `Ctrl+Shift+P` (or `Ctrl+K`): Show/Hide any panel,
-  Move active panel left/right/above/below, Float/Dock, apply a preset
-  (Default, Debug, Review, Watching), save the current layout as a named
-  preset, or Reset layout. This is also the keyboard-only path for every move.
+  Move active panel left/right/above/below, Float/Dock, pop out, apply a
+  preset (Default, Debug, Review, Watching), save the current layout as a
+  named preset, or Reset layout. This is also the keyboard-only path for
+  every move.
 - **Resilience** — a corrupt or future-versioned saved layout falls back to
   the default preset with a dismissible notice; panels the current build no
   longer ships are dropped from a restore while keeping the rest.
 
-## 7. UI reference — right panel tabs
+## 7. UI reference — panels
 
 | Tab | What it shows |
 |---|---|
@@ -211,8 +215,9 @@ remains the classic fixed one while the dock shell matures):
 | **Config** | Model lineup + provider keys editor, with key verification. |
 | **Standards** | Directives editor, skills editor (create/edit/delete), review checklist. |
 
-Left panel: sessions list and file explorer (tree, editor with diff toggle —
-manual saves are guarded against clobbering concurrent agent edits).
+The projects/sessions and explorer panels sit on the left by default (the
+layout is yours to rearrange — see §6.1); the editor has a diff toggle, and
+manual saves are guarded against clobbering concurrent agent edits.
 
 ## 8. Extending CodingDude
 

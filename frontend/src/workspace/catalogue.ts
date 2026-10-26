@@ -21,7 +21,18 @@
 // Scope note: every catalogue entry has a registered component — a spec with
 // no component would be a panel the UI offers and then fails to render
 // (enforced by catalogue.test.ts against the Workspace registry list).
-import { PANE_SPECS } from '../panes'
+
+// R59 P4: geometry inherited from the retired classic layout (panes.ts is
+// gone; the dock shell owns all resizing). min = the clamp a panel can be
+// dragged to; fallback = the classic layout's default width, kept so a user
+// migrating from the classic shell sees the same first-boot proportions
+// (REQ-7).
+export const GEOMETRY = {
+  sidebar: { min: 180, fallback: 256 },
+  rail: { min: 140, fallback: 208 },
+  right: { min: 280, fallback: 384 },
+  dock: { min: 120, fallback: 240 },
+} as const
 
 export type PanelId = 'nav' | 'explorer' | 'editor' | 'chat' | 'diff' | 'graph'
   | 'planning' | 'artifacts' | 'notes' | 'renders' | 'terminal' | 'output'
@@ -46,14 +57,14 @@ export interface PanelSpec {
 
 // Order is the palette order (P3).
 export const PANELS: readonly PanelSpec[] = [
-  { id: 'nav', title: 'Projects & sessions', component: 'nav', minWidth: PANE_SPECS.sidebar.min },
-  { id: 'explorer', title: 'Explorer', component: 'explorer', minWidth: PANE_SPECS.rail.min },
+  { id: 'nav', title: 'Projects & sessions', component: 'nav', minWidth: GEOMETRY.sidebar.min },
+  { id: 'explorer', title: 'Explorer', component: 'explorer', minWidth: GEOMETRY.rail.min },
   // Monaco restores its own scroll/undo from the model, but keeping the node
   // alive avoids a re-mount flash on every move (REQ-4).
   { id: 'editor', title: 'Editor', component: 'editor', renderer: 'always' },
   // Prompt draft + streaming transcript + scroll position must survive a move.
-  { id: 'chat', title: 'Chat', component: 'chat', renderer: 'always', minWidth: PANE_SPECS.right.min },
-  { id: 'diff', title: 'Diff', component: 'diff', minHeight: PANE_SPECS.dock.min },
+  { id: 'chat', title: 'Chat', component: 'chat', renderer: 'always', minWidth: GEOMETRY.right.min },
+  { id: 'diff', title: 'Diff', component: 'diff', minHeight: GEOMETRY.dock.min },
   // R59 P2: the remaining dock tabs, all closable-but-not-in-the-default-
   // preset; they are opened on demand from the command palette (P3), not on
   // boot. renderer:'always' marks stateful/iframe panels whose DOM must
@@ -87,8 +98,8 @@ export function panelSpec(id: string): PanelSpec | undefined {
  *
  * `AddPanelOptions` extends `Partial<Constraints>`, so the catalogue's
  * minimums land on dockview's own resize clamp instead of being inert data —
- * without them a docked panel could be dragged below the size the classic
- * layout's PANE_SPECS clamp allows.
+ * without them a docked panel could be dragged below the size the geometry
+ * block above allows.
  */
 export function panelOptions(spec: PanelSpec): Record<string, unknown> {
   return {
@@ -118,7 +129,7 @@ export interface Placement {
 }
 
 // REQ-7: first boot reproduces today's screen, so the sizes are the classic
-// layout's own persisted fallbacks rather than new numbers:
+// layout's own persisted fallbacks (GEOMETRY) rather than new numbers:
 //
 //   ┌────────┬──────────┬────────────────────┬─────────┐
 //   │ nav    │ explorer │ editor             │ chat    │
@@ -131,11 +142,11 @@ export interface Placement {
 // an internal shape we cannot verify from here, and a placement list is both
 // readable and testable.
 export const DEFAULT_PRESET: readonly Placement[] = [
-  { id: 'nav', initialWidth: PANE_SPECS.sidebar.fallback },
-  { id: 'explorer', direction: 'right', referencePanel: 'nav', initialWidth: PANE_SPECS.rail.fallback },
+  { id: 'nav', initialWidth: GEOMETRY.sidebar.fallback },
+  { id: 'explorer', direction: 'right', referencePanel: 'nav', initialWidth: GEOMETRY.rail.fallback },
   { id: 'editor', direction: 'right', referencePanel: 'explorer' },
-  { id: 'chat', direction: 'right', referencePanel: 'editor', initialWidth: PANE_SPECS.right.fallback },
-  { id: 'diff', direction: 'below', referencePanel: 'editor', initialHeight: PANE_SPECS.dock.fallback },
+  { id: 'chat', direction: 'right', referencePanel: 'editor', initialWidth: GEOMETRY.right.fallback },
+  { id: 'diff', direction: 'below', referencePanel: 'editor', initialHeight: GEOMETRY.dock.fallback },
 ]
 
 // R59 P3 (tech design §4.5): the other shipped presets. Every entry follows
@@ -154,20 +165,20 @@ export const PRESETS: readonly NamedPreset[] = [
     id: 'debug',
     title: 'Debug',
     placements: [
-      { id: 'nav', initialWidth: PANE_SPECS.sidebar.min },
+      { id: 'nav', initialWidth: GEOMETRY.sidebar.min },
       { id: 'editor', direction: 'right', referencePanel: 'nav' },
       // Graph + Trace under the editor, Cost stacked below them.
       { id: 'graph', direction: 'below', referencePanel: 'editor' },
       { id: 'trace', direction: 'within', referencePanel: 'graph' },
-      { id: 'cost', direction: 'below', referencePanel: 'graph', initialHeight: PANE_SPECS.dock.min },
-      { id: 'chat', direction: 'right', referencePanel: 'editor', initialWidth: PANE_SPECS.right.min },
+      { id: 'cost', direction: 'below', referencePanel: 'graph', initialHeight: GEOMETRY.dock.min },
+      { id: 'chat', direction: 'right', referencePanel: 'editor', initialWidth: GEOMETRY.right.min },
     ],
   },
   {
     id: 'review',
     title: 'Review',
     placements: [
-      { id: 'nav', initialWidth: PANE_SPECS.sidebar.min },
+      { id: 'nav', initialWidth: GEOMETRY.sidebar.min },
       { id: 'editor', direction: 'right', referencePanel: 'nav' },
       // Diff | Waterfall | Output three-up (tech design §4.5).
       { id: 'diff', direction: 'below', referencePanel: 'editor' },
@@ -179,12 +190,12 @@ export const PRESETS: readonly NamedPreset[] = [
     id: 'watching',
     title: 'Watching',
     placements: [
-      { id: 'nav', initialWidth: PANE_SPECS.sidebar.min },
-      { id: 'chat', direction: 'right', referencePanel: 'nav', initialWidth: PANE_SPECS.right.fallback },
+      { id: 'nav', initialWidth: GEOMETRY.sidebar.min },
+      { id: 'chat', direction: 'right', referencePanel: 'nav', initialWidth: GEOMETRY.right.fallback },
       // Editor + Diff centre, Processes bottom (tech design §4.5).
       { id: 'editor', direction: 'right', referencePanel: 'chat' },
       { id: 'diff', direction: 'below', referencePanel: 'editor' },
-      { id: 'processes', direction: 'below', referencePanel: 'diff', initialHeight: PANE_SPECS.dock.min },
+      { id: 'processes', direction: 'below', referencePanel: 'diff', initialHeight: GEOMETRY.dock.min },
     ],
   },
 ]

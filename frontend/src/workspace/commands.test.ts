@@ -51,6 +51,10 @@ function fakeApi(overrides: Partial<CommandApi> = {}): CommandApi & { calls: str
       return opts
     },
     addFloatingGroup: (item: unknown) => calls.push(`float:${String((item as { id: string }).id)}`),
+    addPopoutGroup: (item: unknown) => {
+      calls.push(`popout:${String((item as { id: string }).id)}`)
+      return Promise.resolve(true)
+    },
     removePanel: (p: unknown) => {
       calls.push(`removePanel:${String((p as { id: string }).id)}`)
       const i = panels.findIndex((x) => x.id === (p as { id: string }).id)
@@ -78,10 +82,23 @@ describe('commandList', () => {
     expect(cmds.find((c) => c.id === 'hide:trace')).toBeUndefined()
   })
 
-  it('offers the four moves and Float for the active panel only', () => {
+  it('offers the four moves, Float and Pop out for the active panel only', () => {
     const cmds = commandList(fakeApi(), ctx())
     const moves = cmds.filter((c) => c.group === 'move').map((c) => c.id)
-    expect(moves).toEqual(['move:editor:left', 'move:editor:right', 'move:editor:above', 'move:editor:below', 'float:editor'])
+    expect(moves).toEqual(['move:editor:left', 'move:editor:right', 'move:editor:above', 'move:editor:below', 'float:editor', 'popout:editor'])
+  })
+
+  it('offers Dock (not Pop out) when the active panel is popped out', () => {
+    const api = fakeApi()
+    ;(api as unknown as { getPanel: unknown }).getPanel = (id: string) => ({
+      id,
+      api: { setActive: () => {}, moveTo: () => {} },
+      group: { id: 'g9', api: { location: { type: 'popout' } } },
+    })
+    const cmds = commandList(api, ctx())
+    expect(cmds.find((c) => c.id === 'dock:editor')?.label).toBe('Dock Editor')
+    expect(cmds.find((c) => c.id === 'popout:editor')).toBeUndefined()
+    expect(cmds.find((c) => c.id === 'float:editor')).toBeUndefined()
   })
 
   it('omits moves when no panel is active', () => {
@@ -134,6 +151,25 @@ describe('runCommand', () => {
     expect(api.calls).toEqual(['addPanel:trace:null', 'setActive:trace'])
   })
 
+  it('shows into the grid when the active panel is popped out', () => {
+    // R59 P4: referencing the active panel while it lives in a popout window
+    // would pull the new panel into that OS window — probed live. The command
+    // must fall back to a grid-resident panel instead.
+    const api = fakeApi()
+    const panels = (api as unknown as { panels: Array<{ id: string }> }).panels
+    const popGroup = { id: 'g9', api: { location: { type: 'popout' } } }
+    ;(api as unknown as { getPanel: unknown }).getPanel = (id: string) => ({
+      id,
+      api: {
+        setActive: () => (api as unknown as { calls: string[] }).calls.push(`setActive:${id}`),
+        moveTo: () => {},
+      },
+      group: id === 'nav' ? { id: 'g1', api: { location: { type: 'grid' } } } : popGroup,
+    })
+    expect(runCommand('show:trace', api, ctx())).toBe(true)
+    expect(api.calls[0]).toBe('addPanel:trace:{"direction":"within","referencePanel":"nav"}')
+  })
+
   it('hides an open panel', () => {
     const api = fakeApi()
     expect(runCommand('hide:chat', api, ctx())).toBe(true)
@@ -156,6 +192,22 @@ describe('runCommand', () => {
     const api = fakeApi()
     expect(runCommand('float:chat', api, ctx())).toBe(true)
     expect(api.calls).toEqual(['float:chat', 'setActive:chat'])
+  })
+
+  it('pops the panel out to its own window', () => {
+    const api = fakeApi()
+    expect(runCommand('popout:chat', api, ctx())).toBe(true)
+    expect(api.calls).toEqual(['popout:chat'])
+    return new Promise<void>((resolve) =>
+      setTimeout(() => {
+        expect(api.calls).toEqual(['popout:chat', 'setActive:chat'])
+        resolve()
+      }, 0),
+    )
+  })
+
+  it('refuses to pop out an unknown panel', () => {
+    expect(runCommand('popout:nope', fakeApi(), ctx())).toBe(false)
   })
 
   it('delegates presets to the shell and returns false for unknown ids', () => {

@@ -15,6 +15,5 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 // #229: the memory list grows forever (one row per remembered fact/solution)
 // and re-renders wholesale on every poll — the cap is what a human scrolls
-// anyway. One constant, shared by the classic dock (App.jsx) and the dock
-// workspace's memory panel.
+// anyway. One constant, shared by the dock workspace's memory panel.
 export const MEMORY_LIMIT = 200
