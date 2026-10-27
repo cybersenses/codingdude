@@ -51,6 +51,22 @@ describe('sessionData store', () => {
     store.dispose()
   })
 
+  it('polls a topic keyed by a workdir containing a colon (R68 planning)', async () => {
+    // The store key concatenates the scope id and topic; the tick re-splits
+    // it to find the fetcher. A scope id that itself contains a colon — a
+    // Windows workdir like 'G:\proj' — broke that split: planning fetched
+    // once on subscribe and then never again, so agent writes never showed.
+    const f = fetchers({ planning: async (wd) => ({ wd }) })
+    const store = createSessionStore(f)
+    const cb = vi.fn()
+    sub(store, 'planning', 'G:\\proj'); store.subscribe('planning', 'G:\\proj', cb)
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(f.planning).toHaveBeenCalledWith('G:\\proj')
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(f.planning.mock.calls.length).toBeGreaterThanOrEqual(2)
+    store.dispose()
+  })
+
   it('never fetches a topic with no subscribers', async () => {
     const f = fetchers({ cost: async () => ({}) })
     const store = createSessionStore(f)

@@ -146,15 +146,21 @@ function ChatPanel() {
 // topic — Output + Waterfall both read `output` — unpolled). `countedRef`
 // mirrors whether THIS subscriber is currently counted; the first sync(true)
 // after mount performs the subscribe-time +1.
-function visible(topic, Panel) {
+// `keyOf` (optional) picks which shell value keys the visibility count.
+// Session-scoped topics (the default) count under the session id; R68's
+// `planning` topic is workdir-scoped and must count under the workdir —
+// exactly the key its panel subscribes to — or the store would never poll it.
+function visible(topic, Panel, keyOf) {
   function GatedPanel(props) {
-    const { store: shellStore, sessionId } = useShell()
+    const shell = useShell()
+    const { store: shellStore } = shell
+    const key = keyOf ? keyOf(shell) : shell.sessionId
     const panelApi = props.api
     const countedRef = useRef(false) // not yet counted visible
     useEffect(() => {
       const sync = (isVisible) => {
         if (isVisible === countedRef.current) return
-        shellStore.setVisible(topic, sessionId, isVisible)
+        shellStore.setVisible(topic, key, isVisible)
         countedRef.current = isVisible
       }
       if (!panelApi || typeof panelApi.onDidVisibilityChange !== 'function') {
@@ -168,7 +174,7 @@ function visible(topic, Panel) {
         disp.dispose()
         sync(false)
       }
-    }, [shellStore, sessionId, panelApi])
+    }, [shellStore, key, panelApi])
     return <Panel {...props} />
   }
   return GatedPanel
@@ -184,6 +190,9 @@ const GatedTracePanel = visible('trace', TracePanel)
 const GatedOutputPanel = visible('output', OutputPanel)
 const GatedWaterfallPanel = visible('output', WaterfallPanel)
 const GatedProcessesPanel = visible('processes', ProcessesPanel)
+// R68 (#256): planning polls while visible, keyed by workdir — its store
+// topic is project-scoped, so the visibility count must use the same key.
+const GatedPlanningPanel = visible('planning', PlanningPanel, (s) => s.workdir || null)
 
 // Module-level so the registry identity is stable across renders. Every key
 // must have a catalogue entry and vice versa (catalogue.test.ts enforces it).
@@ -194,7 +203,7 @@ const COMPONENTS = {
   chat: ChatPanel,
   diff: GatedDiffPanel,
   graph: GraphPanel,
-  planning: PlanningPanel,
+  planning: GatedPlanningPanel,
   artifacts: ArtifactsPanel,
   notes: NotesPanel,
   renders: GatedRendersPanel,
