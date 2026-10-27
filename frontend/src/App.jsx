@@ -20,6 +20,7 @@ import { mergeProcesses } from './processes'
 import { pickPending } from './pending'
 import { clearPendingPrompts } from './askUser'
 import { pendingArtifacts } from './artifacts'
+import { parseRevealArgs } from './citations'
 
 // Chrome (fixed surfaces) and panels (dockable in P1). App keeps only the
 // session/SSE state machine and the layout; every visible surface lives in
@@ -423,6 +424,12 @@ export default function App() {
               // matched to ITS tool's completion (parallel tool calls mean a
               // sibling's END must not clear the gate card).
               last.inFlight = { ...(last.inFlight || {}), [ev.tool_name]: ev.args || '' }
+              // R69 #261: reveal_code is pure UI signalling — its args ARE the
+              // payload. Workspace owns the listener (panel + editor).
+              if (ev.tool_name === 'reveal_code') {
+                const target = parseRevealArgs(ev.args)
+                if (target) window.dispatchEvent(new CustomEvent('cd-open-file', { detail: target }))
+              }
             }
             if (ev.type === 'TOOL_CALL_END') {
               last.toolEvents = [...(last.toolEvents || []), { tool_name: ev.tool_name, result: ev.result }]

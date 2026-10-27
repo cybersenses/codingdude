@@ -22,7 +22,7 @@ import { ACTIONS, buildActionPrompt } from '../aiActions'
 // R59 P0: moved verbatim out of App.jsx. Main area: tab strip + Monaco editor /
 // diff for the shared workspace; becomes the `editor` panel in P1.
 export function EditorPane({ ws, onAsk }) {
-  const { sessionId, tabs, setTabs, draft, setDraft, dirty, setDirty, notice, setNotice, diff, setDiff, active, openFile } = ws
+  const { sessionId, tabs, setTabs, draft, setDraft, dirty, setDirty, notice, setNotice, diff, setDiff, active, openFile, revealAt } = ws
   const [selection, setSelection] = useState('')
 
   function activate(path) {
@@ -141,6 +141,7 @@ export function EditorPane({ ws, onAsk }) {
               value={draft}
               onChange={(v) => { setDraft(v); setDirty(true) }}
               onSelectionChange={setSelection}
+              reveal={revealAt && active && revealAt.path === active.path ? revealAt : null}
               height="100%"
             />
           )}

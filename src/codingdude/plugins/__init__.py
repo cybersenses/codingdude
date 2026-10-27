@@ -63,6 +63,7 @@ from codingdude.planning import build_planning_toolset
 from codingdude.refactor import build_refactor_toolset
 from codingdude.references import build_references_toolset
 from codingdude.repo_map import build_repo_map_toolset
+from codingdude.reveal import build_reveal_toolset
 from codingdude.roadmap import RoadmapStore, build_roadmap_toolset
 from codingdude.sandbox import build_sandbox_toolset
 from codingdude.semantic import SemanticIndex, build_semantic_toolset
@@ -199,6 +200,7 @@ async def build_all(ctx: PluginContext) -> list[AbstractToolset]:
     toolsets.append(build_archlint_toolset(ctx.workdir, ArchLint(db=ctx.db, workdir=str(ctx.workdir))))
     toolsets.append(build_deadcode_toolset(ctx.workdir))
     toolsets.append(build_repo_map_toolset(ctx.workdir))
+    toolsets.append(build_reveal_toolset(ctx.workdir))
     toolsets.append(build_knip_toolset(ctx.workdir))
     toolsets.append(build_ci_toolset(ctx.workdir))
     toolsets.append(build_audit_toolset(ctx.workdir))
