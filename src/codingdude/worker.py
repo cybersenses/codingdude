@@ -131,6 +131,38 @@ async def drain_after_terminal(engine) -> None:
     await engine.drain_post_run(timeout=_DRAIN_BEFORE_TERMINAL_S)
 
 
+async def _resolve_worker_slots(config):
+    """The config-driven model slots — (extraction, vision) — via one seam.
+
+    Both slots resolve through engine._model_from_name WITH
+    config.models.fallback_base_url (#212: worker and engine must never
+    disagree on provider routing). R72 #265: the extraction slot previously
+    omitted fallback_base_url, so a coding-plan-only key made every run-end
+    memory extraction POST to the standard Z.ai endpoint and 400.
+    """
+    log = logging.getLogger('codingdude.worker')
+    extraction = None
+    try:
+        extraction = await _resolve_model(
+            config.models.subagent, config.models.fallback_base_url,
+            config.providers,
+        )
+    except Exception:  # noqa: BLE001 — extraction is best-effort
+        log.warning(
+            'extraction model unavailable; memory extraction disabled',
+            exc_info=True)
+    vision = None
+    if config.models.vision:
+        try:
+            vision = await _resolve_model(
+                config.models.vision, config.models.fallback_base_url,
+                config.providers,
+            )
+        except Exception:  # noqa: BLE001 — image input is best-effort
+            vision = None
+    return extraction, vision
+
+
 async def _resolve_model(
     name: str | None, base_url: str | None = None, providers: dict | None = None,
 ):
@@ -380,25 +412,12 @@ async def run(args) -> int:
         budget_cap_usd=args.budget,
         extraction_model=None,
     )
-    # Memory extraction runs on the cheap subagent model when configured.
-    try:
-        engine.extraction_model = await _resolve_model(
-            config.models.subagent, providers=config.providers)
-    except Exception:  # noqa: BLE001 — extraction is best-effort
-        logging.getLogger('codingdude.worker').warning(
-            'extraction model unavailable; memory extraction disabled',
-            exc_info=True)
+    # Config-driven slots (extraction, vision) resolve through the shared
+    # slots seam (#265: same endpoint routing as the engine's own slots).
+    extraction_model, vision_model = await _resolve_worker_slots(config)
+    engine.extraction_model = extraction_model
     model = await _resolve_model(
         args.model, config.models.fallback_base_url, config.providers)
-    vision_model = None
-    if config.models.vision:
-        try:
-            vision_model = await _resolve_model(
-                config.models.vision, config.models.fallback_base_url,
-                config.providers,
-            )
-        except Exception:  # noqa: BLE001 — image input is best-effort
-            vision_model = None
 
     log = logging.getLogger('codingdude.worker')
     log.info('WORKER_START pid=%s session=%s model=%s', os.getpid(), args.session, args.model)

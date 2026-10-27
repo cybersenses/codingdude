@@ -84,6 +84,35 @@ async def test_reap_worker_idempotent(tmp_path):
     assert len(errors) == 1, errors
 
 
+async def test_reap_worker_run_error_names_run_and_stderr_tail(tmp_path):
+    """R72 #264: a dead worker's captured stderr is the only evidence for a
+    pre-boot death (live symptom: exit 1, zero worker-log lines) — the
+    synthesized RUN_ERROR must carry the run id and the cause, not a generic
+    'exited unexpectedly'."""
+    worker = FakeWorker(poll_result=1)
+    ch, db = make_channel(worker, tmp_path)
+    stderr_log = tmp_path / 'worker-runX.stderr.log'
+    stderr_log.write_text(
+        "ImportError: cannot import name '__version__' from 'websockets'\n",
+        encoding='utf-8',
+    )
+    ch.stderr_path = stderr_log
+    await _reap_worker(ch, db)
+    err = [e for e in ch.history if e['type'] == 'RUN_ERROR'][0]
+    assert 'runX' in err['message'], err['message']
+    assert 'ImportError' in err['message'], err['message']
+
+
+async def test_reap_worker_run_error_without_stderr_file_still_names_run(tmp_path):
+    worker = FakeWorker(poll_result=1)
+    ch, db = make_channel(worker, tmp_path)
+    ch.stderr_path = tmp_path / 'missing.stderr.log'
+    await _reap_worker(ch, db)
+    err = [e for e in ch.history if e['type'] == 'RUN_ERROR'][0]
+    assert 'runX' in err['message'], err['message']
+    assert 'stderr' not in err['message'].lower(), err['message']
+
+
 async def test_janitor_reaps_exited_worker(tmp_path, monkeypatch):
     import codingdude.server as srv
     monkeypatch.setattr(srv, '_JANITOR_INTERVAL_S', 0.02)
