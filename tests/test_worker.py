@@ -82,6 +82,53 @@ async def test_worker_slots_route_through_fallback_base_url(monkeypatch):
     ]
 
 
+async def test_review_routes_extraction_through_fallback_base_url(monkeypatch):
+    """R72 #266 post-push review: --review mode resolves the extraction slot
+    with fallback_base_url, the same routing as run()'s slots. The shipped
+    #265 fix covered only _resolve_worker_slots; review() kept a per-call-site
+    copy without the endpoint, so a coding-plan-only key 400'd review-mode
+    extraction — and review_diff_findings swallowed it into a silent CLEAN."""
+    from types import SimpleNamespace
+
+    from codingdude import worker
+
+    calls = []
+    sentinel = object()
+    config = SimpleNamespace(
+        models=SimpleNamespace(
+            subagent='zai:cheap',
+            fallback_base_url='https://api.z.ai/api/coding/paas/v4',
+        ),
+        providers={},
+    )
+
+    async def fake_resolve(name, base_url=None, providers=None):
+        calls.append((name, base_url, providers))
+        return sentinel
+
+    class FakeEngine:
+        extraction_model = None
+
+        async def review(self, session):
+            return []
+
+    monkeypatch.setattr(worker, '_resolve_model', fake_resolve)
+    monkeypatch.setattr('codingdude.config.load_config', lambda: config)
+    monkeypatch.setattr(
+        'codingdude.db.Database',
+        SimpleNamespace(connect=lambda home: SimpleNamespace()),
+    )
+    monkeypatch.setattr(
+        'codingdude.engine.Engine',
+        lambda config, db: FakeEngine(),
+    )
+    exit_code = await worker.review(SimpleNamespace(review='sess1'))
+    assert exit_code == 0
+    assert calls == [
+        ('zai:cheap', 'https://api.z.ai/api/coding/paas/v4', {}),
+    ]
+
+
 async def test_worker_slots_tolerate_unresolvable_extraction(monkeypatch):
     """Extraction stays best-effort: an unresolvable slot disables it (None)
     instead of failing the run — same contract as before the helper."""

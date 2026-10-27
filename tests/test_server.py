@@ -653,6 +653,27 @@ def test_session_runs_endpoint_lists_recent_runs(server, tmp_path):
     assert runs[0]['worker_pid'] == 7
 
 
+def test_boot_prunes_week_old_stderr_logs(tmp_path):
+    """R72 #264: stderr captures are pruned after 7 days at boot. The shipped
+    sweep had no proof; an aged capture must be removed while a fresh one
+    survives the same boot."""
+    import os
+    import time
+
+    home = tmp_path / 'home'
+    logs = home / 'logs'
+    logs.mkdir(parents=True)
+    old = logs / 'worker-aged.stderr.log'
+    fresh = logs / 'worker-current.stderr.log'
+    old.write_text('Traceback (most recent call last): ...', encoding='utf-8')
+    fresh.write_text('', encoding='utf-8')
+    week_ago = time.time() - 8 * 86_400
+    os.utime(old, (week_ago, week_ago))
+    create_app(home=home, token='test-token', allow_testclient=True)
+    assert not old.exists(), 'aged stderr capture was not pruned'
+    assert fresh.exists(), 'fresh stderr capture was wrongly pruned'
+
+
 def test_run_captures_worker_stderr_to_file(server, tmp_path):
     """R72 #264: the worker's stderr must land in logs/worker-{run_id}.stderr.log
     so a pre-boot death (exit 1, zero worker-log lines) leaves evidence for the
