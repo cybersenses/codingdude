@@ -720,6 +720,17 @@ def load_project_config(workdir: Path) -> dict:
     models = raw.get('models')
     if isinstance(models, dict):
         out['models'] = models
+    kickoff = raw.get('kickoff')
+    if isinstance(kickoff, dict):
+        texts = {
+            k: v for k, v in kickoff.items() if isinstance(v, str) and v.strip()
+        }
+        dropped = sorted(set(kickoff) - set(texts))
+        if dropped:
+            logging.getLogger(__name__).warning(
+                '.codingdude.toml [kickoff]: non-text values ignored: %s', dropped)
+        if texts:
+            out['kickoff'] = texts
     return out
 
 

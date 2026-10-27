@@ -33,8 +33,15 @@ from .messages import decode_messages
 
 
 def export_scenario(db: Database, session_id: str, name: str, checks: list[str] | None = None) -> dict:
-    """Recorded scenario: first user prompt + every model response, in order."""
+    """Recorded scenario: first user prompt + every model response, in order.
+
+    The prompt is the user's ask, not the executed kickoff prefix (R71
+    #263): a replayed scenario is itself a session's first turn, so an
+    exported kickoff would stack on the replay's own kickoff.
+    """
     from pydantic_ai.messages import ModelRequest
+
+    from .kickoff import split_kickoff
 
     prompt = None
     responses: list[dict] = []
@@ -43,7 +50,7 @@ def export_scenario(db: Database, session_id: str, name: str, checks: list[str] 
             if prompt is None:
                 for part in message.parts:
                     if getattr(part, 'part_kind', '') == 'user-prompt':
-                        prompt = str(getattr(part, 'content', ''))
+                        prompt = split_kickoff(str(getattr(part, 'content', '')))
                         break
         else:
             responses.append(_serialize_response(message))

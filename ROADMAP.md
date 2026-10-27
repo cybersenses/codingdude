@@ -1126,10 +1126,23 @@ Fix: migrate the Planning panel onto the R59 P2 visibility-gated data store (ses
 The agent answers "where is X done?" with file:line citations in prose, but prose makes the user go find the file themselves — nothing loads the cited code into the editor. Impact: every "show me where" answer costs a manual file hunt, and the IDE editor sits unused during comprehension. Desired behaviour: the agent calls reveal_code(path, start_line, end_line) and the editor panel opens the file scrolled to and highlighting the cited lines; chat replies render path:line / path:start-end citations as clickable reveal links (covering replayed history too). Shipped in 95231f7; post-push review hardening in the follow-up commit (pure dispatch, single decoration collection, shared normalizeRange, counter nonce, css byte repair).
 
 ## R70 — User manual overhaul — quickstart, screen tour, panel reference, configuration cookbook
-**Status:** open
+**Status:** done
 
 Problem: docs/USER-MANUAL.md is reference-shaped — one line per panel, config keys without worked examples, no walkthrough. A new user cannot learn what each screen is for or how to configure a provider from it.
 
 Impact: onboarding cost; the manual undersells a mature 18-panel UI and a flexible provider system.
 
 Behaviour: split into docs/manual/ pages with docs/USER-MANUAL.md as the index — quickstart walkthrough up front (new users), panel-by-panel screen tour, daily workflows, configuration cookbook with full worked config.toml examples (native provider, coding-plan endpoint, custom OpenAI-compatible), extending (MCP/skills/directives), reference (security, troubleshooting, file layout). Text-only, no screenshots (user decision). Every claim code-checked before it ships.
+
+## R71 — R71: Executed kickoff prompts — first-turn orientation (takeover + greenfield)
+**Status:** open
+
+Problem: deployed agents skip the development pipeline (plan → ticket → gates → review) because those rules live in passive system-instruction text that models skim mid-task.
+
+Design (decided with user):
+- Kickoff prompts are EXECUTED inside a session's first turn, not injected as more passive instructions.
+- Two variants: takeover of an existing codebase (orient: HANDOFF/ROADMAP/CONTEXT, conventions, pipeline contract re-anchor) and greenfield new project (interview the user via ask_user before scaffolding).
+- Fires on every new session's first turn (history empty), per user decision.
+- Bundled defaults in src/codingdude/prompts/kickoff-{existing,new}.md; overridable per project via .codingdude.toml [kickoff], per user decision.
+
+Reuse targets: onboarding.py (detect_conventions, onboarding_needed), load_prompt/build_run_prompt, load_project_config, trace events (mirror boot_event onboarding flag).

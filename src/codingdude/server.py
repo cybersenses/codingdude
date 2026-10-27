@@ -464,13 +464,23 @@ def create_app(
         for attempt in range(5):
             try:
                 payloads = db.load_messages(session_id, limit=limit)
+                from .kickoff import split_kickoff
+
                 out = []
                 for payload in payloads:
-                    out.extend(
-                        json.loads(
-                            ModelMessagesTypeAdapter.dump_json(decode_messages([payload]))
-                        )
-                    )
+                    messages = decode_messages([payload])
+                    # R71 #263: the UI shows what the user typed — the first
+                    # turn's executed kickoff prefix is agent-facing, so it
+                    # is stripped here. Stored history stays faithful for
+                    # the model (compaction/replay see the real prompt).
+                    for m in messages:
+                        for p in getattr(m, 'parts', []):
+                            if (
+                                getattr(p, 'part_kind', '') == 'user-prompt'
+                                and isinstance(p.content, str)
+                            ):
+                                p.content = split_kickoff(p.content)
+                    out.extend(json.loads(ModelMessagesTypeAdapter.dump_json(messages)))
                 return out
             except ValidationError:
                 # The worker may be mid-commit; brief retry beats a 500.
