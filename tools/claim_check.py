@@ -99,6 +99,13 @@ STRICT_DOCS = (
     "README.md",
     "docs/USER-MANUAL.md",
     "docs/TECHNICAL-DESIGN-MANUAL.md",
+    "docs/manual/quickstart.md",
+    "docs/manual/tour.md",
+    "docs/manual/panels.md",
+    "docs/manual/workflows.md",
+    "docs/manual/configuration.md",
+    "docs/manual/extending.md",
+    "docs/manual/reference.md",
 )
 
 #: Words that look like identifiers but name a tool, product or concept.
@@ -127,6 +134,10 @@ RUNTIME_FILES = frozenset(
         "mcp.json",
         "memory.db",
         "server-token",
+        ".codingdude.toml",
+        "traces",
+        "uploads",
+        "logs",
     }
 )
 
