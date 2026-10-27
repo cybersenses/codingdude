@@ -25,7 +25,7 @@ export function Sidebar({ workdir, setWorkdir, sessions, activeSession, onSelect
   const [newProjectName, setNewProjectName] = useState(null)
   const [panelsOpen, setPanelsOpen] = useState(true)
   return (
-    <aside className="flex shrink-0 flex-col gap-3 border-r border-neutral-800 bg-neutral-950 p-3" style={{ width }}>
+    <aside className="flex h-full min-h-0 shrink-0 flex-col gap-3 border-r border-neutral-800 bg-neutral-950 p-3" style={{ width }}>
       <div className="flex items-center gap-2">
         <img src={logoUrl} alt="CodingDude logo" className="h-6 w-6 rounded" />
         <h1 className="text-lg font-bold text-brand-400">CodingDude</h1>
@@ -134,7 +134,7 @@ export function Sidebar({ workdir, setWorkdir, sessions, activeSession, onSelect
           )}
         </div>
       )}
-      <div className="flex-1 overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         {sessions.map((s) => (
           <button
             key={s.session_id}
