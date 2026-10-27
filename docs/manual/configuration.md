@@ -143,10 +143,10 @@ github_mirror = true    # mirror tickets/roadmap items to GitHub issues via gh
 ## Per-project overrides: `.codingdude.toml`
 
 A `.codingdude.toml` in the project workdir overrides the global config for
-sessions in that project. Currently supported: `shell` and a `[models]`
-overlay. The overlay is a **field-wise merge** — only keys you set win — and
-it is validated; an invalid override logs a warning and the global lineup is
-used unchanged.
+sessions in that project. Currently supported: `shell`, a `[models]`
+overlay, and `[kickoff]` prompts. The models overlay is a **field-wise
+merge** — only keys you set win — and it is validated; an invalid override
+logs a warning and the global lineup is used unchanged.
 
 ```toml
 # myproject/.codingdude.toml
@@ -154,7 +154,28 @@ shell = "powershell"
 
 [models]
 main = "openrouter:anthropic/claude-sonnet-4"   # this project only
+
+[kickoff]
+existing = """
+Our pipeline: plan first, open a GitHub issue, implement, run
+`uv run pytest -q` plus ruff and mypy, then request review.
+Never push without an explicit "push" from me.
+"""
 ```
+
+### Kickoff prompts
+
+Every new session's **first turn** rides an executed *kickoff*: an
+orientation block the agent acts on before handling your request. The
+variant is chosen automatically — `existing` when the workdir holds a
+project (read HANDOFF / ROADMAP / CONTEXT, re-anchor the pipeline
+contract) or `new` when it is greenfield (interview you about purpose,
+stack, and tracking before scaffolding anything). Later turns carry only
+your words; the kickoff fires once per session.
+
+Override the bundled text per project with `[kickoff] existing` /
+`[kickoff] new` (above); omitted keys fall back to the versioned prompts
+shipped in `src/codingdude/prompts/kickoff-*.md`.
 
 ## Pricing
 

@@ -29,7 +29,13 @@ async def test_scripted_run_persists_session(engine, db, workdir):
     assert outcome.output == 'Hello from model'
     stored = decode_messages(db.load_messages(outcome.session_id))
     texts = [p.content for m in stored for p in m.parts if hasattr(p, 'content')]
-    assert 'say the thing' in texts
+    # Turn one stores the composed kickoff + prompt (R71 #263); the user's
+    # words ride at the end of the first user part.
+    user_texts = [
+        p.content for m in stored for p in m.parts
+        if getattr(p, 'part_kind', '') == 'user-prompt'
+    ]
+    assert user_texts[0].endswith('say the thing')
     assert 'Hello from model' in texts
     usage = db.session_usage(outcome.session_id)
     assert usage['requests'] >= 1

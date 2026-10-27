@@ -666,6 +666,17 @@ class Engine:
             prepared.resolved, instructions, toolsets,
             self._prompts.model_settings(self._services, prepared.resolved, thinking),
         )
+        # R71 #263: a session's first turn rides the executed kickoff —
+        # takeover orientation, or the greenfield interview — composed
+        # ahead of build_run_prompt so image attachment is unaffected.
+        # Later turns run the user's words alone.
+        if not prepared.history:
+            from .kickoff import compose_first_prompt, kickoff_block
+
+            mode, kick = kickoff_block(workdir)
+            if kick:
+                prompt = compose_first_prompt(prompt, kick)
+                traced({'type': 'KICKOFF', 'mode': mode})
         run_prompt = build_run_prompt(prompt, image_path)  # #82: image → BinaryContent
         if image_path is not None:
             traced({'type': 'IMAGE_ATTACHED', 'path': str(image_path)})

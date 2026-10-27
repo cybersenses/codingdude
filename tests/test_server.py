@@ -135,6 +135,15 @@ def test_run_streams_ag_ui_events(server, tmp_path):
         f'{base}/sessions/{session_id}/messages', headers=auth(), timeout=10
     ).json()
     assert len(messages) >= 2
+    # R71 #263: turn one rode the executed kickoff (fresh workdir → greenfield),
+    # but the UI route shows the user's own words, not the agent-facing block.
+    user_texts = [
+        p['content']
+        for m in messages if m.get('kind') == 'request'
+        for p in m.get('parts', []) if p.get('part_kind') == 'user-prompt'
+    ]
+    assert 'say hi' in user_texts
+    assert not any(str(t).startswith('## Kickoff') for t in user_texts)
 
 
 def test_cancel_kills_worker(server, tmp_path):
