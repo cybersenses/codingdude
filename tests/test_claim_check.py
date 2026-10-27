@@ -95,12 +95,15 @@ def test_gitignored_paths_are_not_verifiable_here():
 def test_global_gitignore_cannot_exempt_paths(monkeypatch, tmp_path):
     """Machine git config must not decide what this repo ignores (#267).
 
-    Probe: a global core.excludesFile holding `*` made `git check-ignore`
-    exempt `src/codingdude/store.py` and `no-such-dir/` on CI, so four path
-    tests passed with zero findings there while failing locally — the exact
-    machine-dependence the gitignore skip was written to prevent. The checker
-    therefore pins GIT_CONFIG_GLOBAL to the null device and sets
-    GIT_CONFIG_NOSYSTEM: ignore evaluation is this repo's rules, full stop.
+    Probe: a CI runner's ambient git ignore config made `git check-ignore`
+    exempt `src/codingdude/store.py` and `no-such-dir/`, so four path tests
+    passed with zero findings there while failing locally — the exact
+    machine-dependence the gitignore skip was written to prevent. Two ambient
+    sources exist and both are pinned here: a global config's
+    core.excludesFile, and the XDG fallback `~/.config/git/ignore`, which git
+    reads *whenever* core.excludesFile is unset (so emptying the global
+    config, as the first fix tried, does not silence it — only setting the
+    key does).
     """
     ignores = tmp_path / "star.ignore"
     ignores.write_text("*\n", encoding="utf-8")
@@ -110,7 +113,14 @@ def test_global_gitignore_cannot_exempt_paths(monkeypatch, tmp_path):
     )
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(cfg))
 
-    # A global ignore-all must not exempt a genuinely missing path...
+    # XDG fallback: consulted because core.excludesFile may end up unset.
+    home = tmp_path / "evilhome"
+    (home / ".config" / "git").mkdir(parents=True)
+    (home / ".config" / "git" / "ignore").write_text("*\n", encoding="utf-8")
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setenv("HOME", str(home))
+
+    # Ambient ignore-all must not exempt a genuinely missing path...
     assert cc._is_ignored("src/codingdude/store.py", ROOT) is False
     # ...while the repo's own ignore rules still bite.
     assert cc._is_ignored(".scratch/probe.py", ROOT) is True
