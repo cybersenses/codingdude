@@ -653,6 +653,26 @@ def test_session_runs_endpoint_lists_recent_runs(server, tmp_path):
     assert runs[0]['worker_pid'] == 7
 
 
+def test_run_captures_worker_stderr_to_file(server, tmp_path):
+    """R72 #264: the worker's stderr must land in logs/worker-{run_id}.stderr.log
+    so a pre-boot death (exit 1, zero worker-log lines) leaves evidence for the
+    RUN_ERROR the reaper synthesizes."""
+    app, base = server
+    home = tmp_path / 'home'
+    session_id = create_session(base, tmp_path / 'proj-stderr')
+    r = httpx.post(
+        f'{base}/sessions/{session_id}/runs',
+        json={'prompt': 'say hi', 'model': 'codingdude-test:echo'},
+        headers=auth(),
+        timeout=30,
+    )
+    run_id = r.json()['run_id']
+    events = collect_sse(base, run_id)
+    assert events[-1]['type'] == 'RUN_FINISHED'
+    stderr_log = home / 'logs' / f'worker-{run_id}.stderr.log'
+    assert stderr_log.exists(), 'worker stderr file was not created at spawn'
+
+
 def test_run_id_never_leads_with_dash(server, tmp_path, monkeypatch):
     """Regression (worker exit code 2): token_urlsafe can emit a leading '-',
     making argv `--run-id -x...` an argparse usage error — the worker died

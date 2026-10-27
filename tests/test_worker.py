@@ -47,6 +47,64 @@ def test_engine_run_kwargs_forwards_fix_loop():
     assert kwargs['image_path'] is None
 
 
+async def test_worker_slots_route_through_fallback_base_url(monkeypatch):
+    """R72 #265: the worker's config-driven slots (extraction, vision) must
+    resolve through _model_from_name WITH config.models.fallback_base_url —
+    the same seam engine._build_subagent_model uses. Live symptom of the
+    omission: memory extraction 400'd on every run end because a
+    coding-plan-only key hit the standard Z.ai endpoint."""
+    from types import SimpleNamespace
+
+    import codingdude.engine as engine_mod
+    from codingdude import worker
+
+    calls = []
+    sentinel = object()
+
+    def fake_from_name(name, base_url, providers):
+        calls.append((name, base_url))
+        return sentinel
+
+    monkeypatch.setattr(engine_mod, '_model_from_name', fake_from_name)
+    config = SimpleNamespace(
+        models=SimpleNamespace(
+            subagent='zai:cheap',
+            vision='zai:vision',
+            fallback_base_url='https://api.z.ai/api/coding/paas/v4',
+        ),
+        providers={},
+    )
+    extraction, vision = await worker._resolve_worker_slots(config)
+    assert extraction is sentinel and vision is sentinel
+    assert calls == [
+        ('zai:cheap', 'https://api.z.ai/api/coding/paas/v4'),
+        ('zai:vision', 'https://api.z.ai/api/coding/paas/v4'),
+    ]
+
+
+async def test_worker_slots_tolerate_unresolvable_extraction(monkeypatch):
+    """Extraction stays best-effort: an unresolvable slot disables it (None)
+    instead of failing the run — same contract as before the helper."""
+    from types import SimpleNamespace
+
+    import codingdude.engine as engine_mod
+    from codingdude import worker
+
+    def boom(name, base_url, providers):
+        raise RuntimeError('no credentials')
+
+    monkeypatch.setattr(engine_mod, '_model_from_name', boom)
+    config = SimpleNamespace(
+        models=SimpleNamespace(
+            subagent='zai:cheap', vision=None, fallback_base_url='https://x/v4',
+        ),
+        providers={},
+    )
+    extraction, vision = await worker._resolve_worker_slots(config)
+    assert extraction is None
+    assert vision is None
+
+
 def test_engine_run_kwargs_defaults_fix_loop_off_and_resolves_workdir(tmp_path):
     from codingdude import worker
 

@@ -110,6 +110,9 @@ class RunChannel:
         self.inbox: asyncio.Queue = asyncio.Queue()  # server → worker (approvals)
         self.worker: subprocess.Popen | None = None
         self.loop: asyncio.AbstractEventLoop | None = None
+        # R72 #264: worker stderr lands here (set at spawn); the reaper reads
+        # the tail as the only evidence for a pre-boot death.
+        self.stderr_path: Path | None = None
         # #148: worker-lifecycle visibility that does not depend on the ws.
         self.boot_seen = False       # worker connected its WebSocket
         self.created = time.monotonic()
@@ -180,6 +183,10 @@ async def _reap_worker(channel, db: 'Database | None' = None) -> None:
     RUN_ERROR so any attached consumer settles instead of waiting forever on
     a dead run (live symptom: UI 'still working' 300s+ after the worker died).
     Idempotent (#148): the janitor and the ws teardown may both call this.
+
+    R72 #264: the worker's stderr is captured at spawn (channel.stderr_path),
+    so a pre-boot death (trampoline failure, ImportError) now carries its own
+    evidence: the tail is logged and folded into the RUN_ERROR message.
     """
     log = logging.getLogger('codingdude.server')
     if channel.reaped:
@@ -198,11 +205,19 @@ async def _reap_worker(channel, db: 'Database | None' = None) -> None:
             channel.run_id, _terminal_status(channel),
             exit_code=worker.returncode)
     if not channel.saw_terminal():
+        stderr_tail = _read_stderr_tail(channel.stderr_path)
+        if stderr_tail:
+            log.warning(
+                'WORKER_STDERR run=%s worker_pid=%s tail: %s',
+                channel.run_id, worker.pid, stderr_tail)
+        hint = ''
+        if stderr_tail:
+            hint = ' stderr: ' + ' '.join(stderr_tail.split())[-400:]
         channel.push({
             'type': 'RUN_ERROR',
             'code': 'worker_died',
             'message': f'worker exited unexpectedly (code {worker.returncode}) '
-                       'without finishing the run',
+                       f'— run {channel.run_id} did not finish.{hint}',
         })
         # Brief grace so subscribers consume the synthesized terminal, then reap.
         await asyncio.sleep(2.0)
@@ -212,6 +227,23 @@ async def _reap_worker(channel, db: 'Database | None' = None) -> None:
         # idempotently instead of 404-ing into the frontend error loop.
         await asyncio.sleep(_TERMINAL_REPLAY_GRACE_S)
     channel.registry.pop(channel.run_id, None)
+
+
+_STDERR_TAIL_BYTES = 2000
+
+
+def _read_stderr_tail(path) -> str:
+    """Last chunk of a worker's captured stderr; '' when absent/unreadable."""
+    if path is None:
+        return ''
+    try:
+        with open(path, 'rb') as fh:
+            fh.seek(0, 2)
+            size = fh.tell()
+            fh.seek(max(0, size - _STDERR_TAIL_BYTES))
+            return fh.read().decode('utf-8', errors='replace').strip()
+    except OSError:
+        return ''
 
 
 def _terminal_status(channel) -> str:
@@ -315,10 +347,18 @@ def create_app(
         # #148: independent worker-lifecycle watchdog (see _run_janitor).
         app.state.janitor_task = asyncio.create_task(_run_janitor(channels, db))
     # Stale prompt files (run 500'd before the worker consumed them) would
-    # otherwise linger forever holding full prompt text on disk.
+    # otherwise linger forever holding full prompt text on disk. Same policy
+    # for the worker stderr captures (#264): small, but unbounded growth in
+    # the config home is untidy.
     for stale in (home / 'prompts').glob('*.prompt'):
         try:
             if stale.stat().st_mtime < (datetime.now(UTC).timestamp() - 86_400):
+                stale.unlink()
+        except OSError:
+            pass
+    for stale in (home / 'logs').glob('worker-*.stderr.log'):
+        try:
+            if stale.stat().st_mtime < (datetime.now(UTC).timestamp() - 7 * 86_400):
                 stale.unlink()
         except OSError:
             pass
@@ -555,9 +595,20 @@ def create_app(
             image_file = uploads / f'{_uuid.uuid4().hex[:8]}{_image_extension(data)}'
             image_file.write_bytes(data)
             cmd += ['--image', str(image_file)]
-        channel.worker = subprocess.Popen(
-            cmd, env={**os.environ, 'CODEDUDE_WORKER_TOKEN': token}
-        )
+        # R72 #264: capture the worker's stderr per run. A pre-boot death
+        # (uv trampoline failure, ImportError — live symptom: exit 1, zero
+        # worker-log lines) writes ONLY to stderr, so without this file the
+        # RUN_ERROR synthesized by the reaper has no cause to show. The
+        # parent closes the handle after spawn; the child keeps its copy.
+        stderr_logs = home / 'logs'
+        stderr_logs.mkdir(parents=True, exist_ok=True)
+        stderr_path = stderr_logs / f'worker-{run_id}.stderr.log'
+        with stderr_path.open('wb') as stderr_fh:
+            channel.worker = subprocess.Popen(  # nosec B603 - argv built here, no shell; same as pre-existing spawns
+                cmd, env={**os.environ, 'CODEDUDE_WORKER_TOKEN': token},
+                stderr=stderr_fh,
+            )
+        channel.stderr_path = stderr_path
         # R31: backfill the live pid now that the process exists.
         db.record_run_start(run_id, session_id, pid=channel.worker.pid)
         logging.getLogger('codingdude.server').info(
