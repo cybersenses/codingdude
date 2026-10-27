@@ -16,6 +16,7 @@
 import { useEffect, useRef } from 'react'
 import Editor, { DiffEditor } from '@monaco-editor/react'
 import { langFor } from './editor'
+import { normalizeRange } from './citations'
 
 const THEME = {
   base: 'vs-dark',
@@ -43,15 +44,21 @@ export default function CodeEditor({ path, value, onChange, onSelectionChange, r
   const editorRef = useRef(null)
   const monacoRef = useRef(null)
   const pendingRevealRef = useRef(null)
+  // Post-push review: ONE collection, replaced per reveal. Calling
+  // createDecorationsCollection on every reveal would stack highlights —
+  // old collections are never reachable again, so old ranges stayed lit.
+  const revealDecorRef = useRef(null)
 
   function applyReveal(editor, monaco, r) {
     if (!editor || !monaco || !r) return
-    const start = Math.max(1, r.startLine)
-    const end = Math.max(start, r.endLine ?? start)
+    const { start, end } = normalizeRange(r.startLine, r.endLine ?? r.startLine)
     const range = new monaco.Range(start, 1, end, 1)
     editor.setSelection(range)
     editor.revealLineInCenter(start)
-    editor.createDecorationsCollection([{
+    if (!revealDecorRef.current) revealDecorRef.current = editor.createDecorationsCollection([])
+    // The ruler hex duplicates --cd-reveal (index.css .cd-reveal-line):
+    // monaco's decoration API takes a literal, not a CSS variable.
+    revealDecorRef.current.set([{
       range,
       options: {
         isWholeLine: true,

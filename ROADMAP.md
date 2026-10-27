@@ -1123,4 +1123,6 @@ Fix: migrate the Planning panel onto the R59 P2 visibility-gated data store (ses
 ## R69 — Agent-driven editor reveal: "show me where" loads + highlights code; clickable citations in chat
 **Status:** done
 
+The agent answers "where is X done?" with file:line citations in prose, but prose makes the user go find the file themselves — nothing loads the cited code into the editor. Impact: every "show me where" answer costs a manual file hunt, and the IDE editor sits unused during comprehension. Desired behaviour: the agent calls reveal_code(path, start_line, end_line) and the editor panel opens the file scrolled to and highlighting the cited lines; chat replies render path:line / path:start-end citations as clickable reveal links (covering replayed history too). Shipped in 95231f7; post-push review hardening in the follow-up commit (pure dispatch, single decoration collection, shared normalizeRange, counter nonce, css byte repair).
+
 

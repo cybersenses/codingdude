@@ -17,6 +17,11 @@ import { useState } from 'react'
 import { call } from '../api'
 import { openTab } from '../editor'
 
+// R69 #261 (post-push review): reveal nonces must be unique even when two
+// parallel reveal_code calls land in the same millisecond — Date.now() is
+// not; a repeated nonce would make the editor effect skip the second reveal.
+let revealSeq = 0
+
 // R35 #72: tree and editor share tab state, so the workspace state lives in
 // one hook (used once, in App); the tree renders in the left rail and the
 // editor in the main area.
@@ -46,7 +51,7 @@ export function useFileWorkspace(sessionId) {
           path,
           startLine: reveal.start,
           endLine: reveal.end ?? reveal.start,
-          nonce: Date.now(),
+          nonce: ++revealSeq,
         })
       }
     } catch (e) {

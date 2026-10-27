@@ -257,7 +257,7 @@
 
 
 /* R69 #261: whole-line highlight for a revealed range (reveal_code tool /
-   clicked citation). Subtle in both themes — the selection carries the
+   clicked citation). Subtle in both themes â€” the selection carries the
    strong affordance, this persists after the selection moves. */
 .cd-reveal-line {
   background: rgba(79, 124, 255, 0.16);

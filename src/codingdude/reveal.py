@@ -22,9 +22,11 @@ includes tool_name + args), and the frontend reacts by opening the editor
 panel, loading the file, scrolling to and highlighting the cited lines.
 
 Nothing is read, written, or executed for side effects here — the tool is
-pure UI signalling. The one thing the server must do is validate: a bogus
-path should fail fast as a ModelRetry instead of arriving in the UI as a
-dead click.
+pure UI signalling. Validation gates the agent loop, not the click: the
+browser reveals on TOOL_CALL_START (which carries the args and fires
+before this code runs), so a bogus path still opens the panel and surfaces
+the file-fetch error in the editor notice. What the ModelRetry buys is the
+agent correcting its own path within the same run.
 """
 from __future__ import annotations
 
