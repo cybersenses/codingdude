@@ -89,7 +89,7 @@ def kickoff_block(workdir: Path) -> tuple[str, str]:
 
         override = load_project_config(workdir).get('kickoff', {}).get(mode)
         if isinstance(override, str) and override.strip():
-            return mode, override.strip()
+            return mode, _headered(override.strip())
         return mode, load_prompt(f'kickoff-{mode}')
     except (OSError, tomllib.TOMLDecodeError) as exc:
         logger.warning('kickoff unavailable (%s); skipping it for this run', exc)
@@ -105,6 +105,20 @@ def compose_first_prompt(prompt: str, kickoff: str) -> str:
 
 KICKOFF_SEPARATOR = '\n\n---\n\n'
 _KICKOFF_HEADER = '## Kickoff ('
+
+
+def _headered(text: str) -> str:
+    """Kickoff text that split_kickoff can strip (R71 #263 review).
+
+    split_kickoff only recognizes a text starting with the kickoff header;
+    bundled prompts ship one, but a project override is free-form — without
+    the header it would ride every UI refresh and eval export (and stack on
+    replay). Header-wrapping here keeps all sources strippable at the
+    boundary while stored history stays verbatim.
+    """
+    if text.startswith(_KICKOFF_HEADER):
+        return text
+    return f'{_KICKOFF_HEADER}project)\n\n{text}'
 
 
 def split_kickoff(text: str) -> str:

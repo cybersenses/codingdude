@@ -101,6 +101,22 @@ def test_project_override_wins(tmp_path):
     assert '## Kickoff (existing codebase)' not in text
 
 
+def test_override_is_stripped_at_the_boundary(tmp_path):
+    """Review fix (9c9e1d2): an override is free-form text, so it must carry
+    the kickoff header — split_kickoff (UI route, eval export) strips only
+    headered text, and an unheadered block would ride every refresh and
+    stack on replay."""
+    (tmp_path / '.git').mkdir()
+    _write(
+        tmp_path / '.codingdude.toml',
+        '[kickoff]\nexisting = "CUSTOM PIPELINE RULES"\n',
+    )
+    _mode, text = kickoff_block(tmp_path)
+    assert text.startswith('## Kickoff (')
+    composed = compose_first_prompt('do the thing', text)
+    assert split_kickoff(composed) == 'do the thing'
+
+
 def test_override_ignores_non_string_and_falls_back(tmp_path):
     (tmp_path / '.git').mkdir()
     _write(tmp_path / '.codingdude.toml', '[kickoff]\nexisting = 5\n')
