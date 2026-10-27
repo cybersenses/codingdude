@@ -1135,7 +1135,7 @@ Impact: onboarding cost; the manual undersells a mature 18-panel UI and a flexib
 Behaviour: split into docs/manual/ pages with docs/USER-MANUAL.md as the index — quickstart walkthrough up front (new users), panel-by-panel screen tour, daily workflows, configuration cookbook with full worked config.toml examples (native provider, coding-plan endpoint, custom OpenAI-compatible), extending (MCP/skills/directives), reference (security, troubleshooting, file layout). Text-only, no screenshots (user decision). Every claim code-checked before it ships.
 
 ## R71 — R71: Executed kickoff prompts — first-turn orientation (takeover + greenfield)
-**Status:** open
+**Status:** done
 
 Problem: deployed agents skip the development pipeline (plan → ticket → gates → review) because those rules live in passive system-instruction text that models skim mid-task.
 
