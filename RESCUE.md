@@ -33,6 +33,30 @@ with every commit; the number above is the sha the rescue validated]. If the ser
 not start after a dependency change, check this first — the code is usually fine; the
 venv is stale.
 
+**Follow-up failure (2026-10-27), same root cause.** After the sync, the server died at
+startup with `ImportError: cannot import name '__version__' from 'websockets' (unknown
+location)` raised from `uvicorn/protocols/websockets/websockets_sansio_impl.py` (probe:
+traceback captured from `python -m codingdude.cli serve`). Cause: the sync that ran while
+the old server still held `.pyd` locks had **half-removed** packages — `websockets`,
+`charset_normalizer` and `primp` each had two dist-infos (old + new) and `websockets`
+had lost its `__init__.py` (probe: `ls .venv/Lib/site-packages | grep dist-info |
+sed 's/-[0-9].*//' | sort | uniq -d` printed all three). Fix that worked:
+`uv sync --reinstall-package websockets --reinstall-package charset-normalizer
+--reinstall-package primp`, then delete the stale old-version dist-info dirs by hand
+(uv will not clean metadata it did not install itself). Verified 2026-10-27: `/health`
+ok and `/runs/{id}/ws` handshake correctly rejected with HTTP 403 (auth seam working,
+not a crash). **Rule: never `uv sync` while a server is running from that venv — stop
+it first, or expect half-removed packages.**
+
+**Separate incident (2026-10-27), not local.** Chats failed with Z.ai `code 1211 Unknown
+Model` for `glm-5.3-flash[1m]` — the `[1m]` long-context suffix disappeared from Z.ai's
+model catalog entirely (probes: raw POST to the coding endpoint, `GET /models` on both
+endpoints — only bare names like `glm-5.3-flash` are served now). Local code was
+innocent: `_model_from_name` passes the name verbatim and always targets
+`fallback_base_url` (the coding endpoint). Fix: dropped `[1m]` from `main`/`fallback`/
+`subagent` in `~/.codingdude/config.toml` (backup at `config.toml.bak-20261027`);
+verified end-to-end via Engine model resolution + one real completion.
+
 
 
 ## 1. Snapshot (update this table every time the state moves)
