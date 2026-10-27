@@ -178,7 +178,11 @@ export function panelIds(layout: SerializedLayout): string[] {
 // Load / save
 // ---------------------------------------------------------------------------
 
-function parseSaved(raw: string | null, isKnown: (id: string) => boolean): LoadResult {
+function parseSaved(
+  raw: string | null,
+  isKnown: (id: string) => boolean,
+  bounds?: FloatingBounds,
+): LoadResult {
   // `clearSavedLayout` stores '' (the KVStorage seam has no removeItem) — an
   // intentional reset must read as "nothing saved" (silent default), not
   // "corrupt" (which would surface a false reset notice).
@@ -196,6 +200,9 @@ function parseSaved(raw: string | null, isKnown: (id: string) => boolean): LoadR
   const dropped = stripUnknownPanels(layout, isKnown)
   if (dropped === null) return { ok: false, reason: 'corrupt' }
   if (panelIds(layout).length === 0) return { ok: false, reason: 'empty' }
+  // #260: a floating panel saved from a taller window must restore on
+  // screen, not drag the document into a phantom scrollbar.
+  if (bounds) clampFloatingGroups(layout, bounds)
   return {
     ok: true,
     preset: typeof parsed.preset === 'string' ? parsed.preset : 'custom',
@@ -204,12 +211,53 @@ function parseSaved(raw: string | null, isKnown: (id: string) => boolean): LoadR
   }
 }
 
+/** Viewport-ish bounds a restored floating window must stay inside. */
+export interface FloatingBounds {
+  width: number
+  height: number
+}
+
+// A floating window's anchor must keep at least this much of the window on
+// screen (its title bar is ~35px; 120px keeps the panel grabbable) — a
+// position saved from a larger window would otherwise restore the panel
+// fully off-screen, reachable only through the palette.
+const FLOATING_MIN_VISIBLE = 120
+
+/**
+ * Clamps each serialized floating-group anchor so the window restores at
+ * least partly on screen (#260). Dockview re-fits grid sizes on restore but
+ * honors floating positions verbatim — one saved on a taller window drags
+ * the document into scrolling past the fold with nothing painted there.
+ * Handles every AnchoredBox corner (top/left, top/right, bottom/left,
+ * bottom/right); popout groups live in separate OS windows and need no
+ * clamp. Mutates in place, like stripUnknownPanels.
+ */
+export function clampFloatingGroups(layout: SerializedLayout, bounds: FloatingBounds): void {
+  if (!Array.isArray(layout.floatingGroups)) return
+  const max = {
+    left: Math.max(0, bounds.width - FLOATING_MIN_VISIBLE),
+    top: Math.max(0, bounds.height - FLOATING_MIN_VISIBLE),
+    right: Math.max(0, bounds.width - FLOATING_MIN_VISIBLE),
+    bottom: Math.max(0, bounds.height - FLOATING_MIN_VISIBLE),
+  }
+  for (const win of layout.floatingGroups) {
+    if (!isRecord(win) || !isRecord(win.position)) continue
+    const pos = win.position as Record<string, number>
+    for (const axis of ['top', 'left', 'right', 'bottom'] as const) {
+      if (typeof pos[axis] === 'number') {
+        pos[axis] = Math.min(Math.max(pos[axis], 0), max[axis])
+      }
+    }
+  }
+}
+
 export function loadSavedLayout(
   storage: KVStorage,
   isKnown: (id: string) => boolean,
+  bounds?: FloatingBounds,
 ): LoadResult {
   try {
-    return parseSaved(storage.getItem(LAYOUT_KEY), isKnown)
+    return parseSaved(storage.getItem(LAYOUT_KEY), isKnown, bounds)
   } catch {
     // localStorage itself can throw (quota, privacy mode) — a broken store
     // must degrade to the default preset, not a blank screen.

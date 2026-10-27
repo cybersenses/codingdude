@@ -22,6 +22,7 @@ import {
   LAYOUT_VERSION,
   PRESETS_KEY,
   clearSavedLayout,
+  clampFloatingGroups,
   createDebouncedSaver,
   deleteUserPreset,
   loadSavedLayout,
@@ -169,6 +170,69 @@ describe('loadSavedLayout', () => {
     // must read as "nothing saved", not as corruption. Workspace writes this
     // after a corrupt/version fallback so the reset notice shows once.
     expect(loadSavedLayout(storage, isKnownPanel)).toEqual({ ok: false, reason: 'missing' })
+  })
+
+  it('#260: clamps off-screen floating anchors into view when bounds are given', () => {
+    const layout = sampleLayout()
+    layout.floatingGroups = [
+      { data: { id: 'g3', views: ['terminal'] }, position: { left: 40, top: 1200, width: 300, height: 200 } },
+    ]
+    const storage = memStorage()
+    saveLayout(storage, layout, 'custom')
+    const res = loadSavedLayout(storage, isKnownPanel, { width: 1440, height: 911 })
+    expect(res.ok).toBe(true)
+    if (res.ok) {
+      // 911 - 120 (FLOATING_MIN_VISIBLE): the panel stays grabbable.
+      expect(res.layout.floatingGroups![0].position).toEqual({ left: 40, top: 791, width: 300, height: 200 })
+    }
+  })
+
+  it('#260: leaves floating anchors untouched without bounds (back-compat)', () => {
+    const layout = sampleLayout()
+    layout.floatingGroups = [
+      { data: { id: 'g3', views: ['terminal'] }, position: { left: 40, top: 1200 } },
+    ]
+    const storage = memStorage()
+    saveLayout(storage, layout, 'custom')
+    const res = loadSavedLayout(storage, isKnownPanel)
+    expect(res.ok).toBe(true)
+    if (res.ok) expect(res.layout.floatingGroups![0].position).toEqual({ left: 40, top: 1200 })
+  })
+})
+
+describe('clampFloatingGroups', () => {
+  it('clamps every AnchoredBox corner form, floor 0 included', () => {
+    const layout = sampleLayout()
+    layout.floatingGroups = [
+      { data: { id: 'a', views: ['terminal'] }, position: { left: 3000, top: 10 } },
+      { data: { id: 'b', views: ['chat'] }, position: { right: 3000, top: 10 } },
+      { data: { id: 'c', views: ['graph'] }, position: { bottom: 5000, left: 10 } },
+      { data: { id: 'd', views: ['runs'] }, position: { bottom: -50, right: -50 } },
+    ]
+    clampFloatingGroups(layout, { width: 1440, height: 911 })
+    const [a, b, c, d] = layout.floatingGroups as Array<{ position: Record<string, number> }>
+    expect(a.position).toEqual({ left: 1320, top: 10 })
+    expect(b.position).toEqual({ right: 1320, top: 10 })
+    expect(c.position).toEqual({ bottom: 791, left: 10 })
+    expect(d.position).toEqual({ bottom: 0, right: 0 })
+  })
+
+  it('keeps in-bounds positions and size fields as-is', () => {
+    const layout = sampleLayout()
+    layout.floatingGroups = [
+      { data: { id: 'g3', views: ['terminal'] }, position: { left: 40, top: 60, width: 300, height: 200 } },
+    ]
+    clampFloatingGroups(layout, { width: 1440, height: 911 })
+    expect(layout.floatingGroups![0].position).toEqual({ left: 40, top: 60, width: 300, height: 200 })
+  })
+
+  it('is a no-op on absent floating groups, junk positions and popouts', () => {
+    const layout = sampleLayout()
+    layout.floatingGroups = [{ data: { id: 'g3', views: ['terminal'] } }, 42]
+    layout.popoutGroups = [{ data: { id: 'g4', views: ['graph'] }, position: { top: 99999 } }]
+    clampFloatingGroups(layout, { width: 1440, height: 911 })
+    expect(layout.floatingGroups![0]).not.toHaveProperty('position')
+    expect((layout.popoutGroups![0] as { position: { top: number } }).position.top).toBe(99999)
   })
 })
 
