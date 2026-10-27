@@ -415,6 +415,14 @@ export default function App() {
       if (['RUN_FINISHED', 'RUN_ERROR', 'RUN_CANCELLED'].includes(ev.type)) {
         terminalSeenRef.current = run_id
       }
+      // R69 #261 (post-push review): reveal_code is pure UI signalling — its
+      // args ARE the payload, and Workspace owns the listener. Dispatched
+      // BEFORE setMessages: state updaters must be pure (StrictMode
+      // double-invokes them in dev, which would double-dispatch this).
+      if (ev.type === 'TOOL_CALL_START' && ev.tool_name === 'reveal_code') {
+        const target = parseRevealArgs(ev.args)
+        if (target) window.dispatchEvent(new CustomEvent('cd-open-file', { detail: target }))
+      }
       setMessages((msgs) => {
             const copy = [...msgs]
             const last = { ...copy[copy.length - 1] }
@@ -424,12 +432,6 @@ export default function App() {
               // matched to ITS tool's completion (parallel tool calls mean a
               // sibling's END must not clear the gate card).
               last.inFlight = { ...(last.inFlight || {}), [ev.tool_name]: ev.args || '' }
-              // R69 #261: reveal_code is pure UI signalling — its args ARE the
-              // payload. Workspace owns the listener (panel + editor).
-              if (ev.tool_name === 'reveal_code') {
-                const target = parseRevealArgs(ev.args)
-                if (target) window.dispatchEvent(new CustomEvent('cd-open-file', { detail: target }))
-              }
             }
             if (ev.type === 'TOOL_CALL_END') {
               last.toolEvents = [...(last.toolEvents || []), { tool_name: ev.tool_name, result: ev.result }]

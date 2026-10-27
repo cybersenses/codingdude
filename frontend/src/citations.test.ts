@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import { describe, expect, it } from 'vitest'
-import { parseCitationHref, parseRevealArgs, rehypeCitations } from './citations'
+import { normalizeRange, parseCitationHref, parseRevealArgs, rehypeCitations } from './citations'
 
 describe('parseRevealArgs (TOOL_CALL_START payload)', () => {
   it('parses a JSON string with the full range', () => {
@@ -54,6 +54,20 @@ describe('cdopen href round-trip', () => {
     expect(parseCitationHref('https://example.com')).toBeNull()
     expect(parseCitationHref('cdopen://')).toBeNull()
     expect(parseCitationHref('cdopen://%zz')).toBeNull()
+  })
+
+  it('swaps a reversed range like the tool path does (post-push review: a clicked 9-3 used to collapse to one line)', () => {
+    expect(parseCitationHref('cdopen://a.py?start=9&end=3'))
+      .toEqual({ path: 'a.py', start: 3, end: 9 })
+  })
+})
+
+describe('normalizeRange (shared by tool args and clicked citations)', () => {
+  it('floors, clamps to 1-based and swaps reversed ranges', () => {
+    expect(normalizeRange(9, 3)).toEqual({ start: 3, end: 9 })
+    expect(normalizeRange(3, 9)).toEqual({ start: 3, end: 9 })
+    expect(normalizeRange(0, -2)).toEqual({ start: 1, end: 1 })
+    expect(normalizeRange(2.9, 5.1)).toEqual({ start: 2, end: 5 })
   })
 })
 

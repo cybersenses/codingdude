@@ -35,6 +35,16 @@ export interface RevealTarget {
  * reveal buttons instead of navigation. */
 export const CD_OPEN_SCHEME = 'cdopen://'
 
+/** Clamp to 1-based and swap a reversed range: `9-3` is a typo for `3-9`,
+ * not an empty range. ONE normalization for every entry point — tool args
+ * (parseRevealArgs) and clicked citations (parseCitationHref → editor) must
+ * reveal the same lines for the same citation text. */
+export function normalizeRange(start: number, end: number): { start: number; end: number } {
+  const s = Math.max(1, Math.floor(start))
+  const e = Math.max(1, Math.floor(end))
+  return { start: Math.min(s, e), end: Math.max(s, e) }
+}
+
 export function citationHref(m: RegExpExecArray): string {
   const [, path, start, end] = m
   // The path is percent-encoded: `new URL` would otherwise eat the first
@@ -61,7 +71,7 @@ export function parseCitationHref(href: string): RevealTarget | null {
   const start = Number(params.get('start'))
   const end = Number(params.get('end') ?? params.get('start'))
   if (!path.trim() || !Number.isFinite(start) || !Number.isFinite(end)) return null
-  return { path, start: Math.max(1, Math.floor(start)), end: Math.max(1, Math.floor(end)) }
+  return { path, ...normalizeRange(start, end) }
 }
 
 /**
@@ -89,9 +99,7 @@ export function parseRevealArgs(raw: unknown): RevealTarget | null {
     if (!Number.isFinite(e)) return null
     end = e
   }
-  const s = Math.max(1, Math.floor(start))
-  const e2 = Math.max(1, Math.floor(end))
-  return { path: a.path, start: Math.min(s, e2), end: Math.max(s, e2) }
+  return { path: a.path, ...normalizeRange(start, end) }
 }
 
 // --- rehype plugin: turn citations in *rendered text* into cdopen links ---
