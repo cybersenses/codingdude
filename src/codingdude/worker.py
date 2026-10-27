@@ -268,10 +268,16 @@ async def review(args) -> int:
     config = load_config()
     engine = Engine(config=config, db=Database.connect(config_home()))
     try:
+        # #266: same endpoint routing as run()'s slots — without
+        # fallback_base_url a coding-plan-only key 400'd review-mode
+        # extraction and review_diff_findings reported a silent CLEAN.
         engine.extraction_model = await _resolve_model(
-            config.models.subagent, providers=config.providers)
+            config.models.subagent, config.models.fallback_base_url,
+            config.providers)
     except Exception:  # noqa: BLE001 — Engine falls back to its own resolution
-        pass
+        logging.getLogger('codingdude.worker').warning(
+            'extraction model unavailable; review falls back to engine '
+            'resolution', exc_info=True)
     findings = await engine.review(args.review)
     print(json.dumps({'findings': findings}))
     return 0
