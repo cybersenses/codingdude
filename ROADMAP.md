@@ -1079,7 +1079,19 @@ False positives verified and closed: config.py ShellConfig kwarg collision; road
 pip-audit gap closed: ran via `uv run --with pip-audit pip-audit` (finding 1b).
 
 ## R67 — Chat autoscroll hijacks the view during runs; input box not resizable
-**Status:** open
+**Status:** done
+
+User report (post-R65 "resize the chat window" work): while a chat runs, every activity in the chat window forces the view to the bottom - the user is pinned seeing only the bottom of the conversation and cannot hold an earlier position to read. What the user actually wanted: resize the input textarea so they can see more of their own text while composing.
+
+Findings (probe, 2026-10-26): the document never scrolls (docH == viewport, dock root exactly 100vh) - the moving thing is the chat's own messages scroller. `Chat.jsx` called `bottomRef.scrollIntoView({behavior:'smooth'})` on EVERY `messages` change (every streaming delta), unconditionally - the classic sticky-autoscroll-without-user-override bug. Fix: scroll the chat's own scroller directly (never `scrollIntoView`, which can walk ancestors), and only when the user is already at the bottom (stick-to-bottom pattern; resume when they return to bottom; reset on session switch). Plus: make the Prompt textarea vertically resizable (native `resize-y`, bounded max height).
+
+Adjacent finding logged, not fixed here: `streaming` state leaks across session switches (a live run in session A disables the prompt and shows Stop in fresh session B until A's SSE closes).
+
+Follow-up (2026-10-26, user report after #254 shipped): "still a massive scroll bar on the right hand side." Probe (.scratch/probe_chat_scrollbar.py): the document still never scrolls - the chat scroller sits flush at the viewport's right edge and was the app's only scrollbar with no styling, so Windows Chrome drew its classic ~17px light-grey slab against the dark shell. Fix: one app-wide rule in `index.css` `@layer base` - `scrollbar-width: thin` plus `scrollbar-color` tinted from tokens (muted foreground @ 55%, transparent track), both themes. Verified from the live-served bundle (computed `scrollbarWidth: thin`, thumb `#a9a39e/0.55`); no server bounce needed - `StaticFiles` serves dist from disk, hard-refresh picks it up.
+
+Follow-up (2026-10-27, #260 done at 5944893 + e7a0f12): the *window-level* scrollbar the user kept reporting after the above. docScroll 1704 vs 911 with zero painted offenders; a hide-one-child binary search through the user's console isolated the dockview split-view, and a poisoned-localStorage repro proved dockview re-fits grid sizes on restore but honors `floatingGroups[].position` verbatim - a floating panel saved from a taller window leaks its off-container box into document scroll. Fix: clampFloatingGroups (all four AnchoredBox corner forms, verified against the vendored dockview-core typings) on every restore - boot AND user-preset apply (post-push review caught the second entry point) - plus an `overflow-hidden` belt on the dock wrapper. The user's existing poisoned localStorage self-heals on next restore+save. Probes red->green (.scratch/probe_dock_phantom.py, probe_floating_visible.py); vitest 184/184. User confirmed the fix works in their tab.
+
+Complete: both halves of the umbrella shipped - sticky autoscroll + textarea resize in #254 (42587fb, Prompt.jsx `resize-y` min 3.25rem max 16rem), the Explorer-walk stall in #255, thin theme-tinted scrollbars, sidebar height bound in #259, planning live-reflect in #256 (R68), and the phantom window scrollbar in #260. All five tickets closed; umbrella closed with them.
 
 User report (post-R65 "resize the chat window" work): while a chat runs, every activity in the chat window forces the view to the bottom - the user is pinned seeing only the bottom of the conversation and cannot hold an earlier position to read. What the user actually wanted: resize the input textarea so they can see more of their own text while composing.
 
