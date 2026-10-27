@@ -50,6 +50,9 @@ from .config import config_home
 from .db import Database
 from .events import TERMINAL_EVENTS
 
+# Module-level so tests can patch the loader seam (bundled package data).
+from .scaffold import _bundled_checklists
+
 HOST = '127.0.0.1'  # localhost only, by design
 
 # When this server process started — surfaced in the UI so a restart is
@@ -991,36 +994,36 @@ def create_app(
         return project_structure(Path(workdir))
 
     # ---- specialty-actions seam (#93, R41): checklists as invokable actions ----
-
-    def _checklists_dir() -> Path:
-        return Path(__file__).resolve().parents[2] / 'reference' / 'checklists'
+    # Served from the bundled package data (codingdude/data/checklists) — the
+    # same source `scaffold` seeds into project workdirs. Reading a repo-root
+    # reference/checklists instead made both endpoints silently empty on any
+    # machine without a locally seeded tree (#267: CI StopIteration — that
+    # directory is runtime state, not part of the checkout).
 
     @app.get('/checklists')
     def list_checklists(_: None = Depends(authorize)) -> dict:
         """Distilled checklists (#92) with titles + use-when lines."""
-        root = _checklists_dir()
         items = []
-        if root.is_dir():
-            for p in sorted(root.glob('*.md')):
-                try:
-                    md = p.read_text(encoding='utf-8')
-                except OSError:
-                    continue
-                lines = md.split('\n')
-                title = next((ln for ln in lines if ln.startswith('# ')), '').lstrip('# ').strip()
-                title = title.removesuffix('Checklist').strip()
-                use_when = next(
-                    (ln.removeprefix('Use when:').strip() for ln in lines
-                     if ln.startswith('Use when:')), '')
-                items.append({'name': p.stem, 'title': title.strip(), 'use_when': use_when})
+        for fname, md in _bundled_checklists():
+            lines = md.split('\n')
+            title = next((ln for ln in lines if ln.startswith('# ')), '').lstrip('# ').strip()
+            title = title.removesuffix('Checklist').strip()
+            use_when = next(
+                (ln.removeprefix('Use when:').strip() for ln in lines
+                 if ln.startswith('Use when:')), '')
+            items.append({
+                'name': fname.removesuffix('.md'),
+                'title': title.strip(),
+                'use_when': use_when,
+            })
         return {'checklists': items}
 
     @app.get('/checklists/{name}')
     def get_checklist(name: str, _: None = Depends(authorize)) -> dict:
-        path = (_checklists_dir() / f'{name}.md').resolve()
-        if path.parent != _checklists_dir().resolve() or not path.is_file():
-            raise HTTPException(status_code=404, detail=f'no such checklist: {name}')
-        return {'name': name, 'markdown': path.read_text(encoding='utf-8')}
+        for fname, md in _bundled_checklists():
+            if fname.removesuffix('.md') == name:
+                return {'name': name, 'markdown': md}
+        raise HTTPException(status_code=404, detail=f'no such checklist: {name}')
 
     @app.get('/sessions/{session_id}/file_diff')
     def file_diff(session_id: str, path: str, _: None = Depends(authorize)) -> dict:

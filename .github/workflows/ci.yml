@@ -12,6 +12,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: claim_check validates commit refs against git, and
+          # a depth-1 clone made every historical ref unresolvable (#267).
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@v5
       - name: Lint
         run: uv run ruff check src tests bench.py

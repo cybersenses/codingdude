@@ -242,6 +242,31 @@ def test_checklists_endpoints(server, tmp_path):
     assert r.status_code == 404
 
 
+def test_checklists_served_from_bundled_data(server, monkeypatch):
+    """#267 (R73): the checklist endpoints read the bundled package data —
+    NOT a repo-root reference/checklists, which only exists on machines
+    where scaffold ran (CI symptom: empty list → StopIteration)."""
+    import codingdude.server as server_mod
+
+    app, base = server
+    fake = [('zeta-probe.md', '# Zeta Probe Checklist\n\nUse when: probing.\n')]
+    monkeypatch.setattr(server_mod, '_bundled_checklists', lambda: fake)
+
+    r = httpx.get(f'{base}/checklists', headers=auth(), timeout=10)
+    assert r.status_code == 200
+    names = [c['name'] for c in r.json()['checklists']]
+    assert names == ['zeta-probe']
+
+    r = httpx.get(f'{base}/checklists/zeta-probe', headers=auth(), timeout=10)
+    assert r.status_code == 200
+    assert 'Zeta Probe' in r.json()['markdown']
+
+    # Unknown names 404 — derived from the same loader, so a bundled-only
+    # install can never be probed into arbitrary file reads.
+    r = httpx.get(f'{base}/checklists/qa-testing', headers=auth(), timeout=10)
+    assert r.status_code == 404
+
+
 def test_archmap_endpoint(server, tmp_path):
     """#101 (R43): module-level architecture map — files as nodes, imports as edges."""
     app, base = server
