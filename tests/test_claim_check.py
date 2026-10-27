@@ -92,6 +92,30 @@ def test_gitignored_paths_are_not_verifiable_here():
     assert cc.check_paths("See `src/codingdude/store.py`.") != []
 
 
+def test_global_gitignore_cannot_exempt_paths(monkeypatch, tmp_path):
+    """Machine git config must not decide what this repo ignores (#267).
+
+    Probe: a global core.excludesFile holding `*` made `git check-ignore`
+    exempt `src/codingdude/store.py` and `no-such-dir/` on CI, so four path
+    tests passed with zero findings there while failing locally — the exact
+    machine-dependence the gitignore skip was written to prevent. The checker
+    therefore pins GIT_CONFIG_GLOBAL to the null device and sets
+    GIT_CONFIG_NOSYSTEM: ignore evaluation is this repo's rules, full stop.
+    """
+    ignores = tmp_path / "star.ignore"
+    ignores.write_text("*\n", encoding="utf-8")
+    cfg = tmp_path / "global.cfg"
+    cfg.write_text(
+        "[core]\n\texcludesFile = " + ignores.as_posix() + "\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(cfg))
+
+    # A global ignore-all must not exempt a genuinely missing path...
+    assert cc._is_ignored("src/codingdude/store.py", ROOT) is False
+    # ...while the repo's own ignore rules still bite.
+    assert cc._is_ignored(".scratch/probe.py", ROOT) is True
+
+
 def test_removal_marker_silences_a_deliberate_absence():
     """Naming a file that no longer exists is a decision, so it must be markable."""
     text = "Corrected `store.py` (removed) to `db.py`."

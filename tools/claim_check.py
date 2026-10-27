@@ -67,6 +67,7 @@ The identifier check is on by default only for `--message-file`; `--symbols` and
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import shutil
 import subprocess  # nosec B404 - fixed git argv only, see _git
@@ -192,12 +193,23 @@ def _git_binary() -> str:
 
 def _git(args: list[str], root: Path) -> subprocess.CompletedProcess[str]:
     # Fixed argv (no shell), binary resolved to an absolute path by _git_binary.
+    # Repo-only config: ignore evaluation must reflect THIS repo's .gitignore,
+    # never the machine's. Probe: a global core.excludesFile holding `*` on a
+    # CI runner made check-ignore exempt every missing path, so four path
+    # tests passed with zero findings there (#267) — the exact
+    # machine-dependence the gitignore skip was written to prevent.
+    env = {
+        **os.environ,
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+    }
     return subprocess.run(  # nosec B603 - argv list, shell=False, resolved binary
         [_git_binary(), *args],
         cwd=root,
         capture_output=True,
         text=True,
         check=False,
+        env=env,
     )
 
 
