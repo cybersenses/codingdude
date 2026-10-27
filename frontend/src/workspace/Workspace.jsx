@@ -387,6 +387,28 @@ export function Workspace({ error, agentStrip, sidebar, fileWs, onAsk, sessionId
     runCommand(`show:${id}`, target, paletteCtx)
   }
 
+  // R69 #261: the one reveal path. App dispatches `cd-open-file` (from the
+  // reveal_code tool event or a clicked citation); the shell answers by
+  // opening the editor panel and loading the file at the range. Refs keep
+  // the subscription mount-once while always calling the latest handlers
+  // (openFile closes over live tab state; a stale copy would race it).
+  const showPanelRef = useRef(showPanel)
+  const openFileRef = useRef(fileWs.openFile)
+  useEffect(() => {
+    showPanelRef.current = showPanel
+    openFileRef.current = fileWs.openFile
+  })
+  useEffect(() => {
+    const onOpenFile = (e) => {
+      const { path, start, end } = e.detail || {}
+      if (!path) return
+      showPanelRef.current('editor')
+      openFileRef.current(path, { start, end })
+    }
+    window.addEventListener('cd-open-file', onOpenFile)
+    return () => window.removeEventListener('cd-open-file', onOpenFile)
+  }, [])
+
   const shell = {
     sidebar,
     fileWs,

@@ -15,9 +15,29 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import React, { useEffect, useRef } from 'react'
 import ReactMarkdown from 'react-markdown'
+import { CD_OPEN_SCHEME, parseCitationHref, rehypeCitations } from '../citations'
 import {
   ApprovalCard, AskUserCard, EditBlock, PlanCard, ToolTimeline,
 } from '../cards/chatCards.jsx'
+
+// R69 #261: citations (path:line) become cdopen:// links via the rehype
+// plugin; this renderer turns them into reveal buttons riding the same
+// `cd-open-file` event the reveal_code tool uses. Real URLs render normally.
+function CiteLink({ href, children }) {
+  if (href && href.startsWith(CD_OPEN_SCHEME)) {
+    const target = parseCitationHref(href)
+    return (
+      <button
+        type="button"
+        className="rounded bg-neutral-900 px-1 font-mono text-brand-300 hover:bg-brand-800 hover:text-brand-fg"
+        title={target ? `open ${target.path}:${target.start}` : 'broken citation'}
+        disabled={!target}
+        onClick={() => target && window.dispatchEvent(new CustomEvent('cd-open-file', { detail: target }))}
+      >{children}</button>
+    )
+  }
+  return <a href={href} target="_blank" rel="noreferrer">{children}</a>
+}
 
 // R59 P0: moved verbatim out of App.jsx. Becomes the `chat` panel in P1; the
 // prompt row is a separate panel (Prompt.jsx).
@@ -56,7 +76,11 @@ export function Chat({ messages, streaming, onStop, onDecide, sessionId, suggest
             >
               {m.role === 'user'
                 ? m.text
-                : <ReactMarkdown>{m.text}</ReactMarkdown>}
+                : (
+                  <ReactMarkdown rehypePlugins={[rehypeCitations]} components={{ a: CiteLink }}>
+                    {m.text}
+                  </ReactMarkdown>
+                )}
               {m.streaming && <span className="animate-pulse">▍</span>}
             </div>
             {m.toolEvents && <ToolTimeline events={m.toolEvents} />}

@@ -28,9 +28,12 @@ export function useFileWorkspace(sessionId) {
   const [dirty, setDirty] = useState(false)
   const [notice, setNotice] = useState(null)
   const [diff, setDiff] = useState(null) // {base} when diff view is on
+  // R69 #261: the pending reveal (from reveal_code or a clicked citation).
+  // Nonce-keyed so re-revealing the same range re-runs the editor effect.
+  const [revealAt, setRevealAt] = useState(null)
   const active = tabs.find((t) => t.active) || null
 
-  async function openFile(path) {
+  async function openFile(path, reveal) {
     try {
       const f = await call(`/sessions/${sessionId}/file?path=${encodeURIComponent(path)}`)
       setTabs(openTab(tabs, { path, content: f.content, mtime: f.mtime }))
@@ -38,9 +41,17 @@ export function useFileWorkspace(sessionId) {
       setDirty(false)
       setNotice(null)
       setDiff(null)
+      if (reveal) {
+        setRevealAt({
+          path,
+          startLine: reveal.start,
+          endLine: reveal.end ?? reveal.start,
+          nonce: Date.now(),
+        })
+      }
     } catch (e) {
       setNotice(`cannot open ${path}: ${e.message}`)
     }
   }
-  return { sessionId, tabs, setTabs, draft, setDraft, dirty, setDirty, notice, setNotice, diff, setDiff, active, openFile }
+  return { sessionId, tabs, setTabs, draft, setDraft, dirty, setDirty, notice, setNotice, diff, setDiff, active, openFile, revealAt }
 }

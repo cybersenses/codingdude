@@ -13,6 +13,7 @@
 //
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
+import { useEffect, useRef } from 'react'
 import Editor, { DiffEditor } from '@monaco-editor/react'
 import { langFor } from './editor'
 
@@ -35,8 +36,38 @@ function baseOptions() {
   }
 }
 
-export default function CodeEditor({ path, value, onChange, onSelectionChange, height = '100%' }) {
+export default function CodeEditor({ path, value, onChange, onSelectionChange, reveal, height = '100%' }) {
+  // R69 #261: reveal = {path, startLine, endLine, nonce}. The editor ref
+  // only exists after monaco's async mount, so the latest reveal is also
+  // kept in a ref and applied in handleMount when it arrived early.
+  const editorRef = useRef(null)
+  const monacoRef = useRef(null)
+  const pendingRevealRef = useRef(null)
+
+  function applyReveal(editor, monaco, r) {
+    if (!editor || !monaco || !r) return
+    const start = Math.max(1, r.startLine)
+    const end = Math.max(start, r.endLine ?? start)
+    const range = new monaco.Range(start, 1, end, 1)
+    editor.setSelection(range)
+    editor.revealLineInCenter(start)
+    editor.createDecorationsCollection([{
+      range,
+      options: {
+        isWholeLine: true,
+        className: 'cd-reveal-line',
+        overviewRuler: { color: '#4f7cff', position: 3 }, // monaco OverviewRulerLane.Right
+      },
+    }])
+  }
+
   function handleMount(editor, monaco) {
+    editorRef.current = editor
+    monacoRef.current = monaco
+    if (pendingRevealRef.current) {
+      applyReveal(editor, monaco, pendingRevealRef.current)
+      pendingRevealRef.current = null
+    }
     if (onSelectionChange) {
       // Only commit the selection on mouse-up / key-up: reporting mid-drag
       // mounts the action bar, shifts layout under the cursor and collapses
@@ -50,6 +81,15 @@ export default function CodeEditor({ path, value, onChange, onSelectionChange, h
       editor.onKeyUp(report)
     }
   }
+
+  // Child effects (monaco's value application) run before this parent
+  // effect, so the model already holds the new content when we scroll.
+  useEffect(() => {
+    if (!reveal) return
+    if (editorRef.current) applyReveal(editorRef.current, monacoRef.current, reveal)
+    else pendingRevealRef.current = reveal
+  }, [reveal?.nonce])
+
   return (
     <Editor
       language={langFor(path || '')}
