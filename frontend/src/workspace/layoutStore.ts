@@ -220,8 +220,9 @@ export interface FloatingBounds {
 // A floating window's anchor must keep at least this much of the window on
 // screen (its title bar is ~35px; 120px keeps the panel grabbable) — a
 // position saved from a larger window would otherwise restore the panel
-// fully off-screen, reachable only through the palette.
-const FLOATING_MIN_VISIBLE = 120
+// fully off-screen, reachable only through the palette. Exported so tests
+// derive their expectations from it instead of restating the arithmetic.
+export const FLOATING_MIN_VISIBLE = 120
 
 /**
  * Clamps each serialized floating-group anchor so the window restores at
@@ -234,11 +235,15 @@ const FLOATING_MIN_VISIBLE = 120
  */
 export function clampFloatingGroups(layout: SerializedLayout, bounds: FloatingBounds): void {
   if (!Array.isArray(layout.floatingGroups)) return
-  const max = {
-    left: Math.max(0, bounds.width - FLOATING_MIN_VISIBLE),
-    top: Math.max(0, bounds.height - FLOATING_MIN_VISIBLE),
-    right: Math.max(0, bounds.width - FLOATING_MIN_VISIBLE),
-    bottom: Math.max(0, bounds.height - FLOATING_MIN_VISIBLE),
+  // One cap per axis: left/right share the width budget, top/bottom the
+  // height budget (an AnchoredBox carries exactly one anchor per axis).
+  const maxX = Math.max(0, bounds.width - FLOATING_MIN_VISIBLE)
+  const maxY = Math.max(0, bounds.height - FLOATING_MIN_VISIBLE)
+  const max: Record<'top' | 'left' | 'right' | 'bottom', number> = {
+    top: maxY,
+    bottom: maxY,
+    left: maxX,
+    right: maxX,
   }
   for (const win of layout.floatingGroups) {
     if (!isRecord(win) || !isRecord(win.position)) continue

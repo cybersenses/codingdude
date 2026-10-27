@@ -21,6 +21,7 @@ import {
   LAYOUT_KEY,
   LAYOUT_VERSION,
   PRESETS_KEY,
+  FLOATING_MIN_VISIBLE,
   clearSavedLayout,
   clampFloatingGroups,
   createDebouncedSaver,
@@ -182,8 +183,13 @@ describe('loadSavedLayout', () => {
     const res = loadSavedLayout(storage, isKnownPanel, { width: 1440, height: 911 })
     expect(res.ok).toBe(true)
     if (res.ok) {
-      // 911 - 120 (FLOATING_MIN_VISIBLE): the panel stays grabbable.
-      expect(res.layout.floatingGroups![0].position).toEqual({ left: 40, top: 791, width: 300, height: 200 })
+      // Derived from FLOATING_MIN_VISIBLE: the panel stays grabbable.
+      expect(res.layout.floatingGroups![0].position).toEqual({
+        left: 40,
+        top: 911 - FLOATING_MIN_VISIBLE,
+        width: 300,
+        height: 200,
+      })
     }
   })
 
@@ -211,9 +217,11 @@ describe('clampFloatingGroups', () => {
     ]
     clampFloatingGroups(layout, { width: 1440, height: 911 })
     const [a, b, c, d] = layout.floatingGroups as Array<{ position: Record<string, number> }>
-    expect(a.position).toEqual({ left: 1320, top: 10 })
-    expect(b.position).toEqual({ right: 1320, top: 10 })
-    expect(c.position).toEqual({ bottom: 791, left: 10 })
+    const maxX = 1440 - FLOATING_MIN_VISIBLE
+    const maxY = 911 - FLOATING_MIN_VISIBLE
+    expect(a.position).toEqual({ left: maxX, top: 10 })
+    expect(b.position).toEqual({ right: maxX, top: 10 })
+    expect(c.position).toEqual({ bottom: maxY, left: 10 })
     expect(d.position).toEqual({ bottom: 0, right: 0 })
   })
 
