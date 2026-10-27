@@ -17,6 +17,15 @@ jobs:
           # a depth-1 clone made every historical ref unresolvable (#267).
           fetch-depth: 0
       - uses: astral-sh/setup-uv@v5
+      # TEMPORARY (#267 diagnosis): which ignore source exempts paths here?
+      - name: Debug ignore evaluation
+        run: |
+          git version
+          git config --list --show-origin | Select-String -Pattern "excludes|ignore"
+          Write-Output "--- plain check-ignore -v:"
+          git check-ignore -v -- src/codingdude/store.py; Write-Output "rc=$LASTEXITCODE"
+          Write-Output "--- with repo-only override:"
+          git -c core.excludesFile=nul check-ignore -v -- src/codingdude/store.py; Write-Output "rc=$LASTEXITCODE"
       - name: Lint
         run: uv run ruff check src tests bench.py
       - name: Type check
