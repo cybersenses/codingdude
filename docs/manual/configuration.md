@@ -175,7 +175,10 @@ your words; the kickoff fires once per session.
 
 Override the bundled text per project with `[kickoff] existing` /
 `[kickoff] new` (above); omitted keys fall back to the versioned prompts
-shipped in `src/codingdude/prompts/kickoff-*.md`.
+shipped in `src/codingdude/prompts/kickoff-*.md`. Kickoff text must not
+contain a bare `---` line — that separator is how the block is joined to
+your message and later stripped, so one inside the text ends the block
+early.
 
 ## Pricing
 
