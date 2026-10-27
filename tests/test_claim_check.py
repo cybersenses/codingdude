@@ -109,6 +109,8 @@ def test_prose_with_a_slash_is_not_a_path_claim():
 def test_runtime_files_are_exempt():
     """`config.toml` is `~/.codingdude/config.toml`, outside this repo."""
     assert cc.check_paths("Keys live in `config.toml`.") == []
+    assert cc.check_paths("Per-project overrides live in `.codingdude.toml`.") == []
+    assert cc.check_paths("Run artefacts land in `traces/`, `uploads/`, `logs/`.") == []
 
 
 # --------------------------------------------------------------------------
