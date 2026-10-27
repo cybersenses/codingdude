@@ -21,18 +21,32 @@ jobs:
       - name: Debug claim_check internals
         run: |
           uv run python -c "
-          import sys; sys.path.insert(0, 'tools')
+          import os, shutil, subprocess, sys
+          sys.path.insert(0, 'tools')
           import claim_check as cc
           tok = 'src/codingdude/store.py'
-          print('ROOT =', cc.ROOT)
-          print('exists():', (cc.ROOT / tok).exists())
-          tracked = cc._tracked_files(cc.ROOT)
-          print('tracked count:', len(tracked))
-          print('tracked[0:3]:', tracked[:3])
-          print('tracked match:', [n for n in tracked if n.endswith('/' + tok) or n == tok])
-          print('_is_ignored:', cc._is_ignored(tok, cc.ROOT))
-          print('_path_exists:', cc._path_exists(tok, cc.ROOT))
-          print('check_paths:', cc.check_paths('See `src/codingdude/store.py` for the writer.'))
+          print('which git:', shutil.which('git'))
+          print('PATH[0:3]:', os.environ['PATH'].split(os.pathsep)[:3])
+          git = shutil.which('git')
+          def probe(label, argv, env=None):
+              r = subprocess.run([git, *argv, 'check-ignore', '-q', '--', tok],
+                                 cwd=cc.ROOT, capture_output=True, text=True, env=env)
+              print(label, 'rc=', r.returncode, 'err=', r.stderr.strip()[:120])
+          probe('plain           :', [])
+          probe('c-nul           :', ['-c', 'core.excludesFile=nul'])
+          probe('c-devnull-lit   :', ['-c', 'core.excludesFile=/dev/null'])
+          env = dict(os.environ, GIT_CONFIG_GLOBAL='nul', GIT_CONFIG_NOSYSTEM='1')
+          probe('env-global-nul  :', [], env)
+          env2 = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+          probe('env-global-dev  :', [], env2)
+          print('os.devnull:', os.devnull)
+          print('cc._is_ignored:', cc._is_ignored(tok, cc.ROOT))
+          r = subprocess.run([git, 'config', '--list', '--show-origin'],
+                             cwd=cc.ROOT, capture_output=True, text=True)
+          print('config lines w excludes/ignore:')
+          for ln in r.stdout.splitlines():
+              if 'exclud' in ln.lower() or 'ignor' in ln.lower():
+                  print('   ', ln)
           "
       - name: Lint
         run: uv run ruff check src tests bench.py
