@@ -288,16 +288,19 @@ def _is_ignored(token: str, root: Path) -> bool:
 
     Fails closed: if git cannot answer, the path is still checked.
 
-    Queried with *and* without a trailing slash — but only when the token itself
-    is a directory claim (ends in "/"): a directory-only ignore pattern
-    (`frontend/dist/`, `reference/`) matches `frontend/dist/` but not
-    `frontend/dist`. A FILE token (`src/codingdude/store.py`) must not have a
-    directory claim fabricated for it: git 2.56 (the CI runner) answers "ignored"
-    for the fabricated `store.py/` form where 2.55 does not (#267), which
-    silently exempted every missing file path on CI.
+    Two shapes, neither of them the raw trailing-slash path:
+
+    * a FILE claim (`src/codingdude/store.py`) is probed as itself — git 2.56
+      (the CI runner) phantom-matches nonexistent trailing-slash paths, and a
+      `store.py/` probe fabricated a directory claim the document never made,
+      silently exempting every missing file path on CI (#267);
+    * a DIRECTORY claim (`frontend/dist/`) is probed as a file inside the tree
+      (`frontend/dist/x`) — directory-only ignore patterns (`reference/`) match
+      their contents, so the answer is the same, and the 2.56 trailing-slash
+      phantom is sidestepped (`no-such-dir/x` is an ordinary file path).
     """
     if token.endswith("/"):
-        forms = [token, token.rstrip("/")]
+        forms = [token.rstrip("/") + "/x"]
     else:
         forms = [token]
     for form in dict.fromkeys(forms):
