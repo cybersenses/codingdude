@@ -404,7 +404,12 @@ export function Workspace({ error, agentStrip, sidebar, fileWs, onAsk, sessionId
       saveLayout(window.localStorage, apiRef.current.toJSON(), presetRef.current)
     }, SAVE_DEBOUNCE_MS)
 
-    const saved = loadSavedLayout(window.localStorage, isKnownPanel)
+    // #260: bounds clamp floating panels saved from a larger window back on
+    // screen — dockview restores their positions verbatim otherwise.
+    const saved = loadSavedLayout(window.localStorage, isKnownPanel, {
+      width: window.innerWidth,
+      height: window.innerHeight,
+    })
     if (saved.ok) {
       try {
         dockApi.fromJSON(saved.layout)
@@ -454,7 +459,10 @@ export function Workspace({ error, agentStrip, sidebar, fileWs, onAsk, sessionId
             {notice}
           </button>
         )}
-        <div className="min-h-0 flex-1">
+        {/* #260 belt: nothing inside the dock may ever scroll the window —
+            restored dockview geometry (e.g. a stale floating panel) leaked
+            into document scroll before this. */}
+        <div className="min-h-0 flex-1 overflow-hidden">
           <DockviewReact
             theme={themeDark}
             components={COMPONENTS}
