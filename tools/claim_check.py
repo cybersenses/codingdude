@@ -288,11 +288,18 @@ def _is_ignored(token: str, root: Path) -> bool:
 
     Fails closed: if git cannot answer, the path is still checked.
 
-    Queried with *and* without a trailing slash: a directory-only ignore pattern
+    Queried with *and* without a trailing slash — but only when the token itself
+    is a directory claim (ends in "/"): a directory-only ignore pattern
     (`frontend/dist/`, `reference/`) matches `frontend/dist/` but not
-    `frontend/dist`, and stripping the slash was the first version's bug.
+    `frontend/dist`. A FILE token (`src/codingdude/store.py`) must not have a
+    directory claim fabricated for it: git 2.56 (the CI runner) answers "ignored"
+    for the fabricated `store.py/` form where 2.55 does not (#267), which
+    silently exempted every missing file path on CI.
     """
-    forms = [token, token.rstrip("/"), token.rstrip("/") + "/"]
+    if token.endswith("/"):
+        forms = [token, token.rstrip("/")]
+    else:
+        forms = [token]
     for form in dict.fromkeys(forms):
         try:
             result = _git(["check-ignore", "-q", "--", form], root)
