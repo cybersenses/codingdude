@@ -1121,6 +1121,6 @@ Rule (user, 2026-10-27): local planning writes must ALWAYS reflect in the visibl
 Fix: migrate the Planning panel onto the R59 P2 visibility-gated data store (sessionData) as a workdir-keyed `planning` topic — polled every 2s while the panel is visible, paused hidden, errors keep last data (#231/#233 semantics), mutations refresh out-of-band via store.refresh(). This retires the last fetch-once dock panel instead of adding a new per-tab poll, per the P2 architecture.
 
 ## R69 — Agent-driven editor reveal: "show me where" loads + highlights code; clickable citations in chat
-**Status:** open
+**Status:** done
 
 
