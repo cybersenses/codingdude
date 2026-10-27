@@ -17,15 +17,23 @@ jobs:
           # a depth-1 clone made every historical ref unresolvable (#267).
           fetch-depth: 0
       - uses: astral-sh/setup-uv@v5
-      # TEMPORARY (#267 diagnosis): which ignore source exempts paths here?
-      - name: Debug ignore evaluation
+      # TEMPORARY (#267 diagnosis): interrogate check_paths on the runner.
+      - name: Debug claim_check internals
         run: |
-          git version
-          git config --list --show-origin | Select-String -Pattern "excludes|ignore"
-          Write-Output "--- plain check-ignore -v:"
-          git check-ignore -v -- src/codingdude/store.py; Write-Output "rc=$LASTEXITCODE"
-          Write-Output "--- with repo-only override:"
-          git -c core.excludesFile=nul check-ignore -v -- src/codingdude/store.py; Write-Output "rc=$LASTEXITCODE"
+          uv run python -c "
+          import sys; sys.path.insert(0, 'tools')
+          import claim_check as cc
+          tok = 'src/codingdude/store.py'
+          print('ROOT =', cc.ROOT)
+          print('exists():', (cc.ROOT / tok).exists())
+          tracked = cc._tracked_files(cc.ROOT)
+          print('tracked count:', len(tracked))
+          print('tracked[0:3]:', tracked[:3])
+          print('tracked match:', [n for n in tracked if n.endswith('/' + tok) or n == tok])
+          print('_is_ignored:', cc._is_ignored(tok, cc.ROOT))
+          print('_path_exists:', cc._path_exists(tok, cc.ROOT))
+          print('check_paths:', cc.check_paths('See `src/codingdude/store.py` for the writer.'))
+          "
       - name: Lint
         run: uv run ruff check src tests bench.py
       - name: Type check
