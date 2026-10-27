@@ -36,6 +36,7 @@ import { createSessionStore } from '../store/sessionData'
 import { sessionTopics, requiresSession } from '../store/sessionTopics'
 import { CommandPalette } from './CommandPalette'
 import {
+  clampFloatingGroups,
   clearSavedLayout,
   createDebouncedSaver,
   loadSavedLayout,
@@ -280,6 +281,13 @@ function Watermark({ containerApi, onPreset }) {
 
 const SAVE_DEBOUNCE_MS = 400
 
+// #260: the bounds every restored floating panel is clamped into. Window
+// (not dock-box) bounds are deliberate — floating overlays legitimately sit
+// over the footer, and innerHeight - FLOATING_MIN_VISIBLE (120) always
+// clears the dock bottom (footer strip ~58px), so the title bar stays
+// grabbable even though the cap is looser than the container.
+const floatingBounds = () => ({ width: window.innerWidth, height: window.innerHeight })
+
 export function Workspace({ error, agentStrip, sidebar, fileWs, onAsk, sessionId, prompt, pending, chat, footer, onRefreshArtifacts, workdir, reviewDiff = 0 }) {
   const [api, setApi] = useState(null)
   const apiRef = useRef(null)
@@ -321,6 +329,11 @@ export function Workspace({ error, agentStrip, sidebar, fileWs, onAsk, sessionId
       const saved = loadUserPresets(window.localStorage)[presetId]
       if (!saved) return
       try {
+        // #260 review: user presets take the same floating clamp as the
+        // boot restore — fromJSON honors stale positions verbatim otherwise,
+        // so a preset saved on a taller window would land its panel
+        // off-screen (belt stops the scroll, not the invisibility).
+        clampFloatingGroups(saved, floatingBounds())
         targetApi.clear()
         targetApi.fromJSON(saved)
         presetRef.current = `custom:${presetId}`
@@ -406,10 +419,7 @@ export function Workspace({ error, agentStrip, sidebar, fileWs, onAsk, sessionId
 
     // #260: bounds clamp floating panels saved from a larger window back on
     // screen — dockview restores their positions verbatim otherwise.
-    const saved = loadSavedLayout(window.localStorage, isKnownPanel, {
-      width: window.innerWidth,
-      height: window.innerHeight,
-    })
+    const saved = loadSavedLayout(window.localStorage, isKnownPanel, floatingBounds())
     if (saved.ok) {
       try {
         dockApi.fromJSON(saved.layout)
