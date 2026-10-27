@@ -13,35 +13,45 @@
 //
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
-import React, { useEffect, useState } from 'react'
+import React, { useState } from 'react'
 import { api } from '../../api'
+import { useShell } from '../../workspace/shellContext'
+import { useSessionData } from '../../store/sessionData'
 
 // R59 P0: moved verbatim out of App.jsx's DockPanel tab body. Roadmap,
-// tickets, PRDs, tech designs and decisions for the selected project; becomes
+// tickets, PRDs, tech designs and decisions for the selected project; became
 // the `planning` panel in P2.
 export function Planning({ workdir }) {
-  const [data, setData] = useState(null)
-  const [err, setErr] = useState('')
+  // R68 (#256): planning data comes from the visibility-gated store, keyed by
+  // the workdir — the panel refetches every tick while visible, so tickets
+  // and roadmap items the agent creates mid-run appear here within ~2s
+  // without re-selecting the project. Fetch-once-per-workdir was the bug:
+  // the GitHub mirror of the same creation was visible while the local
+  // tickets list stayed frozen.
+  const { store } = useShell()
+  const { data, error } = useSessionData(store, 'planning', workdir || null)
+  // #242 class: mutation failures (status change, add) are distinct from poll
+  // failures — both surface, but a bad mutation must not look like a poll
+  // outage, and vice versa.
+  const [mutErr, setMutErr] = useState('')
   const [newTitle, setNewTitle] = useState('')
   const [kind, setKind] = useState('ticket')
 
-  async function refresh() {
-    if (!workdir) return
-    try {
-      setData(await api.getPlanning(workdir))
-      setErr('')
-    } catch (e) { setErr(String(e.message)) }
+  // Out-of-band refetch after a mutation the panel owns — the store's
+  // refresh() documents exactly this case (no 2s wait for the next tick).
+  function refresh() {
+    store.refresh('planning', workdir || null)
   }
-  useEffect(() => { refresh() }, [workdir])
 
   async function setStatus(fn, id, status) {
-    // #242 class: a failed status change must surface — a silent catch makes
-    // refresh() re-show the old status as if the change had worked.
     try {
       await fn(workdir, id, status)
+      setMutErr('')
     } catch (e) {
-      setErr(`status change failed: ${e instanceof Error ? e.message : String(e)}`)
+      setMutErr(`status change failed: ${e instanceof Error ? e.message : String(e)}`)
     }
+    // Either way: refetch so the row shows persisted truth, never a hopeful
+    // local optimistic value.
     refresh()
   }
   async function add() {
@@ -55,18 +65,18 @@ export function Planning({ workdir }) {
     try {
       await fn(workdir, title, '')
       setNewTitle('')
-      setErr('')
-    } catch (e) { setErr(String(e.message)) }
+      setMutErr('')
+    } catch (e) { setMutErr(e instanceof Error ? e.message : String(e)) }
     refresh()
   }
 
   if (!workdir) {
     return <div className="rounded border border-line bg-surface p-4 text-xs text-ink-muted">Select a project first.</div>
   }
-  if (err && !data) {
+  if (error && !data) {
     return (
       <div data-poll-error="Planning" className="rounded border border-danger/50 bg-danger/10 p-3 text-xs text-danger">
-        planning data unavailable: {err}{' '}
+        planning data unavailable: {error}{' '}
         <button className="ml-1 underline hover:opacity-80" onClick={refresh}>retry</button>
       </div>
     )
@@ -77,10 +87,11 @@ export function Planning({ workdir }) {
   const statusColor = (s) => s === 'done' ? 'text-success'
     : s === 'in_progress' ? 'text-warning' : 'text-ink-muted'
   return (
-      <div className="space-y-3">
-      {err && (
+    <div className="space-y-3">
+      {(mutErr || (error && data)) && (
         <div className="rounded border border-warning/50 bg-warning/10 px-2 py-1 text-[10px] text-warning">
-          refresh failed: {err}
+          {mutErr && <div>{mutErr}</div>}
+          {error && <div>refresh failed: {error}</div>}
         </div>
       )}
       <div className="flex gap-1">

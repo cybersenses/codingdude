@@ -56,4 +56,10 @@ export const sessionTopics: Record<string, TopicFetcher> = {
     runEvents: await call(`/sessions/${sid}/trace?limit=300`),
   }),
   processes: (sid) => call(`/sessions/${sid}/processes`).then((rows) => rows || []),
+  // R68 (#256): planning is project-scoped, not session-scoped — the store key
+  // is the workdir, and the fetcher maps it straight through. Guarded so the
+  // no-workdir key (panel placeholder state) resolves null instead of calling
+  // /api/planning/ forever; it must NOT join SESSION_REQUIRED, or planning
+  // would stop polling the moment no session is selected.
+  planning: (wd) => (wd ? api.getPlanning(wd) : Promise.resolve(null)),
 }

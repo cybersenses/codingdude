@@ -1088,3 +1088,12 @@ Findings (probe, 2026-10-26): the document never scrolls (docH == viewport, dock
 Adjacent finding logged, not fixed here: `streaming` state leaks across session switches (a live run in session A disables the prompt and shows Stop in fresh session B until A's SSE closes).
 
 Follow-up (2026-10-26, user report after #254 shipped): "still a massive scroll bar on the right hand side." Probe (.scratch/probe_chat_scrollbar.py): the document still never scrolls — the chat scroller sits flush at the viewport's right edge and was the app's only scrollbar with no styling, so Windows Chrome drew its classic ~17px light-grey slab against the dark shell. Fix: one app-wide rule in `index.css` `@layer base` — `scrollbar-width: thin` plus `scrollbar-color` tinted from tokens (muted foreground @ 55%, transparent track), both themes. Verified from the live-served bundle (computed `scrollbarWidth: thin`, thumb `#a9a39e/0.55`); no server bounce needed — `StaticFiles` serves dist from disk, hard-refresh picks it up.
+
+## R68 — Planning panel reflects agent-created tickets live
+**Status:** done
+
+The Planning dock panel fetches planning data exactly once per workdir change; tickets/roadmap items created by the agent mid-run (create_ticket / create_roadmap_item tools) never appear until the user re-selects the project. The GitHub mirror of those same creations IS visible (gh subprocess + issue on github.com), which reads as "logged on GitHub but not locally" — the local write is real but the visible tickets list never refreshes.
+
+Rule (user, 2026-10-27): local planning writes must ALWAYS reflect in the visible tickets.
+
+Fix: migrate the Planning panel onto the R59 P2 visibility-gated data store (sessionData) as a workdir-keyed `planning` topic — polled every 2s while the panel is visible, paused hidden, errors keep last data (#231/#233 semantics), mutations refresh out-of-band via store.refresh(). This retires the last fetch-once dock panel instead of adding a new per-tab poll, per the P2 architecture.

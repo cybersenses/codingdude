@@ -73,8 +73,13 @@ export interface StoreOptions {
   requiresSession?: (topic: string) => boolean
 }
 
+// R68: '|' not ':' — scope ids are not always UUIDs. The planning topic keys
+// by the workdir, and a Windows workdir contains a drive-letter colon
+// ('G:\proj'), which the tick's key re-split mistook for the separator.
+const KEY_SEP = '|'
+
 function keyOf(topic: string, sessionId: SessionId): string {
-  return `${sessionId ?? '_'}:${topic}`
+  return `${sessionId ?? '_'}${KEY_SEP}${topic}`
 }
 
 export function createSessionStore(
@@ -125,7 +130,7 @@ export function createSessionStore(
     if (isHidden()) return
     for (const [k, s] of keys) {
       if (s.subscribers.size === 0 || s.visible === 0) continue
-      const idx = k.indexOf(':')
+      const idx = k.indexOf(KEY_SEP)
       const sid = k.slice(0, idx) === '_' ? null : k.slice(0, idx)
       const topic = k.slice(idx + 1)
       if (blocked(topic, sid)) continue
