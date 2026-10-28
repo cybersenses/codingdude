@@ -479,12 +479,12 @@ gzip, and it ships inside the bundle (the chunk carries `dv-dockview`). So the
 "measure `dist` before/after … reject if it exceeds ~60 KB gzip without a stated
 reason" — was never actually run.
 
-Run properly, with a worktree build of `96fbb6e` (pre-dockview) against the
+Run properly, with a worktree build of `489594f` (pre-dockview) against the
 built `dist`:
 
 | Build | entry chunk raw | entry chunk gzip |
 |---|---|---|
-| `96fbb6e` (pre-P1) | 386,814 | 117,580 |
+| `489594f` (pre-P1) | 386,814 | 117,580 |
 | P1, static import | 807,083 | 215,732 |
 | **P1, lazy import (now)** | **387,694** | **118,022** |
 
@@ -851,7 +851,7 @@ the failure mode to avoid.
    and `.scratch/` are build products and a local library: absent from a fresh
    checkout by definition, present on the author's machine because a build or a scan
    ran. Asserting on them made the check machine-dependent — green locally, twelve
-   findings in a clean one. Probe: a `git worktree` of `862c939`,
+   findings in a clean one. Probe: a `git worktree` of `eb60c3a`,
    `pytest tests/test_claim_check.py` → 4 of 7 documents failed. `git check-ignore`
    decides, queried with *and* without a trailing slash, because a directory-only
    pattern (`frontend/dist/`) matches only the slash form. Fails closed: if git
@@ -930,7 +930,7 @@ COALESCE(MAX(seq), -1) + 1`, which computes the sequence under the write lock.
 Defect 3 becomes one connection per thread, created lazily through a
 `threading.local`, with schema and migration run once on the calling thread.
 
-**The guard had a hole, found by the post-push review of `229f96c`.** The first
+**The guard had a hole, found by the post-push review of `4a51d26`.** The first
 version guarded `execute`, `executemany` and `executescript` but not `commit`,
 while `Database._commit` — then the only place that retried — is bypassed by 31
 call sites in those eight modules, which call `db._conn.commit()` directly. A
@@ -1045,7 +1045,7 @@ And the gate cannot force the probe to be honest; it forces the author to choose
 between naming a command and writing `not yet verified`.
 
 **Impact.** `tests/test_claim_check.py` 43 → 47 tests; the living-docs sweep is
-unchanged (paths/refs/counts only). Shipped in `f051ad5`, tightened after review.
+unchanged (paths/refs/counts only). Shipped in `1560772`, tightened after review.
 
 ## R57 addendum — bounding the WAL (#238)
 
