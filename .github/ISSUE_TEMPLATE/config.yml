@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: SECURITY.md
+    about: Do NOT open an issue. Email security@cyberflex.io per our security policy.
+  - name: Questions and support
+    url: https://discord.gg/UA73mmfb
+    about: The #help forum is the fastest path — support happens in public, not in issues.

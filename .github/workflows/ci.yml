@@ -6,10 +6,16 @@ on:
   pull_request:
 
 jobs:
+  # Required check: python gates. Keep the job name stable — branch
+  # protection requires it by name (docs/GITHUB-STRATEGY.md).
   test:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: claim_check validates commit refs against git, and
+          # a depth-1 clone made every historical ref unresolvable (#267).
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@v5
       - name: Lint
         run: uv run ruff check src tests bench.py
@@ -17,5 +23,36 @@ jobs:
         run: uv run mypy
       - name: Tests
         run: uv run pytest -q
+
+  # Required check: frontend gates (CI previously did not cover frontend/.
+  # Job name is a required status check — do not rename casually.
+  frontend:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Tests
+        run: npm test
+      - name: Build
+        run: npm run build
+
+  # Advisory: benchmark noise must never block a merge
+  # (docs/GITHUB-STRATEGY.md, CI policy).
+  bench:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
       - name: Benchmark (scripted)
         run: uv run python bench.py

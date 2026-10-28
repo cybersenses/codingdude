@@ -4,7 +4,12 @@
 
 ### Issue tracker
 
-Issues live as local markdown files under `.scratch/<feature>/`. See `docs/agents/issue-tracker.md`.
+The tracker is the local planning store (roadmap items `R#`, tickets
+`#N`) surfaced through the planning tools; `gh_mirror` one-way-mirrors
+creates and done-transitions to GitHub issues (see
+`docs/GITHUB-STRATEGY.md`). The `.scratch/<feature>/` markdown layout in
+`docs/agents/issue-tracker.md` applies only to wayfinder maps, not to
+project tickets.
 
 ### Triage labels
 
