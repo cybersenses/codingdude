@@ -12,9 +12,9 @@ Read this before the R59 sections below; the backend moved on while the UI did n
 **What happened.** A full security scan (bandit, semgrep, npm audit, pip-audit, manual
 auth/path/XSS review) was remediated under roadmap item **R66**, issues #248–#252, with
 follow-up #253 still open (pydantic-ai ≥2.54 adaptation). Per-finding status lives in
-`ROADMAP.md` under `## R66`; the commits are `c261807` (dompurify pin), `733aa10` (dep
-floors raised, pydantic-ai pinned `>=2.53,<2.54`), `8c03183` (gh tools argv-only, no
-shell), `479fcc4` (mermaid `securityLevel: 'strict'`), `32bce1e` + `161ee61`
+`ROADMAP.md` under `## R66`; the commits are `aec851a` (dompurify pin), `5c149c6` (dep
+floors raised, pydantic-ai pinned `>=2.53,<2.54`), `28e084d` (gh tools argv-only, no
+shell), `356b87b` (mermaid `securityLevel: 'strict'`), `8f9cac2` + `c3b3397`
 (constant-time token compares in the server auth seams). The `#250` auth-seam
 tests moved from `test_server.py` to `tests/test_server_auth.py` (four broader
 auth tests remain in `test_server.py`).
@@ -64,8 +64,8 @@ verified end-to-end via Engine model resolution + one real completion.
 | Item | Value |
 |---|---|
 | Repo | `G:\pydantic` (branch `main`) |
-| Last known-good commit | `161ee61` — R66 security overhaul complete (#248–#252: dep floors raised with pydantic-ai `<2.54`, gh argv-only, constant-time auth); venv re-synced after the breakage below, server healthy on `/health` (gates: pytest 878/1 skipped, ruff, mypy clean). Last UI known-good is unchanged: `d6a121f` — R65 sash affordance (gates: vitest 175, pytest 875/1, smoke 20/20 exit 0) |
-| Restore tag | `pre-r59-p0` → `0c2e58e` (created before any refactor; **do not delete**) |
+| Last known-good commit | `c3b3397` — R66 security overhaul complete (#248–#252: dep floors raised with pydantic-ai `<2.54`, gh argv-only, constant-time auth); venv re-synced after the breakage below, server healthy on `/health` (gates: pytest 878/1 skipped, ruff, mypy clean). Last UI known-good is unchanged: `300f25a` — R65 sash affordance (gates: vitest 175, pytest 875/1, smoke 20/20 exit 0) |
+| Restore tag | `pre-r59-p0` → `c1e216c` (created before any refactor; **do not delete**) |
 | Working tree at kickoff | clean except `M ROADMAP.md` (R59 item) |
 | Risk area | `frontend/src/` — React UI |
 | Backend | untouched by R59 (Python, `src/codingdude/`) |
