@@ -67,6 +67,7 @@ The identifier check is on by default only for `--message-file`; `--symbols` and
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import shutil
 import subprocess  # nosec B404 - fixed git argv only, see _git
@@ -192,12 +193,27 @@ def _git_binary() -> str:
 
 def _git(args: list[str], root: Path) -> subprocess.CompletedProcess[str]:
     # Fixed argv (no shell), binary resolved to an absolute path by _git_binary.
+    # Repo-only ignore evaluation: claims are measured against THIS repo's
+    # .gitignore, never ambient machine config. Probe (#267): a CI runner's
+    # `~/.config/git/ignore` — the XDG fallback git reads whenever
+    # core.excludesFile is unset — exempted every missing path, so four
+    # path-claim tests passed with zero findings on CI while failing locally.
+    # Setting the key with `-c` takes highest precedence AND switches the XDG
+    # fallback off; GIT_CONFIG_GLOBAL/NOSYSTEM strip the remaining machine
+    # config for good measure.
+    argv = [_git_binary(), "-c", f"core.excludesFile={os.devnull}", *args]
+    env = {
+        **os.environ,
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+    }
     return subprocess.run(  # nosec B603 - argv list, shell=False, resolved binary
-        [_git_binary(), *args],
+        argv,
         cwd=root,
         capture_output=True,
         text=True,
         check=False,
+        env=env,
     )
 
 
@@ -272,11 +288,21 @@ def _is_ignored(token: str, root: Path) -> bool:
 
     Fails closed: if git cannot answer, the path is still checked.
 
-    Queried with *and* without a trailing slash: a directory-only ignore pattern
-    (`frontend/dist/`, `reference/`) matches `frontend/dist/` but not
-    `frontend/dist`, and stripping the slash was the first version's bug.
+    Two shapes, neither of them the raw trailing-slash path:
+
+    * a FILE claim (`src/codingdude/store.py`) is probed as itself — git 2.56
+      (the CI runner) phantom-matches nonexistent trailing-slash paths, and a
+      `store.py/` probe fabricated a directory claim the document never made,
+      silently exempting every missing file path on CI (#267);
+    * a DIRECTORY claim (`frontend/dist/`) is probed as a file inside the tree
+      (`frontend/dist/x`) — directory-only ignore patterns (`reference/`) match
+      their contents, so the answer is the same, and the 2.56 trailing-slash
+      phantom is sidestepped (`no-such-dir/x` is an ordinary file path).
     """
-    forms = [token, token.rstrip("/"), token.rstrip("/") + "/"]
+    if token.endswith("/"):
+        forms = [token.rstrip("/") + "/x"]
+    else:
+        forms = [token]
     for form in dict.fromkeys(forms):
         try:
             result = _git(["check-ignore", "-q", "--", form], root)
