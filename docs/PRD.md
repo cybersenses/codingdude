@@ -110,7 +110,8 @@ control, provider freedom, tiered approvals, and full traceability.
 
 - Python 3.12+, uv, Windows-first (PowerShell/Git Bash) with cross-platform intent.
 - pydantic-ai model interfaces; tree-sitter language packs; Playwright for
-  visual gates; vendored github-mcp-server.exe (MIT, NOTICE.md).
+  visual gates; github-mcp-server.exe fetched from upstream releases (MIT,
+  NOTICE.md).
 - Legal: AGPL-3.0 obligations, CLA for contributions, trademark separation.
 
 ## 9. Document governance
