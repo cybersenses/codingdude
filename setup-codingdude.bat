@@ -80,12 +80,12 @@ rem codegraph: semantic code intelligence MCP (bundles its own node runtime).
 call npm install -g @colbymchenry/codegraph || (
   echo WARNING: codegraph install failed - codegraph MCP will be unavailable.
 )
-rem github MCP: vendored with the deploy, copied to the per-user tools dir.
+rem github MCP: downloaded from upstream releases to the per-user tools dir.
 if not exist "%USERPROFILE%\tools\github-mcp" mkdir "%USERPROFILE%\tools\github-mcp"
 if exist "%USERPROFILE%\tools\github-mcp\github-mcp-server.exe" (
   echo        github-mcp-server.exe already present - leaving it in place.
-) else copy /y "%REPO%tools\github-mcp\github-mcp-server.exe" "%USERPROFILE%\tools\github-mcp\" >nul || (
-  echo WARNING: could not copy github-mcp-server.exe - github MCP will be
+) else powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/github/github-mcp-server/releases/latest/download/github-mcp-server_Windows_x86_64.zip' -OutFile \"$env:TEMP\github-mcp-server.zip\"; Expand-Archive -Force \"$env:TEMP\github-mcp-server.zip\" \"$env:USERPROFILE\tools\github-mcp\" } finally { Remove-Item -Force -ErrorAction SilentlyContinue \"$env:TEMP\github-mcp-server.zip\" }" || (
+  echo WARNING: could not download github-mcp-server.exe - github MCP will be
   echo          unavailable on this machine.
 )
 echo        Note: %USERPROFILE%\.codingdude\mcp.json is seeded from PATH on

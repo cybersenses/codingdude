@@ -1,6 +1,9 @@
 # CodingDude
 
-A personal, single-user coding agent built with [pydantic-ai](https://ai.pydantic.dev/), driven from a web UI, with tiered approvals for risky actions.
+Structured AI coding: a personal, single-user coding agent that plans,
+designs, implements, reviews, and ships software-engineering work inside
+your repository — built with [pydantic-ai](https://ai.pydantic.dev/),
+driven from a web UI, with tiered approvals for risky actions.
 
 Copyright (C) 2025 Cyberflex (https://www.cyberflex.io). Licensed under the
 [GNU AGPL-3.0-or-later](LICENSE) — see [Licence](#licence).
@@ -9,7 +12,7 @@ Copyright (C) 2025 Cyberflex (https://www.cyberflex.io). Licensed under the
 
 ## What it is
 
-CodingDude is an agentic coding assistant that works inside your repository:
+CodingDude applies structured AI coding to a real repository:
 it reads and edits code, runs your gates (pytest/ruff/mypy, builds, tests),
 plans non-trivial work, tracks it on a roadmap, and reports back with evidence
 before claiming anything is done.

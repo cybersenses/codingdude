@@ -24,3 +24,7 @@ pydantic-ai-main/
 *.db-shm
 *.db-wal
 nul
+
+# 26MB vendored binary removed from git (R74 #268) - fetched from upstream
+# releases by setup-codingdude.bat instead
+tools/github-mcp/github-mcp-server.exe

@@ -61,8 +61,8 @@ or just: `gates.bat` (runs all three; pass pytest paths to scope it).
 `setup-codingdude.bat` installs everything the MCP layer needs:
 
 - **codegraph** - `npm i -g @colbymchenry/codegraph` (needs Node)
-- **github-mcp-server** - vendored binary in `tools/github-mcp/`, copied to
-  `%USERPROFILE%\tools\github-mcp\` (skipped if already present)
+- **github-mcp-server** - downloaded from `github/github-mcp-server` releases
+  to `%USERPROFILE%\tools\github-mcp\` (skipped if already present)
 - **zai-vision** - runs via `npx -y @z_ai/mcp-server` at boot (needs Node and
   `ZAI_API_KEY` in the environment)
 - **gh** - GitHub CLI, installed via winget if missing

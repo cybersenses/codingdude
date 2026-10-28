@@ -14,12 +14,13 @@ This product includes software developed by third parties:
 
 ## github-mcp-server
 
-- `tools/github-mcp/github-mcp-server.exe` and its `README.md`
+- `tools/github-mcp/` retains upstream `README.md` and `LICENSE`; the binary
+  itself is not vendored — `setup-codingdude.bat` downloads it from upstream
+  releases
 - Copyright (c) 2025 GitHub
 - License: MIT — full text in `tools/github-mcp/LICENSE`
 - Source: https://github.com/github/github-mcp-server
-- Binary is vendored so setup works offline; if you redistribute this
-  repository, the MIT notice above must be retained with it.
+- If you redistribute the binary, retain this MIT notice with it.
 
 ## Matt Pocock's skills (mattpocock/skills)
 
