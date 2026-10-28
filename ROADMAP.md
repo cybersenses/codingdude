@@ -1153,7 +1153,7 @@ Reuse targets: onboarding.py (detect_conventions, onboarding_needed), load_promp
 Two live incidents (15:14/15:16 worker pre-boot deaths; 400 on every run-end memory extraction) exposed two seams: (1) worker stderr was never captured server-side, so trampoline-stage deaths left zero evidence and the synthesized RUN_ERROR was generic; (2) worker.py resolved the extraction slot without config.models.fallback_base_url, so coding-plan-only keys hit the standard Z.ai endpoint and 400'd every run end. Tickets: #264 stderr capture + actionable RUN_ERROR; #265 extraction-slot endpoint parity.
 
 ## R73 — R73: GitHub contribution strategy — branch model, CI, triage, releases
-**Status:** in_progress
+**Status:** done
 
 Audience: human
 
