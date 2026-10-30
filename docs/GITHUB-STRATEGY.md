@@ -83,6 +83,48 @@ consent* still holds):
   self-approval; the pre-merge code-review pass is the real control.
   When collaborators arrive, this becomes a true second pair of eyes.
 
+## Reviewer runbook (external PRs)
+
+What happens when a stranger opens a PR, in order. A PR is an issue
+with attached code: same triage roles, same states, plus the
+AI-generated-comment disclaimer on everything we post.
+
+1. **CI before review.** First-time contributors' workflow runs need a
+   manual "Approve and run workflows" click — deliberate GitHub
+   friction; click it. Never review a red PR. If required checks fail
+   on our side (flaky gate, stale docs), we fix or explain in a
+   comment; otherwise the ball is the contributor's.
+2. **Verify the claim.** Check out the branch and run the gates cited
+   in the body. Report confirmed (with code path), failed, or
+   insufficient detail — the last is a strong `needs-info` signal.
+3. **Scope gate.** One logical change. Feature PRs without a promoting
+   issue go back to issue-first (comment, don't merge). Mass
+   reformatting and drive-by refactors close without ceremony;
+   rejected enhancement requests are recorded in `.out-of-scope/`.
+4. **Code review.** The `code-review` skill over the diff: correctness
+   (verified, not claimed), standards (CONTRIBUTING ground rules +
+   CONTEXT.md vocabulary), tests at real seams. Diffs touching auth,
+   filesystem paths, subprocess spawning, or config handling get
+   mandatory scrutiny; vendored third-party code gets a license look
+   before anything else.
+5. **Decide.** Squash-merge (title becomes the subject) or close with
+   a plain-language reason. Low quality closes without ceremony —
+   slow merges are fine, fake contributor counts are not.
+6. **Post-merge ceremony is ours.** Contributors meet CONTRIBUTING's
+   ground rules; maintainers apply the rest: local ticket + roadmap
+   entry, `code-design.md` entry where the design moved, CHANGELOG
+   entry, release train.
+
+Standing decisions (2026-10-27, post-public):
+
+- **CLA is checked by hand** during review; a CLA bot waits for volume
+  (see *Going public* step 2).
+- **No required-review rule** on branch protection: external PRs
+  cannot merge regardless (maintainer-only merge rights); requiring a
+  review count would only add friction to maintainer PRs.
+- **The local tracker records only our work**: an external PR gets a
+  local ticket only if it merges.
+
 ## Releases
 
 - Semver. The version lives in **two** places and moves together:

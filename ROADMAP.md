@@ -1160,6 +1160,6 @@ Audience: human
 Design + document the GitHub strategy: branch model (protected main, PRs for everyone incl. agent), CI policy (required test+frontend, advisory bench), issues/triage, release runbook (semver, CHANGELOG per merge, tags), security intake, go-public gating. Decisions: private now/public later; PRs for everyone; formal releases.
 
 ## R74 — R74: binary purge from git + README structured-AI-coding positioning
-**Status:** open
+**Status:** done
 
 Remove tools/github-mcp/github-mcp-server.exe (26MB) from HEAD and all history; setup-codingdude.bat switches to downloading from github/github-mcp-server releases. Reposition README around structured AI coding (Cyberflex stays legal entity, CodingDude stays product). History rewrite rewrites ~167 commit SHAs (53fb4f5..HEAD); documented fallout: stale closed-by markers, PR squash SHA drift, Z: mirror resync, server bounce.
