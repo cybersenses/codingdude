@@ -1163,3 +1163,8 @@ Design + document the GitHub strategy: branch model (protected main, PRs for eve
 **Status:** done
 
 Remove tools/github-mcp/github-mcp-server.exe (26MB) from HEAD and all history; setup-codingdude.bat switches to downloading from github/github-mcp-server releases. Reposition README around structured AI coding (Cyberflex stays legal entity, CodingDude stays product). History rewrite rewrites ~167 commit SHAs (53fb4f5..HEAD); documented fallout: stale closed-by markers, PR squash SHA drift, Z: mirror resync, server bounce.
+
+## R75 — Codegraph boot: sync instead of init when an index already exists
+**Status:** done
+
+Symptom: every session start prints "Already initialized in <dir> — use codegraph index/sync". Root cause (probe .scratch/probe_codegraph_sync.py): `codegraph init` no-ops on an existing index (0.15s, banner, index mtimes unchanged), while `codegraph sync` incrementally updates (0.61s after edit) and `codegraph index` rebuilds. codegraph_boot.py's stale self-heal (#203) and mid-run refresh (R14) both run init on an existing index — a no-op reported as success, so the graph stays stale and the banner repeats every session. Fix: sync when an index exists; init only when none; on sync failure fall back to full `index` rebuild.
