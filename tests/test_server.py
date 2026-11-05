@@ -772,6 +772,39 @@ def test_terminal_status_always_in_db_check_set():
         )
 
 
+def test_stderr_hint_drops_mcp_startup_chatter():
+    """#287: the reaper's RUN_ERROR hint must not serve MCP-server startup
+    banners as the cause of a worker death — the stderr tail is dominated by
+    child-process chatter (chrome-devtools temp-dir notice, CodeGraph
+    banner, Go-style log lines, CLI arg warnings), which is noise."""
+    from codingdude.server import _stderr_hint
+
+    tail = '\n'.join([
+        'time=2026-11-05T15:44:59.242 level=INFO msg="server session ended"',
+        'chrome-devtools-mcp is restricted to the OS temp directory',
+        'Unknown arguments: --updateChecks',
+        'CodeGraph MCP server v1.5.0 listening on stdio',
+    ])
+    assert _stderr_hint(tail) == ''
+
+
+def test_stderr_hint_keeps_worker_failure_evidence():
+    """#287: real worker failure evidence survives the filter — tracebacks
+    and import errors are exactly what the hint exists to surface."""
+    from codingdude.server import _stderr_hint
+
+    tail = '\n'.join([
+        'time=2026-11-05T15:44:59.242 level=INFO msg="server session ended"',
+        'Traceback (most recent call last):',
+        '  File "worker.py", line 1, in <module>',
+        'ImportError: cannot import name x',
+    ])
+    hint = _stderr_hint(tail)
+    assert 'Traceback' in hint
+    assert 'ImportError' in hint
+    assert 'server session ended' not in hint
+
+
 # ---- #239: server errors must reach logs/server.log, not just stdout ----
 
 

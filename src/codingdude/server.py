@@ -215,7 +215,9 @@ async def _reap_worker(channel, db: 'Database | None' = None) -> None:
                 channel.run_id, worker.pid, stderr_tail)
         hint = ''
         if stderr_tail:
-            hint = ' stderr: ' + ' '.join(stderr_tail.split())[-400:]
+            hint_lines = _stderr_hint(stderr_tail)
+            if hint_lines:
+                hint = ' stderr: ' + ' '.join(hint_lines.split())[-400:]
         channel.push({
             'type': 'RUN_ERROR',
             'code': 'worker_died',
@@ -233,6 +235,31 @@ async def _reap_worker(channel, db: 'Database | None' = None) -> None:
 
 
 _STDERR_TAIL_BYTES = 2000
+
+# #287: the stderr tail of a healthy-spawned worker is dominated by MCP
+# child-process startup chatter (Go-style time=/level= log lines, server
+# banners, CLI arg warnings) — none of it is the cause of a worker death.
+_STDERR_NOISE_PREFIXES = ('time=',)
+_STDERR_NOISE_MARKERS = (
+    'level=', 'restricted to the os temp directory', 'unknown arguments',
+    'mcp server', 'server session ended', 'listening on',
+)
+
+
+def _stderr_hint(tail: str) -> str:
+    """Worker-relevant lines of a stderr tail, for the RUN_ERROR hint.
+
+    The WORKER_STDERR warning log keeps the full tail (server-side
+    forensics, #264); only the user-facing hint is filtered so MCP startup
+    chatter is not presented as the cause of a worker death."""
+    lines = [ln.strip() for ln in tail.splitlines()]
+    keep = [
+        ln for ln in lines
+        if ln
+        and not ln.startswith(_STDERR_NOISE_PREFIXES)
+        and not any(marker in ln.lower() for marker in _STDERR_NOISE_MARKERS)
+    ]
+    return '\n'.join(keep).strip()
 
 
 def _read_stderr_tail(path) -> str:
