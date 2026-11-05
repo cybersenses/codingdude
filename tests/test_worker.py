@@ -289,7 +289,9 @@ def test_arm_exit_watchdog_cancels_previous():
 
 def test_sender_loop_survives_connection_closed():
     """#73: a ws drop mid-run must not kill the worker. The sender drops the
-    event, keeps draining the queue, and returns on the terminal event."""
+    event, keeps draining the queue, and returns on the terminal event.
+    #285: it also reports delivery truth — False when the socket died — so
+    run() can log the loss and exit non-zero instead of claiming success."""
     import asyncio
 
     from websockets.exceptions import ConnectionClosedError
@@ -314,10 +316,176 @@ def test_sender_loop_survives_connection_closed():
         q.put_nowait({'type': 'TEXT_MESSAGE_START'})
         q.put_nowait({'type': 'TEXT_MESSAGE_END'})
         q.put_nowait({'type': 'RUN_FINISHED'})
-        await worker._sender_loop(ws, q)
+        return await worker._sender_loop(ws, q)
 
-    asyncio.run(main())  # must not raise
+    delivered = asyncio.run(main())  # must not raise
+    assert delivered is False  # the terminal never reached the server
     assert sent == []  # socket was dead; events dropped, not crashed on
+
+
+def test_sender_loop_reports_terminal_delivered():
+    """#285: a healthy socket delivers the terminal event and reports True."""
+    import asyncio
+    import json
+
+    from codingdude import worker
+
+    sent: list[str] = []
+
+    class HealthyWS:
+        async def send(self, msg):
+            sent.append(msg)
+
+    async def main():
+        ws = HealthyWS()
+        q: asyncio.Queue = asyncio.Queue()
+        q.put_nowait({'type': 'TEXT_MESSAGE_START'})
+        q.put_nowait({'type': 'RUN_FINISHED'})
+        return await worker._sender_loop(ws, q)
+
+    assert asyncio.run(main()) is True
+    assert json.loads(sent[-1])['type'] == 'RUN_FINISHED'
+
+
+def _run_args():
+    return _args(
+        workdir='', session='s1', model='m', server='ws://server/ws',
+        yolo=False, budget=None, run_id='r1', prompt_file=None, image=None,
+    )
+
+
+def _patch_run_boundaries(monkeypatch, ws_cls):
+    """Boundary mocks for run(): config, db, engine, model slots, ws. No
+    engine internals are mocked — only the process's true edges."""
+    from types import SimpleNamespace
+
+    from codingdude import worker
+
+    async def fake_slots(config):
+        return None, None
+
+    async def fake_resolve(*a):
+        return 'fake-model'
+
+    def fake_connect(url):
+        # real websockets.connect() returns the async-CM directly
+        return ws_cls()
+
+    monkeypatch.setattr(
+        'codingdude.config.load_config',
+        lambda: SimpleNamespace(
+            models=SimpleNamespace(fallback_base_url=''), providers={}),
+    )
+    monkeypatch.setattr(
+        'codingdude.db.Database',
+        SimpleNamespace(connect=lambda home: SimpleNamespace()),
+    )
+    monkeypatch.setattr('codingdude.engine.Engine', lambda **kw: FakeRunEngine())
+    monkeypatch.setattr(worker, '_resolve_worker_slots', fake_slots)
+    monkeypatch.setattr(worker, '_resolve_model', fake_resolve)
+    monkeypatch.setattr(worker, 'websockets', SimpleNamespace(connect=fake_connect))
+    monkeypatch.setattr(worker, 'arm_exit_watchdog', lambda *a, **k: None)
+    monkeypatch.setattr(worker, 'trace_terminal', lambda *a, **k: None)
+
+
+class FakeRunEngine:
+    """Minimal Engine surface run() touches: one turn + a drainable tail."""
+
+    def __init__(self):
+        from types import SimpleNamespace
+
+        self._db = SimpleNamespace(record_run_end=lambda *a, **k: None)
+
+    async def run(self, **kwargs):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(status='ok', output='done')
+
+    async def drain_post_run(self, timeout=None):
+        return None
+
+
+class HealthyRunWS:
+    sent: list = []
+
+    def __init__(self):
+        HealthyRunWS.sent = []
+
+    async def send(self, msg):
+        HealthyRunWS.sent.append(msg)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        from websockets.exceptions import ConnectionClosedError
+
+        raise ConnectionClosedError(None, None, None)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class DyingRunWS:
+    calls = 0
+
+    def __init__(self):
+        DyingRunWS.calls = 0
+
+    async def send(self, msg):
+        DyingRunWS.calls += 1
+        if DyingRunWS.calls == 1:
+            from websockets.exceptions import ConnectionClosedError
+
+            raise ConnectionClosedError(None, None, None)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        from websockets.exceptions import ConnectionClosedError
+
+        raise ConnectionClosedError(None, None, None)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+async def test_run_exits_zero_when_terminal_delivered(monkeypatch):
+    """#285: a healthy socket delivers the terminal; run() returns 0."""
+    import json
+
+    from codingdude import worker
+
+    _patch_run_boundaries(monkeypatch, HealthyRunWS)
+    code = await worker.run(_run_args())
+    assert code == 0
+    assert json.loads(HealthyRunWS.sent[-1])['type'] == 'RUN_FINISHED'
+
+
+async def test_run_logs_dropped_terminal_and_exits_nonzero(monkeypatch, caplog):
+    """#285: when the ws died mid-run the terminal never reached the server.
+    run() must log WORKER_TERMINAL_DROPPED and exit non-zero — the old
+    'WORKER_TERMINAL_SENT … terminal event delivered' fired unconditionally
+    and the process exited 0, so the server-side reaper fabricated an
+    unexplained RUN_ERROR popup instead of reporting the loss."""
+    import logging
+
+    from codingdude import worker
+
+    _patch_run_boundaries(monkeypatch, DyingRunWS)
+    with caplog.at_level(logging.WARNING, logger='codingdude.worker'):
+        code = await worker.run(_run_args())
+    assert code == 1
+    assert any(
+        'WORKER_TERMINAL_DROPPED' in r.getMessage() for r in caplog.records
+    ), [r.getMessage() for r in caplog.records]
 
 
 def test_reader_loop_returns_on_connection_closed():
