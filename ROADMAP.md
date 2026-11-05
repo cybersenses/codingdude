@@ -1173,3 +1173,8 @@ Symptom: every session start prints "Already initialized in <dir> — use codegr
 **Status:** done
 
 Two fixes with no behavior change: (1) repo_map walk pruned during traversal + mtime signature cache (measured 5.5s on this repo); (2) MCP pre-flight spawns each server and closes it, then pydantic-ai spawns again at agent-enter — reuse the connection, parallelize pre-flight, pin @latest.
+
+## R77 — R77: Run-failure visibility — unblock arch_lint, truthful terminal delivery, O(limit) trace endpoint, clean RUN_ERROR hints
+**Status:** done
+
+External review of a DataReview session surfaced a synthesized error popup whose root cause is in the harness: arch_lint blocks the worker event loop (sync report() in an async tool, ~4x redundant scan) past uvicorn's 20s ws ping timeout; the dropped socket silently swallows the terminal event while the worker logs "delivered" and exits 0; the reaper then fabricates a RUN_ERROR padded with MCP startup noise from the stderr tail. Secondary: GET /sessions/{id}/trace reads the whole (hundreds-of-MB) trace file per call and the frontend calls it 3x per session load. Verified against this checkout: archlint.py:379-381/73-95/317-324, worker.py:286-309/404-484, server.py:182-249/1528-1539; measured report() 4.3s vs check() 0.8s on src/codingdude; 264MB live trace in this home; 3x WORKER_EXITED exit=0 terminal_seen=False in this home's server.log.
