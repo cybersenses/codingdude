@@ -249,6 +249,34 @@ def _read_stderr_tail(path) -> str:
         return ''
 
 
+_TRACE_TAIL_WINDOW_BYTES = 64 * 1024
+_TRACE_TAIL_MAX_LIMIT = 1000
+
+
+def _trace_tail_lines(trace_file: Path, limit: int) -> list[str]:
+    """Last `limit` complete lines of a jsonl file without reading it whole.
+
+    #286: /trace used to read_text().splitlines() the entire trace per call
+    (264MB live here, 531MB on a reviewed install) while the frontend calls
+    it 3x per session load. The window grows from the end until it holds
+    `limit` complete lines or reaches file start; the first line of a
+    window that doesn't begin at offset 0 is partial (cut mid-line) and is
+    dropped.
+    """
+    size = trace_file.stat().st_size
+    window = _TRACE_TAIL_WINDOW_BYTES
+    with trace_file.open('rb') as fh:
+        while True:
+            start = max(0, size - window)
+            fh.seek(start)
+            lines = fh.read().decode('utf-8', errors='replace').splitlines()
+            if start:
+                lines = lines[1:]  # first line is partial — drop it
+            if len(lines) >= limit or start == 0:
+                return lines[-limit:]
+            window *= 4
+
+
 def _terminal_status(channel) -> str:
     """Durable end-state for the runs row, derived from channel history."""
     terminals = [e['type'] for e in channel.history
@@ -1527,12 +1555,12 @@ def create_app(
     @app.get('/sessions/{session_id}/trace')
     def session_trace(session_id: str, limit: int = 50, _: None = Depends(authorize)) -> list[dict]:
         """Replayable run trace: the last `limit` traced events (default 50)."""
+        limit = max(1, min(limit, _TRACE_TAIL_MAX_LIMIT))
         trace_file = home / 'traces' / f'{session_id}.jsonl'
         if not trace_file.exists():
             return []
-        lines = trace_file.read_text(encoding='utf-8').splitlines()
         out = []
-        for line in lines[-limit:]:
+        for line in _trace_tail_lines(trace_file, limit):
             if line.strip():
                 try:
                     out.append(json.loads(line))
