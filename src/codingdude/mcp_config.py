@@ -21,6 +21,7 @@ file (`<workdir>/.codingdude/mcp.json`) wins per server name over the global
 one (`~/.codingdude/mcp.json`).
 """
 
+import asyncio
 import hashlib
 import json
 import shutil
@@ -75,8 +76,11 @@ def _default_mcp_servers() -> dict:
         }
     npx = shutil.which('npx')
     if npx:
-        command, npx_args = npx, ['-y', '@z_ai/mcp-server@latest']
-        cdt_command, cdt_args = npx, ['-y', 'chrome-devtools-mcp@latest',
+        # Pinned versions (R76): `@latest` costs a registry round-trip on
+        # every spawn and silently upgrades mid-project; a pin spawns from
+        # the local npx cache immediately.
+        command, npx_args = npx, ['-y', '@z_ai/mcp-server@0.1.6']
+        cdt_command, cdt_args = npx, ['-y', 'chrome-devtools-mcp@1.12.0',
                                       '--no-usage-statistics', '--no-update-checks']
         if npx.lower().endswith(('.cmd', '.bat')):
             command, npx_args = 'cmd', ['/c', npx, *npx_args]
@@ -203,11 +207,19 @@ def _find_list_tools(obj, depth: int = 0):
 async def verify_mcp_toolsets(
     names: list[str], toolsets: list, attempts: int = 2,
 ) -> tuple[list, list[dict]]:
-    """Pre-flight every MCP server: connect, list tools, retry once.
+    """Pre-flight every MCP server, in parallel: connect, list tools, retry once.
 
     A server that can't initialize is dropped for this run with a warning
     instead of raising mid-run — before this, one flaky codegraph spawn
     killed the whole run before the agent could do anything about it.
+    Servers verify concurrently: spawn + handshake is the startup tax for
+    every npx-backed server, and serially it multiplies.
+
+    A healthy server's session is left ENTERED (pydantic-ai's toolset enter
+    is refcounted), so the agent's own enter reuses the live connection —
+    no second initialize handshake — and the pre-listed tools stay cached
+    for the run. The session closes when the worker exits (stdio EOF ends
+    the child process).
 
     Returns (healthy_toolsets, report) where report is a per-server
     [{name, ok, error}] list — the raw material for the MCP_STATUS trace
@@ -216,35 +228,40 @@ async def verify_mcp_toolsets(
     """
     import logging
 
-    healthy: list = []
-    report: list[dict] = []
-    for name, toolset in zip(names, toolsets, strict=False):
+    async def verify_one(name: str, toolset) -> tuple[bool, str | None]:
         inner = _find_list_tools(toolset)
-        ok = False
+        if inner is None:
+            return True, None  # nothing to verify; keep it
         last_exc: Exception | None = None
         for _attempt in range(max(1, attempts)):
             try:
-                if inner is None:
-                    ok = True  # nothing to verify; keep it
-                    break
-                async with inner:
+                await inner.__aenter__()
+                try:
                     await inner.list_tools()
-                ok = True
-                break
+                except Exception:
+                    # Unwind this attempt's session before retrying or
+                    # abandoning — a failed list must not leak the refcount.
+                    await inner.__aexit__(None, None, None)
+                    raise
+                return True, None
             except Exception as exc:  # noqa: BLE001 — spawn failures are expected flakiness
                 last_exc = exc
-        report.append({
-            'name': name,
-            'ok': ok,
-            'error': None if ok else str(last_exc),
-        })
+        logging.getLogger(__name__).warning(
+            'MCP server %s failed to initialize (%s); disabled for this run',
+            name, last_exc,
+        )
+        return False, str(last_exc)
+
+    results = await asyncio.gather(
+        *(verify_one(name, toolset)
+          for name, toolset in zip(names, toolsets, strict=False))
+    )
+    healthy: list = []
+    report: list[dict] = []
+    for name, toolset, (ok, error) in zip(names, toolsets, results, strict=False):
+        report.append({'name': name, 'ok': ok, 'error': error})
         if ok:
             healthy.append(toolset)
-        else:
-            logging.getLogger(__name__).warning(
-                'MCP server %s failed to initialize (%s); disabled for this run',
-                name, last_exc,
-            )
     return healthy, report
 
 

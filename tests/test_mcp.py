@@ -31,6 +31,17 @@ from codingdude.mcp_config import (
 SERVER_CMD = {'command': sys.executable, 'args': [str(Path(__file__).parent / 'mcp_echo_server.py')]}
 
 
+def marker_server_cmd(marker, **env_extra):
+    """Config entry for mcp_marker_server.py: marks each process spawn, with
+    optional SLEEP_SECONDS / FAIL_FIRST knobs (see the fixture docstring)."""
+    return {
+        'type': 'stdio',
+        'command': sys.executable,
+        'args': [str(Path(__file__).parent / 'mcp_marker_server.py')],
+        'env': {'MARKER_FILE': str(marker), **env_extra},
+    }
+
+
 def setup_configs(home, workdir):
     home.mkdir(parents=True, exist_ok=True)
     (home / 'mcp.json').write_text(json.dumps({
@@ -175,7 +186,7 @@ def test_ensure_default_mcp_adds_chrome_devtools_with_telemetry_off(home, monkey
     assert entry['command'] == 'cmd'
     assert entry['args'][:2] == ['/c', 'C:/Program Files/nodejs/npx.CMD']
     args = ' '.join(entry['args'])
-    assert 'chrome-devtools-mcp@latest' in args
+    assert 'chrome-devtools-mcp@1.12.0' in args  # pinned, not @latest (R76)
     assert '--no-usage-statistics' in args
     assert '--no-update-checks' in args
     assert 'env' not in entry  # no secrets to expand
@@ -321,3 +332,97 @@ def test_mcp_status_block_lists_dead_servers_only_when_dead():
     assert 'echo' not in block
     # dead server must be flagged as unavailable this run
     assert 'unavailable' in block
+
+
+async def test_preflight_spawn_is_reused_by_agent_run(home, workdir, tmp_path):
+    """The pre-flight connection must BE the run's connection: one spawn per
+    healthy server per run. The old verify-entered-then-closed flow spawned
+    every server twice (pre-flight + agent enter), paying npx/interpreter
+    startup twice per run."""
+    marker = tmp_path / 'spawns.log'
+    home.mkdir(parents=True, exist_ok=True)
+    (home / 'mcp.json').write_text(json.dumps({
+        'mcpServers': {'marker': marker_server_cmd(marker)},
+        'disabled': [],
+    }), encoding='utf-8')
+
+    from helpers import scripted
+    from pydantic_ai.messages import (
+        ModelMessage,
+        ModelResponse,
+        TextPart,
+        ToolCallPart,
+        ToolReturnPart,
+    )
+
+    from codingdude.config import load_config
+    from codingdude.db import Database
+    from codingdude.engine import Engine
+
+    def pinger(messages: list[ModelMessage], info):
+        if not any(isinstance(p, ToolCallPart) for m in messages for p in m.parts):
+            return ModelResponse(parts=[ToolCallPart(tool_name='marker_ping', args={})])
+        returns = [
+            str(p.content)
+            for m in messages
+            for p in m.parts
+            if isinstance(p, ToolReturnPart)
+        ]
+        return ModelResponse(parts=[TextPart(content=f"{';'.join(returns)} seen")])
+
+    engine = Engine(config=load_config(), db=Database.connect(home))
+    outcome = await engine.run(prompt='ping the marker server', workdir=workdir, model=scripted(pinger))
+    assert 'pong' in outcome.output  # the live session actually answered a tool call
+    assert marker.read_text().count('spawn') == 1  # verify's spawn IS the run's spawn
+
+
+def test_preflight_verifies_servers_concurrently(home, tmp_path):
+    """Pre-flight must not serialize server startups: 4 servers sleeping ~1.2s
+    each must verify in well under the serial floor (~4 x spawn+sleep+list)."""
+    import asyncio
+    import time
+
+    marker = tmp_path / 'spawns.log'
+    home.mkdir(parents=True, exist_ok=True)
+    (home / 'mcp.json').write_text(json.dumps({
+        'mcpServers': {
+            f'slow-{i}': marker_server_cmd(marker, SLEEP_SECONDS='1.2')
+            for i in range(4)
+        },
+        'disabled': [],
+    }), encoding='utf-8')
+    names = merged_mcp_server_names(home, tmp_path)
+    toolsets = load_merged_mcp_toolsets(home, tmp_path)
+
+    t0 = time.perf_counter()
+    healthy, report = asyncio.run(verify_mcp_toolsets(names, toolsets, attempts=1))
+    elapsed = time.perf_counter() - t0
+
+    assert len(healthy) == 4
+    assert all(r['ok'] for r in report)
+    assert elapsed < 4.5, f'serial pre-flight took {elapsed:.2f}s (bound 4.5s)'
+
+
+def test_verify_retries_and_recovers_fail_first(home, tmp_path):
+    """A server whose first spawn dies must still land healthy on retry, and
+    the retry must not leak the failed attempt's session (refcount intact)."""
+    import asyncio
+
+    marker = tmp_path / 'spawns.log'
+    home.mkdir(parents=True, exist_ok=True)
+    (home / 'mcp.json').write_text(json.dumps({
+        'mcpServers': {'flaky': marker_server_cmd(marker, FAIL_FIRST='1')},
+        'disabled': [],
+    }), encoding='utf-8')
+    names = merged_mcp_server_names(home, tmp_path)
+    toolsets = load_merged_mcp_toolsets(home, tmp_path)
+
+    healthy, report = asyncio.run(verify_mcp_toolsets(names, toolsets, attempts=2))
+    by_name = {r['name']: r for r in report}
+    assert by_name['flaky']['ok'] is True
+    assert by_name['flaky']['error'] is None
+    assert len(healthy) == 1
+    # keep-enter: the verified session stays open for the run's agent to
+    # reuse (no second handshake at agent-enter time)
+    from codingdude.mcp_config import _find_list_tools
+    assert _find_list_tools(healthy[0]).is_running is True

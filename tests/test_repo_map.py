@@ -42,6 +42,22 @@ def test_map_includes_tree_and_signatures(workdir):
     assert 'def helper' in m
 
 
+def test_map_counts_exclude_skip_dirs(workdir):
+    """Files under SKIP_DIRS never enter the map — neither the count line nor
+    their tree entries/signatures (regression net for the pruned-walk rewrite)."""
+    make_project(workdir)
+    (workdir / 'node_modules').mkdir()
+    (workdir / 'node_modules' / 'dep.js').write_text('function bundled() {}')
+    (workdir / '.venv').mkdir()
+    (workdir / '.venv' / 'vendored.py').write_text('def vendored(): pass')
+    m = build_repo_map(workdir)
+    assert m.startswith('[repo: 3 source files]')
+    assert 'node_modules' not in m
+    assert 'bundled' not in m
+    assert '.venv' not in m
+    assert 'vendored' not in m
+
+
 def test_budget_truncates_map(workdir):
     make_project(workdir)
     tiny = build_repo_map(workdir, budget=60)

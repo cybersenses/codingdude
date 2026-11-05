@@ -1168,3 +1168,8 @@ Remove tools/github-mcp/github-mcp-server.exe (26MB) from HEAD and all history; 
 **Status:** done
 
 Symptom: every session start prints "Already initialized in <dir> — use codegraph index/sync". Root cause (probe .scratch/probe_codegraph_sync.py): `codegraph init` no-ops on an existing index (0.15s, banner, index mtimes unchanged), while `codegraph sync` incrementally updates (0.61s after edit) and `codegraph index` rebuilds. codegraph_boot.py's stale self-heal (#203) and mid-run refresh (R14) both run init on an existing index — a no-op reported as success, so the graph stays stale and the banner repeats every session. Fix: sync when an index exists; init only when none; on sync failure fall back to full `index` rebuild.
+
+## R76 — R76: Cut per-run startup tax (repo_map walk + MCP double-spawn)
+**Status:** done
+
+Two fixes with no behavior change: (1) repo_map walk pruned during traversal + mtime signature cache (measured 5.5s on this repo); (2) MCP pre-flight spawns each server and closes it, then pydantic-ai spawns again at agent-enter — reuse the connection, parallelize pre-flight, pin @latest.

@@ -22,6 +22,7 @@ map exceeds its budget, signature sections drop first (the file tree survives).
 """
 
 import ast
+import os
 from pathlib import Path
 from typing import NamedTuple
 
@@ -133,17 +134,21 @@ def js_symbols_source(source: bytes, suffix: str) -> list[Symbol]:
 
 def build_repo_map(workdir: Path, budget: int = DEFAULT_BUDGET,
                    extensions: set[str] | None = None) -> str:
-    """Compact map: source file tree + signatures, within budget chars."""
+    """Compact map: source file tree + signatures, within budget chars.
+
+    The walk prunes SKIP_DIRS *before descending* (os.walk with an in-place
+    dirnames filter), so .venv/node_modules trees are never enumerated — an
+    earlier rglob('*') version listed every file under them first and filtered
+    per file, costing seconds on repos with big dependency trees.
+    """
     exts = extensions or SOURCE_EXTENSIONS
     root = Path(workdir)
-    files = []
-    for f in sorted(root.rglob('*')):
-        if not f.is_file() or f.suffix not in exts:
-            continue
-        rel = f.relative_to(root)
-        if any(part in SKIP_DIRS for part in rel.parts):
-            continue
-        files.append(rel)
+    files: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
+        for name in sorted(filenames):
+            if Path(name).suffix in exts:
+                files.append(Path(dirpath, name).relative_to(root))
 
     lines: list[str] = []
     size = 0
@@ -172,6 +177,8 @@ def build_repo_map(workdir: Path, budget: int = DEFAULT_BUDGET,
             continue
         if not add('  ' * (len(parts) - 1) + parts[-1]):
             continue
+        if size >= budget:
+            break  # nothing further fits; stop reading/parsing files
         if rel.suffix == '.py':
             for sig in _python_signatures(root / rel):
                 if not add(sig):
