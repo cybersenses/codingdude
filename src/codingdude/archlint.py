@@ -34,6 +34,7 @@ from codingdude.pyparse import parse_python
 
 from .db import Database
 from .roadmap import RoadmapStore
+from .tools import skip_dir
 
 WAIVER_PREFIX = 'ARCH-WAIVER'
 
@@ -315,7 +316,7 @@ class ArchLint:
 
 def _trees(workdir: Path):
     for path in sorted(workdir.rglob('*.py')):
-        if any(part in ('.venv', 'venv', 'node_modules', '.git') for part in path.parts):
+        if any(skip_dir(part) for part in path.parts):
             continue
         try:
             yield path, parse_python(path.read_bytes())

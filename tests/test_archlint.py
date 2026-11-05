@@ -277,6 +277,27 @@ def test_check_tolerates_non_utf8_source(workdir):
     assert [f['rule'] for f in findings] == ['missing-contract']
 
 
+def test_check_skips_venv_siblings(workdir):
+    """The shared skip rule (tools.skip_dir) drops .venv-prefixed siblings
+    (.venv-verify & friends — the R75/#255 side-venv class) and plain venv
+    dirs, so their site-packages copies never enter the scan: otherwise the
+    duplicated public_api bodies below would fire duplicate-bodies."""
+    write(workdir, '.venv-verify/lib/site-packages/pkg/mod.py', '''
+        def public_api():
+            return 1
+    ''')
+    write(workdir, 'venv/lib/site-packages/pkg/mod.py', '''
+        def public_api():
+            return 1
+    ''')
+    write(workdir, 'src/pkg/mod.py', '''
+        def public_api():
+            return 1
+    ''')
+    findings = ArchLint().check(workdir)
+    assert [f['rule'] for f in findings] == ['missing-contract']
+
+
 async def test_arch_lint_tool_does_not_block_event_loop(workdir):
     """#284: arch_lint is an async tool on the worker's event loop; running
     the synchronous scan inline blocked the loop for the whole report

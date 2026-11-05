@@ -1172,7 +1172,7 @@ Symptom: every session start prints "Already initialized in <dir> — use codegr
 ## R76 — R76: Cut per-run startup tax (repo_map walk + MCP double-spawn)
 **Status:** done
 
-Two fixes with no behavior change: (1) repo_map walk pruned during traversal + mtime signature cache (measured 5.5s on this repo); (2) MCP pre-flight spawns each server and closes it, then pydantic-ai spawns again at agent-enter — reuse the connection, parallelize pre-flight, pin @latest.
+Two fixes: (1) repo_map walk prunes skip-dirs during descent with an early budget break (5.5s -> ~1.0s measured on this repo); (2) MCP pre-flight verifies all servers concurrently and keeps healthy sessions entered so pydantic-ai reuses them at agent-enter instead of respawning (~13.4s -> ~2s); npx servers version-pinned (z_ai@0.1.6, chrome-devtools@1.12.0). DFS order can shift which files fill the signature-budget tail; the review pass added .venv*-prefix and plain-venv skipping via tools.skip_dir (R75/#255 class).
 
 ## R77 — R77: Run-failure visibility — unblock arch_lint, truthful terminal delivery, O(limit) trace endpoint, clean RUN_ERROR hints
 **Status:** done

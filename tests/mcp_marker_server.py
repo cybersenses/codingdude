@@ -36,9 +36,12 @@ if sleep_seconds:
 if marker:
     with open(marker, 'a', encoding='utf-8') as f:
         f.write(f'spawn pid={os.getpid()} ppid={os.getppid()}\n')
-if os.environ.get('FAIL_FIRST') and marker and open(marker, encoding='utf-8').read().count('spawn') == 1:
-    # First-ever start of this config: die so the client's first attempt fails.
-    sys.exit(1)
+if os.environ.get('FAIL_FIRST') and marker:
+    with open(marker, encoding='utf-8') as f:
+        first_spawn = f.read().count('spawn') == 1
+    if first_spawn:
+        # First-ever start of this config: die so the client's first attempt fails.
+        sys.exit(1)
 
 
 @mcp.tool

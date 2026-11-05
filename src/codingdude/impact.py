@@ -28,7 +28,7 @@ from pathlib import Path
 
 from codingdude.pyparse import parse_python
 
-from .repo_map import SKIP_DIRS
+from .tools import SKIP_DIRS
 
 SOURCE_EXTS = {'.py', '.js', '.jsx', '.ts', '.tsx'}
 

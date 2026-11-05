@@ -30,7 +30,7 @@ from pydantic_ai.toolsets import FunctionToolset
 
 from codingdude.pyparse import parse_python
 
-from .tools import SKIP_DIRS
+from .tools import skip_dir
 
 SOURCE_EXTENSIONS = {'.py', '.js', '.jsx', '.mjs', '.ts', '.tsx'}
 DEFAULT_BUDGET = 6000
@@ -136,7 +136,7 @@ def build_repo_map(workdir: Path, budget: int = DEFAULT_BUDGET,
                    extensions: set[str] | None = None) -> str:
     """Compact map: source file tree + signatures, within budget chars.
 
-    The walk prunes SKIP_DIRS *before descending* (os.walk with an in-place
+    The walk prunes skip-dirs *before descending* (os.walk with an in-place
     dirnames filter), so .venv/node_modules trees are never enumerated — an
     earlier rglob('*') version listed every file under them first and filtered
     per file, costing seconds on repos with big dependency trees.
@@ -145,7 +145,7 @@ def build_repo_map(workdir: Path, budget: int = DEFAULT_BUDGET,
     root = Path(workdir)
     files: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
+        dirnames[:] = sorted(d for d in dirnames if not skip_dir(d))
         for name in sorted(filenames):
             if Path(name).suffix in exts:
                 files.append(Path(dirpath, name).relative_to(root))

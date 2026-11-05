@@ -254,11 +254,11 @@ async def verify_mcp_toolsets(
 
     results = await asyncio.gather(
         *(verify_one(name, toolset)
-          for name, toolset in zip(names, toolsets, strict=False))
+          for name, toolset in zip(names, toolsets, strict=True))
     )
     healthy: list = []
     report: list[dict] = []
-    for name, toolset, (ok, error) in zip(names, toolsets, results, strict=False):
+    for name, toolset, (ok, error) in zip(names, toolsets, results, strict=True):
         report.append({'name': name, 'ok': ok, 'error': error})
         if ok:
             healthy.append(toolset)

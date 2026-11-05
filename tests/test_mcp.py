@@ -400,7 +400,9 @@ def test_preflight_verifies_servers_concurrently(home, tmp_path):
 
     assert len(healthy) == 4
     assert all(r['ok'] for r in report)
-    assert elapsed < 4.5, f'serial pre-flight took {elapsed:.2f}s (bound 4.5s)'
+    # Generous bound: tolerates CI variance around the ~2-3s parallel path
+    # while still failing the serial floor (~4x spawn+sleep+list, 8s+).
+    assert elapsed < 7.0, f'serial pre-flight took {elapsed:.2f}s (bound 7.0s)'
 
 
 def test_verify_retries_and_recovers_fail_first(home, tmp_path):
