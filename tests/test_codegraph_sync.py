@@ -25,6 +25,7 @@ every session re-printed the banner. New contract:
 
 import os
 import time
+import types
 
 from codingdude.codegraph_boot import boot_codegraph, refresh_codegraph_index
 
@@ -49,7 +50,6 @@ def _capturing_runner(results=None):
         sub = cmd[3] if len(cmd) > 3 else ''
         calls.append((sub, list(cmd)))
         rc = next((r for name, r in results if name == sub), 0)
-        import types
         return types.SimpleNamespace(returncode=rc, stdout=f'{sub} out')
 
     runner.calls = calls
