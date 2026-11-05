@@ -25,8 +25,10 @@ import ast
 import warnings
 
 
-def parse_python(source: str) -> ast.Module:
-    """Parse Python source with SyntaxWarning suppressed."""
+def parse_python(source: str | bytes) -> ast.Module:
+    """Parse Python source with SyntaxWarning suppressed. Bytes are accepted
+    so callers walking foreign trees don't pre-decode: ast.parse applies the
+    PEP 263 encoding declaration / BOM itself (#284)."""
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', SyntaxWarning)
         return ast.parse(source)

@@ -235,6 +235,80 @@ def test_stale_waiver_reported_for_retirement(workdir, db):
     assert 'deadbeef0000' in report
 
 
+def test_report_scans_workdir_once(workdir, db):
+    """#284: one full scan feeds the whole report — active, waived and
+    stale-waiver sections alike. The old report scanned 4x (check twice,
+    stale waivers twice, each stale pass re-running check), which
+    multiplied the blocking cost of every arch_lint call."""
+    write(workdir, 'src/pkg/mod.py', '''
+        def public_api():
+            return 1
+    ''')
+
+    class CountingLint(ArchLint):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.checks = 0
+
+        def check(self, wd):
+            self.checks += 1
+            return super().check(wd)
+
+    lint = CountingLint(db=db, workdir=str(workdir))
+    lint.waive('deadbeef0000', 'finding that no longer exists')
+    report = lint.report(workdir)
+    assert lint.checks == 1, f'report() scanned the workdir {lint.checks}x'
+    assert 'missing-contract' in report  # active finding rendered
+    assert 'stale-waiver' in report  # stale waiver rendered from the same scan
+
+
+def test_check_tolerates_non_utf8_source(workdir):
+    """#284: third-party trees contain UTF-16 and binary files with a .py
+    suffix. read_text(utf-8) crashed the whole scan with UnicodeDecodeError;
+    bytes passed to ast.parse honour PEP 263 encodings, and undecodable
+    files are skipped like any other unparseable file."""
+    (workdir / 'pkg' / 'utf16_mod.py').write_bytes('X = 1\n'.encode('utf-16'))
+    (workdir / 'pkg' / 'binary.py').write_bytes(b'\xff\xfe\x00\x00broken')
+    write(workdir, 'src/pkg/mod.py', '''
+        def public_api():
+            return 1
+    ''')
+    findings = ArchLint().check(workdir)  # must not raise
+    assert [f['rule'] for f in findings] == ['missing-contract']
+
+
+async def test_arch_lint_tool_does_not_block_event_loop(workdir):
+    """#284: arch_lint is an async tool on the worker's event loop; running
+    the synchronous scan inline blocked the loop for the whole report
+    (live: 6m31s on a large workdir — the ws keepalive died mid-run). The
+    scan must run in a thread while the loop keeps servicing other tasks."""
+    import asyncio
+    import time
+
+    window: dict = {}
+
+    class SlowLint:
+        def report(self, wd):
+            window['start'] = time.monotonic()
+            time.sleep(0.3)
+            window['end'] = time.monotonic()
+            return 'clean'
+
+    ticks: list[float] = []
+
+    async def ticker():
+        for _ in range(6):
+            await asyncio.sleep(0.05)
+            ticks.append(time.monotonic())
+
+    tools = build_archlint_toolset(workdir, SlowLint()).tools
+    await asyncio.gather(tools['arch_lint'].function(), ticker())
+    during = [t for t in ticks if window['start'] < t < window['end']]
+    assert during, (
+        'event loop was blocked for the whole scan — report() ran inline'
+    )
+
+
 async def test_wired_into_build_all(tmp_path, monkeypatch):
     """Upstream check: arch_lint reaches a real engine toolset."""
     from codingdude.config import Config

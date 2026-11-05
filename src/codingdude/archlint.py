@@ -20,6 +20,7 @@ decision (workdir-scoped) so overturning architecture is always visible.
 """
 
 import ast
+import asyncio
 import hashlib
 import json
 import re
@@ -71,10 +72,14 @@ class ArchLint:
         return findings
 
     def report(self, workdir: Path | str) -> str:
+        """Rendered lint report from ONE full scan (#284): active findings,
+        waived findings, and stale waivers — the waiver set is compared
+        against the fingerprints this scan already produced."""
         workdir = Path(workdir)
-        active = [f for f in self.check(workdir) if not f.get('waived')]
-        waived = [f for f in self.check(workdir) if f.get('waived')]
-        stale = sorted(self._stale_waivers(workdir))
+        findings = self.check(workdir)
+        active = [f for f in findings if not f.get('waived')]
+        waived = [f for f in findings if f.get('waived')]
+        stale = sorted(self._waivers(workdir) - {f['fingerprint'] for f in findings})
         if not active and not waived and not stale:
             return 'arch_lint: clean — no seam leaks or duplicated bodies found.'
         lines = []
@@ -87,7 +92,7 @@ class ArchLint:
             )
         for f in waived:
             lines.append(f"[{f['rule']}] WAIVED ({f['fingerprint']}): {f['message']}")
-        for fingerprint in sorted(self._stale_waivers(workdir)):
+        for fingerprint in stale:
             lines.append(
                 f'[stale-waiver] WAIVER {fingerprint} matches no finding — '
                 'retire the decision (fix shipped; the waiver is obsolete)'
@@ -297,12 +302,6 @@ class ArchLint:
                 })
         return findings
 
-    def _stale_waivers(self, workdir: Path) -> set[str]:
-        """Waivers whose finding no longer fires — the fix shipped, so the
-        recorded decision should be retired (ADR hygiene)."""
-        waived_fingerprints = {f['fingerprint'] for f in self.check(workdir)}
-        return self._waivers(workdir) - waived_fingerprints
-
     def _waivers(self, workdir: Path) -> set[str]:
         if self.db is None:
             return set()
@@ -319,9 +318,11 @@ def _trees(workdir: Path):
         if any(part in ('.venv', 'venv', 'node_modules', '.git') for part in path.parts):
             continue
         try:
-            yield path, parse_python(path.read_text(encoding='utf-8'))
-        except SyntaxError:
-            continue  # unparseable file: not this linter's job
+            yield path, parse_python(path.read_bytes())
+        except (SyntaxError, ValueError):
+            continue  # unparseable file: not this linter's job (ValueError
+            # covers undecodable sources — null bytes, broken coding decls;
+            # UnicodeDecodeError is a ValueError subclass)
 
 
 def _body_key(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
@@ -378,7 +379,10 @@ def build_archlint_toolset(workdir: Path | str, lint: ArchLint) -> FunctionTools
 
     async def arch_lint() -> str:
         """Run the architecture linter (seam leaks, duplicated bodies). Fix every finding or waive it explicitly — never ignore one."""
-        return lint.report(workdir)
+        # #284: the scan is pure CPU over the workdir's trees; inline it here
+        # and the worker's event loop blocks for the whole report (observed:
+        # 6m31s, uvicorn's ws ping timeout killed the socket mid-run).
+        return await asyncio.to_thread(lint.report, workdir)
 
     async def waive_finding(fingerprint: str, reason: str) -> str:
         """Explicitly waive an architecture-lint finding; recorded as a design decision."""
