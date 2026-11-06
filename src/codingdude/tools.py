@@ -47,7 +47,17 @@ MAX_READ_BYTES = 256 * 1024
 MAX_GREP_RESULTS = 50
 MAX_FILE_BYTES = 2 * 1024 * 1024  # grep: skip files larger than this
 SKIP_DIRS = {'.git', '.venv', 'node_modules', '__pycache__', '.mypy_cache', '.pytest_cache'}
+# Plain (undotted) virtualenv dirs — same noise class as .venv; archlint's
+# scanner skipped them before the shared rule existed.
+_PLAIN_VENV_DIRS = frozenset({'venv'})
 SECRET_MARKERS = ('KEY', 'TOKEN', 'SECRET', 'PASSWORD', 'CREDENTIAL')
+
+
+def skip_dir(name: str) -> bool:
+    """Canonical skip rule for workdir walkers: SKIP_DIRS, any .venv-prefixed
+    sibling (.venv-verify & friends — the R75/#255 side-venv class), and
+    plain venv dirs."""
+    return name in SKIP_DIRS or name.startswith('.venv') or name in _PLAIN_VENV_DIRS
 
 
 def _git_bash_exe() -> str | None:

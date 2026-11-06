@@ -283,13 +283,16 @@ async def review(args) -> int:
     return 0
 
 
-async def _sender_loop(ws, queue: 'asyncio.Queue') -> None:
-    """Forward queued events over the ws.
+async def _sender_loop(ws, queue: 'asyncio.Queue') -> bool:
+    """Forward queued events over the ws; report delivery truth (#285).
 
     #73: a mid-run connection drop (server bounce) must not crash the worker.
     Once the socket is dead we stop sending (events are dropped; the engine
     persists trace/messages itself) but keep draining the queue so the runner
     never blocks, and return on the terminal event as before.
+    Returns True when the terminal event was actually sent, False after a
+    WS_LOST — run() turns that into WORKER_TERMINAL_DROPPED and a non-zero
+    exit instead of logging 'terminal delivered' on a dead socket.
     """
     log = logging.getLogger('codingdude.worker')
     dead = False
@@ -306,7 +309,7 @@ async def _sender_loop(ws, queue: 'asyncio.Queue') -> None:
                     os.getpid(),
                 )
         if event.get('type') in TERMINAL_EVENTS:
-            return
+            return not dead
 
 
 async def _reader_loop(ws, pending_gate: dict, pending_ask: dict) -> None:
@@ -401,6 +404,17 @@ def wire_interactions(policy, args, engine, loop, on_event, pending_gate, pendin
     policy.ask_user = ask_user_fn
 
 
+def trace_terminal(session_id: str, event: dict) -> None:
+    """Emit the terminal trace event for a finished run."""
+    from codingdude.traces import append_trace_line
+
+    # Atomic single-line append (#79) — never interleaves with the engine
+    # tracer writing to the same session trace.
+    append_trace_line(
+        config_home() / 'traces' / f'{session_id}.jsonl', event,
+    )
+
+
 async def run(args) -> int:
     """Worker entry: run one agent turn for a session and persist the trace."""
     from codingdude.approvals import ApprovalPolicy
@@ -461,10 +475,23 @@ async def run(args) -> int:
 
         runner_task = asyncio.create_task(runner())
 
-        # Sender exits when it forwards the terminal event. The UI is
-        # settled by then; drain the pending tail before teardown (R30).
-        await sender_task
-        log.info('WORKER_TERMINAL_SENT pid=%s — terminal event delivered, draining tail', os.getpid())
+        # The sender exits when it forwards the terminal event — or reports
+        # that the socket died before it could (#285). Log the truth either
+        # way: 'delivered' on a dead socket made every bounce look like a
+        # clean finish, and the server reaped an unexplained RUN_ERROR.
+        delivered = await sender_task
+        if delivered:
+            log.info(
+                'WORKER_TERMINAL_SENT pid=%s — terminal event delivered, draining tail',
+                os.getpid(),
+            )
+        else:
+            log.warning(
+                'WORKER_TERMINAL_DROPPED pid=%s — ws died mid-run; the run is '
+                'persisted locally but the server never received the terminal '
+                'event, exiting non-zero so the reaper reports the loss',
+                os.getpid(),
+            )
         # The watchdog must cover the drain too: a drain that never returns
         # (blocked event loop, un-cancellable shielded cleanup) would never
         # reach the arm_exit_watchdog() call below and the worker would hang
@@ -481,18 +508,9 @@ async def run(args) -> int:
     arm_exit_watchdog()
     log.info('WORKER_EXITING pid=%s — run() returning, interpreter teardown next', os.getpid())
 
-    return 0
-
-
-def trace_terminal(session_id: str, event: dict) -> None:
-    """Emit the terminal trace event for a finished run."""
-    from codingdude.traces import append_trace_line
-
-    # Atomic single-line append (#79) — never interleaves with the engine
-    # tracer writing to the same session trace.
-    append_trace_line(
-        config_home() / 'traces' / f'{session_id}.jsonl', event,
-    )
+    # #285: a run whose terminal never reached the server did not finish for
+    # the user — exit non-zero so the reaper's message tells the truth.
+    return 0 if delivered else 1
 
 
 def engine_run_kwargs(args, model, vision_model=None) -> dict:

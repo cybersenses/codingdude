@@ -653,6 +653,32 @@ def test_session_runs_endpoint_lists_recent_runs(server, tmp_path):
     assert runs[0]['worker_pid'] == 7
 
 
+def test_session_trace_returns_last_n_from_large_trace(server, tmp_path):
+    """#286 contract: /trace returns exactly the last `limit` events, in
+    order, from a trace larger than one tail window (~200KB > 64KB). This
+    pins the replay contract through the tail-read refactor — window growth
+    must not shift, duplicate, or drop events at the boundary."""
+    app, base = server
+    home = tmp_path / 'home'
+    sid = create_session(base, tmp_path / 'proj-trace')
+    trace = home / 'traces' / f'{sid}.jsonl'
+    trace.parent.mkdir(parents=True, exist_ok=True)
+    lines = [json.dumps({'type': 'EVT', 'i': i, 'pad': 'x' * 80}) for i in range(2000)]
+    trace.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+    r = httpx.get(f'{base}/sessions/{sid}/trace?limit=50', headers=auth(), timeout=10)
+    assert r.status_code == 200
+    events = r.json()
+    assert [e['i'] for e in events] == list(range(1950, 2000))
+
+
+def test_session_trace_missing_file_is_empty_list(server, tmp_path):
+    app, base = server
+    sid = create_session(base, tmp_path / 'proj-trace-empty')
+    r = httpx.get(f'{base}/sessions/{sid}/trace', headers=auth(), timeout=10)
+    assert r.status_code == 200
+    assert r.json() == []
+
+
 def test_boot_prunes_week_old_stderr_logs(tmp_path):
     """R72 #264: stderr captures are pruned after 7 days at boot. The shipped
     sweep had no proof; an aged capture must be removed while a fresh one
@@ -744,6 +770,39 @@ def test_terminal_status_always_in_db_check_set():
         assert _terminal_status(channel) in allowed, (
             f'{terminal} maps to a status outside the runs CHECK set'
         )
+
+
+def test_stderr_hint_drops_mcp_startup_chatter():
+    """#287: the reaper's RUN_ERROR hint must not serve MCP-server startup
+    banners as the cause of a worker death — the stderr tail is dominated by
+    child-process chatter (chrome-devtools temp-dir notice, CodeGraph
+    banner, Go-style log lines, CLI arg warnings), which is noise."""
+    from codingdude.server import _stderr_hint
+
+    tail = '\n'.join([
+        'time=2026-11-05T15:44:59.242 level=INFO msg="server session ended"',
+        'chrome-devtools-mcp is restricted to the OS temp directory',
+        'Unknown arguments: --updateChecks',
+        'CodeGraph MCP server v1.5.0 listening on stdio',
+    ])
+    assert _stderr_hint(tail) == ''
+
+
+def test_stderr_hint_keeps_worker_failure_evidence():
+    """#287: real worker failure evidence survives the filter — tracebacks
+    and import errors are exactly what the hint exists to surface."""
+    from codingdude.server import _stderr_hint
+
+    tail = '\n'.join([
+        'time=2026-11-05T15:44:59.242 level=INFO msg="server session ended"',
+        'Traceback (most recent call last):',
+        '  File "worker.py", line 1, in <module>',
+        'ImportError: cannot import name x',
+    ])
+    hint = _stderr_hint(tail)
+    assert 'Traceback' in hint
+    assert 'ImportError' in hint
+    assert 'server session ended' not in hint
 
 
 # ---- #239: server errors must reach logs/server.log, not just stdout ----

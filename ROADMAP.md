@@ -1168,3 +1168,13 @@ Remove tools/github-mcp/github-mcp-server.exe (26MB) from HEAD and all history; 
 **Status:** done
 
 Symptom: every session start prints "Already initialized in <dir> — use codegraph index/sync". Root cause (probe .scratch/probe_codegraph_sync.py): `codegraph init` no-ops on an existing index (0.15s, banner, index mtimes unchanged), while `codegraph sync` incrementally updates (0.61s after edit) and `codegraph index` rebuilds. codegraph_boot.py's stale self-heal (#203) and mid-run refresh (R14) both run init on an existing index — a no-op reported as success, so the graph stays stale and the banner repeats every session. Fix: sync when an index exists; init only when none; on sync failure fall back to full `index` rebuild.
+
+## R76 — R76: Cut per-run startup tax (repo_map walk + MCP pre-flight)
+**Status:** done
+
+Two fixes: (1) repo_map walk prunes skip-dirs during descent with an early budget break (4.2-4.5s -> 0.9-1.2s measured on this repo, bench x3); (2) MCP pre-flight verifies all servers concurrently and keeps healthy sessions entered so agent-enter skips a second initialize handshake on the same child process (fastmcp keeps one child alive; the double-spawn claim was falsified by probe, see code-design #284) (~13.4s -> ~2s); npx servers version-pinned (z_ai@0.1.6, chrome-devtools@1.12.0). DFS order can shift which files fill the signature-budget tail; the review pass added .venv*-prefix and plain-venv skipping via tools.skip_dir (R75/#255 class).
+
+## R77 — R77: Run-failure visibility — unblock arch_lint, truthful terminal delivery, O(limit) trace endpoint, clean RUN_ERROR hints
+**Status:** done
+
+External review of a DataReview session surfaced a synthesized error popup whose root cause is in the harness: arch_lint blocks the worker event loop (sync report() in an async tool, ~4x redundant scan) past uvicorn's 20s ws ping timeout; the dropped socket silently swallows the terminal event while the worker logs "delivered" and exits 0; the reaper then fabricates a RUN_ERROR padded with MCP startup noise from the stderr tail. Secondary: GET /sessions/{id}/trace reads the whole (hundreds-of-MB) trace file per call and the frontend calls it 3x per session load. Verified against this checkout: archlint.py:379-381/73-95/317-324, worker.py:286-309/404-484, server.py:182-249/1528-1539; measured report() 4.3s vs check() 0.8s on src/codingdude; 264MB live trace in this home; 3x WORKER_EXITED exit=0 terminal_seen=False in this home's server.log.

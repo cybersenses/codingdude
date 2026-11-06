@@ -215,7 +215,9 @@ async def _reap_worker(channel, db: 'Database | None' = None) -> None:
                 channel.run_id, worker.pid, stderr_tail)
         hint = ''
         if stderr_tail:
-            hint = ' stderr: ' + ' '.join(stderr_tail.split())[-400:]
+            hint_lines = _stderr_hint(stderr_tail)
+            if hint_lines:
+                hint = ' stderr: ' + ' '.join(hint_lines.split())[-400:]
         channel.push({
             'type': 'RUN_ERROR',
             'code': 'worker_died',
@@ -234,6 +236,31 @@ async def _reap_worker(channel, db: 'Database | None' = None) -> None:
 
 _STDERR_TAIL_BYTES = 2000
 
+# #287: the stderr tail of a healthy-spawned worker is dominated by MCP
+# child-process startup chatter (Go-style time=/level= log lines, server
+# banners, CLI arg warnings) — none of it is the cause of a worker death.
+_STDERR_NOISE_PREFIXES = ('time=',)
+_STDERR_NOISE_MARKERS = (
+    'level=', 'restricted to the os temp directory', 'unknown arguments',
+    'mcp server', 'server session ended', 'listening on',
+)
+
+
+def _stderr_hint(tail: str) -> str:
+    """Worker-relevant lines of a stderr tail, for the RUN_ERROR hint.
+
+    The WORKER_STDERR warning log keeps the full tail (server-side
+    forensics, #264); only the user-facing hint is filtered so MCP startup
+    chatter is not presented as the cause of a worker death."""
+    lines = [ln.strip() for ln in tail.splitlines()]
+    keep = [
+        ln for ln in lines
+        if ln
+        and not ln.startswith(_STDERR_NOISE_PREFIXES)
+        and not any(marker in ln.lower() for marker in _STDERR_NOISE_MARKERS)
+    ]
+    return '\n'.join(keep).strip()
+
 
 def _read_stderr_tail(path) -> str:
     """Last chunk of a worker's captured stderr; '' when absent/unreadable."""
@@ -247,6 +274,34 @@ def _read_stderr_tail(path) -> str:
             return fh.read().decode('utf-8', errors='replace').strip()
     except OSError:
         return ''
+
+
+_TRACE_TAIL_WINDOW_BYTES = 64 * 1024
+_TRACE_TAIL_MAX_LIMIT = 1000
+
+
+def _trace_tail_lines(trace_file: Path, limit: int) -> list[str]:
+    """Last `limit` complete lines of a jsonl file without reading it whole.
+
+    #286: /trace used to read_text().splitlines() the entire trace per call
+    (264MB live here, 531MB on a reviewed install) while the frontend calls
+    it 3x per session load. The window grows from the end until it holds
+    `limit` complete lines or reaches file start; the first line of a
+    window that doesn't begin at offset 0 is partial (cut mid-line) and is
+    dropped.
+    """
+    size = trace_file.stat().st_size
+    window = _TRACE_TAIL_WINDOW_BYTES
+    with trace_file.open('rb') as fh:
+        while True:
+            start = max(0, size - window)
+            fh.seek(start)
+            lines = fh.read().decode('utf-8', errors='replace').splitlines()
+            if start:
+                lines = lines[1:]  # first line is partial — drop it
+            if len(lines) >= limit or start == 0:
+                return lines[-limit:]
+            window *= 4
 
 
 def _terminal_status(channel) -> str:
@@ -1527,12 +1582,12 @@ def create_app(
     @app.get('/sessions/{session_id}/trace')
     def session_trace(session_id: str, limit: int = 50, _: None = Depends(authorize)) -> list[dict]:
         """Replayable run trace: the last `limit` traced events (default 50)."""
+        limit = max(1, min(limit, _TRACE_TAIL_MAX_LIMIT))
         trace_file = home / 'traces' / f'{session_id}.jsonl'
         if not trace_file.exists():
             return []
-        lines = trace_file.read_text(encoding='utf-8').splitlines()
         out = []
-        for line in lines[-limit:]:
+        for line in _trace_tail_lines(trace_file, limit):
             if line.strip():
                 try:
                     out.append(json.loads(line))
