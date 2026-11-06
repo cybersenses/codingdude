@@ -330,6 +330,34 @@ def test_stale_guard_cleared_by_reread(tmp_path):
     assert edit('x.py', 'a = 999', 'a = 1000') == 'edited x.py'
 
 
+def test_edit_event_caps_oversized_payload(tmp_path):
+    """EDIT_APPLIED before/after are forensic convenience — the file itself
+    is the source of truth (git). Oversized payloads get head+tail capped
+    with an explicit marker + original length; small payloads stay verbatim
+    (R78 #290: before/after were 160.5MB of a 269MB session trace)."""
+    events: list[dict] = []
+    edit = _tool(tmp_path, 'edit_file', on_edit=events.append)
+
+    big = ('x\n' * 20000) + 'ANCHOR\n' + ('y\n' * 20000)
+    (tmp_path / 'big.py').write_bytes(big.encode('utf-8'))  # bytes: no newline translation
+    edit('big.py', 'ANCHOR', 'REPLACED')
+    ev = events[-1]
+    assert ev['type'] == 'EDIT_APPLIED' and ev['path'] == 'big.py'
+    assert len(ev['before']) <= 3200 and len(ev['after']) <= 3200
+    assert ev['before_len'] == len(big)  # original size survives the cap
+    assert 'chars truncated' in ev['before'] and 'chars truncated' in ev['after']
+    assert ev['before'].startswith('x\n') and ev['before'].endswith('y\n')
+    assert ev['after'].startswith('x\n') and ev['after'].endswith('y\n')
+
+    small = 'def tiny():\n    return 1\n'
+    (tmp_path / 'small.py').write_bytes(small.encode('utf-8'))
+    edit('small.py', 'return 1', 'return 2')
+    ev2 = events[-1]
+    assert ev2['before'] == small
+    assert ev2['after'] == 'def tiny():\n    return 2\n'
+    assert 'before_len' not in ev2 and 'after_len' not in ev2
+
+
 @pytest.mark.skipif(os.name != 'nt', reason='Windows bash resolution')
 def test_shell_argv_windows_resolves_git_bash_not_wsl_stub():
     """Bare `bash` on Windows can resolve to the WSL stub (no distro ->

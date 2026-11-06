@@ -66,6 +66,21 @@ def test_map_counts_exclude_skip_dirs(workdir):
     assert 'vtool' not in m
 
 
+def test_map_excludes_scratch(workdir):
+    """Harness-owned .scratch (probes, restart logs) is not project source —
+    it must not enter the walk, the count, or burn the signature budget."""
+    make_project(workdir)
+    scratch = workdir / '.scratch'
+    scratch.mkdir()
+    (scratch / 'probe_turn_costs.py').write_text('def probe_cost(): pass')
+    (scratch / 'probe.mjs').write_text('export function scratchTool() {}')
+    m = build_repo_map(workdir)
+    assert m.startswith('[repo: 3 source files]')
+    assert '.scratch' not in m
+    assert 'probe_cost' not in m
+    assert 'scratchTool' not in m
+
+
 def test_budget_truncates_map(workdir):
     make_project(workdir)
     tiny = build_repo_map(workdir, budget=60)

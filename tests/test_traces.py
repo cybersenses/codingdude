@@ -22,6 +22,7 @@ each line an atomic append, even under concurrent writers.
 """
 
 import json
+import os
 import threading
 
 import pytest
@@ -44,6 +45,19 @@ def test_appends_one_json_line(trace_file):
 def test_appends_create_parent_dirs(trace_file):
     append_trace_line(trace_file, {'type': 'X'})
     assert trace_file.exists()
+
+
+def test_append_recovers_from_stale_cached_fd(trace_file):
+    """A cached fd closed behind our back (external rotation/close) must be
+    detected and rebuilt: the append lands instead of raising EBADF, and no
+    event is lost."""
+    append_trace_line(trace_file, {'type': 'A'})
+    from codingdude import traces
+
+    os.close(traces._fds[trace_file])  # external close → cache holds a stale fd
+    append_trace_line(trace_file, {'type': 'B'})
+    lines = trace_file.read_text(encoding='utf-8').splitlines()
+    assert [json.loads(line)['type'] for line in lines] == ['A', 'B']
 
 
 def test_concurrent_writers_produce_only_intact_lines(trace_file):
