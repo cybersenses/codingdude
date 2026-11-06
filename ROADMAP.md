@@ -1169,10 +1169,10 @@ Remove tools/github-mcp/github-mcp-server.exe (26MB) from HEAD and all history; 
 
 Symptom: every session start prints "Already initialized in <dir> — use codegraph index/sync". Root cause (probe .scratch/probe_codegraph_sync.py): `codegraph init` no-ops on an existing index (0.15s, banner, index mtimes unchanged), while `codegraph sync` incrementally updates (0.61s after edit) and `codegraph index` rebuilds. codegraph_boot.py's stale self-heal (#203) and mid-run refresh (R14) both run init on an existing index — a no-op reported as success, so the graph stays stale and the banner repeats every session. Fix: sync when an index exists; init only when none; on sync failure fall back to full `index` rebuild.
 
-## R76 — R76: Cut per-run startup tax (repo_map walk + MCP double-spawn)
+## R76 — R76: Cut per-run startup tax (repo_map walk + MCP pre-flight)
 **Status:** done
 
-Two fixes: (1) repo_map walk prunes skip-dirs during descent with an early budget break (5.5s -> ~1.0s measured on this repo); (2) MCP pre-flight verifies all servers concurrently and keeps healthy sessions entered so pydantic-ai reuses them at agent-enter instead of respawning (~13.4s -> ~2s); npx servers version-pinned (z_ai@0.1.6, chrome-devtools@1.12.0). DFS order can shift which files fill the signature-budget tail; the review pass added .venv*-prefix and plain-venv skipping via tools.skip_dir (R75/#255 class).
+Two fixes: (1) repo_map walk prunes skip-dirs during descent with an early budget break (4.2-4.5s -> 0.9-1.2s measured on this repo, bench x3); (2) MCP pre-flight verifies all servers concurrently and keeps healthy sessions entered so agent-enter skips a second initialize handshake on the same child process (fastmcp keeps one child alive; the double-spawn claim was falsified by probe, see code-design #284) (~13.4s -> ~2s); npx servers version-pinned (z_ai@0.1.6, chrome-devtools@1.12.0). DFS order can shift which files fill the signature-budget tail; the review pass added .venv*-prefix and plain-venv skipping via tools.skip_dir (R75/#255 class).
 
 ## R77 — R77: Run-failure visibility — unblock arch_lint, truthful terminal delivery, O(limit) trace endpoint, clean RUN_ERROR hints
 **Status:** done

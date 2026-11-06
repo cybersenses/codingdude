@@ -25,6 +25,7 @@ import hashlib
 import json
 import re
 from collections import defaultdict
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -314,9 +315,12 @@ class ArchLint:
         }
 
 
-def _trees(workdir: Path):
+def _trees(workdir: Path) -> Iterator[tuple[Path, ast.Module]]:
     for path in sorted(workdir.rglob('*.py')):
-        if any(skip_dir(part) for part in path.parts):
+        # Skip rule applies to workdir-relative parts only: an ancestor above
+        # the workdir named like a skip dir (project under .../venv/) must not
+        # silently exclude the whole scan.
+        if any(skip_dir(part) for part in path.relative_to(workdir).parts):
             continue
         try:
             yield path, parse_python(path.read_bytes())

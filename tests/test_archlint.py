@@ -19,7 +19,7 @@ import textwrap
 
 import pytest
 
-from codingdude.archlint import ArchLint, build_archlint_toolset
+from codingdude.archlint import ArchLint, _trees, build_archlint_toolset
 from codingdude.db import Database
 from codingdude.roadmap import RoadmapStore
 
@@ -458,3 +458,16 @@ def test_spec_contracts_helper_direct(workdir):
     """)
     findings = ArchLint()._spec_contracts(workdir)
     assert [f['rule'] for f in findings] == ['spec-contract-missing']
+
+
+def test_trees_ignores_skip_named_ancestors(tmp_path):
+    """_trees applies the skip rule to workdir-relative parts only: an
+    ancestor above the workdir named like a skip dir (project living under
+    .../venv/) must not silently exclude the whole scan."""
+    proj = tmp_path / 'venv' / 'proj'
+    (proj / 'src').mkdir(parents=True)
+    (proj / 'src' / 'mod.py').write_text('def api():\n    return 1\n',
+                                         encoding='utf-8')
+
+    found = [p.relative_to(proj).as_posix() for p, _ in _trees(proj)]
+    assert found == ['src/mod.py']
