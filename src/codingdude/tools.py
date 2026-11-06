@@ -46,7 +46,7 @@ from .security import format_findings, scan_source
 MAX_READ_BYTES = 256 * 1024
 MAX_GREP_RESULTS = 50
 MAX_FILE_BYTES = 2 * 1024 * 1024  # grep: skip files larger than this
-SKIP_DIRS = {'.git', '.venv', 'node_modules', '__pycache__', '.mypy_cache', '.pytest_cache'}
+SKIP_DIRS = {'.git', '.venv', 'node_modules', '__pycache__', '.mypy_cache', '.pytest_cache', '.scratch'}
 # Plain (undotted) virtualenv dirs — same noise class as .venv; archlint's
 # scanner skipped them before the shared rule existed.
 _PLAIN_VENV_DIRS = frozenset({'venv'})
@@ -56,7 +56,8 @@ SECRET_MARKERS = ('KEY', 'TOKEN', 'SECRET', 'PASSWORD', 'CREDENTIAL')
 def skip_dir(name: str) -> bool:
     """Canonical skip rule for workdir walkers: SKIP_DIRS, any .venv-prefixed
     sibling (.venv-verify & friends — the R75/#255 side-venv class), and
-    plain venv dirs."""
+    plain venv dirs. .scratch is the harness's own scratch area (probes,
+    restart logs) — never project source, so walkers skip it wholesale."""
     return name in SKIP_DIRS or name.startswith('.venv') or name in _PLAIN_VENV_DIRS
 
 
@@ -283,6 +284,26 @@ async def _drain(reader: asyncio.StreamReader) -> tuple[bytes, bool]:
 
 
 EditEmitter = Callable[[dict], None]
+
+# EDIT_APPLIED before/after are forensic convenience — the file on disk (git)
+# is the source of truth, and the frontend reads only `path`. Uncapped, full
+# file contents measured 160.5MB of a 269MB session trace (~49KB/event avg).
+# Cap oversized payloads head+tail (shell-output precedent) with an explicit
+# marker; small payloads stay verbatim.
+_TRACE_HEAD_CHARS = 2000
+_TRACE_TAIL_CHARS = 1000
+
+
+def _cap_for_trace(text: str) -> str | None:
+    """Head+tail capped copy for the trace event, or None when it fits."""
+    if len(text) <= _TRACE_HEAD_CHARS + _TRACE_TAIL_CHARS:
+        return None
+    omitted = len(text) - _TRACE_HEAD_CHARS - _TRACE_TAIL_CHARS
+    return (
+        text[:_TRACE_HEAD_CHARS]
+        + f'\n...[{omitted} chars truncated - full content recoverable via git]...\n'
+        + text[-_TRACE_TAIL_CHARS:]
+    )
 
 
 def _read_verbatim(target: Path) -> str:
@@ -515,7 +536,17 @@ def build_toolset(
 
     def emit_edit(path: str, before: str, after: str) -> None:
         if on_edit:
-            on_edit({'type': 'EDIT_APPLIED', 'kind': 'edit', 'path': path, 'before': before, 'after': after})
+            event: dict = {
+                'type': 'EDIT_APPLIED', 'kind': 'edit', 'path': path,
+            }
+            for name, text in (('before', before), ('after', after)):
+                capped = _cap_for_trace(text)
+                if capped is None:
+                    event[name] = text
+                else:
+                    event[name] = capped
+                    event[f'{name}_len'] = len(text)
+            on_edit(event)
 
     def _guard_project_context(path: str) -> None:
         """Directives files (AGENT.md, DIRECTIVES.md) always need a gate."""
