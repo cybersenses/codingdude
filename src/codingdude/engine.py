@@ -313,8 +313,27 @@ class Engine:
 
     def _make_tracer(self, session_id: str, workdir: Path, trace: bool, emit,
                      run_id: str | None = None):
-        """The per-run event sink: trace JSONL + render capture + UI emit."""
+        """The per-run event sink: trace JSONL + render capture + UI emit.
+
+        R79 #291: the trace and UI paths are separate sinks. The UI emit
+        always receives the raw per-token event; the trace path coalesces
+        streaming deltas when config.trace.deltas == 'compact' (the default),
+        and appends every event directly in 'full' mode.
+        """
         trace_file = self._config_home() / 'traces' / f'{session_id}.jsonl'
+        trace_cfg = self._config.trace
+        coalescer = None
+        if trace and trace_cfg.deltas != 'full':
+            import time
+
+            from codingdude.traces import DeltaCoalescer
+
+            coalescer = DeltaCoalescer(
+                trace_file,
+                flush_bytes=trace_cfg.flush_bytes,
+                flush_ms=trace_cfg.flush_ms,
+                now=time.monotonic,
+            )
 
         def traced(event: dict) -> None:
             from codingdude.traces import append_trace_line
@@ -326,7 +345,10 @@ class Engine:
             if trace:
                 # Single atomic append per line (#79): concurrent writers
                 # (engine tracer + trace_terminal) must never interleave.
-                append_trace_line(trace_file, event)
+                if coalescer is not None:
+                    coalescer.append(event)
+                else:
+                    append_trace_line(trace_file, event)
             if event.get('type') == 'RENDER_CAPTURED' and session_id:
                 # R1: capture hook auto-register — persist the render with
                 # session provenance; failures never fail the run.

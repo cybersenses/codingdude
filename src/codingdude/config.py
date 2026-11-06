@@ -574,6 +574,21 @@ def provider_effective_key(name: str, d: ProviderDef) -> str | None:
 
 
 @dataclass(frozen=True)
+class TraceConfig:
+    """Trace streaming-delta recording mode (R79 #291).
+
+    compact: adjacent same-type delta events coalesce into fewer lines
+    (bounded crash-loss: at most one flush window of tokens). full: one
+    line per delta, byte-identical to pre-R79 traces. The live UI emit
+    path is per-token in both modes.
+    """
+
+    deltas: str = 'compact'  # 'compact' | 'full'
+    flush_bytes: int = 4096
+    flush_ms: float = 250.0
+
+
+@dataclass(frozen=True)
 class Config:
     """Top-level CodingDude configuration assembled from config home + environment."""
     models: ModelLineup
@@ -581,6 +596,7 @@ class Config:
     providers: dict[str, ProviderDef] = field(default_factory=dict)
     delegation: DelegationConfig = field(default_factory=DelegationConfig)
     planning: PlanningConfig = field(default_factory=PlanningConfig)
+    trace: TraceConfig = field(default_factory=TraceConfig)
 
     @classmethod
     def defaults(cls) -> Config:
@@ -643,6 +659,16 @@ def load_config(home: Path | None = None) -> Config:
         github_mirror=bool(planning_raw.get(
             'github_mirror', defaults.planning.github_mirror)),
     )
+    trace_raw = raw.get('trace', {})
+    if not isinstance(trace_raw, dict):
+        logging.getLogger(__name__).warning(
+            'config.toml [trace]: unsupported shape; ignored')
+        trace_raw = {}
+    deltas = trace_raw.get('deltas', defaults.trace.deltas)
+    if deltas not in ('compact', 'full'):
+        raise ValueError(
+            f'config.toml [trace] deltas: {deltas!r} — must be "compact" or "full"'
+        )
     config = Config(
         models=ModelLineup(
             main=models.get('main', defaults.models.main),
@@ -660,6 +686,12 @@ def load_config(home: Path | None = None) -> Config:
         providers=_parse_providers(providers),
         delegation=delegation,
         planning=planning,
+        trace=TraceConfig(
+            deltas=deltas,
+            flush_bytes=int(trace_raw.get(
+                'flush_bytes', defaults.trace.flush_bytes)),
+            flush_ms=float(trace_raw.get('flush_ms', defaults.trace.flush_ms)),
+        ),
     )
     apply_provider_keys(config)
     return config
