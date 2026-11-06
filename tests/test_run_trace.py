@@ -49,3 +49,59 @@ def test_tracer_without_run_id_leaves_event_untouched(home, workdir):
     line = (home / 'traces' / f'{sid}.jsonl').read_text(encoding='utf-8').strip()
     event = json.loads(line)
     assert 'run_id' not in event
+
+
+# --- R79 #291: tracer split-sink — compact trace, raw UI emit --------------
+
+def test_tracer_default_compact_coalesces_trace_but_emit_stays_raw(home, workdir):
+    """Compact (the default): the trace file holds coalesced delta lines,
+    while every UI emit receives the raw per-token event (SSE smoothness
+    is a UI contract, independent of the trace mode)."""
+    engine = _engine(home)
+    sid = engine._db.create_session(workdir)
+    seen: list[dict] = []
+    traced = engine._make_tracer(
+        sid, workdir, trace=True, emit=seen.append, run_id='runX',
+    )
+    for i in range(50):
+        traced({'type': 'TEXT_MESSAGE_CONTENT', 'delta': f'w{i} '})
+    traced({'type': 'RUN_FINISHED'})
+
+    # UI path: all 50 raw events, per-token.
+    assert len(seen) == 51
+    assert all(e['run_id'] == 'runX' for e in seen)
+    # Trace path: coalesced — far fewer delta lines, exact concatenation.
+    events = [
+        json.loads(line)
+        for line in (home / 'traces' / f'{sid}.jsonl')
+        .read_text(encoding='utf-8').splitlines()
+    ]
+    deltas = [e for e in events if e['type'] == 'TEXT_MESSAGE_CONTENT']
+    assert len(deltas) < 10
+    assert ''.join(e['delta'] for e in deltas) == ''.join(f'w{i} ' for i in range(50))
+    assert all(e['run_id'] == 'runX' for e in deltas)
+
+
+def test_tracer_full_mode_appends_every_delta_line(home, workdir):
+    """[trace] deltas = "full": one trace line per delta — byte-identical
+    to pre-R79 traces (old replay tooling keeps working)."""
+    home.mkdir(parents=True, exist_ok=True)
+    (home / 'config.toml').write_text(
+        '[trace]\ndeltas = "full"\n', encoding='utf-8',
+    )
+    engine = _engine(home)
+    assert engine._config.trace.deltas == 'full'
+    sid = engine._db.create_session(workdir)
+    traced = engine._make_tracer(sid, workdir, trace=True, emit=None, run_id='runX')
+    for i in range(5):
+        traced({'type': 'TEXT_MESSAGE_CONTENT', 'delta': f'w{i} '})
+    traced({'type': 'RUN_FINISHED'})
+
+    events = [
+        json.loads(line)
+        for line in (home / 'traces' / f'{sid}.jsonl')
+        .read_text(encoding='utf-8').splitlines()
+    ]
+    assert [e['type'] for e in events] == ['TEXT_MESSAGE_CONTENT'] * 5 + ['RUN_FINISHED']
+    assert [e['delta'] for e in events[:5]] == [f'w{i} ' for i in range(5)]
+    assert all('coalesced' not in e for e in events)

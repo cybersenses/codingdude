@@ -22,12 +22,20 @@ trace. `append_trace_line` makes each line a single atomic append:
 `os.O_APPEND` keeps the file offset at EOF for every write, and one
 `os.write` call per line means the OS never splits it. An in-process lock
 additionally preserves line ordering between threads of one process.
+
+R79 #291 adds `DeltaCoalescer` for compact trace mode: streaming-delta
+events (TEXT_MESSAGE_CONTENT / TOOL_CALL_ARGS) are buffered and written as
+one coalesced line per flush window. Concatenating a message's deltas still
+reconstructs the text exactly — at chunk-level, not token-level, timing
+granularity. Crash loss is bounded to one flush window. The live UI emit
+path (engine._make_tracer) is separate and stays per-token in every mode.
 """
 
 import json
 import os
 import threading
 from collections import OrderedDict
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -64,6 +72,83 @@ def _open_trace_fd(trace_file: Path) -> int:
     while len(_fds) > _FD_CACHE_MAX:
         _drop_fd(next(iter(_fds)))
     return fd
+
+
+class DeltaCoalescer:
+    """Buffer streaming-delta trace events and write them coalesced (R79 #291).
+
+    Compact trace mode: one line per token-chunk costs ~110 bytes of JSON
+    overhead per ~15-byte token. Adjacent same-type delta events are
+    concatenated into a single line; concatenating the deltas still
+    reconstructs the text exactly, at chunk-level timing granularity. All
+    writes go through append_trace_line, so #79/#289 atomicity is preserved
+    and the first buffered event's keys (run_id, ...) are kept.
+
+    Flush triggers: any non-delta event (passed through after flushing),
+    the size or age bound (checked at append time — no timer task), and
+    close(). Crash loss is bounded: at most one flush window of tokens.
+    """
+
+    _DELTA_TYPES = frozenset({'TEXT_MESSAGE_CONTENT', 'TOOL_CALL_ARGS'})
+
+    def __init__(
+        self, trace_file: Path, *, flush_bytes: int, flush_ms: float,
+        now: Callable[[], float],
+    ):
+        self._trace_file = Path(trace_file)
+        self._flush_bytes = flush_bytes
+        self._flush_ms = flush_ms
+        self._now = now
+        self._type: str | None = None
+        self._head: dict = {}
+        self._chunks: list[str] = []
+        self._bytes = 0
+        self._first_ts: float | None = None
+
+    def append(self, event: dict) -> None:
+        """Buffer one delta event, or flush + pass a non-delta event through."""
+        if event.get('type') not in self._DELTA_TYPES:
+            self.flush()
+            append_trace_line(self._trace_file, event)
+            return
+        if self._type is not None and event['type'] != self._type:
+            self.flush()
+        if (
+            self._type is not None
+            and self._first_ts is not None
+            and (self._bytes + len(event['delta']) > self._flush_bytes
+                 or (self._now() - self._first_ts) * 1000 >= self._flush_ms)
+        ):
+            # Adding this chunk would cross a bound: close the current line
+            # first so every line stays <= flush_bytes and stale buffers
+            # never outlive flush_ms.
+            self.flush()
+        if self._type is None:
+            self._type = event['type']
+            self._head = {k: v for k, v in event.items() if k != 'delta'}
+            self._first_ts = self._now()
+        self._chunks.append(event['delta'])
+        self._bytes += len(event['delta'])
+
+    def flush(self) -> None:
+        """Write buffered deltas as one line; no-op when nothing is buffered."""
+        if self._type is None:
+            return
+        append_trace_line(self._trace_file, {
+            **self._head,
+            'type': self._type,
+            'delta': ''.join(self._chunks),
+            'coalesced': len(self._chunks),
+        })
+        self._type = None
+        self._head = {}
+        self._chunks = []
+        self._bytes = 0
+        self._first_ts = None
+
+    def close(self) -> None:
+        """Flush any buffered deltas (engine shutdown / coalescer teardown)."""
+        self.flush()
 
 
 def append_trace_line(trace_file: Path, event: dict) -> None:
