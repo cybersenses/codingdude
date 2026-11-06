@@ -21,9 +21,9 @@ from helpers import scripted
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
+    ToolReturnPart,
 )
 
 
@@ -45,7 +45,7 @@ def tool_then_answer(tool_name: str, tool_args: dict, answer_check):
             str(p.content)
             for m in messages
             for p in m.parts
-            if isinstance(p, RetryPromptPart)
+            if isinstance(p, ToolReturnPart) and p.outcome == 'retried'
         ]
         return ModelResponse(parts=[TextPart(content=answer_check(retries))])
 

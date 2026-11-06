@@ -20,7 +20,6 @@ from helpers import scripted
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -65,7 +64,7 @@ def planner_flow(answers: list[str]):
             str(p.content)
             for m in messages
             for p in m.parts
-            if isinstance(p, (ToolReturnPart, RetryPromptPart))
+            if isinstance(p, ToolReturnPart)
         ]
         return ModelResponse(parts=[TextPart(content='FINAL:' + ' | '.join(texts))])
 

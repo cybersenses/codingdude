@@ -15,6 +15,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """Database: schema created on first use, sessions and messages roundtrip."""
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -65,6 +66,51 @@ def test_usage_accumulates_per_session(home, workdir):
     assert totals['input_tokens'] == 11
     assert totals['output_tokens'] == 7
     assert abs(totals['cost_usd'] - 0.03) < 1e-9
+
+
+def test_legacy_retry_prompt_history_still_decodes(home, workdir):
+    """#253 storage contract: a 2.53-era session whose tool retry was stored
+    as a `retry-prompt` part must keep decoding after the unpin. pydantic-ai
+    ≥2.54 translates it on load into the part it always meant — a tool-bound
+    retry becomes that call's ToolReturnPart(outcome='retried'). The JSON is
+    the exact wire format dumped by 2.53.0 (known-good literal), not a
+    hand-modeled shape.
+    """
+    db = Database.connect(home)
+    session_id = db.create_session(workdir)
+    legacy = json.dumps([
+        {'parts': [{'content': 'go', 'timestamp': '2026-01-01T12:00:00Z',
+                    'part_kind': 'user-prompt'}], 'timestamp': None,
+         'instructions': None, 'kind': 'request', 'run_id': None,
+         'conversation_id': None, 'metadata': None, 'state': 'complete'},
+        {'parts': [{'tool_name': 'boom', 'args': {'x': 1}, 'tool_call_id': 'call_1',
+                    'tool_kind': None, 'id': None, 'provider_name': None,
+                    'provider_details': None, 'part_kind': 'tool-call'}],
+         'usage': {'input_tokens': 0, 'cache_write_tokens': 0, 'cache_read_tokens': 0,
+                   'output_tokens': 0, 'input_audio_tokens': 0, 'cache_audio_read_tokens': 0,
+                   'output_audio_tokens': 0, 'audio_seconds': 0.0, 'details': {}, 'cost': None},
+         'model_name': 'function:test', 'timestamp': '2026-01-01T12:00:00Z',
+         'kind': 'response', 'provider_name': None, 'provider_url': None,
+         'provider_details': None, 'provider_response_id': None, 'finish_reason': None,
+         'run_id': None, 'conversation_id': None, 'metadata': None,
+         'workspace_ref': None, 'state': 'complete'},
+        {'parts': [{'content': 'Tool boom failed unexpectedly: RuntimeError: locked',
+                    'tool_name': 'boom', 'tool_call_id': 'call_1',
+                    'timestamp': '2026-01-01T12:00:00Z', 'part_kind': 'retry-prompt'}],
+         'timestamp': None, 'instructions': None, 'kind': 'request', 'run_id': None,
+         'conversation_id': None, 'metadata': None, 'state': 'complete'},
+    ])
+    db.append_messages(session_id, legacy)
+    loaded = decode_messages(db.load_messages(session_id))
+    retried = [
+        p for m in loaded for p in m.parts
+        if getattr(p, 'outcome', None) == 'retried'
+    ]
+    assert len(retried) == 1
+    assert retried[0].tool_name == 'boom'
+    assert retried[0].tool_call_id == 'call_1'
+    assert 'file locked' not in retried[0].content  # stored wording survives verbatim
+    assert 'RuntimeError: locked' in retried[0].content
 
 
 def test_session_usage_includes_per_model_breakdown(home, workdir):

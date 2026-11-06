@@ -77,8 +77,11 @@ async def test_directives_file_edits_are_gated(home, workdir):
                     args={'path': DIRECTIVES_FILENAME, 'old_text': 'old rule', 'new_text': 'new rule'},
                 )]
             )
-        from pydantic_ai.messages import RetryPromptPart
-        retries = [str(p.content) for m in messages for p in m.parts if isinstance(p, RetryPromptPart)]
+        from pydantic_ai.messages import ToolReturnPart
+        retries = [
+            str(p.content) for m in messages for p in m.parts
+            if isinstance(p, ToolReturnPart) and p.outcome == 'retried'
+        ]
         return ModelResponse(parts=[TextPart(content='gated' if retries else 'wrote-ungated')])
 
     from codingdude.approvals import ApprovalPolicy
