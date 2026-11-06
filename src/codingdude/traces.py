@@ -147,7 +147,13 @@ class DeltaCoalescer:
         self._first_ts = None
 
     def close(self) -> None:
-        """Flush any buffered deltas (engine shutdown / coalescer teardown)."""
+        """Flush any buffered deltas.
+
+        Engine code does not call close(): a run's terminal event is a
+        non-delta pass-through that flushes the buffer (append), so only a
+        hard process crash leaves buffered tokens — bounded loss, by design.
+        Tests call close() to end a buffer deterministically.
+        """
         self.flush()
 
 
