@@ -107,3 +107,52 @@ def test_agent_default_retries_is_five():
     assembler = PromptAssembler()
     agent = assembler.agent(TestModel(), 'instructions', [])
     assert agent._max_tool_retries == 5
+
+
+@pytest.mark.asyncio
+async def test_retry_surfaces_as_tool_return_part():
+    """#253 (≥2.54 message semantics): a tool failure reaches the model as
+    that call's own ToolReturnPart with outcome='retried' — the deprecated
+    RetryPromptPart representation is gone from new history. Observed at the
+    FunctionModel seam: the second request's history must carry the retried
+    return, or the scripted model loops until the budget dies (red on 2.53).
+    """
+    from pydantic_ai import Agent
+    from pydantic_ai.messages import (
+        ModelResponse,
+        TextPart,
+        ToolCallPart,
+        ToolReturnPart,
+    )
+    from pydantic_ai.models.function import FunctionModel
+
+    seen: list[list] = []
+
+    def fn(messages, info):
+        seen.append(list(messages))
+        retried = any(
+            isinstance(p, ToolReturnPart) and p.outcome == 'retried'
+            for m in messages
+            for p in m.parts
+        )
+        if not retried:
+            return ModelResponse(parts=[ToolCallPart(tool_name='boom', args={'x': 1})])
+        return ModelResponse(parts=[TextPart(content='recovered')])
+
+    def boom(x: int) -> str:
+        raise RuntimeError('file locked')
+
+    agent = Agent(
+        model=FunctionModel(fn),
+        toolsets=[error_feedback_toolset(FunctionToolset([boom]))],
+        retries=3,
+    )
+    result = await agent.run('go')
+    assert result.output == 'recovered'
+    retry_parts = [
+        p for msgs in seen for m in msgs for p in m.parts
+        if isinstance(p, ToolReturnPart) and p.outcome == 'retried'
+    ]
+    assert len(retry_parts) == 1
+    assert retry_parts[0].tool_name == 'boom'
+    assert 'file locked' in str(retry_parts[0].content)
