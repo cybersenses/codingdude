@@ -111,14 +111,33 @@ def test_next_phase_none_when_untagged_or_nothing_left(home, workdir):
     store = _store(home, workdir)
     tid = _ticket(home, workdir)
     attempt = store.claim(tid, 's1', plan_steps=['a', 'b'])
-    # nothing done yet, but no tagged steps either
-    assert store.next_phase('s1') is None
+    # fresh untagged plan: heading into an untagged (main-profile) phase
+    nxt = store.next_phase('s1')
+    assert nxt is not None and nxt['function'] is None
+    assert nxt['step_index'] == 0
     store.set_step(attempt['id'], 0, 'done', command='x', exit_code=0,
                    key_output_line='ok')
     store.set_step(attempt['id'], 1, 'done', command='x', exit_code=0,
                    key_output_line='ok')
-    # all steps done (still claimed): heading back to main
+    # all steps done (still claimed): nothing left to staff
     assert store.next_phase('s1') is None
+
+
+def test_next_phase_follows_the_work_not_the_first_tag(home, workdir):
+    """The evaluator's #299 finding: an untagged PREFIX is a main-profile
+    phase — the boundary to the tagged step fires only when the work
+    reaches it, never while the prefix is still open."""
+    store = _store(home, workdir)
+    tid = _ticket(home, workdir)
+    attempt = store.claim(tid, 's1', plan_steps=[
+        'untagged setup', '[function:coder] fix it',
+    ])
+    nxt = store.next_phase('s1')
+    assert nxt['step_index'] == 0 and nxt['function'] is None
+    store.set_step(attempt['id'], 0, 'done', command='x', exit_code=0,
+                   key_output_line='ok')
+    nxt = store.next_phase('s1')
+    assert nxt['step_index'] == 1 and nxt['function'] == 'coder'
 
 
 def test_next_phase_scans_only_this_sessions_claims(home, workdir):
@@ -297,6 +316,47 @@ async def test_transition_suppresses_kickoff(home, db, workdir, monkeypatch):
     )
     assert any(e.get('type') == 'PHASE_START' for e in events)
     assert not any(e.get('type') == 'KICKOFF' for e in events)
+
+
+async def test_mixed_plan_prefix_runs_on_main_then_boundary_fires(
+        home, db, workdir, monkeypatch):
+    """The evaluator's #299 scenario, pinned at the engine seam: a fresh
+    mixed plan runs its untagged prefix on main (no boundary, no reset);
+    the coder boundary fires only when the work reaches the tagged step."""
+    engine, coder_seen = _profiled_engine(db, monkeypatch)
+    store = _store(home, workdir)
+    tid = _ticket(home, workdir)
+    sid = db.create_session(workdir)
+    store.claim(tid, sid, plan_steps=[
+        'untagged setup', '[function:coder] fix it',
+    ])
+
+    events_one: list[dict] = []
+    await engine.run(
+        prompt='do the setup', workdir=workdir, session_id=sid,
+        model=scripted(lambda m, i: ModelResponse(
+            parts=[TextPart(content='main-ran-setup')])),
+        emit=events_one.append,
+    )
+    assert not any(e.get('type') == 'PHASE_START' for e in events_one)
+    assert db.session_phase(sid) is None
+
+    attempt = store.resume_state(tid)
+    store.set_step(attempt['id'], 0, 'done', command='x', exit_code=0,
+                   key_output_line='ok')
+
+    events_two: list[dict] = []
+    outcome = await engine.run(
+        prompt='now fix it', workdir=workdir, session_id=sid,
+        model=scripted(lambda m, i: ModelResponse(
+            parts=[TextPart(content='main-model-should-not-run')])),
+        emit=events_two.append,
+    )
+    assert outcome.output == 'phase-ok'
+    assert any(e.get('type') == 'PHASE_START' and e.get('function') == 'coder'
+               for e in events_two)
+    assert db.session_phase(sid) == 'coder'
+    assert any('Phase handoff: coder' in s for s in coder_seen)
 
 
 # ---- legacy DB: sessions.phase migrates additively ----

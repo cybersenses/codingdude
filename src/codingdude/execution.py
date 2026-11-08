@@ -358,10 +358,12 @@ class ExecutionStore:
         return out
 
     def next_phase(self, session_id: str) -> dict | None:
-        """DE-7b (#299): the function tag of the first non-done TAGGED step
-        across this session's claimed attempts — the phase the session is
-        heading into. None when the remaining work is untagged (main
-        profile), which includes every pre-#299 plan."""
+        """DE-7b (#299): the phase the session is heading into — the
+        FIRST non-done step across its claimed attempts, with that step's
+        function tag (None = main profile). The tag of the step actually
+        being worked decides the phase: an untagged prefix runs on main and
+        the boundary to a tagged function fires only when the work reaches
+        that step. None when nothing is left (all done, or no claims)."""
         rows = self.db._conn.execute(
             "SELECT * FROM ticket_execution"
             " WHERE session_id = ? AND workdir = ? AND status = 'claimed'"
@@ -370,11 +372,11 @@ class ExecutionStore:
         ).fetchall()
         for r in rows:
             for i, s in enumerate(json.loads(r['steps_json'])):
-                if s.get('status') != 'done' and s.get('function'):
+                if s.get('status') != 'done':
                     return {
                         'ticket_id': r['ticket_id'],
                         'attempt_id': r['id'],
-                        'function': s['function'],
+                        'function': s.get('function'),
                         'step_index': i,
                     }
         return None
