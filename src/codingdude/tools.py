@@ -888,6 +888,7 @@ def build_shell_toolset(
     workdir: Path, policy, shell_bin: str = 'bash',
     on_render: Callable[[str], None] | None = None,
     registry: ProcessRegistry | None = None,
+    lane=None,
 ) -> FunctionToolset:
     """The shell tool, gated by the ApprovalPolicy.
 
@@ -897,6 +898,11 @@ def build_shell_toolset(
 
     `registry` (R28 Phase 1) records every spawned command so HITL can see
     the agent's processes; visibility only — no behavior change.
+
+    `lane` (#297 DE-3): when a ready long-run lane is set, the shell
+    delegates the whole command lifecycle — approval gating, container
+    exec, tier labeling — to exec_in_sandbox_dir via lane.run(); the host
+    path below stays byte-identical for every other run.
     """
 
     def _mask_workdir(command: str) -> str:
@@ -919,6 +925,10 @@ def build_shell_toolset(
         return masked
 
     async def shell(command: str, timeout: int = 120) -> str:
+        if lane is not None and lane.sandbox_ready:
+            # DE-3: the lane owns gating + execution (exec_in_sandbox_dir
+            # core); the per-call timeout arg is the core's EXEC_TIMEOUT.
+            return await lane.run(command)
         decision = policy.decide(_mask_workdir(command))
         if decision in (NEEDS_GATE, DENIED):
             await _resolve_gate(policy, command, always=decision == DENIED)

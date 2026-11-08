@@ -21,6 +21,7 @@ resumes by reading the latest attempt instead of re-deriving state from git.
 """
 
 import json
+import re
 from datetime import UTC, datetime, timedelta
 
 from pydantic_ai import FunctionToolset
@@ -97,6 +98,37 @@ def _drift_flags(steps: list[dict]) -> dict:
     }
 
 
+#: Attempt-level evaluator budget (DE-2, decision #96): the release pass,
+#: fix loops, and milestone passes share it; exhaustion stops the loop and
+#: surfaces NEEDS_OPERATOR — the convergence alarm against runaway cost.
+EVALUATOR_CAP = 3
+
+#: Plan-step marker syntax (DE-2 #296, pinned by test): leading [tag] groups
+#: on a plan step — [milestone] flags a boundary evaluation; [function:name]
+#: carries the DE-7 function tag (#299 consumes it). Recognized only at the
+#: start of the text; the text itself is kept verbatim.
+_TAG_RE = re.compile(r'^(?:\[(milestone|function:[A-Za-z][\w-]*)\]\s*)+')
+_TAG_ONLY_RE = re.compile(r'^\[(milestone|function:[A-Za-z][\w-]*)\]\s*')
+
+
+def _parse_step_tags(text: str) -> dict:
+    """Marker flags for one plan-step text: {'milestone': True} and/or
+    {'function': name}; {} for an untagged step (byte-compat default)."""
+    tags: dict = {}
+    rest = text
+    while True:
+        m = _TAG_ONLY_RE.match(rest)
+        if m is None:
+            break
+        name = m.group(1)
+        if name == 'milestone':
+            tags['milestone'] = True
+        else:
+            tags['function'] = name.removeprefix('function:')
+        rest = rest[m.end():]
+    return tags
+
+
 class ExecutionStore:
     """Attempt lineage for tickets, scoped by workdir."""
 
@@ -164,7 +196,8 @@ class ExecutionStore:
                 session_id,
                 json.dumps(plan_steps or []),
                 json.dumps(
-                    [{'text': s, 'status': 'todo', 'evidence': None}
+                    [{'text': s, 'status': 'todo', 'evidence': None,
+                      **_parse_step_tags(s)}
                      for s in plan_steps or []]
                 ),
                 _now(),
@@ -230,10 +263,12 @@ class ExecutionStore:
         command: str | None = None,
         exit_code: int | None = None,
         key_output_line: str | None = None,
-    ) -> None:
+    ) -> dict:
         """Record one plan step. A 'done' step requires structured evidence
         (command, exit_code, key_output_line) — the evidence gate raises
-        EvidenceError otherwise; non-done statuses are unaffected."""
+        EvidenceError otherwise; non-done statuses are unaffected.
+        Returns the updated step (marker keys like milestone/function are
+        preserved, so triggers can read them)."""
         attempt = self._by_id(attempt_id)
         if attempt is None:
             raise KeyError(f'no execution attempt #{attempt_id}')
@@ -243,8 +278,7 @@ class ExecutionStore:
         evidence = None
         if status == 'done':
             evidence = _validated_evidence(index, command, exit_code, key_output_line)
-        steps[index] = {'text': steps[index]['text'], 'status': status,
-                        'evidence': evidence}
+        steps[index] = {**steps[index], 'status': status, 'evidence': evidence}
         self.db._conn.execute(
             'UPDATE ticket_execution SET steps_json = ?, heartbeat_at = ? WHERE id = ?',
             (json.dumps(steps), _now(), attempt_id),
@@ -255,6 +289,7 @@ class ExecutionStore:
             (_now(), attempt['ticket_id'], self.workdir),
         )
         self.db._conn.commit()
+        return steps[index]
 
     def release(self, attempt_id: int, status: str = 'released') -> None:
         if status not in ('released', 'done'):
@@ -381,6 +416,94 @@ class ExecutionStore:
             return []
         return self._waivers(state)
 
+    def record_evaluation(self, attempt_id: int, record: dict) -> None:
+        """Append one evaluator verdict record (DE-2) to the attempt's
+        evaluations_json — the audit trail the cap counts and resume
+        rendering reads."""
+        attempt = self._by_id(attempt_id)
+        if attempt is None:
+            raise KeyError(f'no execution attempt #{attempt_id}')
+        evaluations = self.evaluations(attempt_id)
+        evaluations.append({**record, 'at': _now()})
+        self.db._conn.execute(
+            'UPDATE ticket_execution SET evaluations_json = ?'
+            ' WHERE id = ? AND workdir = ?',
+            (json.dumps(evaluations), attempt_id, self.workdir),
+        )
+        self.db._conn.commit()
+
+    def evaluations(self, attempt_id: int) -> list[dict]:
+        """Verdict records on one attempt, oldest first."""
+        attempt = self._by_id(attempt_id)
+        if attempt is None:
+            raise KeyError(f'no execution attempt #{attempt_id}')
+        raw = attempt.get('evaluations_json')
+        return json.loads(raw) if raw else []
+
+    def render_resume(self, ticket_id: int) -> str:
+        """The resume-state render (the get_resume_state tool body): attempt
+        line, per-step progress with evidence, drift, waivers, and the
+        latest NEEDS_WORK findings — the next session's orientation read."""
+        state = self.resume_state(ticket_id)
+        if state is None:
+            return (
+                f'No execution history for ticket #{ticket_id} — claim it'
+                ' and start fresh.'
+            )
+        steps = json.loads(state['steps_json'])
+        lines = [
+            f"attempt #{state['id']} [{state['status']}] by session"
+            f" {state['session_id']}"
+            f' (heartbeat {state["heartbeat_at"]})',
+        ]
+        plan = json.loads(state['plan_json'])
+        for i, step in enumerate(steps or plan):
+            text = step['text'] if 'text' in step else step
+            st = step.get('status', 'todo') if isinstance(step, dict) else 'todo'
+            ev = step.get('evidence') if isinstance(step, dict) else None
+            line = f'- step {i} [{st}] {text}'
+            if ev:
+                line += f' — evidence: {ev}'
+            lines.append(line)
+        drift = self.drift(ticket_id)
+        drift_bits = []
+        if drift['done_without_evidence']:
+            drift_bits.append(
+                f"done-without-evidence steps {drift['done_without_evidence']}"
+            )
+        if drift['unverified_evidence']:
+            drift_bits.append(
+                'unverified (legacy free-text) evidence on steps'
+                f" {drift['unverified_evidence']}"
+            )
+        if drift['out_of_order']:
+            drift_bits.append(f"out-of-order steps {drift['out_of_order']}")
+        if drift_bits:
+            lines.append('drift: ' + '; '.join(drift_bits)
+                         + ' — reconcile before finishing')
+        for waiver in self.waivers(ticket_id):
+            lines.append(
+                f"waived: steps {waiver['indices']} — {waiver['reason']}"
+            )
+        needs_work = [
+            e for e in self.evaluations(state['id'])
+            if e.get('verdict') == 'NEEDS_WORK'
+        ]
+        if needs_work:
+            latest = needs_work[-1]
+            lines.append(
+                f"evaluator: NEEDS_WORK ({latest.get('trigger')} —"
+                f" {latest.get('summary')})"
+            )
+            for f in latest.get('findings', []):
+                where = f.get('file', '?') + (
+                    f':{f["symbol"]}' if f.get('symbol') else '')
+                lines.append(
+                    f'  - {where} [{f.get("severity", "?")}]'
+                    f' {f.get("note", "")}'
+                )
+        return '\n'.join(lines)
+
     def _enforce_evidence_gate(self, attempt: dict) -> None:
         """Release-time gate (DE-1): a 'done' release requires every done
         step to carry structured evidence and ordered progress; waived
@@ -414,9 +537,16 @@ class ExecutionStore:
         return dict(row) if row else None
 
 
-def build_execution_toolset(store: ExecutionStore, session_id: str) -> FunctionToolset:
+def build_execution_toolset(
+    store: ExecutionStore, session_id: str, evaluator=None,
+) -> FunctionToolset:
     """Agent tools for resumable ticket execution. First move on a claimed
-    ticket is get_resume_state, not re-deriving everything from git."""
+    ticket is get_resume_state, not re-deriving everything from git.
+
+    `evaluator` (#296 DE-2): a WorkEvaluator seam. When set, a 'done'
+    release and a milestone-flagged step completion each trigger an
+    evaluation pass (persisted, capped — non-blocking until the long-run
+    flag lands); without one the triggers skip with an honest note."""
 
     active: list[int] = []
 
@@ -424,6 +554,58 @@ def build_execution_toolset(store: ExecutionStore, session_id: str) -> FunctionT
         if not active:
             raise LookupError('No active claim — call claim_ticket first.')
         return active[-1]
+
+    async def _run_evaluation(trigger: str, step_index: int | None = None,
+                              ticket_id: int | None = None) -> str:
+        """One evaluator pass on the active attempt: capped, persisted,
+        honest about a missing evaluator. Never fails the calling tool."""
+        attempt_id = _attempt()
+        if evaluator is None:
+            return '(evaluation skipped: no evaluator configured)'
+        passed = [
+            e for e in store.evaluations(attempt_id)
+            if e.get('verdict') == 'PASS'
+        ]
+        if passed:
+            return '(evaluation already PASSED on this attempt)'
+        count = len(store.evaluations(attempt_id))
+        if count >= EVALUATOR_CAP:
+            evaluations = store.evaluations(attempt_id)
+            if not evaluations or evaluations[-1].get('verdict') != 'NEEDS_OPERATOR':
+                store.record_evaluation(attempt_id, {
+                    'trigger': trigger,
+                    'verdict': 'NEEDS_OPERATOR',
+                    'findings': [],
+                    'summary': (
+                        f'evaluator cap ({EVALUATOR_CAP}) exhausted without'
+                        ' PASS — convergence alarm; operator must decide'
+                    ),
+                })
+            last = [
+                e for e in evaluations if e.get('verdict') == 'NEEDS_WORK'
+            ]
+            findings_note = (
+                f' last findings: {last[-1].get("summary")}' if last else '')
+            return (
+                'NEEDS_OPERATOR: evaluator cap'
+                f' ({EVALUATOR_CAP}) exhausted without PASS{findings_note}.'
+                ' Stop looping — surface to the operator.'
+            )
+        try:
+            record = await evaluator.evaluate(
+                ticket_id if ticket_id is not None else _ticket_id_of(attempt_id),
+                attempt_id, trigger=trigger, step_index=step_index,
+            )
+        except Exception as exc:  # noqa: BLE001 — evaluation never kills the tool
+            return f'(evaluation failed: {type(exc).__name__}: {exc})'
+        return (
+            f'evaluation [{trigger}]: {record.get("verdict")} —'
+            f' {record.get("summary")}'
+        )
+
+    def _ticket_id_of(attempt_id: int) -> int:
+        attempt = store._by_id(attempt_id)
+        return attempt['ticket_id'] if attempt else 0
 
     async def claim_ticket(ticket_id: int, plan_steps: list[str] | None = None) -> str:
         """Claim a ticket for this session with an ordered plan; resumes your own claim if you already hold it."""
@@ -446,13 +628,19 @@ def build_execution_toolset(store: ExecutionStore, session_id: str) -> FunctionT
         (the output line proving it, e.g. "3 passed"). Free text is not
         evidence; run the check, then record it."""
         try:
-            store.set_step(_attempt(), index, status, command=command,
-                           exit_code=exit_code, key_output_line=key_output_line)
+            step = store.set_step(_attempt(), index, status, command=command,
+                                  exit_code=exit_code,
+                                  key_output_line=key_output_line)
         except EvidenceError as exc:
             return str(exc)
-        return f'step {index} → {status}' + (
+        result = f'step {index} → {status}' + (
             ' (evidence recorded)' if status == 'done' else ''
         )
+        if status == 'done' and step.get('milestone'):
+            # DE-2 boundary evaluation: milestones are graded when completed
+            # — catching drift mid-course while it is cheap to fix.
+            result += '\n' + await _run_evaluation('milestone', step_index=index)
+        return result
 
     async def heartbeat_claim() -> str:
         """Keep the current claim alive (call periodically during long work)."""
@@ -467,8 +655,13 @@ def build_execution_toolset(store: ExecutionStore, session_id: str) -> FunctionT
             store.release(attempt_id, status)
         except EvidenceError as exc:
             return str(exc)
+        result = f'attempt #{attempt_id} → {status}'
+        if status == 'done':
+            # DE-2: the release-boundary evaluation. Non-blocking until the
+            # long-run flag lands (#300); the verdict is persisted and loud.
+            result += '\n' + await _run_evaluation('release')
         active.pop()
-        return f'attempt #{attempt_id} → {status}'
+        return result
 
     async def waive_drift(indices: list[int], reason: str) -> str:
         """Explicitly waive drift-flagged steps (missing evidence / out of
@@ -484,46 +677,16 @@ def build_execution_toolset(store: ExecutionStore, session_id: str) -> FunctionT
             ' (recorded on the attempt; visible in resume_state)'
         )
 
+    async def evaluate_work(ticket_id: int) -> str:
+        """Run one evaluator pass on the active attempt: a fresh read-only
+        session grades the work against this ticket's contract (verdict
+        PASS/NEEDS_WORK + findings, persisted on the attempt; capped at 3
+        passes per attempt)."""
+        return await _run_evaluation('manual', ticket_id=ticket_id)
+
     async def get_resume_state(ticket_id: int) -> str:
         """Read the resume state for a ticket: who claimed it, plan, per-step progress and evidence."""
-        state = store.resume_state(ticket_id)
-        if state is None:
-            return f'No execution history for ticket #{ticket_id} — claim it and start fresh.'
-        steps = json.loads(state['steps_json'])
-        lines = [
-            f"attempt #{state['id']} [{state['status']}] by session {state['session_id']}"
-            f' (heartbeat {state["heartbeat_at"]})',
-        ]
-        plan = json.loads(state['plan_json'])
-        for i, step in enumerate(steps or plan):
-            text = step['text'] if 'text' in step else step
-            st = step.get('status', 'todo') if isinstance(step, dict) else 'todo'
-            ev = step.get('evidence') if isinstance(step, dict) else None
-            line = f'- step {i} [{st}] {text}'
-            if ev:
-                line += f' — evidence: {ev}'
-            lines.append(line)
-        drift = store.drift(ticket_id)
-        drift_bits = []
-        if drift['done_without_evidence']:
-            drift_bits.append(
-                f"done-without-evidence steps {drift['done_without_evidence']}"
-            )
-        if drift['unverified_evidence']:
-            drift_bits.append(
-                'unverified (legacy free-text) evidence on steps'
-                f" {drift['unverified_evidence']}"
-            )
-        if drift['out_of_order']:
-            drift_bits.append(f"out-of-order steps {drift['out_of_order']}")
-        if drift_bits:
-            lines.append('drift: ' + '; '.join(drift_bits)
-                         + ' — reconcile before finishing')
-        for waiver in store.waivers(ticket_id):
-            lines.append(
-                f"waived: steps {waiver['indices']} — {waiver['reason']}"
-            )
-        return '\n'.join(lines)
+        return store.render_resume(ticket_id)
 
     return FunctionToolset([
         claim_ticket,
@@ -531,5 +694,6 @@ def build_execution_toolset(store: ExecutionStore, session_id: str) -> FunctionT
         heartbeat_claim,
         release_ticket,
         waive_drift,
+        evaluate_work,
         get_resume_state,
     ])

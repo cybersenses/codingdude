@@ -76,7 +76,7 @@ def arm_exit_watchdog(timeout: float = _EXIT_WATCHDOG_S) -> None:
     _exit_watchdog.start()
 
 
-async def _finish_run(engine, args, on_event, outcome=None, exc=None) -> None:
+async def _finish_run(engine, args, on_event, outcome=None, exc=None) -> int:
     """Emit the terminal event immediately — no tail drain first (R30).
 
     Draining before the terminal event made the UI wait ~90s on memory
@@ -85,6 +85,9 @@ async def _finish_run(engine, args, on_event, outcome=None, exc=None) -> None:
     drain_after_terminal (called by run() once the sender has forwarded the
     terminal event), so the worker still exits clean — the tail is never
     cancelled at asyncio.run teardown.
+
+    Returns the run's end code (0 clean, 1 failed/halted) so run() can exit
+    non-zero on a halt even when the terminal was delivered (#295 M4).
     """
     if exc is not None:
         from .exceptions import BudgetExceeded
@@ -102,6 +105,14 @@ async def _finish_run(engine, args, on_event, outcome=None, exc=None) -> None:
             'message': outcome.output,
         }
         end_status, end_code = 'gate_aborted', 0
+    elif outcome.status == 'halted':
+        # REQ-5 (#295): the operator pulled AGENT_STOP — the run did NOT
+        # finish; say so truthfully and exit non-zero (M4).
+        terminal = {
+            'type': 'WORKER_HALTED',
+            'message': outcome.output,
+        }
+        end_status, end_code = 'halted', 1
     else:
         # Only after persistence: the UI reading messages must see
         # the full exchange when RUN_FINISHED lands.
@@ -119,6 +130,8 @@ async def _finish_run(engine, args, on_event, outcome=None, exc=None) -> None:
     trace_terminal(args.session, terminal)
     # Single writer: queued, so ordering with other events is preserved.
     on_event(terminal)
+    return end_code
+
 
 
 async def drain_after_terminal(engine) -> None:
@@ -461,7 +474,10 @@ async def run(args) -> int:
         sender_task = asyncio.create_task(_sender_loop(ws, queue))
         reader_task = asyncio.create_task(_reader_loop(ws, pending_gate, pending_ask))
 
+        halted = False
+
         async def runner():
+            nonlocal halted
             try:
                 outcome = await engine.run(
                     **engine_run_kwargs(args, model, vision_model),
@@ -471,10 +487,11 @@ async def run(args) -> int:
             except Exception as exc:  # noqa: BLE001 — reported to the UI, not crashed
                 await _finish_run(engine, args, on_event, exc=exc)
                 return
+            halted = getattr(outcome, 'status', '') == 'halted'
             await _finish_run(engine, args, on_event, outcome=outcome)
 
-        runner_task = asyncio.create_task(runner())
 
+        runner_task = asyncio.create_task(runner())
         # The sender exits when it forwards the terminal event — or reports
         # that the socket died before it could (#285). Log the truth either
         # way: 'delivered' on a dead socket made every bounce look like a
@@ -510,7 +527,9 @@ async def run(args) -> int:
 
     # #285: a run whose terminal never reached the server did not finish for
     # the user — exit non-zero so the reaper's message tells the truth.
-    return 0 if delivered else 1
+    # #295 M4: an operator halt (AGENT_STOP) is not a clean finish either —
+    # the worker exits non-zero even when the terminal was delivered.
+    return 0 if delivered and not halted else 1
 
 
 def engine_run_kwargs(args, model, vision_model=None) -> dict:
@@ -529,6 +548,7 @@ def engine_run_kwargs(args, model, vision_model=None) -> dict:
         'image_path': image_path_arg(args),
         'vision_model': vision_model,
         'run_id': getattr(args, 'run_id', None),
+        'long_run': getattr(args, 'long_run', None),
     }
 
 
@@ -590,6 +610,13 @@ def main(argv=None) -> int:
     parser.add_argument('--model', default=None)
     parser.add_argument('--yolo', action='store_true')
     parser.add_argument('--fix-loop', action='store_true')
+    parser.add_argument(
+        '--long-run',
+        choices=('assisted', 'unattended'),
+        default=None,
+        help='long-run work-mode level (#297): sandbox lane + honest tier '
+             'reporting; absent = today\'s interactive behavior',
+    )
     parser.add_argument('--image', default=None, help='path to an image to include with the prompt')
     parser.add_argument('--budget', type=float, default=None)
     parser.add_argument('--run-id', default=None, help='run id for durable lifecycle records (R31)')

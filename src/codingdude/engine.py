@@ -34,6 +34,7 @@ from pydantic_ai.models.fallback import FallbackModel
 from .checkpoints import CheckpointStore
 from .config import Config, parse_thinking
 from .db import Database
+from .operator_files import OperatorHalt
 from .run_pipeline import (
     HistoryManager,
     PostRunPipeline,
@@ -128,8 +129,11 @@ class RunOutcome:
     session_id: str
     output: str
     model_name: str
-    status: str = 'complete'  # 'complete' | 'gate_aborted'
+    status: str = 'complete'  # 'complete' | 'gate_aborted' | 'halted'
     gate: GateRequest | None = None
+    # #297 DE-3: the degraded-tier summary line (None on container tier —
+    # every exec result already carries the tier line).
+    lane_note: str | None = None
 
 
 @dataclass
@@ -384,7 +388,7 @@ class Engine:
     async def _run_fix_loop(
         self, session_id: str, resolved: Model, instructions: str, toolsets,
         history: list, result, workdir: Path, test_command: str, shell_bin: str,
-        max_test_iterations: int, emit,
+        max_test_iterations: int, emit, lane=None,
     ) -> tuple[object, list]:
         """Fix-until-green: run the tests, feed failures back, repeat.
 
@@ -397,14 +401,25 @@ class Engine:
 
         usages = [result.usage] if result is not None else []
         for _ in range(max_test_iterations):
-            cap = await run_captured(
-                shell_argv(test_command, shell_bin),
-                cwd=workdir, timeout=600, env=self._scrubbed(),
-            )
-            if cap is None:
-                break
-            test_out = cap.combined[:4000]
-            passed = cap.code == 0
+            if lane is not None and lane.sandbox_ready:
+                # #297 DE-3: test runs are shell work — they execute inside
+                # the lane's container, and pass/fail parses from the shared
+                # core's 'exit <code>' summary.
+                from .lane import exit_code_of
+
+                out = await lane.run(test_command)
+                code = exit_code_of(out)
+                test_out = out[:4000]
+                passed = code == 0
+            else:
+                cap = await run_captured(
+                    shell_argv(test_command, shell_bin),
+                    cwd=workdir, timeout=600, env=self._scrubbed(),
+                )
+                if cap is None:
+                    break
+                test_out = cap.combined[:4000]
+                passed = cap.code == 0
             if emit:
                 emit({'type': 'TEST_RUN', 'passed': passed, 'output': test_out})
             if passed:
@@ -451,8 +466,16 @@ class Engine:
         image_path: Path | None = None,
         vision_model: Model | None = None,
         run_id: str | None = None,
+        long_run: str | None = None,
     ) -> RunOutcome:
         """Flat orchestrator: each stage is a private method; no logic here."""
+        if long_run is not None and long_run not in ('assisted', 'unattended'):
+            # REQ-6: autonomy levels are explicit — an unknown value is a
+            # caller error, never a silent default to interactive.
+            raise ValueError(
+                f"unknown long_run level {long_run!r} — use 'assisted' or "
+                "'unattended'"
+            )
         session_id, created_session = self._ensure_session(session_id, workdir, prompt)
 
         # Wait out the previous turn's background post-run passes so memory
@@ -461,6 +484,16 @@ class Engine:
 
         traced = self._make_tracer(session_id, workdir, trace, emit, run_id=run_id)
         boot_event = self._boot_project(workdir)
+
+        # #297 DE-3: the long-run lane — one container-tier sandbox when
+        # Docker is usable, an honestly-degraded host tier otherwise. The
+        # LANE event is the run's start banner and tier line (trace + UI).
+        lane = None
+        if long_run is not None:
+            from .lane import LongRunLane
+
+            lane = await LongRunLane.create(workdir, run_id, policy=approvals)
+            traced(lane.event)
 
         started = _utcnow()
         try:
@@ -488,7 +521,7 @@ class Engine:
                 vision_model=vision_model, fix_loop=fix_loop,
                 test_command=test_command,
                 on_edit=on_edit_dispatch, capture=capture_for_checkpoints,
-                traced=traced,
+                traced=traced, lane=lane,
             )
             try:
                 result = await self._run_agent(
@@ -509,17 +542,34 @@ class Engine:
                     status='gate_aborted',
                     gate=GateRequest(command=gate.command),
                 )
+            except OperatorHalt as halt:
+                # REQ-5 (#295): AGENT_STOP present at the workdir root — the
+                # operator pulled the kill switch. End the run truthfully;
+                # the worker maps status 'halted' to the WORKER_HALTED
+                # terminal event and a non-zero exit.
+                return RunOutcome(
+                    session_id=session_id,
+                    output=str(halt),
+                    model_name=prepared.model_name,
+                    status='halted',
+                )
+
         except Exception:
             # A run that died before producing anything leaves no husk Session.
             if created_session and not self._db.load_messages(session_id):
                 self._db.delete_session(session_id)
             raise
+        finally:
+            # #297: the idle container goes at run end; the worktree/branch
+            # (the run's work product) stays. Best-effort, never raises.
+            if lane is not None:
+                await lane.cleanup()
 
         return await self._finalize_run(
             session_id, workdir, result, prepared, agent_spec,
             approvals=approvals, fix_loop=fix_loop, test_command=test_command,
             max_test_iterations=max_test_iterations, emit=emit, traced=traced,
-            started=started,
+            started=started, lane=lane,
         )
 
     def _ensure_session(
@@ -613,6 +663,7 @@ class Engine:
         on_edit: Callable[[dict], None],
         capture: Callable[[Path], None],
         traced: Callable[[dict], None],
+        lane=None,
     ) -> AgentSpec:
         """Toolsets + instructions + the Agent, and the prompt to feed it."""
         thinking = parse_thinking(self._config.models.thinking)
@@ -652,6 +703,8 @@ class Engine:
             on_edit=on_edit,
             capture=capture,
             emitter=traced,
+            lane=lane,
+            main_model=prepared.resolved,
         )
         toolsets = await build_all(plugin_ctx)
         # Surface dead MCP servers to the agent: a mandated-but-unavailable
@@ -665,6 +718,12 @@ class Engine:
         from .tool_errors import error_feedback_toolset
 
         toolsets = [error_feedback_toolset(toolsets)]
+        # R80-3 #295 (DE-5): operator kill-switch + steer files, checked at
+        # the dispatch boundary. Applied OUTSIDE error feedback so
+        # OperatorHalt escapes unconverted and aborts the run.
+        from .operator_files import operator_files_toolset
+
+        toolsets = [operator_files_toolset(t, workdir) for t in toolsets]
 
         from .memory import MemoryStore
         from .skills import SkillRegistry
@@ -683,6 +742,10 @@ class Engine:
         )
         if hint:
             instructions += '\n\n' + hint
+        if lane is not None:
+            # #297 DE-3: the agent must know where its shell commands run —
+            # container (branch/mount) or honestly-degraded host tier.
+            instructions += '\n\n' + lane.instructions_block()
 
         agent = self._prompts.agent(
             prepared.resolved, instructions, toolsets,
@@ -736,6 +799,7 @@ class Engine:
         emit,
         traced,
         started,
+        lane=None,
     ) -> RunOutcome:
         """Persist, run the fix loop if asked, record usage, spawn the tail."""
         self._history.persist(session_id, result.all_messages())
@@ -754,7 +818,7 @@ class Engine:
             result, retry_usages = await self._run_fix_loop(
                 session_id, prepared.resolved, agent_spec.instructions,
                 agent_spec.toolsets, agent_spec.history, result, workdir,
-                test_command, shell_bin, max_test_iterations, emit,
+                test_command, shell_bin, max_test_iterations, emit, lane=lane,
             )
             # #81: the loop returns every request's usage (main + retries);
             # bill the whole sequence exactly once below.
@@ -779,6 +843,7 @@ class Engine:
             session_id=session_id,
             output=result.output,
             model_name=prepared.model_name,
+            lane_note=lane.summary_note() if lane is not None else None,
         )
 
     async def _post_run_tail(self, session_id: str, result, workdir, approvals,

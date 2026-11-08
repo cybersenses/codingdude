@@ -412,7 +412,7 @@ export default function App() {
         console.warn('skipping malformed SSE data', e.data)
         return
       }
-      if (['RUN_FINISHED', 'RUN_ERROR', 'RUN_CANCELLED'].includes(ev.type)) {
+      if (['RUN_FINISHED', 'RUN_ERROR', 'RUN_CANCELLED', 'WORKER_HALTED'].includes(ev.type)) {
         terminalSeenRef.current = run_id
       }
       // R69 #261 (post-push review): reveal_code is pure UI signalling — its
@@ -456,13 +456,18 @@ export default function App() {
               last.ask = { questions: ev.questions || [], answered: false }
             }
             if (ev.type === 'REVIEW_FINDINGS') last.review = ev.findings
-            if (['RUN_FINISHED', 'RUN_ERROR', 'RUN_CANCELLED'].includes(ev.type)) {
+            if (['RUN_FINISHED', 'RUN_ERROR', 'RUN_CANCELLED', 'WORKER_HALTED'].includes(ev.type)) {
               last.streaming = false
               // #145: pending ask/gate cards must not outlive the run —
               // the worker is gone, answering would just 404.
               last.ask = null
               last.gate = null
-              setStatus(ev.type === 'RUN_ERROR' ? `error: ${ev.message || ''}` : 'finished')
+              // #295: WORKER_HALTED = the operator pulled AGENT_STOP — the
+              // run stopped truthfully, it did not error and did not finish.
+              setStatus(
+                ev.type === 'RUN_ERROR' ? `error: ${ev.message || ''}`
+                  : ev.type === 'WORKER_HALTED' ? 'stopped' : 'finished',
+              )
               if (ev.type === 'RUN_ERROR') setError(ev.message || 'run error')
               es.close()
               attachedRunRef.current = null

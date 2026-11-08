@@ -105,6 +105,11 @@ class PluginContext:
     on_edit: Callable | None = None
     capture: Callable | None = None
     emitter: Callable | None = None
+    # #297 DE-3: the long-run sandbox lane (None for interactive runs).
+    lane: object | None = None
+    # #296 DE-2: the resolved main run model — the evaluator's fallback slot
+    # (chain: subagent → main; the registry re-points in #299).
+    main_model: Model | None = None
     # Per-server MCP pre-flight results, populated by build_all: the raw
     # material for the engine's `## MCP Status` instructions block.
     mcp_health: list[dict] = field(default_factory=list)
@@ -157,6 +162,7 @@ async def build_all(ctx: PluginContext) -> list[AbstractToolset]:
             build_shell_toolset(
                 ctx.workdir, ctx.approvals, shell_bin=ctx.shell_bin,
                 on_render=on_render, registry=process_registry,
+                lane=getattr(ctx, 'lane', None),
             ),
             build_git_toolset(ctx.workdir, ctx.approvals),
             build_coverage_toolset(ctx.workdir, ctx.approvals),
@@ -254,8 +260,24 @@ async def build_all(ctx: PluginContext) -> list[AbstractToolset]:
 
     toolsets.append(build_research_toolset(ctx.workdir))
     toolsets.append(build_artifacts_toolset(ctx.db, ctx.session_id))
-    toolsets.append(
-        build_execution_toolset(ExecutionStore(ctx.db, str(ctx.workdir)), ctx.session_id)
+    # #296 DE-2: the evaluator pass — a read-only fresh-session grader on
+    # the subagent→main model chain; None when neither slot resolves, and
+    # every trigger then skips with an honest note instead of grading.
+    from codingdude.evaluator import WorkEvaluator, resolve_evaluator_model
+
+    evaluator_model = resolve_evaluator_model(
+        ctx.subagent_model, getattr(ctx, 'main_model', None))
+    evaluator = (
+        WorkEvaluator(
+            db=ctx.db, workdir=ctx.workdir, model=evaluator_model,
+            thinking=ctx.thinking, delegation_config=ctx.config.delegation,
+            db_session=ctx.session_id,
+        )
+        if evaluator_model is not None else None
     )
+    toolsets.append(build_execution_toolset(
+        ExecutionStore(ctx.db, str(ctx.workdir)), ctx.session_id,
+        evaluator=evaluator,
+    ))
 
     return toolsets

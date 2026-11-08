@@ -142,6 +142,7 @@ CREATE TABLE IF NOT EXISTS ticket_execution (
     plan_json TEXT NOT NULL DEFAULT '[]',
     steps_json TEXT NOT NULL DEFAULT '[]',
     waivers_json TEXT NOT NULL DEFAULT '[]',
+    evaluations_json TEXT NOT NULL DEFAULT '[]',
     superseded_attempt_id INTEGER,
     heartbeat_at TEXT NOT NULL,
     created_at TEXT NOT NULL
@@ -481,6 +482,13 @@ class Database:
             self._conn.execute(
                 'ALTER TABLE ticket_execution'
                 ' ADD COLUMN superseded_attempt_id INTEGER'
+            )
+        if execution_cols and 'evaluations_json' not in execution_cols:
+            # DE-2 (#296): evaluator verdict records on the attempt —
+            # existing attempts start with no evaluations.
+            self._conn.execute(
+                "ALTER TABLE ticket_execution ADD COLUMN evaluations_json TEXT"
+                " NOT NULL DEFAULT '[]'"
             )
         self._commit()
 
