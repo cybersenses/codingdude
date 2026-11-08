@@ -21,6 +21,39 @@ jobs:
         run: uv run ruff check src tests bench.py
       - name: Type check
         run: uv run mypy
+      # tree_sitter_language_pack downloads grammars from the xberg-io release
+      # CDN at first use. Run 42467141708 (both attempts) failed 15 tests with
+      # DownloadError http 504 from that CDN. Cache the pack's own cache dir
+      # (%LOCALAPPDATA%\tree-sitter-language-pack, ~1 GB) so tests never need a
+      # live fetch. Key on hashFiles('uv.lock') so a pack version bump re-warms.
+      - name: Restore grammar cache
+        id: grammars
+        uses: actions/cache/restore@v4
+        with:
+          path: ~\AppData\Local\tree-sitter-language-pack
+          key: tree-sitter-lang-pack-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+      - name: Warm grammar cache
+        if: steps.grammars.outputs.cache-hit != 'true'
+        run: |
+          $ok = $false
+          for ($i = 1; $i -le 3; $i++) {
+            # Single quotes inside, double quotes outside: no embedded double
+            # quotes, so this survives both PS 5.1 and pwsh 7 arg quoting.
+            uv run python -c "from tree_sitter_language_pack import cache_dir, download_all, downloaded_languages; print('cache:', cache_dir(), 'cached:', len(downloaded_languages())); n = download_all(); print('download_all:', n, 'cached after:', len(downloaded_languages()))"
+            if ($LASTEXITCODE -eq 0) { $ok = $true; break }
+            Write-Host "grammar warm-up attempt $i failed (exit $LASTEXITCODE); retrying in 20s"
+            Start-Sleep -Seconds 20
+          }
+          if (-not $ok) {
+            Write-Host "::error::grammar cache warm-up failed after 3 attempts (pack CDN unreachable)"
+            exit 1
+          }
+      - name: Save grammar cache
+        if: steps.grammars.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~\AppData\Local\tree-sitter-language-pack
+          key: tree-sitter-lang-pack-${{ runner.os }}-${{ hashFiles('uv.lock') }}
       - name: Tests
         run: uv run pytest -q
 
