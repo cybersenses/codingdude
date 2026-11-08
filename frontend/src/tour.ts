@@ -27,6 +27,7 @@ const WORTHY = new Set([
   'RUN_STARTED',
   'RUN_FINISHED',
   'RUN_ERROR',
+  'WORKER_HALTED',
   'TOOL_CALL_START',
   'TOOL_CALL_END',
   'EDIT_APPLIED',
@@ -61,7 +62,14 @@ export function buildTour(events: Array<Record<string, unknown>>): TourStep[] {
       }
       if (!attached) steps.push({ label: `edited ${String(e.path)}`, ts })
     } else {
-      steps.push({ label: type === 'RUN_STARTED' ? 'run started' : type === 'RUN_ERROR' ? 'run failed' : 'run finished', ts })
+      const label = type === 'RUN_STARTED'
+        ? 'run started'
+        : type === 'RUN_ERROR'
+          ? 'run failed'
+          : type === 'WORKER_HALTED'
+            ? 'run stopped by operator (AGENT_STOP)'
+            : 'run finished'
+      steps.push({ label, ts })
     }
   }
 

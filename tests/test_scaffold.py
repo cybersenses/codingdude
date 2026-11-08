@@ -1,4 +1,4 @@
-﻿# CodingDude — a personal coding agent.
+# CodingDude — a personal coding agent.
 # Copyright (C) 2025 Cyberflex (https://www.cyberflex.io)
 #
 # This program is free software: you can redistribute it and/or modify
@@ -91,3 +91,44 @@ def test_checklist_seed_never_clobbers_existing(tmp_path: Path) -> None:
     (ck / 'api-design.md').write_text('# my custom checklist\n', encoding='utf-8')
     ensure_project_scaffold(tmp_path)
     assert (ck / 'api-design.md').read_text(encoding='utf-8') == '# my custom checklist\n'
+
+
+# --- #295 (DE-5): operator files (AGENT_STOP / STEER.md) are gitignored.
+
+def _git(workdir, *args):
+    import shutil
+    import subprocess  # nosec B404 - test fixture spawns git only, argv list
+
+    git = shutil.which('git') or 'git'
+    return subprocess.run(
+        [git, *args], cwd=workdir, capture_output=True, text=True,
+    )  # nosec B603 - test fixture, fixed argv list, no shell
+
+
+def test_operator_files_gitignored_in_git_repo(tmp_path: Path) -> None:
+    """A repo workdir gets the entries in .git/info/exclude — never touching
+    tracked files, so both operator names are untracked-ignored."""
+    _git(tmp_path, 'init', '-q')
+    (tmp_path / 'AGENT_STOP').write_text('', encoding='utf-8')
+    (tmp_path / 'STEER.md').write_text('steer', encoding='utf-8')
+    ensure_project_scaffold(tmp_path)
+    for name in ('AGENT_STOP', 'STEER.md'):
+        probe = _git(tmp_path, 'check-ignore', '-q', name)
+        assert probe.returncode == 0, f'{name} not gitignored'
+
+
+def test_operator_files_gitignored_without_git(tmp_path: Path) -> None:
+    """A non-repo workdir gets a fresh .gitignore carrying both names."""
+    ensure_project_scaffold(tmp_path)
+    text = (tmp_path / '.gitignore').read_text(encoding='utf-8')
+    assert 'AGENT_STOP' in text and 'STEER.md' in text
+
+
+def test_existing_gitignore_is_never_modified(tmp_path: Path) -> None:
+    """Scaffold never touches existing files: a pre-existing .gitignore is
+    left byte-for-byte alone (the operator can add the names themselves)."""
+    original = 'node_modules/\ndist/\n'
+    (tmp_path / '.gitignore').write_text(original, encoding='utf-8')
+    ensure_project_scaffold(tmp_path)
+    assert (tmp_path / '.gitignore').read_text(encoding='utf-8') == original
+

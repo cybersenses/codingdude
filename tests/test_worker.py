@@ -226,6 +226,64 @@ def test_finish_run_emits_error_terminal_without_draining(monkeypatch):
     assert 'boom' in events[-1]['message']
 
 
+# --- #295 (DE-5): AGENT_STOP halt — WORKER_HALTED terminal, non-zero exit.
+
+def test_finish_run_emits_worker_halted_terminal(monkeypatch):
+    """M4: an engine 'halted' outcome (AGENT_STOP at the workdir root) emits
+    the truthful WORKER_HALTED terminal event, records end status 'halted'
+    with a non-zero exit code, and reports the non-zero code to run()."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from codingdude import worker
+
+    monkeypatch.setattr(worker, 'trace_terminal', lambda *a: None)
+    events = []
+    ends = []
+
+    class FakeEngine:
+        class _db:
+            record_run_end = staticmethod(
+                lambda run_id, status, exit_code=None: ends.append(
+                    (run_id, status, exit_code))
+            )
+
+    code = asyncio.run(worker._finish_run(
+        FakeEngine(), _args(run_id='r1'), events.append,
+        outcome=SimpleNamespace(status='halted', output='operator halt')))
+    assert events[-1]['type'] == 'WORKER_HALTED'
+    assert ends == [('r1', 'halted', 1)]
+    assert code == 1
+
+
+def test_finish_run_returns_zero_for_ok_outcome(monkeypatch):
+    """Contract pin: the return code is additive only — ok outcomes keep
+    reporting 0 so existing exit semantics are unchanged."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from codingdude import worker
+
+    monkeypatch.setattr(worker, 'trace_terminal', lambda *a: None)
+
+    class FakeEngine:
+        pass
+
+    code = asyncio.run(worker._finish_run(
+        FakeEngine(), _args(run_id='r1'), lambda e: None,
+        outcome=SimpleNamespace(status='ok', output='done')))
+    assert code == 0
+
+
+def test_terminal_events_include_worker_halted():
+    """WORKER_HALTED is terminal for every consumer: the worker sender stops
+    on it, the server ends the SSE stream, the UI settles."""
+    from codingdude.events import TERMINAL_EVENTS
+
+    assert 'WORKER_HALTED' in TERMINAL_EVENTS
+
+
+
 def test_drain_after_terminal_uses_bounded_timeout():
     """run() drains the pending tail after the sender exits (post-terminal),
     bounded by _DRAIN_BEFORE_TERMINAL_S, before the process tears down."""
@@ -467,6 +525,32 @@ async def test_run_exits_zero_when_terminal_delivered(monkeypatch):
     code = await worker.run(_run_args())
     assert code == 0
     assert json.loads(HealthyRunWS.sent[-1])['type'] == 'RUN_FINISHED'
+
+
+async def test_run_exits_nonzero_when_engine_halts(monkeypatch):
+    """#295 M4: AGENT_STOP mid-run → the engine returns 'halted', the worker
+    emits WORKER_HALTED and exits non-zero even on a healthy socket."""
+    import json
+    from types import SimpleNamespace
+
+    from codingdude import worker
+
+    _patch_run_boundaries(monkeypatch, HealthyRunWS)
+
+    class HaltingRunEngine(FakeRunEngine):
+        async def run(self, **kwargs):
+            return SimpleNamespace(status='halted', output='operator halt')
+
+    import codingdude.engine as engine_mod
+
+    monkeypatch.setattr(
+        engine_mod, 'Engine', lambda **kw: HaltingRunEngine())
+    # _patch_run_boundaries wired the original; re-point worker's Engine use
+    monkeypatch.setattr(
+        'codingdude.engine.Engine', lambda **kw: HaltingRunEngine())
+    code = await worker.run(_run_args())
+    assert code == 1
+    assert json.loads(HealthyRunWS.sent[-1])['type'] == 'WORKER_HALTED'
 
 
 async def test_run_logs_dropped_terminal_and_exits_nonzero(monkeypatch, caplog):

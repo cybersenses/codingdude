@@ -130,7 +130,9 @@ REMOVAL_MARKERS = ("(removed)", "(deleted)", "(gone)", "(historical")
 RUNTIME_FILES = frozenset(
     {
         "AGENT.md",
+        "AGENT_STOP",
         "DIRECTIVES.md",
+        "STEER.md",
         "config.toml",
         "mcp.json",
         "memory.db",

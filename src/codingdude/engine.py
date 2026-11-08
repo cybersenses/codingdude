@@ -34,6 +34,7 @@ from pydantic_ai.models.fallback import FallbackModel
 from .checkpoints import CheckpointStore
 from .config import Config, parse_thinking
 from .db import Database
+from .operator_files import OperatorHalt
 from .run_pipeline import (
     HistoryManager,
     PostRunPipeline,
@@ -128,7 +129,7 @@ class RunOutcome:
     session_id: str
     output: str
     model_name: str
-    status: str = 'complete'  # 'complete' | 'gate_aborted'
+    status: str = 'complete'  # 'complete' | 'gate_aborted' | 'halted'
     gate: GateRequest | None = None
 
 
@@ -509,6 +510,18 @@ class Engine:
                     status='gate_aborted',
                     gate=GateRequest(command=gate.command),
                 )
+            except OperatorHalt as halt:
+                # REQ-5 (#295): AGENT_STOP present at the workdir root — the
+                # operator pulled the kill switch. End the run truthfully;
+                # the worker maps status 'halted' to the WORKER_HALTED
+                # terminal event and a non-zero exit.
+                return RunOutcome(
+                    session_id=session_id,
+                    output=str(halt),
+                    model_name=prepared.model_name,
+                    status='halted',
+                )
+
         except Exception:
             # A run that died before producing anything leaves no husk Session.
             if created_session and not self._db.load_messages(session_id):
@@ -665,6 +678,12 @@ class Engine:
         from .tool_errors import error_feedback_toolset
 
         toolsets = [error_feedback_toolset(toolsets)]
+        # R80-3 #295 (DE-5): operator kill-switch + steer files, checked at
+        # the dispatch boundary. Applied OUTSIDE error feedback so
+        # OperatorHalt escapes unconverted and aborts the run.
+        from .operator_files import operator_files_toolset
+
+        toolsets = [operator_files_toolset(t, workdir) for t in toolsets]
 
         from .memory import MemoryStore
         from .skills import SkillRegistry

@@ -325,6 +325,7 @@ export function TracePanel() {
       {({ trace, checkpoints }) => {
         const colors = {
           GATE_REQUEST: 'text-warning', RUN_ERROR: 'text-danger',
+          WORKER_HALTED: 'text-warning',
           RUN_FINISHED: 'text-brand-400', TOOL_CALL_START: 'text-accent',
           TOOL_CALL_END: 'text-accent', PLAN_PROPOSED: 'text-accent',
           USER_PROMPT: 'text-neutral-300',
