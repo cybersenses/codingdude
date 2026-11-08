@@ -20,7 +20,9 @@ repo — same style as tests/test_worktrees.py. No mocks.
 """
 
 import os
+import re
 import subprocess
+import types
 
 import pytest
 
@@ -199,3 +201,32 @@ async def test_default_tier_prefers_worktree_without_docker(repo, monkeypatch):
     toolset = build_sandbox_toolset(repo, policy())
     result = await toolset.tools['sandbox_create'].function(name='auto')
     assert 'tier=worktree+venv' in result
+
+
+async def test_container_run_publishes_loopback_only(repo, monkeypatch):
+    """Decision #98 container contracts, pinned at the sandbox_create seam:
+    the preview port publishes loopback-only (never 0.0.0.0) and the
+    creation argv passes no `-e` env flags (no host secrets in the
+    container). No real docker needed: docker_cli points at a harmless
+    binary (the ignored rm -f probe just exits nonzero) and the `docker run`
+    call is captured at the run_captured boundary."""
+    import sys
+
+    import codingdude.sandbox as sb
+    captured: dict[str, list[str]] = {}
+
+    async def fake_run_captured(argv, **kw):
+        captured['argv'] = list(argv)
+        return types.SimpleNamespace(code=0, combined='abc123')
+
+    monkeypatch.setattr(sb, 'docker_usable', lambda: True)
+    monkeypatch.setattr(sb, 'docker_cli', lambda: sys.executable)
+    monkeypatch.setattr(sb, 'run_captured', fake_run_captured)
+    toolset = build_sandbox_toolset(repo, policy(yolo=True))
+    result = await create_ok(toolset, 'lane', tier='container')
+    argv = captured['argv']
+    spec = argv[argv.index('-p') + 1]
+    port = re.search(r'preview=http://localhost:(\d+)', result)
+    assert port, result
+    assert spec == f'127.0.0.1:{port.group(1)}:8000'
+    assert '-e' not in argv

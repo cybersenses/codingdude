@@ -226,7 +226,7 @@ def build_sandbox_toolset(workdir: Path, policy) -> FunctionToolset:
             run = await _run([
                 docker_cli() or 'docker', 'run', '-d', '--name', container,
                 '-v', f'{sandbox}:{CONTAINER_MOUNT}', '-w', CONTAINER_MOUNT,
-                '-p', f'{port}:8000', CONTAINER_IMAGE, 'sleep', 'infinity'],
+                '-p', f'127.0.0.1:{port}:8000', CONTAINER_IMAGE, 'sleep', 'infinity'],
                 workdir, 120)
             if not run.startswith('exit 0'):
                 _git(workdir, 'worktree', 'remove', '--force', str(sandbox))
