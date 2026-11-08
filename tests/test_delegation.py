@@ -15,6 +15,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """Engine seam: delegation to read-only subagents on the cheap model."""
 
+import pytest
 from helpers import scripted
 from pydantic_ai.messages import (
     ModelMessage,
@@ -257,4 +258,136 @@ async def test_subagent_receives_brief_and_events_share_delegation_id(workdir):
     assert started['brief_symbols'] == 1
     joined = '\n'.join(seen)
     assert 'Relevant symbols: loginUser' in joined
+
+
+# ---- DE-7a (#298): delegate under a function profile ----
+
+
+def _profiled_config():
+    from dataclasses import replace
+
+    from codingdude.config import Config, FunctionModelConfig
+
+    models = replace(
+        Config.defaults().models,
+        functions={
+            'evaluator': FunctionModelConfig(
+                model='stub:evaluator-model', thinking='low'),
+            'researcher': FunctionModelConfig(model='stub:researcher-model'),
+            'debugger': FunctionModelConfig(model='stub:debugger-model'),
+        },
+    )
+    return replace(Config.defaults(), models=models)
+
+
+def _stub_model(tag: str):
+    return scripted(
+        lambda m, i: ModelResponse(parts=[TextPart(content=tag)]))
+
+
+async def test_delegate_function_uses_profile_model(workdir):
+    resolved_names = []
+    toolset = build_delegation_toolset(
+        workdir, _stub_model('slot-model'),
+        config=_profiled_config(),
+        model_resolver=lambda name: (
+            resolved_names.append(name) or _stub_model('profiled')),
+        session_id='s1',
+    )
+    [delegate] = [t for t in toolset.tools.values()]
+    out = await delegate.function(task='grade this', function='evaluator')
+    assert out == 'profiled'
+    assert resolved_names == ['stub:evaluator-model']
+
+
+async def test_delegate_unknown_function_is_model_retry(workdir):
+    from pydantic_ai.exceptions import ModelRetry
+
+    toolset = build_delegation_toolset(
+        workdir, _stub_model('slot-model'), config=_profiled_config(),
+        session_id='s1',
+    )
+    [delegate] = [t for t in toolset.tools.values()]
+    with pytest.raises(ModelRetry, match='minister'):
+        await delegate.function(task='x', function='minister')
+
+
+async def test_delegate_function_overlay_reaches_subagent(workdir):
+    seen: list[str] = []
+
+    def spy(messages, info):
+        # instructions ride instruction_parts (they do not appear in the
+        # FunctionModel's message list)
+        for p in info.model_request_parameters.instruction_parts:
+            seen.append(str(getattr(p, 'content', '')))
+        return ModelResponse(parts=[TextPart(content='ok')])
+
+    toolset = build_delegation_toolset(
+        workdir, _stub_model('slot'), config=_profiled_config(),
+        model_resolver=lambda name: scripted(spy),
+        session_id='s1',
+    )
+    [delegate] = [t for t in toolset.tools.values()]
+    await delegate.function(task='x', function='evaluator')
+    assert any('grading work against its ticket contract' in s for s in seen)
+
+
+async def test_delegate_researcher_gets_web_tools(workdir):
+    def spy(messages, info):
+        names = sorted(
+            t.name for t in (info.model_request_parameters.function_tools or [])
+        )
+        return ModelResponse(parts=[TextPart(content='TOOLS:' + ','.join(names))])
+
+    toolset = build_delegation_toolset(
+        workdir, _stub_model('slot'), config=_profiled_config(),
+        model_resolver=lambda name: scripted(spy),
+        session_id='s1',
+    )
+    [delegate] = [t for t in toolset.tools.values()]
+    out = await delegate.function(task='look it up', function='researcher')
+    assert 'web_search' in out or 'duckduckgo_search' in out
+
+
+async def test_delegate_function_bills_with_function_tag(workdir, tmp_path):
+    from codingdude.db import Database
+
+    db = Database.connect(tmp_path / 'home')
+    session_id = db.create_session(workdir)
+    toolset = build_delegation_toolset(
+        workdir, _stub_model('ok'), db=db, session_id=session_id,
+        config=_profiled_config(),
+        model_resolver=lambda name: _stub_model('profiled'),
+    )
+    [delegate] = [t for t in toolset.tools.values()]
+    await delegate.function(task='x', function='evaluator')
+    by_function = {
+        r['function_name']: r for r in db.session_usage(session_id)['by_function']
+    }
+    assert by_function['evaluator']['requests'] >= 1
+
+
+async def test_delegate_function_events_carry_function(workdir):
+    events = []
+    toolset = build_delegation_toolset(
+        workdir, _stub_model('ok'), emitter=events.append, session_id='s1',
+        config=_profiled_config(),
+        model_resolver=lambda name: _stub_model('profiled'),
+    )
+    [delegate] = [t for t in toolset.tools.values()]
+    await delegate.function(task='x', function='debugger')
+    assert events[0]['function'] == 'debugger'
+    assert events[-1]['function'] == 'debugger'
+
+
+async def test_delegate_without_function_is_unchanged(workdir):
+    events = []
+    toolset = build_delegation_toolset(
+        workdir, _stub_model('done'), emitter=events.append, session_id='s1',
+    )
+    [delegate] = [t for t in toolset.tools.values()]
+    out = await delegate.function(task='x')
+    assert out == 'done'
+    assert events[0]['function'] is None
+    assert events[-1]['function'] is None
 

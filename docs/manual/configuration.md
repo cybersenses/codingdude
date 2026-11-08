@@ -140,6 +140,44 @@ github_mirror = true    # mirror tickets/roadmap items to GitHub issues via gh
                         # (best-effort; needs a github.com origin + gh auth)
 ```
 
+### `[models.functions.<name>]`
+
+Staffing by **cognitive function** (DE-7a): delegate sessions can name one
+of six fixed functions, and each staffs from its own profile — explicit
+`model`/`thinking` when set, the `subagent` slot otherwise. Only these two
+keys are configurable: the **tool policy is registry-locked in code**
+(the `functions` module under `src/codingdude/`) and can never be changed
+from config — the lock is the safety property. An unknown function name, a
+model without its `provider:` prefix, or any other key fails fast at load.
+Absent config = every function staffs the subagent slot, exactly as
+before.
+
+```toml
+[models.functions.evaluator]
+model = "zai:glm-5.3-flash"
+thinking = "low"
+
+[models.functions.architect]
+model = "zai:glm-5.3"
+thinking = "xhigh"
+```
+
+The recommended setup (also shown in the Config panel; guidance, not a
+hidden mode):
+
+| Function | Staffs | Recommended setup |
+|---|---|---|
+| `architect` | plan-level seam/interface work | strongest model, max thinking — used rarely |
+| `designer` | user-facing behavior before code | strong model, high thinking |
+| `coder` | the bulk of implementation | strong model, medium thinking |
+| `debugger` | probe loops | fast model, medium thinking |
+| `evaluator` | boundary-based work grading | cheap model, low thinking |
+| `researcher` | web/primary-source reads | cheap model, low thinking |
+
+Spend per function is tagged on usage records: the Cost panel breaks spend
+down **by function** (`main session` = everything the main agent spent),
+which is the feedback loop for staffing decisions.
+
 ## Per-project overrides: `.codingdude.toml`
 
 A `.codingdude.toml` in the project workdir overrides the global config for

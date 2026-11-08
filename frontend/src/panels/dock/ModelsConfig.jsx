@@ -71,8 +71,15 @@ export function ModelsConfig({ data, setData }) {
     return <div className="rounded border border-line bg-surface p-4 text-xs text-ink-muted">Loading model configuration…</div>
   }
 
-  const model = draft ?? JSON.parse(JSON.stringify(cfg.models))
+  const model = draft ?? JSON.parse(JSON.stringify({ ...cfg.models, functions: cfg.functions || {} }))
   const set = (k, v) => setDraft({ ...model, [k]: v })
+  // DE-7a (#298): per-function overrides — model + thinking only; the tool
+  // policy is registry-locked and rendered read-only below.
+  const setFunction = (name, key, v) => {
+    const entry = { ...(model.functions?.[name] || {}), [key]: v }
+    if (v === null || v === '') delete entry[key]
+    set('functions', { ...(model.functions || {}), [name]: entry })
+  }
 
   // #212: providers are user-defined — the draft edits name/base_url/key per
   // provider; blank key keeps the stored one, the clear flag removes it.
@@ -189,6 +196,45 @@ export function ModelsConfig({ data, setData }) {
         {numField('max tokens', 'max_tokens')}
         {numField('context limit', 'context_limit')}
         {numField('request limit', 'request_limit')}
+      </div>
+
+      <div className="space-y-1.5 rounded border border-line bg-surface p-3">
+        <div className="text-[10px] uppercase tracking-wide text-ink-muted">Function profiles</div>
+        <div className="text-[10px] text-neutral-500">
+          Staffing by cognitive function: an explicit model/thinking wins for
+          that function's delegate sessions; otherwise the subagent slot
+          staffs it. Tool policies are registry-locked — configuration tunes
+          cost and quality, never capability.
+        </div>
+        {(cfg.function_specs || []).map((spec) => (
+          <div key={spec.name} className="space-y-1 rounded border border-line p-2">
+            <div className="flex flex-wrap items-baseline gap-2">
+              <span className="font-mono text-[11px] text-accent">{spec.name}</span>
+              <span className="text-[10px] text-neutral-500">{spec.recommended}</span>
+            </div>
+            <CfgTextField
+              label="model"
+              value={model.functions?.[spec.name]?.model ?? ''}
+              placeholder="(subagent slot)"
+              onChange={(v) => setFunction(spec.name, 'model', v)}
+            />
+            <label className="flex items-center gap-2 text-[11px]">
+              <span className="w-32 shrink-0 text-neutral-500">thinking</span>
+              <select
+                className="min-w-0 flex-1 rounded border border-line bg-surface px-1 py-0.5 font-mono text-[11px] text-ink"
+                value={model.functions?.[spec.name]?.thinking ?? ''}
+                onChange={(e) => setFunction(spec.name, 'thinking', e.target.value || null)}
+              >
+                <option value="">(global setting)</option>
+                <option value="off">off</option>
+                {(cfg.thinking_levels || []).map((lvl) => (
+                  <option key={lvl} value={lvl}>{lvl}</option>
+                ))}
+              </select>
+            </label>
+            <div className="text-[9px] text-neutral-600">tools (locked): {spec.tool_policy.join(', ')}</div>
+          </div>
+        ))}
       </div>
 
       <div className="space-y-1.5 rounded border border-line bg-surface p-3">

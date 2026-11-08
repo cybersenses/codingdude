@@ -49,6 +49,40 @@ def resolve_evaluator_model(subagent_model, main_model):
     return subagent_model or main_model or None
 
 
+def resolve_evaluator_from_config(config, model_resolver=None):
+    """The evaluator's model from its DE-7a function profile (#298).
+
+    When `[models.functions.evaluator]` sets an explicit model, resolve it
+    through `model_resolver` (default: the engine's `_model_from_name`
+    seam, lazy-imported — plugins must not import engine at module level)
+    and return `(model, parsed_thinking)`; the profile thinking is gated by
+    `supports_thinking` like every other thinking setting. Without an
+    explicit profile model, returns `(None, None)` and the caller falls
+    back to the `resolve_evaluator_model` chain (subagent → main), which
+    stays byte-compatible with pre-#298 behavior.
+    """
+    entry = config.models.functions.get('evaluator')
+    if entry is None or not entry.model:
+        return None, None
+
+    def _default_resolver(name: str):
+        from .engine import _model_from_name
+
+        return _model_from_name(
+            name, config.models.fallback_base_url, config.providers)
+
+    model = (model_resolver or _default_resolver)(entry.model)
+    thinking = None
+    if entry.thinking is not None:
+        from .config import parse_thinking
+        from .run_pipeline import supports_thinking
+
+        parsed = parse_thinking(entry.thinking)
+        if parsed is not None and supports_thinking(model):
+            thinking = parsed
+    return model, thinking
+
+
 def _ticket_contract(db: Database, workdir: str, ticket_id: int) -> str:
     row = db._conn.execute(
         'SELECT title, body FROM tickets WHERE id = ? AND workdir = ?',
@@ -141,6 +175,9 @@ class WorkEvaluator:
                 input_tokens=getattr(usage, 'input_tokens', 0) or 0,
                 output_tokens=getattr(usage, 'output_tokens', 0) or 0,
                 cost_usd=float(cost) if cost is not None else None,
+                # M6 (#298): evaluator spend is tagged to its function so
+                # cost attribution per function works.
+                function_name='evaluator',
             )
         except Exception:  # noqa: BLE001 — accounting must never fail grading
             logger.warning('evaluator usage billing failed', exc_info=True)

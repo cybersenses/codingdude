@@ -88,6 +88,7 @@ CREATE TABLE IF NOT EXISTS usage (
     input_tokens INTEGER NOT NULL DEFAULT 0,
     output_tokens INTEGER NOT NULL DEFAULT 0,
     cost_usd REAL,
+    function_name TEXT,
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS embeddings (
@@ -489,6 +490,15 @@ class Database:
             self._conn.execute(
                 "ALTER TABLE ticket_execution ADD COLUMN evaluations_json TEXT"
                 " NOT NULL DEFAULT '[]'"
+            )
+        usage_cols = {
+            r['name'] for r in self._conn.execute('PRAGMA table_info(usage)')
+        }
+        if usage_cols and 'function_name' not in usage_cols:
+            # DE-7a (#298): the cognitive function that spent this usage
+            # (delegation/evaluator sessions) — NULL is main-session spend.
+            self._conn.execute(
+                'ALTER TABLE usage ADD COLUMN function_name TEXT'
             )
         self._commit()
 
@@ -928,11 +938,13 @@ class Database:
         input_tokens: int = 0,
         output_tokens: int = 0,
         cost_usd: float | None = None,
+        function_name: str | None = None,
     ) -> None:
         self._conn.execute(
             'INSERT INTO usage (session_id, model, requests, input_tokens, output_tokens,'
-            ' cost_usd, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            (session_id, model, requests, input_tokens, output_tokens, cost_usd, utc_now_iso()),
+            ' cost_usd, function_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            (session_id, model, requests, input_tokens, output_tokens, cost_usd,
+             function_name, utc_now_iso()),
         )
         self._commit()
 
@@ -961,8 +973,23 @@ class Database:
         usage['by_request'] = [
             dict(r)
             for r in self._conn.execute(
-                'SELECT model, requests, input_tokens, output_tokens, cost_usd, created_at'
+                'SELECT model, requests, input_tokens, output_tokens, cost_usd,'
+                ' function_name, created_at'
                 ' FROM usage WHERE session_id = ? ORDER BY id',
+                (session_id,),
+            ).fetchall()
+        ]
+        # M6 (#298): spend per cognitive function — NULL groups the
+        # main session's own spend, tagged rows group delegation-side work.
+        usage['by_function'] = [
+            dict(r)
+            for r in self._conn.execute(
+                'SELECT function_name, COALESCE(SUM(requests), 0) AS requests,'
+                ' COALESCE(SUM(input_tokens), 0) AS input_tokens,'
+                ' COALESCE(SUM(output_tokens), 0) AS output_tokens,'
+                ' SUM(cost_usd) AS cost_usd'
+                ' FROM usage WHERE session_id = ?'
+                ' GROUP BY function_name ORDER BY function_name',
                 (session_id,),
             ).fetchall()
         ]

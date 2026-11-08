@@ -27,6 +27,8 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
+from .functions import FUNCTIONS
+
 
 def _default_config_toml(lineup: ModelLineup) -> str:
     return (
@@ -48,6 +50,17 @@ def _default_config_toml(lineup: ModelLineup) -> str:
         '# Mirror tickets/roadmap items to GitHub issues via gh (best-effort)\n'
         'github_mirror = true\n'
     )
+
+
+@dataclass(frozen=True)
+class FunctionModelConfig:
+    """Operator-configurable knobs for one cognitive function (DE-7a #298):
+    model + thinking only. Capability (tool policy) is registry-locked in
+    functions.py — the operator tunes cost/quality, never what a function
+    may do."""
+
+    model: str | None = None
+    thinking: str | None = None
 
 
 @dataclass(frozen=True)
@@ -81,6 +94,10 @@ class ModelLineup:
     # e.g. pricing = { deepseek-v4-pro = { input = 0.27, output = 1.1 } }
     # Models without an entry are 'unpriced' (tokens-only accounting).
     pricing: dict[str, dict[str, float]] | None = None
+    # Per-function model/thinking overrides (DE-7a #298), from
+    # [models.functions.<name>] tables. Empty = today's behavior: every
+    # function staffs the subagent slot.
+    functions: dict[str, FunctionModelConfig] = field(default_factory=dict)
 
 
 # Providers the UI may suggest for model binding; the prefix before ':' in
@@ -102,6 +119,40 @@ _LEGACY_ENV_VARS = {
 _THINKING_OFF_WORDS = ('off', 'none', 'false', 'disabled')
 
 
+class FunctionModelIn(BaseModel):
+    """One [models.functions.<name>] entry (DE-7a #298): only model and
+    thinking are operator-configurable; the tool policy is registry-locked
+    (functions.py) and any other key is rejected here."""
+
+    model_config = {'extra': 'forbid'}
+
+    model: str | None = None
+    thinking: str | None = None
+
+    @field_validator('model')
+    @classmethod
+    def _check_model_ref(cls, v: str | None) -> str | None:
+        if v and ':' not in v:
+            raise ValueError(
+                f'{v!r} is not a provider-bound model — use "provider:model" '
+                f'(e.g. "zai:glm-5.3"); built-in providers: {KNOWN_PROVIDERS}, '
+                'or any name you have defined under [providers.<name>]'
+            )
+        return v
+
+    @field_validator('thinking')
+    @classmethod
+    def _check_thinking_level(cls, v: str | None) -> str | None:
+        if v is None or v == '':
+            return None
+        val = v.strip().lower()
+        if val not in THINKING_LEVELS and val not in _THINKING_OFF_WORDS:
+            raise ValueError(
+                f'invalid thinking level {v!r}; use one of {THINKING_LEVELS} or off'
+            )
+        return val
+
+
 class ModelLineupIn(BaseModel):
     """Validated model-lineup payload for PUT /config/models (R50).
 
@@ -121,6 +172,22 @@ class ModelLineupIn(BaseModel):
     context_limit: int | None = Field(default=None, ge=1)
     request_limit: int = Field(default=500, ge=1)
     pricing: dict[str, dict[str, float]] | None = None
+    functions: dict[str, FunctionModelIn] | None = None
+
+    @field_validator('functions')
+    @classmethod
+    def _check_function_names(
+        cls, v: dict[str, FunctionModelIn] | None,
+    ) -> dict[str, FunctionModelIn] | None:
+        if v is None:
+            return None
+        unknown = set(v) - set(FUNCTIONS)
+        if unknown:
+            raise ValueError(
+                f'unknown function(s) {sorted(unknown)}; the fixed registry '
+                f'is {sorted(FUNCTIONS)} (functions.py)'
+            )
+        return v
 
     @field_validator('main', 'subagent', 'fallback', 'vision')
     @classmethod
@@ -191,6 +258,21 @@ def models_payload(config: Config) -> dict:
             'request_limit': config.models.request_limit,
             'pricing': config.models.pricing,
         },
+        # DE-7a (#298): per-function operator config + the registry specs
+        # (locked tool policy + recommended setup) the ModelsConfig panel
+        # and the manual render.
+        'functions': {
+            name: {'model': entry.model, 'thinking': entry.thinking}
+            for name, entry in config.models.functions.items()
+        },
+        'function_specs': [
+            {
+                'name': spec.name,
+                'tool_policy': list(spec.tool_policy),
+                'recommended': spec.recommended,
+            }
+            for spec in FUNCTIONS.values()
+        ],
         'providers': providers,
         'provider_defs': provider_defs,
         'provider_prefixes': sorted(set(KNOWN_PROVIDERS) | set(config.providers)),
@@ -486,6 +568,17 @@ def save_models(home: Path, payload: dict) -> dict:
         value = getattr(validated, name)
         if value is None:
             merged.pop(name, None)
+        elif name == 'functions':
+            # DE-7a: entries arrive as FunctionModelIn models — serialize
+            # to plain TOML tables (None fields dropped; an all-None entry
+            # stays as an empty table so the function override is visible).
+            merged[name] = {
+                fname: {
+                    k: v for k, v in entry_model_dump(entry).items()
+                    if v is not None
+                }
+                for fname, entry in value.items()
+            }
         else:
             merged[name] = value
     raw['models'] = merged
@@ -504,6 +597,71 @@ def _default_lineup_dict() -> dict:
     from dataclasses import asdict
 
     return {k: v for k, v in asdict(Config.defaults().models).items() if v is not None}
+
+
+def entry_model_dump(entry) -> dict:
+    """FunctionModelIn -> plain dict, tolerating either model or plain-dict
+    input (save_models validates merged fragments that may still be dicts)."""
+    if isinstance(entry, dict):
+        return entry
+    return entry.model_dump()
+
+
+def _parse_functions(raw: dict) -> dict[str, FunctionModelConfig]:
+    """[models.functions.<name>] tables -> FunctionModelConfig map (DE-7a).
+
+    Fail-fast (the [trace] deltas precedent): an unknown function name, an
+    unknown key, a model without its provider prefix, or an invalid
+    thinking level raises at load — a misconfigured function profile must
+    never silently staff a run with the wrong model. Per-project overrides
+    keep the #210 warn-and-fall-back contract instead (apply_project_models).
+    """
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f'config.toml [models.functions]: expected tables per function,'
+            f' got {type(raw).__name__}'
+        )
+    out: dict[str, FunctionModelConfig] = {}
+    for name, entry in raw.items():
+        if name not in FUNCTIONS:
+            raise ValueError(
+                f'config.toml [models.functions.{name}]: unknown function;'
+                f' the fixed registry is {sorted(FUNCTIONS)} (functions.py)'
+            )
+        if not isinstance(entry, dict):
+            raise ValueError(
+                f'config.toml [models.functions.{name}]: expected a table,'
+                f' got {type(entry).__name__}'
+            )
+        unknown = set(entry) - {'model', 'thinking'}
+        if unknown:
+            raise ValueError(
+                f'config.toml [models.functions.{name}]: unknown keys'
+                f' {sorted(unknown)} — only model and thinking are'
+                ' operator-configurable (tool policy is registry-locked)'
+            )
+        model = entry.get('model')
+        if model is not None and ':' not in model:
+            raise ValueError(
+                f'config.toml [models.functions.{name}]: {model!r} is not a'
+                ' provider-bound model — use "provider:model"'
+            )
+        thinking = entry.get('thinking')
+        if thinking is not None:
+            thinking = str(thinking).strip().lower()
+            if (
+                thinking not in THINKING_LEVELS
+                and thinking not in _THINKING_OFF_WORDS
+            ):
+                raise ValueError(
+                    f'config.toml [models.functions.{name}]: invalid thinking'
+                    f' level {entry.get("thinking")!r}; use one of'
+                    f' {THINKING_LEVELS} or off'
+                )
+        out[name] = FunctionModelConfig(model=model, thinking=thinking)
+    return out
 
 
 THINKING_LEVELS = ('minimal', 'low', 'medium', 'high', 'xhigh')
@@ -681,6 +839,7 @@ def load_config(home: Path | None = None) -> Config:
             context_limit=models.get('context_limit', defaults.models.context_limit),
             request_limit=models.get('request_limit', defaults.models.request_limit),
             pricing=models.get('pricing', defaults.models.pricing),
+            functions=_parse_functions(models.get('functions')),
         ),
         shell=ShellConfig(default=shell.get('default', defaults.shell.default)),
         providers=_parse_providers(providers),
@@ -798,6 +957,12 @@ def apply_project_models(config: Config, workdir: Path) -> Config:
         'context_limit': config.models.context_limit,
         'request_limit': config.models.request_limit,
         'pricing': config.models.pricing,
+        # plain dicts: FunctionModelIn validates dict entries; a project
+        # override that doesn't touch functions keeps the global ones
+        'functions': {
+            name: {'model': entry.model, 'thinking': entry.thinking}
+            for name, entry in config.models.functions.items()
+        },
     }
     merged = {k: v for k, v in {**current, **project_models}.items() if v is not None}
     try:
@@ -817,5 +982,10 @@ def apply_project_models(config: Config, workdir: Path) -> Config:
         context_limit=validated.context_limit,
         request_limit=validated.request_limit,
         pricing=validated.pricing,
+        functions={
+            name: FunctionModelConfig(
+                model=entry.model, thinking=entry.thinking)
+            for name, entry in (validated.functions or {}).items()
+        },
     )
     return replace(config, models=new_models)
