@@ -103,6 +103,41 @@ def compose_first_prompt(prompt: str, kickoff: str) -> str:
     return kickoff + KICKOFF_SEPARATOR + prompt
 
 
+def interrupted_claims_block(claims: list[dict]) -> str:
+    """Render ExecutionStore.interrupted() rows for the first turn (DE-4).
+
+    The replacement session learns which tickets died mid-run and that
+    claim_ticket takes over with the prior steps, evidence, and waivers
+    inherited — resume, not re-derivation. '' when there is nothing to
+    resume, so ordinary first turns are byte-identical to before."""
+    if not claims:
+        return ''
+    lines = [
+        '## Interrupted work (resumable)',
+        '',
+        'Claims in this workdir whose session died mid-run:',
+        '',
+    ]
+    for c in claims:
+        nxt = (
+            f"continue at step {c['next_step_index']}"
+            if c['next_step_index'] is not None
+            else 'all planned steps done — verify and release'
+        )
+        lines.append(
+            f"- ticket #{c['ticket_id']} — attempt #{c['attempt_id']} by dead"
+            f" session {c['session_id']} (run {c['run_status']}),"
+            f" {c['done_count']} step(s) done; {nxt}."
+        )
+    lines += [
+        '',
+        'To resume: claim_ticket(ticket_id) — the takeover inherits the',
+        'prior steps, evidence, and waivers; then get_resume_state and',
+        'continue at the first non-done step.',
+    ]
+    return '\n'.join(lines)
+
+
 KICKOFF_SEPARATOR = '\n\n---\n\n'
 _KICKOFF_HEADER = '## Kickoff ('
 

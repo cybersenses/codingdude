@@ -111,9 +111,12 @@ class ExecutionStore:
         session_id: str,
         plan_steps: list[str] | None = None,
     ) -> dict:
-        """Claim a ticket. Crash-safe: an attempt held by another session with
-        a fresh heartbeat blocks the claim; a stale one is marked 'stale' and
-        a new attempt opens. Same-session claims reuse their attempt."""
+        """Claim a ticket. Crash-safe: an attempt held by another session
+        whose run is verifiably dead (terminal runs row) is taken over
+        immediately — inheriting its plan, steps, evidence, and waivers —
+        one held by a session with no terminal run only yields to heartbeat
+        staleness (marked 'stale', no inheritance); a fresh one blocks.
+        Same-session claims reuse their attempt."""
         live = self.db._conn.execute(
             "SELECT * FROM ticket_execution"
             " WHERE ticket_id = ? AND workdir = ? AND status = 'claimed'"
@@ -121,6 +124,21 @@ class ExecutionStore:
             (ticket_id, self.workdir),
         ).fetchone()
         if live is not None and live['session_id'] != session_id:
+            run_status = self._newest_run_status(live['session_id'])
+            if run_status is not None and run_status != 'running':
+                # DE-4: death-verified takeover — the runs-table join is the
+                # only trigger (never heartbeat staleness alone, which can
+                # misread a live session under load).
+                return self._take_over(live, session_id)
+            if run_status is not None:
+                # The holder's run is still 'running': live, whatever the
+                # heartbeat says (a busy tool call can lag it). The reaper
+                # and boot reconcile turn a dead run terminal within seconds,
+                # so takeover never waits on staleness in practice.
+                raise ValueError(
+                    f'ticket #{ticket_id} already claimed by session'
+                    f" {live['session_id']} (run still {run_status})"
+                )
             cutoff = _iso(datetime.now(UTC) - timedelta(seconds=self.stale_after_s))
             if live['heartbeat_at'] <= cutoff:
                 self.db._conn.execute(
@@ -149,6 +167,48 @@ class ExecutionStore:
                     [{'text': s, 'status': 'todo', 'evidence': None}
                      for s in plan_steps or []]
                 ),
+                _now(),
+                _now(),
+            ),
+        )
+        self.db._conn.commit()
+        return self._by_id(cur.lastrowid)  # type: ignore[arg-type, return-value]
+
+    def _newest_run_status(self, session_id: str) -> str | None:
+        """The newest run row's status for a session, None when it has none.
+
+        Terminal statuses ('completed' / 'failed' / 'gate_aborted' /
+        'interrupted' — everything but 'running') are the R72 forensics
+        verdict: the reaper, boot reconcile, and worker finish all write
+        them, so 'not running' means verifiably dead."""
+        row = self.db._conn.execute(
+            'SELECT status FROM runs WHERE session_id = ?'
+            ' ORDER BY started_at DESC, rowid DESC LIMIT 1',
+            (session_id,),
+        ).fetchone()
+        return row['status'] if row else None
+
+    def _take_over(self, live, session_id: str) -> dict:
+        """Supersede a dead session's attempt (DE-4): mark it 'stale', open
+        a new claimed attempt that inherits plan, steps (status + evidence),
+        and waivers wholesale, and record the superseded attempt id."""
+        self.db._conn.execute(
+            "UPDATE ticket_execution SET status = 'stale' WHERE id = ?",
+            (live['id'],),
+        )
+        cur = self.db._conn.execute(
+            'INSERT INTO ticket_execution'
+            ' (ticket_id, workdir, session_id, status, plan_json, steps_json,'
+            '  waivers_json, superseded_attempt_id, heartbeat_at, created_at)'
+            " VALUES (?, ?, ?, 'claimed', ?, ?, ?, ?, ?, ?)",
+            (
+                live['ticket_id'],
+                self.workdir,
+                session_id,
+                live['plan_json'],
+                live['steps_json'],
+                live['waivers_json'] if live['waivers_json'] else '[]',
+                live['id'],
                 _now(),
                 _now(),
             ),
@@ -230,6 +290,37 @@ class ExecutionStore:
             (ticket_id, self.workdir),
         ).fetchone()
         return dict(row) if row else None
+
+    def interrupted(self) -> list[dict]:
+        """Discovery seam (DE-4): claimed attempts in this workdir whose
+        session's newest run is verifiably dead — the work a replacement
+        session can take over. Each row carries the resume anchors the
+        bootstrap renders: done count and the first non-done step index."""
+        rows = self.db._conn.execute(
+            "SELECT * FROM ticket_execution"
+            ' WHERE workdir = ? AND status = \'claimed\' ORDER BY id',
+            (self.workdir,),
+        ).fetchall()
+        out = []
+        for r in rows:
+            run_status = self._newest_run_status(r['session_id'])
+            if run_status is None or run_status == 'running':
+                continue  # live session, or no run evidence: not interruptible
+            steps = json.loads(r['steps_json'])
+            done_count = sum(1 for s in steps if s.get('status') == 'done')
+            next_index = next(
+                (i for i, s in enumerate(steps) if s.get('status') != 'done'),
+                None,
+            )
+            out.append({
+                'ticket_id': r['ticket_id'],
+                'attempt_id': r['id'],
+                'session_id': r['session_id'],
+                'run_status': run_status,
+                'done_count': done_count,
+                'next_step_index': next_index,
+            })
+        return out
 
     def drift(self, ticket_id: int) -> dict:
         """Plan diffing (R9 thickener): compare the latest attempt's claimed

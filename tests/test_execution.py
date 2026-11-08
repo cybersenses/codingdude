@@ -385,3 +385,113 @@ async def test_wired_into_build_all(tmp_path, monkeypatch):
     names = {t.name for ts in toolsets for t in getattr(ts, 'tools', {}).values()}
     assert {'claim_ticket', 'update_execution_step', 'release_ticket',
             'get_resume_state', 'heartbeat_claim', 'waive_drift'} <= names
+
+
+# --- DE-4 (#294): death-verified takeover + step inheritance ---
+
+_EVIDENCE = dict(command='uv run pytest -q', exit_code=0, key_output_line='3 passed')
+
+
+def _seed_run(db, session_id: str, status: str) -> None:
+    db.record_run_start(f'run-{session_id}', session_id)
+    if status != 'running':
+        db.record_run_end(f'run-{session_id}', status)
+
+
+@pytest.mark.parametrize('terminal', ['completed', 'failed', 'gate_aborted', 'interrupted'])
+def test_takeover_when_holder_run_verifiably_dead(
+    store, db, ticket, terminal,
+):
+    """A blocking attempt whose session's newest run is terminal (worker
+    finish, reaper, boot reconcile) is taken over immediately — no 900s
+    staleness wait — and the new attempt inherits the whole record."""
+    old = store.claim(ticket, 'dead1', plan_steps=['step a', 'step b'])
+    store.set_step(old['id'], 0, 'done', **_EVIDENCE)
+    _seed_run(db, 'dead1', terminal)
+
+    fresh = store.claim(ticket, 's2', plan_steps=['step a', 'step b'])
+
+    assert fresh['id'] != old['id']
+    assert fresh['session_id'] == 's2'
+    assert fresh['superseded_attempt_id'] == old['id']
+    assert store.attempts(ticket)[0]['status'] == 'stale'
+    assert json.loads(fresh['plan_json']) == ['step a', 'step b']
+    steps = json.loads(fresh['steps_json'])
+    assert steps[0] == {
+        'text': 'step a', 'status': 'done', 'evidence': dict(_EVIDENCE),
+    }
+    assert steps[1]['status'] == 'todo'
+    # the inherited record is visible to the gate seams, not just stored
+    drift = store.drift(ticket)
+    assert drift['attempt_id'] == fresh['id']
+    assert drift['done_without_evidence'] == []
+
+
+def test_takeover_carries_waivers(store, db, ticket):
+    """#293 heads-up: inheritance must carry waivers_json — a waived step on
+    the superseded attempt must not re-block release on the new one."""
+    old = store.claim(ticket, 'dead1', plan_steps=['step a', 'step b'])
+    store.set_step(old['id'], 1, 'done', **_EVIDENCE)  # out of order
+    store.waive_drift(old['id'], [1], 'verified in review')
+    _seed_run(db, 'dead1', 'interrupted')
+
+    fresh = store.claim(ticket, 's2', plan_steps=['step a', 'step b'])
+
+    assert store.waivers(ticket) == [
+        {'indices': [1], 'reason': 'verified in review',
+         'at': store.waivers(ticket)[0]['at']},
+    ]
+    store.set_step(fresh['id'], 0, 'done', **_EVIDENCE)
+    store.release(fresh['id'], 'done')  # inherited waiver keeps the gate open
+
+
+def test_no_takeover_while_holder_run_is_live(db, workdir, ticket):
+    """The misidentified-dead race: heartbeat staleness alone never fires
+    the takeover — a session whose newest run row is still 'running' keeps
+    its claim (heartbeat lag under load is not death)."""
+    short = ExecutionStore(db, workdir, stale_after_s=0)
+    old = short.claim(ticket, 's1', plan_steps=['step a'])
+    _seed_run(db, 's1', 'running')
+    time.sleep(0.01)
+    with pytest.raises(ValueError, match='s1'):
+        short.claim(ticket, 's2')
+    assert short.resume_state(ticket)['id'] == old['id']
+    assert short.resume_state(ticket)['status'] == 'claimed'
+
+
+def test_stale_path_unchanged_no_run_row_no_inheritance(db, workdir, ticket):
+    """The legacy 900s staleness path stays as shipped: fresh attempt, empty
+    steps, no supersession link — takeover is the death-verified path only."""
+    short = ExecutionStore(db, workdir, stale_after_s=0)
+    old = short.claim(ticket, 's1', plan_steps=['step a'])
+    store_set = ExecutionStore(db, workdir, stale_after_s=0)
+    store_set.set_step(old['id'], 0, 'done', **_EVIDENCE)
+    time.sleep(0.01)
+    fresh = short.claim(ticket, 's2', plan_steps=['step a'])
+    assert fresh['superseded_attempt_id'] is None
+    assert json.loads(fresh['steps_json'])[0]['status'] == 'todo'
+    assert short.attempts(ticket)[0]['status'] == 'stale'
+
+
+def test_interrupted_discovers_dead_session_claims(store, db, workdir, ticket):
+    """Discovery seam (DE-4): claimed attempts in this workdir whose
+    session's newest run is terminal, with the resume anchors the bootstrap
+    renders into the first turn."""
+    from codingdude.roadmap import RoadmapStore
+
+    dead = store.claim(ticket, 'dead1', plan_steps=['step a', 'step b'])
+    store.set_step(dead['id'], 0, 'done', **_EVIDENCE)
+    _seed_run(db, 'dead1', 'interrupted')
+
+    other = RoadmapStore(db).create_ticket(workdir, 'live work')
+    store.claim(other, 'live1', plan_steps=['x'])
+    _seed_run(db, 'live1', 'running')  # live session: not interrupted
+
+    found = store.interrupted()
+    assert [a['ticket_id'] for a in found] == [ticket]
+    row = found[0]
+    assert row['attempt_id'] == dead['id']
+    assert row['session_id'] == 'dead1'
+    assert row['run_status'] == 'interrupted'
+    assert row['done_count'] == 1
+    assert row['next_step_index'] == 1

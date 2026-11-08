@@ -225,3 +225,59 @@ async def test_second_turn_has_no_kickoff(home, workdir):
     assert 'turn two' in captured[-1]
     assert '## Kickoff' not in captured[-1]
     assert [e for e in events if e.get('type') == 'KICKOFF']  # turn one only fired once
+
+
+# ---- interrupted-claims discovery (DE-4 #294) --------------------------------
+
+def test_interrupted_block_empty_is_empty():
+    from codingdude.kickoff import interrupted_claims_block
+
+    assert interrupted_claims_block([]) == ''
+
+
+async def test_first_turn_names_interrupted_claims(home, workdir):
+    """DE-4 (#294): a dead session's claim in this workdir renders into the
+    first turn, so the replacement session learns it can resume (claim →
+    inherited steps/evidence/waivers) instead of re-deriving everything."""
+    from helpers import scripted
+
+    from codingdude.approvals import ApprovalPolicy
+    from codingdude.config import load_config
+    from codingdude.db import Database
+    from codingdude.engine import Engine
+    from codingdude.execution import ExecutionStore
+    from codingdude.roadmap import RoadmapStore
+
+    db = Database.connect(home)
+    tid = RoadmapStore(db).create_ticket(str(workdir), 'interrupted work')
+    store = ExecutionStore(db, str(workdir))
+    attempt = store.claim(tid, 'dead-session', plan_steps=['step a', 'step b'])
+    store.set_step(
+        attempt['id'], 0, 'done', command='uv run pytest -q', exit_code=0,
+        key_output_line='3 passed',
+    )
+    db.record_run_start('run-dead', 'dead-session')
+    db.record_run_end('run-dead', 'interrupted')
+
+    captured: list[str] = []
+    events: list[dict] = []
+
+    def model_fn(messages, info):
+        captured.append(_last_user_text(messages))
+        from pydantic_ai.messages import ModelResponse, TextPart
+
+        return ModelResponse(parts=[TextPart(content='ok')])
+
+    engine = Engine(config=load_config(), db=db)
+    outcome = await engine.run(
+        prompt='take over the ticket', workdir=workdir,
+        model=scripted(model_fn), approvals=ApprovalPolicy(),
+        emit=events.append,
+    )
+    assert outcome.output == 'ok'
+    assert f'ticket #{tid}' in captured[0]
+    assert 'Interrupted work' in captured[0]
+    # still strippable at the UI boundary: the user's words survive split_kickoff
+    from codingdude.kickoff import split_kickoff
+
+    assert split_kickoff(captured[0]) == 'take over the ticket'
