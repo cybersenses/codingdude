@@ -141,6 +141,7 @@ CREATE TABLE IF NOT EXISTS ticket_execution (
         CHECK (status IN ('claimed', 'released', 'done', 'stale')),
     plan_json TEXT NOT NULL DEFAULT '[]',
     steps_json TEXT NOT NULL DEFAULT '[]',
+    waivers_json TEXT NOT NULL DEFAULT '[]',
     heartbeat_at TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
@@ -460,6 +461,18 @@ class Database:
             self._conn.execute(
                 "ALTER TABLE memory ADD COLUMN kind TEXT NOT NULL DEFAULT 'fact'"
             " CHECK (kind IN ('fact', 'solution'))"
+            )
+        execution_cols = {
+            r['name'] for r in self._conn.execute(
+                'PRAGMA table_info(ticket_execution)'
+            )
+        }
+        if execution_cols and 'waivers_json' not in execution_cols:
+            # DE-1 (#293): recorded-waiver path for the evidence gate —
+            # existing attempts start with no waivers.
+            self._conn.execute(
+                "ALTER TABLE ticket_execution ADD COLUMN waivers_json TEXT"
+                " NOT NULL DEFAULT '[]'"
             )
         self._commit()
 

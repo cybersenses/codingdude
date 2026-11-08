@@ -33,6 +33,70 @@ def _iso(dt: datetime) -> str:
     return dt.isoformat()
 
 
+class EvidenceError(Exception):
+    """The evidence gate (DE-1, decision #95): a 'done' step lacks the
+    structured evidence required to verify it, or a 'done' release is
+    blocked by drift. The only bypass is a recorded waiver."""
+
+
+def _validated_evidence(
+    index: int,
+    command: str | None,
+    exit_code: int | None,
+    key_output_line: str | None,
+) -> dict:
+    """Structured evidence for a 'done' step. Free text is not accepted:
+    narrative assertion is the unverifiable class this gate closes."""
+    command = command.strip() if isinstance(command, str) else ''
+    key_line = key_output_line.strip() if isinstance(key_output_line, str) else ''
+    missing = []
+    if not command:
+        missing.append('command')
+    if not isinstance(exit_code, int) or isinstance(exit_code, bool):
+        missing.append('exit_code')
+    if not key_line:
+        missing.append('key_output_line')
+    if missing:
+        raise EvidenceError(
+            f'step {index} marked done without complete evidence — missing or'
+            f' invalid: {", ".join(missing)}. Evidence is structured, not free'
+            ' text: command = the verification command you ran, exit_code ='
+            ' its exit code, key_output_line = the output line that proves it'
+            ' (e.g. "3 passed"). Run the check, then record it.'
+        )
+    return {
+        'command': command,
+        'exit_code': exit_code,
+        'key_output_line': key_line,
+    }
+
+
+def _drift_flags(steps: list[dict]) -> dict:
+    """Drift signals for one attempt's steps — the single source both
+    drift() (audit view) and release() (write-time gate) read. Legacy
+    free-text evidence strings are demoted to 'unverified', honestly."""
+    without_evidence: list[int] = []
+    unverified: list[int] = []
+    out_of_order: list[int] = []
+    seen_todo = False
+    for i, step in enumerate(steps):
+        if step['status'] != 'done':
+            seen_todo = True
+            continue
+        evidence = step.get('evidence')
+        if evidence is None:
+            without_evidence.append(i)
+        elif isinstance(evidence, str):
+            unverified.append(i)
+        if seen_todo:
+            out_of_order.append(i)
+    return {
+        'done_without_evidence': without_evidence,
+        'unverified_evidence': unverified,
+        'out_of_order': out_of_order,
+    }
+
+
 class ExecutionStore:
     """Attempt lineage for tickets, scoped by workdir."""
 
@@ -102,14 +166,23 @@ class ExecutionStore:
             raise KeyError(f'no execution attempt #{attempt_id}')
 
     def set_step(
-        self, attempt_id: int, index: int, status: str, evidence: str | None = None
+        self, attempt_id: int, index: int, status: str, *,
+        command: str | None = None,
+        exit_code: int | None = None,
+        key_output_line: str | None = None,
     ) -> None:
+        """Record one plan step. A 'done' step requires structured evidence
+        (command, exit_code, key_output_line) — the evidence gate raises
+        EvidenceError otherwise; non-done statuses are unaffected."""
         attempt = self._by_id(attempt_id)
         if attempt is None:
             raise KeyError(f'no execution attempt #{attempt_id}')
         steps = json.loads(attempt['steps_json'])
         if not (0 <= index < len(steps)):
             raise ValueError(f'step index {index} is out of range')
+        evidence = None
+        if status == 'done':
+            evidence = _validated_evidence(index, command, exit_code, key_output_line)
         steps[index] = {'text': steps[index]['text'], 'status': status,
                         'evidence': evidence}
         self.db._conn.execute(
@@ -129,6 +202,8 @@ class ExecutionStore:
         attempt = self._by_id(attempt_id)
         if attempt is None:
             raise KeyError(f'no execution attempt #{attempt_id}')
+        if status == 'done':
+            self._enforce_evidence_gate(attempt)
         self.db._conn.execute(
             'UPDATE ticket_execution SET status = ?, heartbeat_at = ? WHERE id = ?',
             (status, _now(), attempt_id),
@@ -159,27 +234,86 @@ class ExecutionStore:
     def drift(self, ticket_id: int) -> dict:
         """Plan diffing (R9 thickener): compare the latest attempt's claimed
         plan against its actual step progress. Flags steps marked 'done'
-        without verification evidence, and steps completed out of order."""
+        without structured evidence, legacy free-text evidence (demoted to
+        'unverified'), and steps completed out of order."""
         state = self.resume_state(ticket_id)
         if state is None:
             raise KeyError(f'no execution history for ticket #{ticket_id}')
-        steps = json.loads(state['steps_json'])
-        without_evidence = [
-            i for i, s in enumerate(steps)
-            if s['status'] == 'done' and not s.get('evidence')
-        ]
-        out_of_order = []
-        seen_todo = False
-        for i, s in enumerate(steps):
-            if s['status'] != 'done':
-                seen_todo = True
-            elif seen_todo:
-                out_of_order.append(i)
-        return {
-            'attempt_id': state['id'],
-            'done_without_evidence': without_evidence,
-            'out_of_order': out_of_order,
-        }
+        return {'attempt_id': state['id'],
+                **_drift_flags(json.loads(state['steps_json']))}
+
+    def waive_drift(
+        self, attempt_id: int, indices: list[int], reason: str,
+    ) -> list[dict]:
+        """Record an explicit waiver for drift-flagged step indices — the
+        only bypass for the release gate (always-gated philosophy: bypasses
+        exist but are recorded). Persisted on the attempt, rendered by the
+        resume tool, auditable via waivers()."""
+        attempt = self._by_id(attempt_id)
+        if attempt is None:
+            raise KeyError(f'no execution attempt #{attempt_id}')
+        if not reason or not reason.strip():
+            raise ValueError('a waiver needs a reason')
+        if not indices:
+            raise ValueError('a waiver needs at least one step index')
+        already = set(indices) & self._waived_indices(attempt)
+        if already:
+            raise ValueError(
+                f'step(s) {sorted(already)} already waived — one waiver per step'
+            )
+        flags = _drift_flags(json.loads(attempt['steps_json']))
+        flaggable = set(flags['done_without_evidence']) | set(flags['out_of_order'])
+        unknown = sorted(set(indices) - flaggable)
+        if unknown:
+            raise ValueError(
+                f'step(s) {unknown} are not drift-flagged — waive only flagged'
+                f' steps (flagged: {sorted(flaggable)})'
+            )
+        waivers = self._waivers(attempt)
+        waivers.append({
+            'indices': sorted(set(indices)),
+            'reason': reason.strip(),
+            'at': _now(),
+        })
+        self.db._conn.execute(
+            'UPDATE ticket_execution SET waivers_json = ?'
+            ' WHERE id = ? AND workdir = ?',
+            (json.dumps(waivers), attempt_id, self.workdir),
+        )
+        self.db._conn.commit()
+        return waivers
+
+    def waivers(self, ticket_id: int) -> list[dict]:
+        """Recorded waivers on the latest attempt (audit view)."""
+        state = self.resume_state(ticket_id)
+        if state is None:
+            return []
+        return self._waivers(state)
+
+    def _enforce_evidence_gate(self, attempt: dict) -> None:
+        """Release-time gate (DE-1): a 'done' release requires every done
+        step to carry structured evidence and ordered progress; waived
+        indices are exempt."""
+        flags = _drift_flags(json.loads(attempt['steps_json']))
+        blocked = sorted(
+            (set(flags['done_without_evidence']) | set(flags['out_of_order']))
+            - self._waived_indices(attempt)
+        )
+        if blocked:
+            raise EvidenceError(
+                f'cannot release attempt #{attempt["id"]} as done: step(s)'
+                f' {blocked} lack verified evidence or ran out of order.'
+                ' Complete them with update_execution_step (command,'
+                ' exit_code, key_output_line) or explicitly waive_drift('
+                'indices, reason) — waivers are recorded on the attempt.'
+            )
+
+    def _waivers(self, attempt: dict) -> list[dict]:
+        raw = attempt.get('waivers_json')
+        return json.loads(raw) if raw else []
+
+    def _waived_indices(self, attempt: dict) -> set[int]:
+        return {i for w in self._waivers(attempt) for i in w['indices']}
 
     def _by_id(self, attempt_id: int) -> dict | None:
         row = self.db._conn.execute(
@@ -210,11 +344,24 @@ def build_execution_toolset(store: ExecutionStore, session_id: str) -> FunctionT
         return f"Attempt #{attempt['id']} claimed on ticket #{ticket_id}. Call get_resume_state if resuming."
 
     async def update_execution_step(
-        index: int, status: str, evidence: str | None = None
+        index: int, status: str, *,
+        command: str | None = None,
+        exit_code: int | None = None,
+        key_output_line: str | None = None,
     ) -> str:
-        """Record plan-step progress ('todo'|'done') with verification evidence (test counts, commands run)."""
-        store.set_step(_attempt(), index, status, evidence)
-        return f'step {index} → {status}' + (f' (evidence: {evidence})' if evidence else '')
+        """Record plan-step progress ('todo'|'done'). A 'done' step requires
+        structured evidence from a check you actually ran: command (the
+        verification command), exit_code (its exit code), key_output_line
+        (the output line proving it, e.g. "3 passed"). Free text is not
+        evidence; run the check, then record it."""
+        try:
+            store.set_step(_attempt(), index, status, command=command,
+                           exit_code=exit_code, key_output_line=key_output_line)
+        except EvidenceError as exc:
+            return str(exc)
+        return f'step {index} → {status}' + (
+            ' (evidence recorded)' if status == 'done' else ''
+        )
 
     async def heartbeat_claim() -> str:
         """Keep the current claim alive (call periodically during long work)."""
@@ -222,11 +369,29 @@ def build_execution_toolset(store: ExecutionStore, session_id: str) -> FunctionT
         return 'heartbeat ok'
 
     async def release_ticket(status: str = 'released') -> str:
-        """Finish the claim: 'done' (closes the ticket) or 'released' (steps aside)."""
+        """Finish the claim: 'done' (closes the ticket) or 'released' (steps aside).
+        'done' is blocked while steps lack verified evidence or ran out of order."""
         attempt_id = _attempt()
-        store.release(attempt_id, status)
+        try:
+            store.release(attempt_id, status)
+        except EvidenceError as exc:
+            return str(exc)
         active.pop()
         return f'attempt #{attempt_id} → {status}'
+
+    async def waive_drift(indices: list[int], reason: str) -> str:
+        """Explicitly waive drift-flagged steps (missing evidence / out of
+        order) with a reason; the recorded waiver is the only bypass for the
+        release gate and stays visible on the attempt."""
+        try:
+            waivers = store.waive_drift(_attempt(), indices, reason)
+        except ValueError as exc:
+            return f'waiver not recorded: {exc}'
+        last = waivers[-1]
+        return (
+            f"waived steps {last['indices']} — {last['reason']}"
+            ' (recorded on the attempt; visible in resume_state)'
+        )
 
     async def get_resume_state(ticket_id: int) -> str:
         """Read the resume state for a ticket: who claimed it, plan, per-step progress and evidence."""
@@ -248,10 +413,24 @@ def build_execution_toolset(store: ExecutionStore, session_id: str) -> FunctionT
                 line += f' — evidence: {ev}'
             lines.append(line)
         drift = store.drift(ticket_id)
-        if drift['done_without_evidence'] or drift['out_of_order']:
+        drift_bits = []
+        if drift['done_without_evidence']:
+            drift_bits.append(
+                f"done-without-evidence steps {drift['done_without_evidence']}"
+            )
+        if drift['unverified_evidence']:
+            drift_bits.append(
+                'unverified (legacy free-text) evidence on steps'
+                f" {drift['unverified_evidence']}"
+            )
+        if drift['out_of_order']:
+            drift_bits.append(f"out-of-order steps {drift['out_of_order']}")
+        if drift_bits:
+            lines.append('drift: ' + '; '.join(drift_bits)
+                         + ' — reconcile before finishing')
+        for waiver in store.waivers(ticket_id):
             lines.append(
-                f"drift: done-without-evidence steps {drift['done_without_evidence']}, "
-                f"out-of-order steps {drift['out_of_order']} — reconcile before finishing"
+                f"waived: steps {waiver['indices']} — {waiver['reason']}"
             )
         return '\n'.join(lines)
 
@@ -260,5 +439,6 @@ def build_execution_toolset(store: ExecutionStore, session_id: str) -> FunctionT
         update_execution_step,
         heartbeat_claim,
         release_ticket,
+        waive_drift,
         get_resume_state,
     ])
