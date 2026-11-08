@@ -191,6 +191,65 @@ async def exec_in_sandbox_dir(
     return f'{summary} {_tier_line()}'
 
 
+async def create_sandbox(workdir: Path, name: str, tier: str = '') -> str:
+    """Create sandbox `name` (worktree + optional container/venv).
+
+    The shared creation core: build_sandbox_toolset's `sandbox_create` tool
+    and the long-run lane (#297) both call this one implementation, so the
+    #292 container contracts (loopback-only publish, no host env, worktree
+    mount only) hold for every creator.
+    """
+    if tier not in ('', 'worktree', 'container'):
+        return (f"error: unknown tier {tier!r} — use 'worktree' or "
+                "'container'")
+    want_container = tier == 'container' or (
+        tier == '' and docker_usable())
+    if want_container and not docker_usable():
+        if tier == 'container':
+            return ('error: docker requested but not available — no '
+                    'sandbox created')
+        want_container = False  # default tier: fall back, report it
+    try:
+        sandbox = create_worktree(workdir, name)
+    except WorktreeError as exc:
+        return f'error: {exc}'
+    if want_container:
+        container = CONTAINER_PREFIX + name
+        # Deterministic names: a stale container must not block reuse.
+        subprocess.run(
+            [docker_cli() or 'docker', 'rm', '-f', container],
+            capture_output=True, text=True, env=scrubbed_env())  # nosec B603 - fixed-argv docker CLI, no shell
+        port = free_port()
+        run = await _run([
+            docker_cli() or 'docker', 'run', '-d', '--name', container,
+            '-v', f'{sandbox}:{CONTAINER_MOUNT}', '-w', CONTAINER_MOUNT,
+            '-p', f'127.0.0.1:{port}:8000', CONTAINER_IMAGE, 'sleep', 'infinity'],
+            workdir, 120)
+        if not run.startswith('exit 0'):
+            _git(workdir, 'worktree', 'remove', '--force', str(sandbox))
+            _git(workdir, 'worktree', 'prune')
+            return f'error: container start failed: {run}'
+        return (f'sandbox ready: {sandbox} (branch {BRANCH_PREFIX}{name}, '
+                f'container {container}) preview=http://localhost:{port} '
+                f'{_tier_line("container", CONTAINER_IMAGE)}')
+    ok, detail = _make_venv(sandbox)
+    if not ok:
+        # Fail fast: a sandbox without a venv is not a sandbox; remove the
+        # half-built worktree (branch included) so the name stays reusable.
+        remove_worktree(workdir, name)
+        return f'error: venv creation failed: {detail}'
+    port = free_port()
+    return (f'sandbox ready: {sandbox} (branch {BRANCH_PREFIX}{name}) '
+            f'preview=http://localhost:{port} venv={detail} {_tier_line()}')
+
+
+def remove_container(name: str) -> None:
+    """Best-effort removal of sandbox `name`'s container (absent is fine)."""
+    subprocess.run(
+        [docker_cli() or 'docker', 'rm', '-f', CONTAINER_PREFIX + name],
+        capture_output=True, text=True, env=scrubbed_env())  # nosec B603 - fixed-argv docker CLI, no shell
+
+
 def build_sandbox_toolset(workdir: Path, policy) -> FunctionToolset:
     """sandbox_create / sandbox_exec / sandbox_teardown / sandbox_promote:
     the tier-1 prototype lifecycle on top of git worktrees."""
@@ -202,48 +261,7 @@ def build_sandbox_toolset(workdir: Path, policy) -> FunctionToolset:
         return await container_running(container)
 
     async def sandbox_create(name: str, tier: str = '') -> str:
-        if tier not in ('', 'worktree', 'container'):
-            return (f"error: unknown tier {tier!r} — use 'worktree' or "
-                    "'container'")
-        want_container = tier == 'container' or (
-            tier == '' and docker_usable())
-        if want_container and not docker_usable():
-            if tier == 'container':
-                return ('error: docker requested but not available — no '
-                        'sandbox created')
-            want_container = False  # default tier: fall back, report it
-        try:
-            sandbox = create_worktree(workdir, name)
-        except WorktreeError as exc:
-            return f'error: {exc}'
-        if want_container:
-            container = CONTAINER_PREFIX + name
-            # Deterministic names: a stale container must not block reuse.
-            subprocess.run(
-                [docker_cli() or 'docker', 'rm', '-f', container],
-                capture_output=True, text=True, env=scrubbed_env())
-            port = free_port()
-            run = await _run([
-                docker_cli() or 'docker', 'run', '-d', '--name', container,
-                '-v', f'{sandbox}:{CONTAINER_MOUNT}', '-w', CONTAINER_MOUNT,
-                '-p', f'127.0.0.1:{port}:8000', CONTAINER_IMAGE, 'sleep', 'infinity'],
-                workdir, 120)
-            if not run.startswith('exit 0'):
-                _git(workdir, 'worktree', 'remove', '--force', str(sandbox))
-                _git(workdir, 'worktree', 'prune')
-                return f'error: container start failed: {run}'
-            return (f'sandbox ready: {sandbox} (branch {BRANCH_PREFIX}{name}, '
-                    f'container {container}) preview=http://localhost:{port} '
-                    f'{_tier_line("container", CONTAINER_IMAGE)}')
-        ok, detail = _make_venv(sandbox)
-        if not ok:
-            # Fail fast: a sandbox without a venv is not a sandbox; remove the
-            # half-built worktree (branch included) so the name stays reusable.
-            remove_worktree(workdir, name)
-            return f'error: venv creation failed: {detail}'
-        port = free_port()
-        return (f'sandbox ready: {sandbox} (branch {BRANCH_PREFIX}{name}) '
-                f'preview=http://localhost:{port} venv={detail} {_tier_line()}')
+        return await create_sandbox(workdir, name, tier)
 
     async def sandbox_exec(name: str, command: str) -> str:
         return await exec_in_sandbox_dir(workdir, name, command, policy)

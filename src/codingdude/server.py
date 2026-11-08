@@ -31,6 +31,7 @@ import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 from fastapi import (
     Depends,
@@ -528,6 +529,9 @@ def create_app(
         budget: float | None = None
         fix_loop: bool = False
         image_b64: str | None = None  # base64 data-URL payload (no prefix)
+        # #297 REQ-6: long-run work-mode level — per-run, opt-in, validated
+        # fail-fast (unknown levels are a 422, never a silent default).
+        long_run: Literal['assisted', 'unattended'] | None = None
 
     @app.post('/sessions')
     def create_session(body: SessionIn, _: None = Depends(authorize)) -> dict:
@@ -643,6 +647,10 @@ def create_app(
             cmd += ['--budget', str(body.budget)]
         if body.fix_loop:
             cmd.append('--fix-loop')
+        if body.long_run:
+            # #297 DE-3: the validated level rides to the worker; the lane
+            # (sandbox + tier reporting) is the worker/engine's to manage.
+            cmd += ['--long-run', body.long_run]
         if body.image_b64:
             import base64
             import uuid as _uuid

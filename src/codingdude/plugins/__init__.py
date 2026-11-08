@@ -105,6 +105,8 @@ class PluginContext:
     on_edit: Callable | None = None
     capture: Callable | None = None
     emitter: Callable | None = None
+    # #297 DE-3: the long-run sandbox lane (None for interactive runs).
+    lane: object | None = None
     # Per-server MCP pre-flight results, populated by build_all: the raw
     # material for the engine's `## MCP Status` instructions block.
     mcp_health: list[dict] = field(default_factory=list)
@@ -157,6 +159,7 @@ async def build_all(ctx: PluginContext) -> list[AbstractToolset]:
             build_shell_toolset(
                 ctx.workdir, ctx.approvals, shell_bin=ctx.shell_bin,
                 on_render=on_render, registry=process_registry,
+                lane=getattr(ctx, 'lane', None),
             ),
             build_git_toolset(ctx.workdir, ctx.approvals),
             build_coverage_toolset(ctx.workdir, ctx.approvals),

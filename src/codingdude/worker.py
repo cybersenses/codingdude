@@ -548,6 +548,7 @@ def engine_run_kwargs(args, model, vision_model=None) -> dict:
         'image_path': image_path_arg(args),
         'vision_model': vision_model,
         'run_id': getattr(args, 'run_id', None),
+        'long_run': getattr(args, 'long_run', None),
     }
 
 
@@ -609,6 +610,13 @@ def main(argv=None) -> int:
     parser.add_argument('--model', default=None)
     parser.add_argument('--yolo', action='store_true')
     parser.add_argument('--fix-loop', action='store_true')
+    parser.add_argument(
+        '--long-run',
+        choices=('assisted', 'unattended'),
+        default=None,
+        help='long-run work-mode level (#297): sandbox lane + honest tier '
+             'reporting; absent = today\'s interactive behavior',
+    )
     parser.add_argument('--image', default=None, help='path to an image to include with the prompt')
     parser.add_argument('--budget', type=float, default=None)
     parser.add_argument('--run-id', default=None, help='run id for durable lifecycle records (R31)')
