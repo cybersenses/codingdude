@@ -142,6 +142,7 @@ CREATE TABLE IF NOT EXISTS ticket_execution (
     plan_json TEXT NOT NULL DEFAULT '[]',
     steps_json TEXT NOT NULL DEFAULT '[]',
     waivers_json TEXT NOT NULL DEFAULT '[]',
+    superseded_attempt_id INTEGER,
     heartbeat_at TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
@@ -473,6 +474,13 @@ class Database:
             self._conn.execute(
                 "ALTER TABLE ticket_execution ADD COLUMN waivers_json TEXT"
                 " NOT NULL DEFAULT '[]'"
+            )
+        if execution_cols and 'superseded_attempt_id' not in execution_cols:
+            # DE-4 (#294): takeover lineage — the attempt that superseded
+            # this one, when the claim was taken over from a dead session.
+            self._conn.execute(
+                'ALTER TABLE ticket_execution'
+                ' ADD COLUMN superseded_attempt_id INTEGER'
             )
         self._commit()
 

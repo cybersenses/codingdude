@@ -693,9 +693,23 @@ class Engine:
         # ahead of build_run_prompt so image attachment is unaffected.
         # Later turns run the user's words alone.
         if not prepared.history:
-            from .kickoff import compose_first_prompt, kickoff_block
+            from .kickoff import (
+                _headered,
+                compose_first_prompt,
+                interrupted_claims_block,
+                kickoff_block,
+            )
 
             mode, kick = kickoff_block(workdir)
+            # DE-4 #294: dead-session claims in this workdir ride the first
+            # turn too, so the replacement session can resume instead of
+            # re-deriving. Empty when nothing is interruptible.
+            from .execution import ExecutionStore
+
+            claims = ExecutionStore(self._db, str(workdir)).interrupted()
+            if claims:
+                block = interrupted_claims_block(claims)
+                kick = f'{kick}\n\n{block}' if kick else _headered(block)
             if kick:
                 prompt = compose_first_prompt(prompt, kick)
                 traced({'type': 'KICKOFF', 'mode': mode})
