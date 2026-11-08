@@ -291,6 +291,10 @@ async def build_all(ctx: PluginContext) -> list[AbstractToolset]:
     toolsets.append(build_execution_toolset(
         ExecutionStore(ctx.db, str(ctx.workdir)), ctx.session_id,
         evaluator=evaluator,
+        # #300 DE-6: the evaluator blocks release in long-run modes.
+        evaluator_blocking=getattr(
+            ctx.approvals, 'mode', None) is not None,
+        approvals=ctx.approvals,
     ))
 
     return toolsets

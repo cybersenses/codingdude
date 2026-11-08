@@ -586,14 +586,24 @@ class ExecutionStore:
 
 def build_execution_toolset(
     store: ExecutionStore, session_id: str, evaluator=None,
+    evaluator_blocking: bool = False, approvals=None,
 ) -> FunctionToolset:
     """Agent tools for resumable ticket execution. First move on a claimed
     ticket is get_resume_state, not re-deriving everything from git.
 
     `evaluator` (#296 DE-2): a WorkEvaluator seam. When set, a 'done'
     release and a milestone-flagged step completion each trigger an
-    evaluation pass (persisted, capped — non-blocking until the long-run
-    flag lands); without one the triggers skip with an honest note."""
+    evaluation pass (persisted, capped); without one the triggers skip with
+    an honest note.
+
+    `evaluator_blocking` (#300 DE-6): True in long-run modes — a 'done'
+    release requires at least one PASS verdict on the attempt; NEEDS_WORK
+    blocks with the fix path and the cap escalates to NEEDS_OPERATOR.
+
+    `approvals` (#300 DE-6): the session's policy. In 'assisted' mode a
+    released 'done' emits the ONE publish-cycle gate card at convergence;
+    in 'unattended' the flag pre-authorized it at run start.
+    """
 
     active: list[int] = []
 
@@ -654,6 +664,42 @@ def build_execution_toolset(
         attempt = store._by_id(attempt_id)
         return attempt['ticket_id'] if attempt else 0
 
+    async def _converge_publish(approvals) -> str:
+        """DE-6 (#300): publish authorization at release convergence.
+        assisted: ONE gate card via the pending-gate machinery whose
+        approval sets publish_authorized (push consent is not merge
+        consent); unattended: preauthorized from the flag at run start.
+        No long-run mode: nothing happens here."""
+        if approvals is None:
+            return ''
+        mode = getattr(approvals, 'mode', None)
+        if mode not in ('assisted', 'unattended'):
+            return ''
+        from .longrun import PUBLISH_SCOPE
+
+        if mode == 'unattended':
+            return (
+                '\npublish cycle preauthorized by the flag: push'
+                ' codingdude/longrun-* and open a DRAFT PR — merge and'
+                ' draft->ready stay gated.'
+            )
+        if approvals.publish_authorized:
+            return '\npublish cycle already authorized.'
+        if approvals.ask is None:
+            return (
+                '\npublish needs the operator (no gate channel in this'
+                ' run): push stays always-gated.'
+            )
+        answer = await approvals.ask(
+            'PUBLISH AUTHORIZE — ' + PUBLISH_SCOPE + '?')
+        if answer in ('approve', 'pattern'):
+            approvals.publish_authorized = True
+            return (
+                '\npublish cycle authorized: push codingdude/longrun-* and'
+                ' open a DRAFT PR. Merge and draft->ready stay gated.'
+            )
+        return '\npublish declined — the run stays local.'
+
     async def claim_ticket(ticket_id: int, plan_steps: list[str] | None = None) -> str:
         """Claim a ticket for this session with an ordered plan; resumes your own claim if you already hold it."""
         try:
@@ -709,6 +755,26 @@ def build_execution_toolset(
         """Finish the claim: 'done' (closes the ticket) or 'released' (steps aside).
         'done' is blocked while steps lack verified evidence or ran out of order."""
         attempt_id = _attempt()
+        if status == 'done' and evaluator_blocking and evaluator is not None:
+            # DE-6: blocking evaluator in long-run modes — the release
+            # boundary is where a PASS is required, not just recorded.
+            evals = store.evaluations(attempt_id)
+            if not any(e.get('verdict') == 'PASS' for e in evals):
+                latest = evals[-1] if evals else None
+                verdict = latest.get('verdict') if latest else 'none'
+                summary = latest.get('summary', '') if latest else ''
+                if verdict == 'NEEDS_OPERATOR':
+                    return (
+                        'NEEDS_OPERATOR: the evaluator cap is exhausted'
+                        f' without PASS — {summary} Stop looping; surface'
+                        ' to the operator.'
+                    )
+                return (
+                    'release blocked: the evaluator has not PASSED this'
+                    f' attempt (latest verdict: {verdict} — {summary}).'
+                    ' Fix the findings and re-run evaluate_work; the'
+                    ' attempt-level cap bounds the loop.'
+                )
         try:
             store.release(attempt_id, status)
         except EvidenceError as exc:
@@ -718,6 +784,7 @@ def build_execution_toolset(
             # DE-2: the release-boundary evaluation. Non-blocking until the
             # long-run flag lands (#300); the verdict is persisted and loud.
             result += '\n' + await _run_evaluation('release')
+            result += await _converge_publish(approvals)
         active.pop()
         return result
 

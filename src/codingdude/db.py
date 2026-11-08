@@ -203,6 +203,7 @@ CREATE TABLE IF NOT EXISTS runs (
     status TEXT NOT NULL DEFAULT 'running'
         CHECK (status IN ('running', 'completed', 'failed', 'gate_aborted', 'interrupted')),
     exit_code INTEGER,
+    long_run TEXT,
     started_at TEXT NOT NULL,
     ended_at TEXT
 );
@@ -503,6 +504,15 @@ class Database:
             # (delegation/evaluator sessions) — NULL is main-session spend.
             self._conn.execute(
                 'ALTER TABLE usage ADD COLUMN function_name TEXT'
+            )
+        runs_cols = {
+            r['name'] for r in self._conn.execute('PRAGMA table_info(runs)')
+        }
+        if runs_cols and 'long_run' not in runs_cols:
+            # DE-6 (#300): the operator's long-run decision is persisted per
+            # run — every long run carries its enablement in metadata.
+            self._conn.execute(
+                'ALTER TABLE runs ADD COLUMN long_run TEXT'
             )
         self._commit()
 
@@ -871,12 +881,15 @@ class Database:
 
     # --- Runs (R31): durable run lifecycle so end-state survives bounces ---
 
-    def record_run_start(self, run_id: str, session_id: str, *, pid: int | None = None) -> None:
+    def record_run_start(
+        self, run_id: str, session_id: str, *,
+        pid: int | None = None, long_run: str | None = None,
+    ) -> None:
         self._conn.execute(
             'INSERT OR REPLACE INTO runs'
-            ' (run_id, session_id, worker_pid, status, started_at)'
-            " VALUES (?, ?, ?, 'running', ?)",
-            (run_id, session_id, pid, utc_now_iso()),
+            ' (run_id, session_id, worker_pid, status, long_run, started_at)'
+            " VALUES (?, ?, ?, 'running', ?, ?)",
+            (run_id, session_id, pid, long_run, utc_now_iso()),
         )
         self._commit()
 
@@ -892,7 +905,7 @@ class Database:
     def get_run(self, run_id: str) -> dict | None:
         row = self._conn.execute(
             'SELECT run_id, session_id, worker_pid, status, exit_code,'
-            ' started_at, ended_at FROM runs WHERE run_id = ?',
+            ' long_run, started_at, ended_at FROM runs WHERE run_id = ?',
             (run_id,),
         ).fetchone()
         return dict(row) if row else None
@@ -920,6 +933,16 @@ class Database:
         )
         self._commit()
         return cur.rowcount
+
+    def newest_running_long_run(self) -> str | None:
+        """The long-run level of the newest 'running' run (DE-6 #300), or
+        None — what /health echoes so the operator can see the active mode."""
+        row = self._conn.execute(
+            'SELECT long_run FROM runs'
+            " WHERE status = 'running' AND long_run IS NOT NULL"
+            ' ORDER BY started_at DESC, rowid DESC LIMIT 1',
+        ).fetchone()
+        return row['long_run'] if row else None
 
     def list_session_notes(self, session_id: str) -> list[dict]:
         rows = self._conn.execute(

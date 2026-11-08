@@ -505,9 +505,27 @@ class Engine:
         lane = None
         if long_run is not None:
             from .lane import LongRunLane
+            from .longrun import publish_branch, risk_digest, validate_level
 
+            # DE-6 (#300): the run request is the single source of truth —
+            # the policy's work mode and publish authorization derive from
+            # it, never from config or ambient state.
+            validate_level(long_run)
+            publish = long_run == 'unattended'
+            if approvals is not None:
+                approvals.mode = long_run
+                approvals.publish_authorized = publish
             lane = await LongRunLane.create(workdir, run_id, policy=approvals)
             traced(lane.event)
+            tier = lane.tier if lane is not None else 'host'
+            traced({
+                'type': 'LONG_RUN', 'level': long_run, 'tier': tier,
+                'publish_branch': publish_branch(run_id),
+                'publish': (
+                    'preauthorized' if publish
+                    else 'gate-card-at-convergence'),
+                'risks': risk_digest(long_run, tier, publish),
+            })
 
         started = _utcnow()
         try:

@@ -622,7 +622,8 @@ def create_app(
         # until they click dismiss — expiring it behind their back would hide
         # a question they may not have read yet.
         # R31: durable run record — survives a server bounce, unlike `channels`.
-        db.record_run_start(run_id, session_id, pid=None)
+        # DE-6 (#300): the long-run level is part of the run record.
+        db.record_run_start(run_id, session_id, pid=None, long_run=body.long_run)
 
         # The prompt rides on a file, not argv: Windows caps a process command
         # line at ~32k chars, and a long prompt (big editor selection) blew
@@ -676,7 +677,8 @@ def create_app(
             )
         channel.stderr_path = stderr_path
         # R31: backfill the live pid now that the process exists.
-        db.record_run_start(run_id, session_id, pid=channel.worker.pid)
+        db.record_run_start(
+            run_id, session_id, pid=channel.worker.pid, long_run=body.long_run)
         logging.getLogger('codingdude.server').info(
             'RUN_START run=%s session=%s worker_pid=%s prompt=%r',
             run_id, session_id, channel.worker.pid, body.prompt[:120])
@@ -1852,6 +1854,9 @@ def create_app(
             'version': __version__,
             'git_sha': _git_sha(),
             'started_at': _STARTED_AT,
+            # DE-6 (#300): the active long-run level, so the operator can
+            # see the mode a live run is in.
+            'long_run_level': db.newest_running_long_run(),
         }
 
     @app.middleware('http')
