@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     title TEXT,
+    phase TEXT,
     context_tokens INTEGER,
     context_limit INTEGER,
     keep_for_evals INTEGER NOT NULL DEFAULT 0
@@ -263,6 +264,7 @@ class SessionInfo:
     context_tokens: int | None = None
     context_limit: int | None = None
     keep_for_evals: bool = False
+    phase: str | None = None
 
 
 # SQLITE_BUSY retry budget: server and worker processes share the DB file, so a
@@ -448,6 +450,8 @@ class Database:
             ('keep_for_evals',
              'ALTER TABLE sessions ADD COLUMN keep_for_evals'
              ' INTEGER NOT NULL DEFAULT 0'),
+            ('phase',
+             'ALTER TABLE sessions ADD COLUMN phase TEXT'),
         ):
             if column not in existing:
                 self._conn.execute(stmt)
@@ -731,6 +735,22 @@ class Database:
             (int(keep), session_id),
         )
         self._commit()
+
+    def set_session_phase(self, session_id: str, phase: str | None) -> None:
+        """Record the cognitive function staffing this session (DE-7b #299);
+        NULL is the main profile."""
+        self._conn.execute(
+            'UPDATE sessions SET phase = ? WHERE session_id = ?',
+            (phase, session_id),
+        )
+        self._commit()
+
+    def session_phase(self, session_id: str) -> str | None:
+        """The session's recorded phase function (None = main profile)."""
+        row = self._conn.execute(
+            'SELECT phase FROM sessions WHERE session_id = ?', (session_id,)
+        ).fetchone()
+        return row['phase'] if row else None
 
     def add_session_note(
         self, session_id: str, content: str,

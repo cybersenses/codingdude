@@ -357,6 +357,51 @@ class ExecutionStore:
             })
         return out
 
+    def next_phase(self, session_id: str) -> dict | None:
+        """DE-7b (#299): the function tag of the first non-done TAGGED step
+        across this session's claimed attempts — the phase the session is
+        heading into. None when the remaining work is untagged (main
+        profile), which includes every pre-#299 plan."""
+        rows = self.db._conn.execute(
+            "SELECT * FROM ticket_execution"
+            " WHERE session_id = ? AND workdir = ? AND status = 'claimed'"
+            ' ORDER BY id',
+            (session_id, self.workdir),
+        ).fetchall()
+        for r in rows:
+            for i, s in enumerate(json.loads(r['steps_json'])):
+                if s.get('status') != 'done' and s.get('function'):
+                    return {
+                        'ticket_id': r['ticket_id'],
+                        'attempt_id': r['id'],
+                        'function': s['function'],
+                        'step_index': i,
+                    }
+        return None
+
+    def phase_handoff(self, nxt: dict) -> str:
+        """DE-7b: the get-up-to-speed artifact a fresh phase session is
+        seeded with — the ticket contract plus the resume-state render
+        (steps, evidence, drift, evaluator findings). The claims store is
+        the single source of what the next session needs to know."""
+        tid = nxt['ticket_id']
+        row = self.db._conn.execute(
+            'SELECT title, body FROM tickets WHERE id = ? AND workdir = ?',
+            (tid, self.workdir),
+        ).fetchone()
+        title = row['title'] if row else f'ticket #{tid}'
+        function = nxt.get('function') or 'main'
+        return (
+            f'## Phase handoff: {function}\n\n'
+            f'You are continuing ticket #{tid} ({title}) in a fresh session'
+            f' staffed as `{function}`. Prior turns are not in your context;'
+            ' everything you need is below. Continue with the first'
+            ' non-done step — evidence rules apply (update_execution_step'
+            ' with command, exit_code, key_output_line).\n\n'
+            'Where the work stands:\n'
+            + self.render_resume(tid)
+        )
+
     def drift(self, ticket_id: int) -> dict:
         """Plan diffing (R9 thickener): compare the latest attempt's claimed
         plan against its actual step progress. Flags steps marked 'done'
@@ -614,7 +659,18 @@ def build_execution_toolset(
         except ValueError as exc:
             return f'Cannot claim ticket #{ticket_id}: {exc}'
         active.append(attempt['id'])
-        return f"Attempt #{attempt['id']} claimed on ticket #{ticket_id}. Call get_resume_state if resuming."
+        result = f"Attempt #{attempt['id']} claimed on ticket #{ticket_id}. Call get_resume_state if resuming."
+        # DE-7b (#299): the staffing plan is operator-visible at claim
+        # approval — the function tags ride the live tool-call args, the
+        # result line names them in plan order.
+        functions: list[str] = []
+        for step in json.loads(attempt['steps_json']):
+            fn = step.get('function')
+            if fn and fn not in functions:
+                functions.append(fn)
+        if functions:
+            result += '\nstaffing: ' + ' -> '.join(functions)
+        return result
 
     async def update_execution_step(
         index: int, status: str, *,

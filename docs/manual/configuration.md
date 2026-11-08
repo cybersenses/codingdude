@@ -178,6 +178,23 @@ Spend per function is tagged on usage records: the Cost panel breaks spend
 down **by function** (`main session` = everything the main agent spent),
 which is the feedback loop for staffing decisions.
 
+### Phase sequencing (function-tagged plans)
+
+Plan steps can carry a function tag (`[function:coder] implement it` — the
+same leading-tag syntax as `[milestone]`). When the work reaches a step
+tagged with a *different* function than the current session, the next turn
+starts **fresh**: prior turns leave the model's context, the session is
+staffed from that function's profile (model + thinking + overlay), and the
+first prompt is seeded with a **phase handoff** — the ticket contract plus
+the full progress render (steps, evidence, drift, evaluator findings).
+The session keeps its identity, so the UI and the claims store are
+unaffected; the handoff artifact is persisted history, visible in the
+chat. When tagged work ends, the session returns to the main profile the
+same way. Plans with no tags never phase-switch — behavior is exactly as
+before. The `claim_ticket` result names the staffed functions in plan
+order (`staffing: designer -> coder -> evaluator`), and every boundary
+logs a `PHASE_START` event in the trace.
+
 ## Per-project overrides: `.codingdude.toml`
 
 A `.codingdude.toml` in the project workdir overrides the global config for
