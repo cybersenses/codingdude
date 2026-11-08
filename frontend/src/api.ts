@@ -44,6 +44,8 @@ export interface ModelsInfo {
   default: string
   models: Record<string, string | null>
   provider_prefixes?: string[]
+  functions?: Record<string, { model: string | null; thinking: string | null }>
+  function_specs?: Array<{ name: string; tool_policy: string[]; recommended: string }>
 }
 
 export interface Project {

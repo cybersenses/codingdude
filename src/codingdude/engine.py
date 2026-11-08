@@ -32,7 +32,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.models.fallback import FallbackModel
 
 from .checkpoints import CheckpointStore
-from .config import Config, parse_thinking
+from .config import Config, ThinkingSetting, parse_thinking
 from .db import Database
 from .operator_files import OperatorHalt
 from .run_pipeline import (
@@ -134,6 +134,20 @@ class RunOutcome:
     # #297 DE-3: the degraded-tier summary line (None on container tier —
     # every exec result already carries the tier line).
     lane_note: str | None = None
+
+
+@dataclass(frozen=True)
+class PhaseTransition:
+    """DE-7b (#299): a phase boundary — the next run starts a fresh session
+    under the target function's profile, seeded with the handoff artifact.
+    `model` is None for a return to the main profile (the caller's model
+    argument resolves normally); `function` is None on that same return."""
+
+    function: str | None
+    handoff: str
+    model: Model | None = None
+    thinking: ThinkingSetting | None = None
+    overlay: str | None = None
 
 
 @dataclass
@@ -491,16 +505,37 @@ class Engine:
         lane = None
         if long_run is not None:
             from .lane import LongRunLane
+            from .longrun import publish_branch, risk_digest, validate_level
 
+            # DE-6 (#300): the run request is the single source of truth —
+            # the policy's work mode and publish authorization derive from
+            # it, never from config or ambient state.
+            validate_level(long_run)
+            publish = long_run == 'unattended'
+            if approvals is not None:
+                approvals.mode = long_run
+                approvals.publish_authorized = publish
             lane = await LongRunLane.create(workdir, run_id, policy=approvals)
             traced(lane.event)
+            tier = lane.tier if lane is not None else 'host'
+            traced({
+                'type': 'LONG_RUN', 'level': long_run, 'tier': tier,
+                'publish_branch': publish_branch(run_id),
+                'publish': (
+                    'preauthorized' if publish
+                    else 'gate-card-at-convergence'),
+                'risks': risk_digest(long_run, tier, publish),
+            })
 
         started = _utcnow()
         try:
             self._services.check_budget(session_id)
+            # DE-7b (#299): a phase boundary resets the session — fresh
+            # history, profile model, handoff-seeded prompt.
+            phase = self._detect_phase(session_id, workdir)
             prepared = await self._prepare_history(
                 session_id, prompt, model, image_path, vision_model,
-                on_event, traced, boot_event,
+                on_event, traced, boot_event, phase=phase,
             )
             cp_holder: list[str] = []
 
@@ -521,7 +556,7 @@ class Engine:
                 vision_model=vision_model, fix_loop=fix_loop,
                 test_command=test_command,
                 on_edit=on_edit_dispatch, capture=capture_for_checkpoints,
-                traced=traced, lane=lane,
+                traced=traced, lane=lane, phase=phase,
             )
             try:
                 result = await self._run_agent(
@@ -572,6 +607,52 @@ class Engine:
             started=started, lane=lane,
         )
 
+    def _detect_phase(
+        self, session_id: str, workdir: Path,
+    ) -> PhaseTransition | None:
+        """DE-7b (#299): a phase boundary fires when the active attempt's
+        next non-done step staffs a DIFFERENT function than the session's
+        recorded phase — including the return to main when a tagged phase
+        ends. Sessions with no tagged work never transition (byte-compat).
+        """
+        from .execution import ExecutionStore
+        from .functions import function_spec, resolve_function_config
+        from .run_pipeline import supports_thinking
+
+        store = ExecutionStore(self._db, str(workdir))
+        nxt = store.next_phase(session_id)
+        target = nxt['function'] if nxt else None
+        current = self._db.session_phase(session_id)
+        if target == current:
+            return None
+        if target is None and current is None:
+            return None  # untagged-forever: byte-compatible with today
+        if target is None:
+            # tagged phase ended: back to the main profile, fresh session
+            return PhaseTransition(
+                function=None,
+                handoff=store.phase_handoff(nxt) if nxt else '',
+            )
+        spec = function_spec(target)
+        resolved = resolve_function_config(self._config, target)
+        if resolved is None or spec is None:  # pragma: no cover - registry
+            return None
+        model_name, thinking_str = resolved
+        model = _model_from_name(
+            model_name, self._config.models.fallback_base_url,
+            self._config.providers,
+        )
+        thinking = None
+        if thinking_str is not None:
+            parsed = parse_thinking(thinking_str)
+            if parsed is not None and supports_thinking(model):
+                thinking = parsed
+        return PhaseTransition(
+            function=target, model=model, thinking=thinking,
+            overlay=spec.overlay,
+            handoff=store.phase_handoff(nxt) if nxt is not None else '',
+        )
+
     def _ensure_session(
         self, session_id: str | None, workdir: Path, prompt: str,
     ) -> tuple[str, bool]:
@@ -618,8 +699,40 @@ class Engine:
         on_event: Callable[[object], None] | None,
         traced: Callable[[dict], None],
         boot_event: dict,
+        phase: PhaseTransition | None = None,
     ) -> PreparedRun:
-        """Resolve the model, load/compact history, record context usage."""
+        """Resolve the model, load/compact history, record context usage.
+
+        DE-7b (#299): on a phase transition the model comes from the
+        function profile and the session's message store is wiped — the
+        session row keeps its identity (claims-store join, UI continuity);
+        the model's context is what resets.
+        """
+        if phase is not None:
+            resolved = phase.model if phase.model is not None else (
+                self._resolve_run_model(model, image_path, vision_model))
+            model_name = getattr(resolved, 'model_name', str(resolved))
+            traced({'type': 'USER_PROMPT', 'text': prompt})
+            traced(boot_event)
+            traced({'type': 'PHASE_START', 'function': phase.function})
+            self._db.replace_messages(session_id, [])
+            self._db.set_session_phase(session_id, phase.function)
+            history: list = []
+            cm = self._history.context_manager(model_name)
+            ctx_stats = cm.usage(history)
+            traced({
+                'type': 'CONTEXT_USAGE',
+                'total_tokens': ctx_stats.total_tokens,
+                'model_limit': ctx_stats.model_limit,
+                'usage_percent': round(ctx_stats.usage_percent, 4),
+            })
+            self._db.update_session_context(
+                session_id, ctx_stats.total_tokens, ctx_stats.model_limit
+            )
+            return PreparedRun(
+                resolved=resolved, model_name=model_name, history=history,
+                cm=cm,
+            )
         resolved = self._resolve_run_model(model, image_path, vision_model)
         model_name = getattr(resolved, 'model_name', str(resolved))
 
@@ -664,9 +777,12 @@ class Engine:
         capture: Callable[[Path], None],
         traced: Callable[[dict], None],
         lane=None,
+        phase: PhaseTransition | None = None,
     ) -> AgentSpec:
         """Toolsets + instructions + the Agent, and the prompt to feed it."""
         thinking = parse_thinking(self._config.models.thinking)
+        if phase is not None and phase.thinking is not None:
+            thinking = phase.thinking
 
         # Pattern Approvals are session-scoped: load what past runs saved.
         if approvals is not None:
@@ -746,6 +862,10 @@ class Engine:
             # #297 DE-3: the agent must know where its shell commands run —
             # container (branch/mount) or honestly-degraded host tier.
             instructions += '\n\n' + lane.instructions_block()
+        if phase is not None and phase.overlay:
+            # DE-7b: the phase's registry overlay — persona/checklist
+            # material for the function now staffing the session.
+            instructions += '\n\n' + phase.overlay
 
         agent = self._prompts.agent(
             prepared.resolved, instructions, toolsets,
@@ -754,8 +874,10 @@ class Engine:
         # R71 #263: a session's first turn rides the executed kickoff —
         # takeover orientation, or the greenfield interview — composed
         # ahead of build_run_prompt so image attachment is unaffected.
-        # Later turns run the user's words alone.
-        if not prepared.history:
+        # Later turns run the user's words alone. DE-7b: a phase
+        # transition also starts from empty history, but the handoff
+        # artifact IS the orientation — the kickoff must not re-fire.
+        if not prepared.history and phase is None:
             from .kickoff import (
                 _headered,
                 compose_first_prompt,
@@ -776,6 +898,11 @@ class Engine:
             if kick:
                 prompt = compose_first_prompt(prompt, kick)
                 traced({'type': 'KICKOFF', 'mode': mode})
+        if phase is not None and phase.handoff:
+            # DE-7b: the get-up-to-speed artifact rides ahead of the user's
+            # words — the model sees exactly what it needs, history-faithful
+            # (this composed turn is what gets persisted).
+            prompt = f'{phase.handoff}\n\n---\n\n{prompt}'
         run_prompt = build_run_prompt(prompt, image_path)  # #82: image → BinaryContent
         if image_path is not None:
             traced({'type': 'IMAGE_ATTACHED', 'path': str(image_path)})

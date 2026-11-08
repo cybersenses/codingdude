@@ -162,10 +162,16 @@ export function Prompt({ onSend, disabled, running = false, suggestMode, setSugg
           )}
         </select>
       )}
-      <label className={`flex items-center gap-1 text-[10px] ${yolo ? 'text-danger' : 'text-neutral-400'}`} title="auto-approve every gated action for this session">
+      <label className={`flex items-center gap-1 text-[10px] ${yolo ? 'text-danger' : 'text-neutral-400'}`} title="yolo = the approval-policy switch: auto-approve every gated action for this session. It is NOT the long-run mode — see --long-run.">
         <input type="checkbox" checked={yolo} onChange={(e) => setYolo(e.target.checked)} />
         yolo
       </label>
+      <span
+        className="max-w-[26rem] cursor-help text-[10px] text-neutral-500"
+        title="Long runs (--long-run assisted|unattended on the run request) are a separate WORK mode: sandbox lane, durable resume, evidence gate, evaluator, publish cycle. They compose with — but are distinct from — the yolo approval switch."
+      >
+        long runs ≠ yolo
+      </span>
       <label
         className={`cursor-pointer text-sm ${notify ? '' : 'grayscale opacity-50'}`}
         title="notify when a run finishes or waits"

@@ -499,3 +499,121 @@ async def test_replay_eval_flags_seeded_defect(home, workdir):
     assert record['verdict'] == 'NEEDS_WORK'
     assert record['findings'][0]['file'] == 'app.py'
     assert record['findings'][0]['symbol'] == 'greet'
+
+
+# --- DE-7a (#298): the evaluator staffs from its function profile ---
+
+
+def _profiled_config():
+    from dataclasses import replace
+
+    from codingdude.config import Config, FunctionModelConfig
+
+    models = replace(
+        Config.defaults().models,
+        functions={'evaluator': FunctionModelConfig(
+            model='stub:evaluator-model', thinking='low')},
+    )
+    return replace(Config.defaults(), models=models)
+
+
+def test_evaluator_profile_resolves_from_config():
+    from codingdude.evaluator import resolve_evaluator_from_config
+
+    resolved: list[str] = []
+
+    def resolver(name: str):
+        resolved.append(name)
+        return 'SENTINEL-MODEL'
+
+    model, thinking = resolve_evaluator_from_config(
+        _profiled_config(), model_resolver=resolver)
+    assert model == 'SENTINEL-MODEL'
+    assert resolved == ['stub:evaluator-model']
+    # 'low' parses through parse_thinking; the supports_thinking gate keeps
+    # it only for thinking-capable models — a stub model is not, so None.
+    assert thinking is None
+
+
+def test_evaluator_profile_thinking_applies_to_capable_model():
+    from codingdude.evaluator import resolve_evaluator_from_config
+
+    class ThinkingStub:
+        model_name = 'stub:thinker'
+
+        @property
+        def models(self):  # FallbackModel-like: candidates carry glm names
+            return ()
+
+    def resolver(name: str):
+        return ThinkingStub()
+
+    import codingdude.run_pipeline as rp
+
+    orig = rp.supports_thinking
+    rp.supports_thinking = lambda m: True
+    try:
+        model, thinking = resolve_evaluator_from_config(
+            _profiled_config(), model_resolver=resolver)
+    finally:
+        rp.supports_thinking = orig
+    assert model is not None
+    assert thinking == 'low'
+
+
+def test_evaluator_profile_absent_yields_none():
+    from codingdude.config import Config
+    from codingdude.evaluator import resolve_evaluator_from_config
+
+    assert resolve_evaluator_from_config(Config.defaults()) == (None, None)
+
+
+async def test_evaluator_bills_with_function_tag(home, workdir):
+    from codingdude.db import Database
+    from codingdude.evaluator import WorkEvaluator
+
+    store = _store(home, workdir)
+    tid = _ticket(home, workdir)
+    attempt = store.claim(tid, 's1', plan_steps=['step'])
+    db = Database.connect(home)
+    evaluator = WorkEvaluator(
+        db=db, workdir=workdir, model=_verdict_model(), db_session='s1',
+    )
+    await evaluator.evaluate(tid, attempt['id'], trigger='release')
+    by_function = {
+        r['function_name']: r for r in db.session_usage('s1')['by_function']
+    }
+    assert by_function['evaluator']['requests'] >= 1
+
+
+async def test_plugins_wires_evaluator_from_function_profile(
+        home, workdir, tmp_path, monkeypatch):
+    """build_all resolves the evaluator from [models.functions.evaluator]
+    when set — through the engine's _model_from_name seam."""
+    from codingdude.db import Database
+    from codingdude.plugins import PluginContext, build_all
+
+    resolved: list[str] = []
+    fake_model = object()
+
+    def fake_model_from_name(name, base_url=None, providers=None):
+        resolved.append(name)
+        return fake_model
+
+    monkeypatch.setattr(
+        'codingdude.engine._model_from_name', fake_model_from_name)
+    captured: dict = {}
+
+    class Recorder:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr('codingdude.evaluator.WorkEvaluator', Recorder)
+    db = Database.connect(home)
+    ctx = PluginContext(
+        workdir=workdir, config=_profiled_config(), db=db,
+        session_id='s9', home=home,
+    )
+    await build_all(ctx)
+    assert resolved == ['stub:evaluator-model']
+    assert captured['model'] is fake_model

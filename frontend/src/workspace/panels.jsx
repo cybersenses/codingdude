@@ -121,6 +121,17 @@ export function CostPanel() {
               ))}
             </div>
           )}
+          {(usage.by_function || []).length > 0 && (
+            <div className="mt-2">
+              <div className="text-[10px] font-semibold uppercase text-ink-muted">by function</div>
+              {(usage.by_function || []).map((f) => (
+                <div key={f.function_name ?? 'main'} className="flex justify-between font-mono text-[10px] text-ink-muted">
+                  <span className="truncate">{f.function_name ?? 'main session'}</span>
+                  <span className="ml-2 shrink-0">{f.requests} req · {f.input_tokens}/{f.output_tokens} tok · ${(f.cost_usd ?? 0).toFixed(4)}</span>
+                </div>
+              ))}
+            </div>
+          )}
           {(usage.by_request || []).length > 0 && (
             <div className="mt-2">
               <div className="text-[10px] font-semibold uppercase text-ink-muted">per request</div>
@@ -326,6 +337,7 @@ export function TracePanel() {
         const colors = {
           GATE_REQUEST: 'text-warning', RUN_ERROR: 'text-danger',
           WORKER_HALTED: 'text-warning',
+          PHASE_START: 'text-accent', LONG_RUN: 'text-accent',
           RUN_FINISHED: 'text-brand-400', TOOL_CALL_START: 'text-accent',
           TOOL_CALL_END: 'text-accent', PLAN_PROPOSED: 'text-accent',
           USER_PROMPT: 'text-neutral-300',

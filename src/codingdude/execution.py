@@ -357,6 +357,53 @@ class ExecutionStore:
             })
         return out
 
+    def next_phase(self, session_id: str) -> dict | None:
+        """DE-7b (#299): the phase the session is heading into — the
+        FIRST non-done step across its claimed attempts, with that step's
+        function tag (None = main profile). The tag of the step actually
+        being worked decides the phase: an untagged prefix runs on main and
+        the boundary to a tagged function fires only when the work reaches
+        that step. None when nothing is left (all done, or no claims)."""
+        rows = self.db._conn.execute(
+            "SELECT * FROM ticket_execution"
+            " WHERE session_id = ? AND workdir = ? AND status = 'claimed'"
+            ' ORDER BY id',
+            (session_id, self.workdir),
+        ).fetchall()
+        for r in rows:
+            for i, s in enumerate(json.loads(r['steps_json'])):
+                if s.get('status') != 'done':
+                    return {
+                        'ticket_id': r['ticket_id'],
+                        'attempt_id': r['id'],
+                        'function': s.get('function'),
+                        'step_index': i,
+                    }
+        return None
+
+    def phase_handoff(self, nxt: dict) -> str:
+        """DE-7b: the get-up-to-speed artifact a fresh phase session is
+        seeded with — the ticket contract plus the resume-state render
+        (steps, evidence, drift, evaluator findings). The claims store is
+        the single source of what the next session needs to know."""
+        tid = nxt['ticket_id']
+        row = self.db._conn.execute(
+            'SELECT title, body FROM tickets WHERE id = ? AND workdir = ?',
+            (tid, self.workdir),
+        ).fetchone()
+        title = row['title'] if row else f'ticket #{tid}'
+        function = nxt.get('function') or 'main'
+        return (
+            f'## Phase handoff: {function}\n\n'
+            f'You are continuing ticket #{tid} ({title}) in a fresh session'
+            f' staffed as `{function}`. Prior turns are not in your context;'
+            ' everything you need is below. Continue with the first'
+            ' non-done step — evidence rules apply (update_execution_step'
+            ' with command, exit_code, key_output_line).\n\n'
+            'Where the work stands:\n'
+            + self.render_resume(tid)
+        )
+
     def drift(self, ticket_id: int) -> dict:
         """Plan diffing (R9 thickener): compare the latest attempt's claimed
         plan against its actual step progress. Flags steps marked 'done'
@@ -539,14 +586,24 @@ class ExecutionStore:
 
 def build_execution_toolset(
     store: ExecutionStore, session_id: str, evaluator=None,
+    evaluator_blocking: bool = False, approvals=None,
 ) -> FunctionToolset:
     """Agent tools for resumable ticket execution. First move on a claimed
     ticket is get_resume_state, not re-deriving everything from git.
 
     `evaluator` (#296 DE-2): a WorkEvaluator seam. When set, a 'done'
     release and a milestone-flagged step completion each trigger an
-    evaluation pass (persisted, capped — non-blocking until the long-run
-    flag lands); without one the triggers skip with an honest note."""
+    evaluation pass (persisted, capped); without one the triggers skip with
+    an honest note.
+
+    `evaluator_blocking` (#300 DE-6): True in long-run modes — a 'done'
+    release requires at least one PASS verdict on the attempt; NEEDS_WORK
+    blocks with the fix path and the cap escalates to NEEDS_OPERATOR.
+
+    `approvals` (#300 DE-6): the session's policy. In 'assisted' mode a
+    released 'done' emits the ONE publish-cycle gate card at convergence;
+    in 'unattended' the flag pre-authorized it at run start.
+    """
 
     active: list[int] = []
 
@@ -607,6 +664,42 @@ def build_execution_toolset(
         attempt = store._by_id(attempt_id)
         return attempt['ticket_id'] if attempt else 0
 
+    async def _converge_publish(approvals) -> str:
+        """DE-6 (#300): publish authorization at release convergence.
+        assisted: ONE gate card via the pending-gate machinery whose
+        approval sets publish_authorized (push consent is not merge
+        consent); unattended: preauthorized from the flag at run start.
+        No long-run mode: nothing happens here."""
+        if approvals is None:
+            return ''
+        mode = getattr(approvals, 'mode', None)
+        if mode not in ('assisted', 'unattended'):
+            return ''
+        from .longrun import PUBLISH_SCOPE
+
+        if mode == 'unattended':
+            return (
+                '\npublish cycle preauthorized by the flag: push'
+                ' codingdude/longrun-* and open a DRAFT PR — merge and'
+                ' draft->ready stay gated.'
+            )
+        if approvals.publish_authorized:
+            return '\npublish cycle already authorized.'
+        if approvals.ask is None:
+            return (
+                '\npublish needs the operator (no gate channel in this'
+                ' run): push stays always-gated.'
+            )
+        answer = await approvals.ask(
+            'PUBLISH AUTHORIZE — ' + PUBLISH_SCOPE + '?')
+        if answer in ('approve', 'pattern'):
+            approvals.publish_authorized = True
+            return (
+                '\npublish cycle authorized: push codingdude/longrun-* and'
+                ' open a DRAFT PR. Merge and draft->ready stay gated.'
+            )
+        return '\npublish declined — the run stays local.'
+
     async def claim_ticket(ticket_id: int, plan_steps: list[str] | None = None) -> str:
         """Claim a ticket for this session with an ordered plan; resumes your own claim if you already hold it."""
         try:
@@ -614,7 +707,18 @@ def build_execution_toolset(
         except ValueError as exc:
             return f'Cannot claim ticket #{ticket_id}: {exc}'
         active.append(attempt['id'])
-        return f"Attempt #{attempt['id']} claimed on ticket #{ticket_id}. Call get_resume_state if resuming."
+        result = f"Attempt #{attempt['id']} claimed on ticket #{ticket_id}. Call get_resume_state if resuming."
+        # DE-7b (#299): the staffing plan is operator-visible at claim
+        # approval — the function tags ride the live tool-call args, the
+        # result line names them in plan order.
+        functions: list[str] = []
+        for step in json.loads(attempt['steps_json']):
+            fn = step.get('function')
+            if fn and fn not in functions:
+                functions.append(fn)
+        if functions:
+            result += '\nstaffing: ' + ' -> '.join(functions)
+        return result
 
     async def update_execution_step(
         index: int, status: str, *,
@@ -651,6 +755,26 @@ def build_execution_toolset(
         """Finish the claim: 'done' (closes the ticket) or 'released' (steps aside).
         'done' is blocked while steps lack verified evidence or ran out of order."""
         attempt_id = _attempt()
+        if status == 'done' and evaluator_blocking and evaluator is not None:
+            # DE-6: blocking evaluator in long-run modes — the release
+            # boundary is where a PASS is required, not just recorded.
+            evals = store.evaluations(attempt_id)
+            if not any(e.get('verdict') == 'PASS' for e in evals):
+                latest = evals[-1] if evals else None
+                verdict = latest.get('verdict') if latest else 'none'
+                summary = latest.get('summary', '') if latest else ''
+                if verdict == 'NEEDS_OPERATOR':
+                    return (
+                        'NEEDS_OPERATOR: the evaluator cap is exhausted'
+                        f' without PASS — {summary} Stop looping; surface'
+                        ' to the operator.'
+                    )
+                return (
+                    'release blocked: the evaluator has not PASSED this'
+                    f' attempt (latest verdict: {verdict} — {summary}).'
+                    ' Fix the findings and re-run evaluate_work; the'
+                    ' attempt-level cap bounds the loop.'
+                )
         try:
             store.release(attempt_id, status)
         except EvidenceError as exc:
@@ -660,6 +784,7 @@ def build_execution_toolset(
             # DE-2: the release-boundary evaluation. Non-blocking until the
             # long-run flag lands (#300); the verdict is persisted and loud.
             result += '\n' + await _run_evaluation('release')
+            result += await _converge_publish(approvals)
         active.pop()
         return result
 

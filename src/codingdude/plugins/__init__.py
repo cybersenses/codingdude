@@ -180,6 +180,8 @@ async def build_all(ctx: PluginContext) -> list[AbstractToolset]:
             delegation_config=ctx.config.delegation,
             emitter=ctx.emitter, db=ctx.db, session_id=ctx.session_id,
             approvals=ctx.approvals,
+            # DE-7a (#298): function profiles staff delegate sessions
+            config=ctx.config,
         ))
 
     toolsets.append(build_web_toolset())
@@ -260,17 +262,28 @@ async def build_all(ctx: PluginContext) -> list[AbstractToolset]:
 
     toolsets.append(build_research_toolset(ctx.workdir))
     toolsets.append(build_artifacts_toolset(ctx.db, ctx.session_id))
-    # #296 DE-2: the evaluator pass — a read-only fresh-session grader on
-    # the subagent→main model chain; None when neither slot resolves, and
-    # every trigger then skips with an honest note instead of grading.
-    from codingdude.evaluator import WorkEvaluator, resolve_evaluator_model
+    # #296 DE-2: the evaluator pass — a read-only fresh-session grader.
+    # DE-7a (#298): the evaluator staffs from its registry profile
+    # ([models.functions.evaluator]) when configured; otherwise the
+    # subagent→main chain (None when neither slot resolves, and every
+    # trigger then skips with an honest note instead of grading).
+    from codingdude.evaluator import (
+        WorkEvaluator,
+        resolve_evaluator_from_config,
+        resolve_evaluator_model,
+    )
 
-    evaluator_model = resolve_evaluator_model(
+    profile_model, profile_thinking = resolve_evaluator_from_config(
+        ctx.config)
+    evaluator_model = profile_model or resolve_evaluator_model(
         ctx.subagent_model, getattr(ctx, 'main_model', None))
+    evaluator_thinking = (
+        profile_thinking if profile_model is not None else ctx.thinking)
     evaluator = (
         WorkEvaluator(
             db=ctx.db, workdir=ctx.workdir, model=evaluator_model,
-            thinking=ctx.thinking, delegation_config=ctx.config.delegation,
+            thinking=evaluator_thinking,
+            delegation_config=ctx.config.delegation,
             db_session=ctx.session_id,
         )
         if evaluator_model is not None else None
@@ -278,6 +291,10 @@ async def build_all(ctx: PluginContext) -> list[AbstractToolset]:
     toolsets.append(build_execution_toolset(
         ExecutionStore(ctx.db, str(ctx.workdir)), ctx.session_id,
         evaluator=evaluator,
+        # #300 DE-6: the evaluator blocks release in long-run modes.
+        evaluator_blocking=getattr(
+            ctx.approvals, 'mode', None) is not None,
+        approvals=ctx.approvals,
     ))
 
     return toolsets

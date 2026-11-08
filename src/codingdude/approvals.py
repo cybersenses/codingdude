@@ -93,20 +93,38 @@ class ApprovalPolicy:
     `allowed_binaries`: deny-by-default gate for unknown leading tokens — a
     command whose binary is not on this list (nor pattern-approved) is gated
     even if it would otherwise look read-only.
+
+    DE-6 (#300): `mode` is the long-run work mode, DERIVED from the run
+    request by the engine — None for ordinary runs (the matrix below is
+    byte-identical to pre-#300 behavior), 'assisted' auto-approves
+    NEEDS_GATE except the always-gated tier (decision #101), 'unattended'
+    is full-off approval semantics. `--yolo` stays the separate
+    approval-policy switch (decision #100: the two are distinct
+    instruments). `publish_authorized` gates the publish cycle: pre-set
+    from the flag in unattended, set by the ONE convergence gate card in
+    assisted; the git toolset consults it for codingdude/longrun-* pushes
+    only.
     """
 
     yolo: bool = False
+    mode: str | None = None
     patterns: set[str] = field(default_factory=set)
     ask: object | None = None
     on_pattern: object | None = None  # callable(pattern) — engine persists it
     ask_user: object | None = None  # interactive form asker (ASK_USER / ask_user tool)
     allowed_binaries: set[str] = field(default_factory=lambda: set(DEFAULT_ALLOWED_BINARIES))
+    publish_authorized: bool = False
 
     def approve_pattern(self, pattern: str) -> None:
         self.patterns.add(pattern)
 
     def decide(self, command: str) -> str:
         if self.yolo:
+            return APPROVED
+        if self.mode == 'unattended':
+            # DE-6: full-off approval semantics — same outcome as yolo,
+            # but from the work-mode switch (decision #100 keeps them
+            # conceptually distinct instruments).
             return APPROVED
         stripped = command.strip()
         if not stripped:
@@ -119,6 +137,10 @@ class ApprovalPolicy:
         if any(stripped == p or stripped.startswith(p + ' ') for p in self.patterns):
             return APPROVED
         if AUTO_SHELL.match(stripped) and base in self.allowed_binaries:
+            return APPROVED
+        if self.mode == 'assisted':
+            # DE-6: NEEDS_GATE auto-approves; the always-gated tier never
+            # reaches here (it returned DENIED above) — decision #101.
             return APPROVED
         return NEEDS_GATE
 

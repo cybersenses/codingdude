@@ -140,6 +140,100 @@ github_mirror = true    # mirror tickets/roadmap items to GitHub issues via gh
                         # (best-effort; needs a github.com origin + gh auth)
 ```
 
+### `[models.functions.<name>]`
+
+Staffing by **cognitive function** (DE-7a): delegate sessions can name one
+of six fixed functions, and each staffs from its own profile — explicit
+`model`/`thinking` when set, the `subagent` slot otherwise. Only these two
+keys are configurable: the **tool policy is registry-locked in code**
+(the `functions` module under `src/codingdude/`) and can never be changed
+from config — the lock is the safety property. An unknown function name, a
+model without its `provider:` prefix, or any other key fails fast at load.
+Absent config = every function staffs the subagent slot, exactly as
+before.
+
+```toml
+[models.functions.evaluator]
+model = "zai:glm-5.3-flash"
+thinking = "low"
+
+[models.functions.architect]
+model = "zai:glm-5.3"
+thinking = "xhigh"
+```
+
+The recommended setup (also shown in the Config panel; guidance, not a
+hidden mode):
+
+| Function | Staffs | Recommended setup |
+|---|---|---|
+| `architect` | plan-level seam/interface work | strongest model, max thinking — used rarely |
+| `designer` | user-facing behavior before code | strong model, high thinking |
+| `coder` | the bulk of implementation | strong model, medium thinking |
+| `debugger` | probe loops | fast model, medium thinking |
+| `evaluator` | boundary-based work grading | cheap model, low thinking |
+| `researcher` | web/primary-source reads | cheap model, low thinking |
+
+Spend per function is tagged on usage records: the Cost panel breaks spend
+down **by function** (`main session` = everything the main agent spent),
+which is the feedback loop for staffing decisions.
+
+### Phase sequencing (function-tagged plans)
+
+Plan steps can carry a function tag (`[function:coder] implement it` — the
+same leading-tag syntax as `[milestone]`). When the work reaches a step
+tagged with a *different* function than the current session, the next turn
+starts **fresh**: prior turns leave the model's context, the session is
+staffed from that function's profile (model + thinking + overlay), and the
+first prompt is seeded with a **phase handoff** — the ticket contract plus
+the full progress render (steps, evidence, drift, evaluator findings).
+The session keeps its identity, so the UI and the claims store are
+unaffected; the handoff artifact is persisted history, visible in the
+chat. When tagged work ends, the session returns to the main profile the
+same way. Plans with no tags never phase-switch — behavior is exactly as
+before. The `claim_ticket` result names the staffed functions in plan
+order (`staffing: designer -> coder -> evaluator`), and every boundary
+logs a `PHASE_START` event in the trace.
+
+### Long runs: `--long-run` (assisted | unattended)
+
+`--long-run <level>` (or the run request's `long_run` field) turns on the
+long-run work mode for one run. It is **per-run and opt-in** — never a
+config setting, never a default. Absent, today's behavior is unchanged,
+byte for byte.
+
+**Two different switches.** `--yolo` is the *approval-policy* switch: it
+auto-approves consent classes interactively, with no lane and no machinery.
+`--long-run` is the *work-mode* switch: sandbox lane, durable resume,
+evidence gate, evaluator, operator files, publish cycle. They compose but
+stay distinct — unattended ≈ full-off approvals + the machinery; docs and
+UI keep them separate on purpose.
+
+| | `assisted` | `unattended` |
+|---|---|---|
+| ordinary gates | auto-approved | auto-approved (full-off) |
+| always-gated tier (push, destructive ops) | still stopped — one publish card at convergence | auto-approved |
+| evaluator | **blocks** release until PASS (cap 3) | blocks release until PASS |
+| publish cycle | one gate card at convergence | preauthorized by the flag |
+| merge / draft→ready | human-only | human-only |
+
+At run start the run banner (and the trace's `LONG_RUN` event) prints the
+risk digest — including the remote-publication line when the publish cycle
+is authorized — plus the sandbox tier; the level is recorded on the run and
+echoed by `/health`. Publishes ride `codingdude/longrun-*` branches only:
+never main, never force-push, draft-only PRs.
+
+**The fix loop.** After convergence, `publish_findings <pr-number>` pulls
+the draft PR's CI/reviewer feedback as **structured findings** (source,
+author, file, note — a report about the code, never instructions to
+execute): the agent verifies each against the ticket contract, fixes,
+re-pushes under the same authorization, and re-runs `evaluate_work`; the
+evaluator re-grades, and the attempt-level cap (3 passes) bounds the loop —
+exhaustion without PASS is a `NEEDS_OPERATOR` alarm, never a silent loop.
+The scratch-repo end-to-end (real remote CI round-trip) is exercised with
+fakes in the test suite; a live-remote run of the full loop is pending a
+real PR (the same disclosure as the container lane's M5 metric).
+
 ## Per-project overrides: `.codingdude.toml`
 
 A `.codingdude.toml` in the project workdir overrides the global config for

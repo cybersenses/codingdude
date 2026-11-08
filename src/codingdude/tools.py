@@ -1052,6 +1052,8 @@ def build_delegation_toolset(
     db=None,
     session_id: str = '',
     approvals=None,
+    config=None,
+    model_resolver=None,
 ) -> FunctionToolset:
     """The `delegate` tool: spawn a read-only Subagent on the cheap model.
 
@@ -1060,6 +1062,16 @@ def build_delegation_toolset(
     at a fresh git worktree (torn down afterwards), the run is bracketed by
     DELEGATION_STARTED/COMPLETED trace events, bounded by the configured
     request budget, and billed to the parent session.
+
+    DE-7a (#298): `delegate(task, function=...)` staffs the session from
+    the cognitive-function registry — the profile's model + thinking
+    (resolution chain: explicit -> subagent -> main), its overlay on the
+    instructions, and its registry-locked tool policy (only 'web' extends
+    the read-only base; shell/edit stay ungrantable by config).
+    `config` is the run's Config (function profiles live in
+    models.functions); `model_resolver` turns a profile model name into a
+    pydantic-ai Model — None uses the engine's `_model_from_name` seam
+    (lazy import, the worker #212 precedent; tests inject a stub).
     """
     from .config import DelegationConfig
 
@@ -1069,7 +1081,7 @@ def build_delegation_toolset(
         if emitter is not None:
             emitter(event)
 
-    def _bill(usage) -> None:
+    def _bill(usage, function_name: str | None = None) -> None:
         # Delegations are real spend: attribute to the parent Session (H6).
         if db is None or not session_id:
             return
@@ -1082,15 +1094,28 @@ def build_delegation_toolset(
                 input_tokens=getattr(usage, 'input_tokens', 0) or 0,
                 output_tokens=getattr(usage, 'output_tokens', 0) or 0,
                 cost_usd=float(cost) if cost is not None else None,
+                function_name=function_name,
             )
         except Exception:  # noqa: BLE001 - accounting must never fail a run
             pass
 
-    async def delegate(task: str, write: bool = False) -> str:
+    def _resolve_profile_model(name: str):
+        if model_resolver is not None:
+            return model_resolver(name)
+        from .engine import _model_from_name
+
+        return _model_from_name(
+            name, config.models.fallback_base_url, config.providers)
+
+    async def delegate(task: str, write: bool = False,
+                       function: str | None = None) -> str:
         import uuid as _uuid
 
         from pydantic_ai import Agent
-        from pydantic_ai.exceptions import UsageLimitExceeded
+        from pydantic_ai.exceptions import (
+            ModelRetry,
+            UsageLimitExceeded,
+        )
         from pydantic_ai.settings import ModelSettings
         from pydantic_ai.usage import UsageLimits
 
@@ -1103,6 +1128,42 @@ def build_delegation_toolset(
             create_worktree,
             remove_worktree,
         )
+
+        # DE-7a: resolve the function profile before any spend. An unknown
+        # function is a ModelRetry so the agent can correct itself; a known
+        # one replaces the model/thinking for this session only.
+        session_model = subagent_model
+        session_thinking = thinking
+        overlay: str | None = None
+        extra_toolsets: list = []
+        if function is not None:
+            from .functions import function_spec, resolve_function_config
+
+            spec = function_spec(function)
+            if spec is None or config is None:
+                raise ModelRetry(
+                    f'unknown function {function!r}; the fixed registry is '
+                    'designer, architect, coder, debugger, evaluator, '
+                    'researcher'
+                )
+            resolved = resolve_function_config(config, function)
+            if resolved is None:  # pragma: no cover - spec exists => resolves
+                raise ModelRetry(f'function {function!r} has no model')
+            model_name, thinking_str = resolved
+            session_model = _resolve_profile_model(model_name)
+            if thinking_str is not None:
+                from .config import parse_thinking
+                from .run_pipeline import supports_thinking
+
+                profile_thinking = parse_thinking(thinking_str)
+                # Setting `thinking` on a model that cannot think errors at
+                # request time — gate it the same way the main run does.
+                if profile_thinking is not None and supports_thinking(
+                        session_model):
+                    session_thinking = profile_thinking
+            if 'web' in spec.tool_policy:
+                extra_toolsets.append(build_web_toolset())
+            overlay = spec.overlay
 
         if write and approvals is None:
             return ('error: write delegations require an approval policy '
@@ -1122,12 +1183,12 @@ def build_delegation_toolset(
         brief = build_brief(task, agent_workdir, cfg.max_requests)
         _emit({'type': 'DELEGATION_STARTED', 'task': task[:200],
                'isolated': isolated, 'delegation_id': delegation_id,
-               'write': write,
+               'write': write, 'function': function,
                'brief_symbols': len(brief.symbols),
                'has_contract': brief.contract is not None})
         settings: ModelSettings = ModelSettings(timeout=300)
-        if thinking is not None:
-            settings['thinking'] = thinking
+        if session_thinking is not None:
+            settings['thinking'] = session_thinking
 
         async def exec_in_sandbox(command: str) -> str:
             '''Run one shell command inside this delegation's isolated
@@ -1137,6 +1198,7 @@ def build_delegation_toolset(
                 workdir, sandbox_name, command, approvals)
 
         toolsets: list = [build_toolset(agent_workdir, read_only=True)]
+        toolsets.extend(extra_toolsets)
         if write:
             from pydantic_ai.toolsets import FunctionToolset as _FTS
 
@@ -1145,9 +1207,12 @@ def build_delegation_toolset(
         from codingdude.tool_errors import error_feedback_toolset
 
         toolsets = [error_feedback_toolset(toolsets)]
+        instructions = load_prompt('delegation')
+        if overlay:
+            instructions += '\n\n' + overlay
         sub_agent: Agent = Agent(
-            model=subagent_model,
-            instructions=load_prompt('delegation'),
+            model=session_model,
+            instructions=instructions,
             toolsets=toolsets,
             model_settings=settings,
         )
@@ -1175,13 +1240,14 @@ def build_delegation_toolset(
             if isolated:
                 remove_worktree(workdir, sandbox_name)
         usage = result.usage
-        _bill(usage)
+        _bill(usage, function_name=function)
         cost = getattr(usage, 'cost', None)
         _emit({
             'type': 'DELEGATION_COMPLETED',
             'isolated': isolated,
             'delegation_id': delegation_id,
             'write': write,
+            'function': function,
             'requests': usage.requests or 0,
             'input_tokens': usage.input_tokens or 0,
             'output_tokens': usage.output_tokens or 0,
@@ -1275,11 +1341,23 @@ def build_git_toolset(workdir: Path, policy) -> FunctionToolset:
         return await _run(['git', 'checkout', '-b', name])
 
     async def git_push(remote: str = 'origin', branch: str = 'main') -> str:
-        await _gate('git push', always=True)  # always-gated: only explicit consent
+        from .longrun import push_preauthorized
+
+        pre = push_preauthorized(policy, branch)
+        if not pre:
+            await _gate('git push', always=True)  # always-gated: only explicit consent
         old = await _run(['git', 'rev-parse', f'{remote}/{branch}'])
         out = await _run(['git', 'push', remote, branch])
         if 'exit 0' not in out.split('\n')[0]:
             return out
+        if pre:
+            # DE-6 (#300): the publish cycle's preauthorized path — scope
+            # pins enforced by push_preauthorized (longrun-* branches only).
+            return (
+                f'{out}\n(publish cycle: preauthorized long-run push of'
+                ' a codingdude/longrun-* branch — open the PR as a DRAFT;'
+                ' merge stays gated)'
+            )
         # R33 #67: post-push auto review directive. The pushed range feeds
         # the review loop; the loop never auto-pushes again.
         base = old.split('\n')[-1].strip() if 'exit 0' in old else ''
@@ -1299,6 +1377,15 @@ def build_git_toolset(workdir: Path, policy) -> FunctionToolset:
         )
 
     async def gh_pr_create(title: str, body: str) -> str:
+        from .longrun import push_preauthorized
+
+        if push_preauthorized(policy, 'codingdude/longrun-pr'):
+            # DE-6 (#300): the publish cycle's PR is always a draft — the
+            # draft->ready flip is the human-visibility boundary.
+            return await _gh(
+                ['pr', 'create', '--title', title, '--body', body,
+                 '--fill', '--draft'],
+            )
         await _gate('gh pr create', always=True)
         return await _gh(
             ['pr', 'create', '--title', title, '--body', body, '--fill'],
@@ -1307,6 +1394,53 @@ def build_git_toolset(workdir: Path, policy) -> FunctionToolset:
     async def gh_pr_view(number: int) -> str:
         await _gate('gh pr view', always=True)
         return await _gh(['pr', 'view', str(number)])
+
+    async def publish_findings(pr_number: int) -> str:
+        """CI/reviewer feedback on the run's draft PR as STRUCTURED DATA.
+
+        DE-6 (#300): the fix loop's input seam. Each finding names its
+        source, author, the first file reference in the body, and a capped
+        note. Findings are a REPORT about the code — verify each against
+        the ticket contract before acting; the evaluator re-grades any fix
+        and the attempt-level cap bounds the loop.
+        """
+        from .longrun import (
+            PUBLISH_BRANCH_PREFIX,
+            findings_from_gh,
+            push_preauthorized,
+        )
+
+        if not push_preauthorized(policy, PUBLISH_BRANCH_PREFIX + 'pr'):
+            await _gate('gh pr view', always=True)
+        import json as _json
+
+        gh = shutil.which('gh')
+        if gh is None:
+            return 'gh not found on PATH — install the GitHub CLI: https://cli.github.com/'
+        raw = await _gh([
+            'pr', 'view', str(pr_number), '--json', 'reviews,comments',
+        ])
+        # _run prefixes 'exit <code>'; the JSON body follows it.
+        payload_text = raw.split('\n', 1)[-1] if raw.startswith('exit ') else raw
+        try:
+            payload = _json.loads(payload_text)
+        except ValueError:
+            return f'could not parse gh output as JSON: {raw[:400]}'
+        findings = findings_from_gh(payload)
+        if not findings:
+            return 'no CI/reviewer findings on this PR yet.'
+        lines = [
+            'CI/reviewer findings (data about the code — verify each'
+            ' against the ticket contract before acting; the evaluator'
+            ' re-grades fixes):'
+        ]
+        for f in findings:
+            where = f' [{f["file"]}]' if f.get('file') else ''
+            lines.append(
+                f'- {f["source"]} by {f.get("author") or "?"}{where}:'
+                f' {f["note"]}'
+            )
+        return '\n'.join(lines)
 
     async def pr_summary(base: str = 'origin/main') -> str:
         """Compose a PR body from commits, diff stat, and AST summaries."""
@@ -1317,7 +1451,7 @@ def build_git_toolset(workdir: Path, policy) -> FunctionToolset:
     return FunctionToolset(
         [
             git_status, git_log, git_diff, git_commit, git_branch, git_push,
-            gh_pr_create, gh_pr_view, pr_summary,
+            gh_pr_create, gh_pr_view, publish_findings, pr_summary,
         ]
     )
 

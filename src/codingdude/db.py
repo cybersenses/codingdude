@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     title TEXT,
+    phase TEXT,
     context_tokens INTEGER,
     context_limit INTEGER,
     keep_for_evals INTEGER NOT NULL DEFAULT 0
@@ -88,6 +89,7 @@ CREATE TABLE IF NOT EXISTS usage (
     input_tokens INTEGER NOT NULL DEFAULT 0,
     output_tokens INTEGER NOT NULL DEFAULT 0,
     cost_usd REAL,
+    function_name TEXT,
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS embeddings (
@@ -201,6 +203,7 @@ CREATE TABLE IF NOT EXISTS runs (
     status TEXT NOT NULL DEFAULT 'running'
         CHECK (status IN ('running', 'completed', 'failed', 'gate_aborted', 'interrupted')),
     exit_code INTEGER,
+    long_run TEXT,
     started_at TEXT NOT NULL,
     ended_at TEXT
 );
@@ -262,6 +265,7 @@ class SessionInfo:
     context_tokens: int | None = None
     context_limit: int | None = None
     keep_for_evals: bool = False
+    phase: str | None = None
 
 
 # SQLITE_BUSY retry budget: server and worker processes share the DB file, so a
@@ -447,6 +451,8 @@ class Database:
             ('keep_for_evals',
              'ALTER TABLE sessions ADD COLUMN keep_for_evals'
              ' INTEGER NOT NULL DEFAULT 0'),
+            ('phase',
+             'ALTER TABLE sessions ADD COLUMN phase TEXT'),
         ):
             if column not in existing:
                 self._conn.execute(stmt)
@@ -489,6 +495,24 @@ class Database:
             self._conn.execute(
                 "ALTER TABLE ticket_execution ADD COLUMN evaluations_json TEXT"
                 " NOT NULL DEFAULT '[]'"
+            )
+        usage_cols = {
+            r['name'] for r in self._conn.execute('PRAGMA table_info(usage)')
+        }
+        if usage_cols and 'function_name' not in usage_cols:
+            # DE-7a (#298): the cognitive function that spent this usage
+            # (delegation/evaluator sessions) — NULL is main-session spend.
+            self._conn.execute(
+                'ALTER TABLE usage ADD COLUMN function_name TEXT'
+            )
+        runs_cols = {
+            r['name'] for r in self._conn.execute('PRAGMA table_info(runs)')
+        }
+        if runs_cols and 'long_run' not in runs_cols:
+            # DE-6 (#300): the operator's long-run decision is persisted per
+            # run — every long run carries its enablement in metadata.
+            self._conn.execute(
+                'ALTER TABLE runs ADD COLUMN long_run TEXT'
             )
         self._commit()
 
@@ -722,6 +746,22 @@ class Database:
         )
         self._commit()
 
+    def set_session_phase(self, session_id: str, phase: str | None) -> None:
+        """Record the cognitive function staffing this session (DE-7b #299);
+        NULL is the main profile."""
+        self._conn.execute(
+            'UPDATE sessions SET phase = ? WHERE session_id = ?',
+            (phase, session_id),
+        )
+        self._commit()
+
+    def session_phase(self, session_id: str) -> str | None:
+        """The session's recorded phase function (None = main profile)."""
+        row = self._conn.execute(
+            'SELECT phase FROM sessions WHERE session_id = ?', (session_id,)
+        ).fetchone()
+        return row['phase'] if row else None
+
     def add_session_note(
         self, session_id: str, content: str,
         run_id: str | None = None, offset_s: float | None = None,
@@ -841,12 +881,15 @@ class Database:
 
     # --- Runs (R31): durable run lifecycle so end-state survives bounces ---
 
-    def record_run_start(self, run_id: str, session_id: str, *, pid: int | None = None) -> None:
+    def record_run_start(
+        self, run_id: str, session_id: str, *,
+        pid: int | None = None, long_run: str | None = None,
+    ) -> None:
         self._conn.execute(
             'INSERT OR REPLACE INTO runs'
-            ' (run_id, session_id, worker_pid, status, started_at)'
-            " VALUES (?, ?, ?, 'running', ?)",
-            (run_id, session_id, pid, utc_now_iso()),
+            ' (run_id, session_id, worker_pid, status, long_run, started_at)'
+            " VALUES (?, ?, ?, 'running', ?, ?)",
+            (run_id, session_id, pid, long_run, utc_now_iso()),
         )
         self._commit()
 
@@ -862,7 +905,7 @@ class Database:
     def get_run(self, run_id: str) -> dict | None:
         row = self._conn.execute(
             'SELECT run_id, session_id, worker_pid, status, exit_code,'
-            ' started_at, ended_at FROM runs WHERE run_id = ?',
+            ' long_run, started_at, ended_at FROM runs WHERE run_id = ?',
             (run_id,),
         ).fetchone()
         return dict(row) if row else None
@@ -890,6 +933,16 @@ class Database:
         )
         self._commit()
         return cur.rowcount
+
+    def newest_running_long_run(self) -> str | None:
+        """The long-run level of the newest 'running' run (DE-6 #300), or
+        None — what /health echoes so the operator can see the active mode."""
+        row = self._conn.execute(
+            'SELECT long_run FROM runs'
+            " WHERE status = 'running' AND long_run IS NOT NULL"
+            ' ORDER BY started_at DESC, rowid DESC LIMIT 1',
+        ).fetchone()
+        return row['long_run'] if row else None
 
     def list_session_notes(self, session_id: str) -> list[dict]:
         rows = self._conn.execute(
@@ -928,11 +981,13 @@ class Database:
         input_tokens: int = 0,
         output_tokens: int = 0,
         cost_usd: float | None = None,
+        function_name: str | None = None,
     ) -> None:
         self._conn.execute(
             'INSERT INTO usage (session_id, model, requests, input_tokens, output_tokens,'
-            ' cost_usd, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            (session_id, model, requests, input_tokens, output_tokens, cost_usd, utc_now_iso()),
+            ' cost_usd, function_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            (session_id, model, requests, input_tokens, output_tokens, cost_usd,
+             function_name, utc_now_iso()),
         )
         self._commit()
 
@@ -961,8 +1016,23 @@ class Database:
         usage['by_request'] = [
             dict(r)
             for r in self._conn.execute(
-                'SELECT model, requests, input_tokens, output_tokens, cost_usd, created_at'
+                'SELECT model, requests, input_tokens, output_tokens, cost_usd,'
+                ' function_name, created_at'
                 ' FROM usage WHERE session_id = ? ORDER BY id',
+                (session_id,),
+            ).fetchall()
+        ]
+        # M6 (#298): spend per cognitive function — NULL groups the
+        # main session's own spend, tagged rows group delegation-side work.
+        usage['by_function'] = [
+            dict(r)
+            for r in self._conn.execute(
+                'SELECT function_name, COALESCE(SUM(requests), 0) AS requests,'
+                ' COALESCE(SUM(input_tokens), 0) AS input_tokens,'
+                ' COALESCE(SUM(output_tokens), 0) AS output_tokens,'
+                ' SUM(cost_usd) AS cost_usd'
+                ' FROM usage WHERE session_id = ?'
+                ' GROUP BY function_name ORDER BY function_name',
                 (session_id,),
             ).fetchall()
         ]
