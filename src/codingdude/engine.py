@@ -704,6 +704,7 @@ class Engine:
             capture=capture,
             emitter=traced,
             lane=lane,
+            main_model=prepared.resolved,
         )
         toolsets = await build_all(plugin_ctx)
         # Surface dead MCP servers to the agent: a mandated-but-unavailable
