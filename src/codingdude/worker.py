@@ -39,11 +39,16 @@ from websockets.exceptions import ConnectionClosed
 
 from .events import TERMINAL_EVENTS
 
-# Bounded tail drain after the terminal event: each tail pass is already capped by
-# run_pipeline._POST_RUN_LLM_TIMEOUT_S and they run concurrently, so ~one pass
-# plus slack. Keeps shutdown deterministic — nothing pending to cancel. Runs
-# AFTER RUN_FINISHED so extraction latency is invisible to the user (R30).
-_DRAIN_BEFORE_TERMINAL_S = 150.0
+# Bounded tail drain after the terminal event: the claims tail runs up to TWO
+# sequential bounded passes (audit + retry round, each capped by
+# run_pipeline._POST_RUN_LLM_TIMEOUT_S = 120s) concurrently with memory
+# extraction's single pass — so the honest worst case is ~240s, not "one pass
+# plus slack" (the old 150s cut live retries mid-verification). 300s covers
+# the worst case and matches engine._POST_RUN_DRAIN_TIMEOUT_S; a tail that
+# outlives even this is cancelled cleanly and still emits its verdict
+# event (#308). Runs AFTER RUN_FINISHED so extraction latency is invisible
+# to the user (R30).
+_DRAIN_BEFORE_TERMINAL_S = 300.0
 
 # #62: hard-exit watchdog. Worker state is fully persisted before the drain
 # ends, so interpreter teardown is not critical — but a wedged asyncio.run
