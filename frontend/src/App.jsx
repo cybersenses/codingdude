@@ -18,6 +18,7 @@ import { api, authLocal, call, checkAuth } from './api'
 import { SSE_MAX_RETRIES, runToReattach, sseRetryDelayMs } from './reattach'
 import { mergeProcesses } from './processes'
 import { pickPending } from './pending'
+import { resolveModelSend } from './modelpick'
 import { clearPendingPrompts } from './askUser'
 import { pendingArtifacts } from './artifacts'
 import { parseRevealArgs } from './citations'
@@ -72,6 +73,9 @@ export default function App() {
     localStorage.getItem('cd-theme') === 'light' ? 'light' : 'dark'
   )
   const [models, setModels] = useState(null)
+  // #307: a failed /models fetch is surfaced through the picker (disabled +
+  // readable message) instead of the select silently vanishing.
+  const [modelsError, setModelsError] = useState('')
   const [model, setModel] = useState(() => localStorage.getItem('cd-model') || '')
   const [yolo, setYolo] = useState(() => localStorage.getItem('cd-yolo') === '1')
   // #300 DE-6: long-run work-mode level ('' = off). Deliberately NOT persisted
@@ -112,7 +116,11 @@ export default function App() {
   // Model + YOLO: fetch the lineup once, persist the choice per browser.
   useEffect(() => {
     if (!loggedIn) return
-    api.listModels().then(setModels).catch(() => {})
+    // #307: no silent catch — the picker must explain itself when the
+    // lineup is unavailable.
+    api.listModels()
+      .then((m) => { setModels(m); setModelsError('') })
+      .catch((e) => setModelsError(String(e.message || e)))
   }, [loggedIn])
   useEffect(() => { localStorage.setItem('cd-model', model) }, [model])
   useEffect(() => { localStorage.setItem('cd-yolo', yolo ? '1' : '0') }, [yolo])
@@ -343,7 +351,7 @@ export default function App() {
       .startRun(
         activeSession,
         prompt,
-        model && models ? models.models[model] : null,
+        resolveModelSend(models, model).send,
         fixLoop,
         image ? image.b64 : null,
         yolo,
@@ -633,6 +641,7 @@ export default function App() {
     fixLoop,
     setFixLoop,
     models,
+    modelsError,
     model,
     setModel,
     yolo,

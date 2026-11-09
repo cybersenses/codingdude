@@ -1,7 +1,7 @@
 # RESCUE.md — recovery sheet for the R59 P0/P1 frontend refactor
 
 **Read this first if a session died, the UI is broken, or you are an AI taking over with no context.**
-Owner: CodingDude. Last updated: R80 wave 9 — §7 worktree-trap row (lane worktrees are run products; norecursedirs excludes dot-dirs) and the §1 `App.jsx` count after the DE-6/long-run composer work.
+Owner: CodingDude. Last updated: R81 #307 — §1 `App.jsx` count (710→719, model-picker combobox).
 
 ---
 
@@ -69,7 +69,7 @@ verified end-to-end via Engine model resolution + one real completion.
 | Working tree at kickoff | clean except `M ROADMAP.md` (R59 item) |
 | Risk area | `frontend/src/` — React UI |
 | Backend | untouched by R59 (Python, `src/codingdude/`) |
-| `App.jsx` size | history row, all counts are as-of-then (historical): 3288 at kickoff → **1337** after P0 → **1439** after #233 → **1488** after P1 → **1501** after the lazy-import split → **1500** after review deleted a duplicated comment block → **1498** after #232 removed the inert `refreshKey` chain → **1500** (historical) after R59 P2 passed `workdir` to the dock shell and moved `MEMORY_LIMIT` to `limits.ts` (post-push review then removed the dead `processes` prop). Today's figure is the last one. P1 is additive: `workspace/` is 485 lines across three files — `Workspace.jsx` 274, `catalogue.ts` 96, `catalogue.test.ts` 115 — and `App.jsx` only gained the flag, the shared prop bags and `React.lazy`/`Suspense` (historical: all counts as-of-then). P4 then deleted the classic shell — `App.jsx` is now 710 lines (a post-push review once took it to 674; R69 #261's reveal-code dispatch added seven and its post-push review two more; R80-3 #295's WORKER_HALTED terminal handling added five; the DE-6 ask-card sequence ids and long-run composer state added twenty-one more; the post-push review's shared ask-card builder one more), session/SSE state machine only |
+| `App.jsx` size | history row, all counts are as-of-then (historical): 3288 at kickoff → **1337** after P0 → **1439** after #233 → **1488** after P1 → **1501** after the lazy-import split → **1500** after review deleted a duplicated comment block → **1498** after #232 removed the inert `refreshKey` chain → **1500** (historical) after R59 P2 passed `workdir` to the dock shell and moved `MEMORY_LIMIT` to `limits.ts` (post-push review then removed the dead `processes` prop). Today's figure is the last one. P1 is additive: `workspace/` is 485 lines across three files — `Workspace.jsx` 274, `catalogue.ts` 96, `catalogue.test.ts` 115 — and `App.jsx` only gained the flag, the shared prop bags and `React.lazy`/`Suspense` (historical: all counts as-of-then). P4 then deleted the classic shell — `App.jsx` is now 719 lines (a post-push review once took it to 674; R69 #261's reveal-code dispatch added seven and its post-push review two more; R80-3 #295's WORKER_HALTED terminal handling added five; the DE-6 ask-card sequence ids and long-run composer state added twenty-one more; the post-push review's shared ask-card builder one more; R81 #307's model-picker combobox wiring added nine more), session/SSE state machine only |
 | **Shell** | since P4 there is exactly one shell: the dockview dock (`src/workspace/`); the sixteen-tab DockPanel and `panes.ts` (removed) are deleted. Escape hatch if a saved layout breaks: the boot restore degrades to the default preset; `localStorage.removeItem('cd-layout-v1')` resets by hand |
 
 ### Progress log (P0 steps, newest last)
