@@ -19,7 +19,9 @@ import { checklistPrompt } from '../checklists'
 
 // R59 P0: moved verbatim out of App.jsx. The prompt row sits directly above the
 // chat panel and is docked with it in P1.
-export function Prompt({ onSend, disabled, running = false, suggestMode, setSuggestMode, fixLoop, setFixLoop, models, model, setModel, yolo, setYolo, longRun, setLongRun, notify, toggleNotify }) {
+import { modelOptions, resolveModelSend } from '../modelpick'
+
+export function Prompt({ onSend, disabled, running = false, suggestMode, setSuggestMode, fixLoop, setFixLoop, models, modelsError, model, setModel, yolo, setYolo, longRun, setLongRun, notify, toggleNotify }) {
   const [text, setText] = useState('')
   const [image, setImage] = useState(null) // {b64, name}
   const [checklists, setChecklists] = useState(null) // null = picker not opened yet
@@ -148,19 +150,43 @@ export function Prompt({ onSend, disabled, running = false, suggestMode, setSugg
         <input type="checkbox" checked={fixLoop} onChange={(e) => setFixLoop(e.target.checked)} />
         fix until green
       </label>
-      {models && (
+      {/* #307: combobox — configured slots as datalist quick options, plus
+          free-typed `provider:model` passthrough. resolveModelSend owns what
+          is sent; the suffix shows the resolved name so an alias choice is
+          never mistaken for the literal string. */}
+      {modelsError ? (
         <select
-          className="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-ink"
-          value={model}
-          onChange={(e) => setModel(e.target.value)}
-          title={model && models.models[model] ? models.models[model] : 'configured default (main)'}
+          className="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-warning"
+          value=""
+          disabled
+          title={modelsError}
           aria-label="Model"
         >
-          <option value="">default (main)</option>
-          {['main', 'subagent', 'fallback', 'vision'].map((k) =>
-            models.models[k] ? <option key={k} value={k}>{k} — {models.models[k]}</option> : null
-          )}
+          <option value="">models unavailable</option>
         </select>
+      ) : (
+        <span className="flex items-center gap-1">
+          <input
+            className="w-36 min-w-0 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-ink"
+            value={model}
+            list="cd-model-options"
+            placeholder="default (main)"
+            aria-label="Model"
+            title="Per-run model: pick a configured slot from the list or type provider:model. Empty = configured default (main)."
+            onChange={(e) => setModel(e.target.value)}
+          />
+          <datalist id="cd-model-options">
+            {modelOptions(models).map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </datalist>
+          {(() => {
+            const send = resolveModelSend(models, model)
+            return !send.literal && send.send
+              ? <span className="text-[10px] text-neutral-500">→ {send.send}</span>
+              : null
+          })()}
+        </span>
       )}
       <label className={`flex items-center gap-1 text-[10px] ${yolo ? 'text-danger' : 'text-neutral-400'}`} title="yolo = the approval-policy switch: auto-approve every gated action for this session. It is NOT the long-run mode — see --long-run.">
         <input type="checkbox" checked={yolo} onChange={(e) => setYolo(e.target.checked)} />
