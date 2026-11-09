@@ -58,6 +58,63 @@ def exit_code_of(text: str) -> int | None:
     return int(m.group(1)) if m else None
 
 
+#: git identity for the bootstrap seed commit — deterministic, never relies
+#: on ambient global config (a fresh scratch project may have none).
+_BOOTSTRAP_IDENTITY = (
+    '-c', 'user.name=codingdude', '-c', 'user.email=codingdude@local',
+)
+_BOOTSTRAP_COMMIT_MSG = 'initial commit (long-run lane bootstrap)'
+
+
+def ensure_commit_ready(workdir: Path) -> str | None:
+    """#306: make a commitless workdir branchable so the container tier can
+    engage.
+
+    `git worktree add` needs at least one commit; scratch-project bootstrap
+    tasks start with no repo at all. This seeds the missing baseline: git
+    init when needed, then one seed commit of the current state (an empty
+    workdir gets an empty root commit). The commit lands on the default
+    branch of the long-run workdir — deliberate: the run's own changes stay
+    isolated on branch codingdude/<lane> while the seed state is the base
+    every future run starts from. Returns None when the workdir is
+    branchable, else a readable reason (the lane degrades honestly; this
+    never raises).
+    """
+    import shutil
+    import subprocess  # nosec B404 - fixed-argv git only, no shell
+
+    git = shutil.which('git') or 'git'
+
+    def _git(*args: str) -> tuple[int, str]:
+        proc = subprocess.run(
+            [git, *args], cwd=workdir, capture_output=True, text=True,
+        )  # nosec B603 - fixed argv, no shell
+        return proc.returncode, (proc.stdout + proc.stderr).strip()
+
+    code, out = _git('rev-parse', '--git-dir')
+    if code != 0:
+        code, out = _git('init')
+        if code != 0:
+            return f'git init failed: {out}'
+    code, _ = _git('rev-parse', 'HEAD')
+    if code == 0:
+        return None  # already branchable — touch nothing
+    code, out = _git(*_BOOTSTRAP_IDENTITY, 'add', '-A')
+    if code != 0:
+        return f'git add failed: {out}'
+    code, out = _git(*_BOOTSTRAP_IDENTITY, 'commit', '-m', _BOOTSTRAP_COMMIT_MSG)
+    if code == 0:
+        return None
+    # Nothing staged (empty workdir): an empty root commit still gives the
+    # worktree a HEAD to branch from.
+    code, out = _git(
+        *_BOOTSTRAP_IDENTITY, 'commit', '--allow-empty', '-m',
+        _BOOTSTRAP_COMMIT_MSG)
+    if code != 0:
+        return f'git commit failed: {out}'
+    return None
+
+
 @dataclass
 class LongRunLane:
     """One sandbox lane for one long run (DE-3)."""
@@ -85,7 +142,24 @@ class LongRunLane:
                        'tier (no container isolation)',
                 policy=policy,
             )
-        result = await create_sandbox(workdir, name, 'container')
+        # #306: bootstrap a commitless workdir. Scratch-project tasks START
+        # with no repo — without this, `git worktree add` failed and every
+        # bootstrap run degraded to the host tier: the one mode that exists
+        # to make the first commit could never reach the container. The seed
+        # commit lands on the default branch of the long-run workdir (gates
+        # are auto-approved on this path by construction); the run's own
+        # work stays isolated on branch codingdude/<name>.
+        bootstrap = ensure_commit_ready(workdir)
+        if bootstrap is not None:
+            logger.warning('lane bootstrap failed: %s', bootstrap)
+            return cls(
+                workdir=workdir, name=name, tier='host', sandbox_ready=False,
+                reason=f'lane bootstrap failed ({bootstrap}) — shell '
+                       'commands run on the host tier',
+                policy=policy,
+            )
+        result = await create_sandbox(
+            workdir, name, 'container', reuse_worktree=True)
         if result.startswith('sandbox ready'):
             return cls(
                 workdir=workdir, name=name, tier='container',

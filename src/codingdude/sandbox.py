@@ -191,13 +191,22 @@ async def exec_in_sandbox_dir(
     return f'{summary} {_tier_line()}'
 
 
-async def create_sandbox(workdir: Path, name: str, tier: str = '') -> str:
+async def create_sandbox(
+    workdir: Path, name: str, tier: str = '', reuse_worktree: bool = False,
+) -> str:
     """Create sandbox `name` (worktree + optional container/venv).
 
     The shared creation core: build_sandbox_toolset's `sandbox_create` tool
     and the long-run lane (#297) both call this one implementation, so the
     #292 container contracts (loopback-only publish, no host env, worktree
     mount only) hold for every creator.
+
+    reuse_worktree (#305): when the worktree already exists (the worker's
+    auto-resume re-creates the same lane name after attempt 1's timeout —
+    its worktree is attempt 1's work product and must be reused, not
+    refused), adopt it instead of failing with 'worktree already exists'.
+    Interactive callers keep the default (False): a name collision there is
+    a user mistake worth reporting, not something to adopt silently.
     """
     if tier not in ('', 'worktree', 'container'):
         return (f"error: unknown tier {tier!r} — use 'worktree' or "
@@ -210,7 +219,10 @@ async def create_sandbox(workdir: Path, name: str, tier: str = '') -> str:
                     'sandbox created')
         want_container = False  # default tier: fall back, report it
     try:
-        sandbox = create_worktree(workdir, name)
+        if reuse_worktree and (workdir / WORKTREE_DIRNAME / name).exists():
+            sandbox = workdir / WORKTREE_DIRNAME / name
+        else:
+            sandbox = create_worktree(workdir, name)
     except WorktreeError as exc:
         return f'error: {exc}'
     if want_container:

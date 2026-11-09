@@ -656,9 +656,18 @@ class Engine:
     def _ensure_session(
         self, session_id: str | None, workdir: Path, prompt: str,
     ) -> tuple[str, bool]:
-        """The Session this run appends to; created fresh when not given."""
+        """The Session this run appends to; created fresh when not given.
+
+        #305: a given id whose row is missing is recreated under the SAME id
+        — the worker's auto-resume re-enters run() after attempt 1's husk
+        cleanup deleted the brand-new empty session, and the resumed run must
+        stay visible and writable under the id the UI already knows."""
         if session_id is None:
             return self._db.create_session(workdir, title=prompt[:80]), True
+        if self._db.session_workdir(session_id) is None:
+            recreated = self._db.create_session(
+                workdir, title=prompt[:80], session_id=session_id)
+            return recreated, True
         return session_id, False
 
     def _boot_project(self, workdir: Path) -> dict:

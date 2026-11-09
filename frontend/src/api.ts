@@ -186,10 +186,17 @@ export const api = {
     fixLoop = false,
     imageB64: string | null = null,
     yolo = false,
+    // #300 DE-6: the long-run work-mode level — per-run, opt-in; absent =
+    // today's behavior. The server validates ('assisted' | 'unattended',
+    // else 422); null is omitted so the payload stays byte-compat.
+    longRun: 'assisted' | 'unattended' | null = null,
   ): Promise<{ run_id: string }> =>
     call<{ run_id: string }>(`/sessions/${sessionId}/runs`, {
       method: 'POST',
-      body: JSON.stringify({ prompt, model, fix_loop: fixLoop, image_b64: imageB64, yolo }),
+      body: JSON.stringify({
+        prompt, model, fix_loop: fixLoop, image_b64: imageB64, yolo,
+        ...(longRun ? { long_run: longRun } : {}),
+      }),
     }),
   cancelRun: (runId: string): Promise<unknown> => call(`/runs/${runId}`, { method: 'DELETE' }),
   approve: (runId: string, decision: ApprovalDecision): Promise<unknown> =>

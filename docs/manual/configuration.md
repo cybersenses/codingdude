@@ -234,6 +234,22 @@ The scratch-repo end-to-end (real remote CI round-trip) is exercised with
 fakes in the test suite; a live-remote run of the full loop is pending a
 real PR (the same disclosure as the container lane's M5 metric).
 
+**Timeout auto-resume.** A model request that stalls and hits the 300s
+transport timeout does not kill a long run: the worker resumes the run
+**once** with a continuation prompt (history, plan, and step state
+persist, so the agent picks up where the dead request left off) and the
+trace/UI show an `AUTO_RESUMED` event. A second timeout is terminal.
+Only the model-request family triggers this — a tool/command that times
+out stays in the ordinary tool-retry path.
+
+**Lane bootstrap on fresh projects.** A long run whose workdir has no git
+repository (or no commits yet) does not degrade to the host tier: the
+lane seeds the missing baseline — `git init` if needed, then one commit
+of the current state (message: `initial commit (long-run lane bootstrap)`;
+an empty project gets an empty root commit) — and starts the container.
+The run's own work stays isolated on the `codingdude/longrun-*` branch;
+publish/promotion rules are unchanged.
+
 ## Per-project overrides: `.codingdude.toml`
 
 A `.codingdude.toml` in the project workdir overrides the global config for

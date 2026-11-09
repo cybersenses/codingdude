@@ -33,6 +33,7 @@ import sys
 import threading
 from pathlib import Path
 
+import httpx
 import websockets
 from websockets.exceptions import ConnectionClosed
 
@@ -76,6 +77,29 @@ def arm_exit_watchdog(timeout: float = _EXIT_WATCHDOG_S) -> None:
     _exit_watchdog.start()
 
 
+# #305: the continuation prompt for the single auto-resume after a model
+# request timeout. History/plan/steps persist in the DB, so "continue" is
+# enough for the agent to pick up where the dead request left off.
+_TIMEOUT_RESUME_PROMPT = (
+    'The previous attempt was cut off by a model request timeout mid-run. '
+    'Continue the task from the last completed step; do not restart '
+    'completed work.'
+)
+
+
+def _is_transport_timeout(exc: Exception) -> bool:
+    """#305: the model-request timeout family — the one failure pydantic-ai
+    neither retries nor falls back on (R25 retries cover tools only).
+
+    Matches the concrete httpx timeouts, plain TimeoutError, and the exact
+    wording pydantic-ai flattens a model-request timeout to. Tool/command
+    timeouts say e.g. "command timed out after 300s" — those are R25
+    retryable tool failures and must NOT trigger a run resume."""
+    if isinstance(exc, (TimeoutError, httpx.TimeoutException)):
+        return True
+    return 'request timed out' in str(exc).lower()
+
+
 async def _finish_run(engine, args, on_event, outcome=None, exc=None) -> int:
     """Emit the terminal event immediately — no tail drain first (R30).
 
@@ -92,7 +116,7 @@ async def _finish_run(engine, args, on_event, outcome=None, exc=None) -> int:
     if exc is not None:
         from .exceptions import BudgetExceeded
 
-        terminal = {
+        terminal: dict[str, object] = {
             'type': 'RUN_ERROR',
             'code': 'budget' if isinstance(exc, BudgetExceeded) else 'error',
             'message': str(exc),
@@ -127,6 +151,10 @@ async def _finish_run(engine, args, on_event, outcome=None, exc=None) -> int:
         except Exception:  # noqa: BLE001 — bookkeeping must never fail the run
             logging.getLogger('codingdude.worker').warning(
                 'RUN_END_RECORD_FAILED run=%s', run_id, exc_info=True)
+    # R31 provenance: every traced event names its run — terminal events
+    # were the only un-stamped ones (#305 post-mortem) and broke run-scoped
+    # trace queries.
+    terminal['run_id'] = getattr(args, 'run_id', None)
     trace_terminal(args.session, terminal)
     # Single writer: queued, so ordering with other events is preserved.
     on_event(terminal)
@@ -256,6 +284,120 @@ async def _resolve_model(
                 yield gated_response(messages).parts[0].content
 
         return FunctionModel(gated, stream_function=gated_stream, model_name='test-gated')
+    if name == 'codingdude-test:ask2':
+        import json as _json
+
+        from pydantic_ai.messages import (
+            ModelResponse as MR,
+        )
+        from pydantic_ai.messages import (
+            TextPart as TP,
+        )
+        from pydantic_ai.messages import (
+            ToolCallPart,
+            ToolReturnPart,
+        )
+        from pydantic_ai.models.function import FunctionModel
+
+        # Two sequential ask_user calls (the live long-run failure shape:
+        # first ask resolves, second never does). Deterministic.
+        def ask2_response(messages):
+            returns = [
+                str(p.content)
+                for m in messages
+                for p in m.parts
+                if isinstance(p, ToolReturnPart)
+            ]
+            if not returns:
+                return MR(parts=[ToolCallPart(tool_name='ask_user', args={
+                    'questions': _json.dumps(
+                        [{'question': 'q-one?', 'options': ['a-one', 'x'], 'multi': False}]),
+                })])
+            if len(returns) == 1:
+                return MR(parts=[ToolCallPart(tool_name='ask_user', args={
+                    'questions': _json.dumps(
+                        [{'question': 'q-two?', 'options': ['a-two', 'y'], 'multi': False}]),
+                })])
+            ok = ('a-one' in returns[0]) and ('a-two' in returns[1])
+            return MR(parts=[TP(content='ask2-ok' if ok else f'ask2-bad {returns}')])
+
+        def ask2(messages, info):
+            return ask2_response(messages)
+
+        async def ask2_stream(messages, info):
+            response = ask2_response(messages)
+            for i, part in enumerate(response.parts):
+                if hasattr(part, 'tool_name'):
+                    from pydantic_ai.models.function import DeltaToolCall
+
+                    args = part.args
+                    if not isinstance(args, str):
+                        args = _json.dumps(args)
+                    yield {i: DeltaToolCall(name=part.tool_name, json_args=args)}
+                elif hasattr(part, 'content') and isinstance(part.content, str):
+                    yield part.content
+
+        return FunctionModel(ask2, stream_function=ask2_stream, model_name='test-ask2')
+    if name == 'codingdude-test:timeout-once':
+        # #305: the first model request raises a transport timeout (the live
+        # long-run failure shape — provider stall, then ModelSettings
+        # timeout surfaces as "Request timed out."), every later request
+        # answers normally. Proves the worker's single auto-resume turns one
+        # dead request into a finished run.
+        import httpx as _httpx
+        from pydantic_ai.messages import ModelResponse as MR
+        from pydantic_ai.messages import TextPart as TP
+        from pydantic_ai.models.function import FunctionModel
+
+        state = {'raised': False}
+
+        def flaky_response(messages):
+            if not state['raised']:
+                state['raised'] = True
+                raise _httpx.ReadTimeout('Request timed out.')
+            return MR(parts=[TP(content='timeout-recovered')])
+
+        def flaky(messages, info):
+            return flaky_response(messages)
+
+        async def flaky_stream(messages, info):
+            response = flaky_response(messages)
+            yield response.parts[0].content
+
+        return FunctionModel(
+            flaky, stream_function=flaky_stream, model_name='test-timeout-once')
+    if name == 'codingdude-test:timeout-always':
+        # #305: every model request raises the timeout — the resume must be
+        # bounded, so the second failure is a terminal RUN_ERROR.
+        import httpx as _httpx
+        from pydantic_ai.models.function import FunctionModel
+
+        def always_timeout(messages, info):
+            raise _httpx.ReadTimeout('Request timed out.')
+
+        async def always_timeout_stream(messages, info):
+            raise _httpx.ReadTimeout('Request timed out.')
+            yield  # pragma: no cover - unreachable, keeps it a generator
+
+        return FunctionModel(
+            always_timeout, stream_function=always_timeout_stream,
+            model_name='test-timeout-always')
+    if name == 'codingdude-test:tool-timeout-text':
+        # #305 pin: a TOOL-origin failure whose message embeds a timeout
+        # ("command timed out") is R25-retryable tool territory, NOT the
+        # model-request family — the worker must NOT burn its resume on it.
+        from pydantic_ai.models.function import FunctionModel
+
+        def tool_text_timeout(messages, info):
+            raise RuntimeError('command timed out after 300s')
+
+        async def tool_text_timeout_stream(messages, info):
+            raise RuntimeError('command timed out after 300s')
+            yield  # pragma: no cover - unreachable, keeps it a generator
+
+        return FunctionModel(
+            tool_text_timeout, stream_function=tool_text_timeout_stream,
+            model_name='test-tool-timeout-text')
     if providers or base_url:
         # #212: route through the engine's single resolution seam so the
         # worker, CLI, and engine can never disagree on provider routing.
@@ -475,20 +617,43 @@ async def run(args) -> int:
         reader_task = asyncio.create_task(_reader_loop(ws, pending_gate, pending_ask))
 
         halted = False
+        end_code: dict[str, int] = {'code': 0}
 
         async def runner():
             nonlocal halted
-            try:
-                outcome = await engine.run(
-                    **engine_run_kwargs(args, model, vision_model),
-                    approvals=policy,
-                    emit=on_event,
-                )
-            except Exception as exc:  # noqa: BLE001 — reported to the UI, not crashed
-                await _finish_run(engine, args, on_event, exc=exc)
-                return
+            # #305: one bounded auto-resume. The model-request timeout family
+            # is the one failure pydantic-ai neither retries nor falls back on
+            # (R25 retries cover tools); a single provider stall killed the
+            # whole live long-run (run WwDMwohNfhU, 2026-11-09). History/plan
+            # state persists, so a continuation prompt picks up where the
+            # dead request left off. Second timeout is terminal, never a loop.
+            kwargs = engine_run_kwargs(args, model, vision_model)
+            resumed = False
+            while True:
+                try:
+                    outcome = await engine.run(
+                        **kwargs, approvals=policy, emit=on_event,
+                    )
+                    break
+                except Exception as exc:  # noqa: BLE001 — reported to the UI, not crashed
+                    if resumed or not _is_transport_timeout(exc):
+                        end_code['code'] = await _finish_run(
+                            engine, args, on_event, exc=exc)
+                        return
+                    resumed = True
+                    event = {
+                        'type': 'AUTO_RESUMED',
+                        'run_id': getattr(args, 'run_id', None),
+                        'error': str(exc)[:200],
+                    }
+                    trace_terminal(args.session, event)
+                    log.info(
+                        'WORKER_AUTO_RESUME pid=%s — model request timed out; '
+                        'resuming once from persisted state', os.getpid())
+                    on_event(event)
+                    kwargs = {**kwargs, 'prompt': _TIMEOUT_RESUME_PROMPT}
             halted = getattr(outcome, 'status', '') == 'halted'
-            await _finish_run(engine, args, on_event, outcome=outcome)
+            end_code['code'] = await _finish_run(engine, args, on_event, outcome=outcome)
 
 
         runner_task = asyncio.create_task(runner())
@@ -529,7 +694,11 @@ async def run(args) -> int:
     # the user — exit non-zero so the reaper's message tells the truth.
     # #295 M4: an operator halt (AGENT_STOP) is not a clean finish either —
     # the worker exits non-zero even when the terminal was delivered.
-    return 0 if delivered and not halted else 1
+    # #305: a delivered terminal's exit code IS the run outcome (failed → 1)
+    # so the reaper's process-code record agrees with the worker's own
+    # record_run_end instead of overwriting its truthful 1 with a delivered 0
+    # (live symptom: status=failed with exit_code=0 on run WwDMwohNfhU).
+    return 0 if delivered and end_code['code'] == 0 and not halted else 1
 
 
 def engine_run_kwargs(args, model, vision_model=None) -> dict:

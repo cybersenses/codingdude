@@ -117,15 +117,78 @@ async def test_lane_degrades_when_docker_absent(workdir, monkeypatch):
     assert lane.event['tier'] == 'host'
 
 
-async def test_lane_degrades_without_git_history(workdir, monkeypatch):
+async def test_lane_bootstraps_commitless_workdir_to_container(
+        workdir, monkeypatch):
+    """#306: the lane engages the container tier on a commitless workdir.
+    Scratch-project bootstrap tasks START with no repo — before the seed
+    commit they degraded to the host tier, so the one mode that exists to
+    make the first commit could never reach the container. The seed state
+    is committed on the base repo; the run's worktree branches from it."""
+    from codingdude import sandbox
+    from codingdude.lane import LongRunLane
+
+    (workdir / 'seed.py').write_text('print("seed")\n', encoding='utf-8')
+    monkeypatch.setattr(sandbox, 'docker_usable', lambda: True)
+
+    async def fake_run(argv, cwd, timeout):
+        return f'exit 0\n{argv[-1]}'
+
+    monkeypatch.setattr(sandbox, '_run', fake_run)
+    lane = await LongRunLane.create(workdir, 'abc123def', policy=None)
+    assert lane.tier == 'container'
+    assert lane.sandbox_ready is True
+    assert lane.event['degraded'] is False
+    # the seed state is committed on the base repo — HEAD exists now
+    assert _git(workdir, 'rev-parse', 'HEAD')
+    # ...and the worktree branched from it
+    assert (workdir / '.codingdude-worktrees' / lane.name).exists()
+
+
+async def test_lane_reuses_worktree_on_resume(workdir, monkeypatch):
+    """#305 post-push review: the worker's auto-resume re-creates the SAME
+    lane name after attempt 1's timeout. Attempt 1's worktree is its work
+    product (cleanup keeps it) — attempt 2 must adopt it and stay on the
+    container tier, not degrade to host on 'worktree already exists'."""
+    from codingdude import sandbox
+    from codingdude.lane import LongRunLane
+
+    _init_repo(workdir)
+    monkeypatch.setattr(sandbox, 'docker_usable', lambda: True)
+
+    async def fake_run(argv, cwd, timeout):
+        return f'exit 0\n{argv[-1]}'
+
+    monkeypatch.setattr(sandbox, '_run', fake_run)
+    lane1 = await LongRunLane.create(workdir, 'abc123def', policy=None)
+    assert lane1.tier == 'container'
+    wtree = workdir / '.codingdude-worktrees' / lane1.name
+    (wtree / 'product.txt').write_text('attempt-1 work', encoding='utf-8')
+    await lane1.cleanup()  # container removed, worktree kept (by design)
+
+    lane2 = await LongRunLane.create(workdir, 'abc123def', policy=None)
+    assert lane2.tier == 'container', lane2.reason
+    assert lane2.sandbox_ready is True
+    # attempt 1's work product survives into the resumed lane
+    assert (wtree / 'product.txt').read_text(encoding='utf-8') == 'attempt-1 work'
+    await lane2.cleanup()
+
+
+async def test_lane_degrades_when_bootstrap_fails(workdir, monkeypatch):
+    """#306: a bootstrap failure degrades honestly to the host tier with the
+    reason in the LANE event — never raises, never silently hosts."""
+    import codingdude.lane as lane_mod
     from codingdude import sandbox
     from codingdude.lane import LongRunLane
 
     monkeypatch.setattr(sandbox, 'docker_usable', lambda: True)
+    monkeypatch.setattr(
+        lane_mod, 'ensure_commit_ready',
+        lambda wd: 'git commit failed: simulated')
     lane = await LongRunLane.create(workdir, 'abc123def', policy=None)
-    # no commits → no worktree → degraded, never raised
+    assert lane.tier == 'host'
     assert lane.sandbox_ready is False
-    assert 'commit' in (lane.reason or '').lower()
+    assert 'bootstrap failed' in (lane.reason or '')
+    assert 'git commit failed: simulated' in (lane.reason or '')
 
 
 async def test_lane_cleanup_removes_container_keeps_worktree(workdir, monkeypatch):
@@ -460,3 +523,39 @@ def test_engine_run_kwargs_forwards_long_run():
     kwargs = worker.engine_run_kwargs(_args(long_run='unattended'), model='m')
     assert kwargs['long_run'] == 'unattended'
     assert worker.engine_run_kwargs(_args(), model='m')['long_run'] is None
+
+
+# --- #306: ensure_commit_ready — the bootstrap seam unit tests
+
+
+def test_ensure_commit_ready_noop_on_committed_repo(workdir):
+    """A repo that already has commits is untouched — no extra commits."""
+    from codingdude.lane import ensure_commit_ready
+
+    _init_repo(workdir)
+    assert ensure_commit_ready(workdir) is None
+    assert _git(workdir, 'rev-list', '--count', 'HEAD') == '1'
+
+
+def test_ensure_commit_ready_seeds_commitless_repo(workdir):
+    """git init'ed but commitless: the current state becomes the seed commit
+    with the deterministic bootstrap identity."""
+    from codingdude.lane import ensure_commit_ready
+
+    _git(workdir, 'init', '-q')
+    (workdir / 'greet.py').write_text('print("hi")\n', encoding='utf-8')
+    assert ensure_commit_ready(workdir) is None
+    assert _git(workdir, 'rev-list', '--count', 'HEAD') == '1'
+    assert 'long-run lane bootstrap' in _git(workdir, 'log', '-1', '--format=%s')
+    # the seed file is IN the commit
+    assert 'greet.py' in _git(workdir, 'show', '--name-only', '--format=')
+
+
+def test_ensure_commit_ready_empty_dir_gets_root_commit(workdir):
+    """A plain (not-even-git) empty dir: init + empty root commit — enough
+    for the worktree to branch from."""
+    from codingdude.lane import ensure_commit_ready
+
+    assert ensure_commit_ready(workdir) is None
+    assert _git(workdir, 'rev-list', '--count', 'HEAD') == '1'
+    assert _git(workdir, 'log', '-1', '--format=%an') == 'codingdude'

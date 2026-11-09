@@ -19,7 +19,7 @@ import { checklistPrompt } from '../checklists'
 
 // R59 P0: moved verbatim out of App.jsx. The prompt row sits directly above the
 // chat panel and is docked with it in P1.
-export function Prompt({ onSend, disabled, running = false, suggestMode, setSuggestMode, fixLoop, setFixLoop, models, model, setModel, yolo, setYolo, notify, toggleNotify }) {
+export function Prompt({ onSend, disabled, running = false, suggestMode, setSuggestMode, fixLoop, setFixLoop, models, model, setModel, yolo, setYolo, longRun, setLongRun, notify, toggleNotify }) {
   const [text, setText] = useState('')
   const [image, setImage] = useState(null) // {b64, name}
   const [checklists, setChecklists] = useState(null) // null = picker not opened yet
@@ -166,12 +166,18 @@ export function Prompt({ onSend, disabled, running = false, suggestMode, setSugg
         <input type="checkbox" checked={yolo} onChange={(e) => setYolo(e.target.checked)} />
         yolo
       </label>
-      <span
-        className="max-w-[26rem] cursor-help text-[10px] text-neutral-500"
-        title="Long runs (--long-run assisted|unattended on the run request) are a separate WORK mode: sandbox lane, durable resume, evidence gate, evaluator, publish cycle. They compose with — but are distinct from — the yolo approval switch."
+      <select
+        className={`rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs ${longRun ? 'text-warning' : 'text-ink'}`}
+        value={longRun}
+        disabled={disabled}
+        title="Long-run work mode for this run (per-run, resets to off): sandbox lane, durable resume, evidence gate, evaluator, publish cycle. assisted = still stops with one publish card at the end; unattended = publishes its branch + draft PR on its own. Composes with — but is NOT — the yolo approval switch. Merge/ready stays yours either way."
+        aria-label="Long-run level"
+        onChange={(e) => setLongRun(e.target.value)}
       >
-        long runs ≠ yolo
-      </span>
+        <option value="">long run: off</option>
+        <option value="assisted">long run: assisted</option>
+        <option value="unattended">long run: unattended</option>
+      </select>
       <label
         className={`cursor-pointer text-sm ${notify ? '' : 'grayscale opacity-50'}`}
         title="notify when a run finishes or waits"

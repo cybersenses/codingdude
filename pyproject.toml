@@ -65,7 +65,15 @@ build-backend = "uv_build"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-norecursedirs = ["reference", ".scratch"]
+# '.scratch' is the scratch-probe area; the rest restores pytest's FULL
+# default exclusion set — the earlier two-entry list clobbered '.*', so
+# .codingdude-worktrees (lane worktrees kept by design after long-runs)
+# shadowed the real tests/ modules and poisoned collection (#306 follow-up).
+norecursedirs = [
+    "reference", ".scratch",
+    "*.egg", ".*", "_darcs", "build", "CVS", "dist", "node_modules", "venv",
+    "{arch}",
+]
 
 [tool.mypy]
 packages = ["codingdude"]
