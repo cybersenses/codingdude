@@ -33,6 +33,7 @@ import sys
 import threading
 from pathlib import Path
 
+import httpx
 import websockets
 from websockets.exceptions import ConnectionClosed
 
@@ -89,19 +90,14 @@ _TIMEOUT_RESUME_PROMPT = (
 def _is_transport_timeout(exc: Exception) -> bool:
     """#305: the model-request timeout family — the one failure pydantic-ai
     neither retries nor falls back on (R25 retries cover tools only).
-    Matches the concrete httpx timeouts, plain TimeoutError, and the
-    flattened message ("Request timed out.") the live long-run failure
-    surfaced."""
-    if isinstance(exc, TimeoutError):
-        return True
-    try:
-        import httpx
 
-        if isinstance(exc, httpx.TimeoutException):
-            return True
-    except ImportError:  # pragma: no cover - httpx ships with pydantic-ai
-        pass
-    return 'timed out' in str(exc).lower()
+    Matches the concrete httpx timeouts, plain TimeoutError, and the exact
+    wording pydantic-ai flattens a model-request timeout to. Tool/command
+    timeouts say e.g. "command timed out after 300s" — those are R25
+    retryable tool failures and must NOT trigger a run resume."""
+    if isinstance(exc, (TimeoutError, httpx.TimeoutException)):
+        return True
+    return 'request timed out' in str(exc).lower()
 
 
 async def _finish_run(engine, args, on_event, outcome=None, exc=None) -> int:
@@ -386,6 +382,22 @@ async def _resolve_model(
         return FunctionModel(
             always_timeout, stream_function=always_timeout_stream,
             model_name='test-timeout-always')
+    if name == 'codingdude-test:tool-timeout-text':
+        # #305 pin: a TOOL-origin failure whose message embeds a timeout
+        # ("command timed out") is R25-retryable tool territory, NOT the
+        # model-request family — the worker must NOT burn its resume on it.
+        from pydantic_ai.models.function import FunctionModel
+
+        def tool_text_timeout(messages, info):
+            raise RuntimeError('command timed out after 300s')
+
+        async def tool_text_timeout_stream(messages, info):
+            raise RuntimeError('command timed out after 300s')
+            yield  # pragma: no cover - unreachable, keeps it a generator
+
+        return FunctionModel(
+            tool_text_timeout, stream_function=tool_text_timeout_stream,
+            model_name='test-tool-timeout-text')
     if providers or base_url:
         # #212: route through the engine's single resolution seam so the
         # worker, CLI, and engine can never disagree on provider routing.

@@ -144,6 +144,35 @@ async def test_lane_bootstraps_commitless_workdir_to_container(
     assert (workdir / '.codingdude-worktrees' / lane.name).exists()
 
 
+async def test_lane_reuses_worktree_on_resume(workdir, monkeypatch):
+    """#305 post-push review: the worker's auto-resume re-creates the SAME
+    lane name after attempt 1's timeout. Attempt 1's worktree is its work
+    product (cleanup keeps it) — attempt 2 must adopt it and stay on the
+    container tier, not degrade to host on 'worktree already exists'."""
+    from codingdude import sandbox
+    from codingdude.lane import LongRunLane
+
+    _init_repo(workdir)
+    monkeypatch.setattr(sandbox, 'docker_usable', lambda: True)
+
+    async def fake_run(argv, cwd, timeout):
+        return f'exit 0\n{argv[-1]}'
+
+    monkeypatch.setattr(sandbox, '_run', fake_run)
+    lane1 = await LongRunLane.create(workdir, 'abc123def', policy=None)
+    assert lane1.tier == 'container'
+    wtree = workdir / '.codingdude-worktrees' / lane1.name
+    (wtree / 'product.txt').write_text('attempt-1 work', encoding='utf-8')
+    await lane1.cleanup()  # container removed, worktree kept (by design)
+
+    lane2 = await LongRunLane.create(workdir, 'abc123def', policy=None)
+    assert lane2.tier == 'container', lane2.reason
+    assert lane2.sandbox_ready is True
+    # attempt 1's work product survives into the resumed lane
+    assert (wtree / 'product.txt').read_text(encoding='utf-8') == 'attempt-1 work'
+    await lane2.cleanup()
+
+
 async def test_lane_degrades_when_bootstrap_fails(workdir, monkeypatch):
     """#306: a bootstrap failure degrades honestly to the host tier with the
     reason in the LANE event — never raises, never silently hosts."""

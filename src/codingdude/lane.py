@@ -158,7 +158,8 @@ class LongRunLane:
                        'commands run on the host tier',
                 policy=policy,
             )
-        result = await create_sandbox(workdir, name, 'container')
+        result = await create_sandbox(
+            workdir, name, 'container', reuse_worktree=True)
         if result.startswith('sandbox ready'):
             return cls(
                 workdir=workdir, name=name, tier='container',

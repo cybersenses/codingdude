@@ -41,6 +41,15 @@ const Workspace = lazy(() =>
 // survives as the per-panel [data-poll-error] banner and the store's
 // per-topic errors.
 
+// One ask-card shape for both ask sites (SSE handler + restorePending) —
+// DE-6: the sequence id is the card's React key so a second sequential ask
+// remounts a fresh, answerable card. The id is stamped OUTSIDE the state
+// updater and passed in: updaters must stay pure (StrictMode double-invokes
+// them in dev, which would double-increment a ref mutation inside).
+function askCard(questions, id) {
+  return { questions: questions || [], answered: false, id }
+}
+
 export default function App() {
   const [loggedIn, setLoggedIn] = useState(null) // null = checking cookie
   const [workdir, setWorkdir] = useState(localStorage.getItem('codingdude-workdir') || '')
@@ -239,17 +248,12 @@ export default function App() {
       const tr = await call(`/sessions/${sessionId}/trace?limit=300`)
       const p = pickPending(tr || [], runId)
       if (!p) return
+      const askId = p.kind === 'ask' ? ++askSeqRef.current : null
       setMessages((msgs) => {
         if (!msgs.length) return msgs
         const copy = [...msgs]
         const last = { ...copy[copy.length - 1] }
-        if (p.kind === 'ask') {
-          last.ask = {
-            questions: p.questions,
-            answered: false,
-            id: ++askSeqRef.current, // fresh card instance on reattach
-          }
-        }
+        if (p.kind === 'ask') last.ask = askCard(p.questions, askId) // fresh card instance on reattach
         else last.gate = p.command
         copy[copy.length - 1] = last
         return copy
@@ -438,6 +442,7 @@ export default function App() {
         const target = parseRevealArgs(ev.args)
         if (target) window.dispatchEvent(new CustomEvent('cd-open-file', { detail: target }))
       }
+      const askId = ev.type === 'ASK_USER' ? ++askSeqRef.current : null
       setMessages((msgs) => {
             const copy = [...msgs]
             const last = { ...copy[copy.length - 1] }
@@ -468,11 +473,7 @@ export default function App() {
               setStatus('waiting for approval')
             }
             if (ev.type === 'ASK_USER') {
-              last.ask = {
-                questions: ev.questions || [],
-                answered: false,
-                id: ++askSeqRef.current, // new key → the next ask remounts a fresh, answerable card
-              }
+              last.ask = askCard(ev.questions, askId) // new key → the next ask remounts a fresh, answerable card
             }
             if (ev.type === 'REVIEW_FINDINGS') last.review = ev.findings
             if (['RUN_FINISHED', 'RUN_ERROR', 'RUN_CANCELLED', 'WORKER_HALTED'].includes(ev.type)) {

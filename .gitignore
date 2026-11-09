@@ -25,6 +25,11 @@ pydantic-ai-main/
 *.db-wal
 nul
 
+# lane worktrees are run work-products of long-run sessions in THIS
+# workdir — runtime state, never tracked (#306 follow-up: a stale one
+# briefly got committed as an embedded repo by a careless git add -A)
+.codingdude-worktrees/
+
 # 26MB vendored binary removed from git (R74 #268) - fetched from upstream
 # releases by setup-codingdude.bat instead
 tools/github-mcp/github-mcp-server.exe

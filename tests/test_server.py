@@ -1011,6 +1011,32 @@ def test_worker_reports_error_after_second_timeout(server, tmp_path):
     assert 'timed out' in str(events[-1].get('message', '')).lower()
 
 
+def test_tool_origin_timeout_text_does_not_resume(server, tmp_path):
+    """#305 post-push review pin: the resume predicate matches the
+    model-request family only. A tool-origin failure whose text embeds a
+    timeout ("command timed out after 300s") is R25 tool territory — the
+    worker must NOT burn its single resume on it (no AUTO_RESUMED; terminal
+    RUN_ERROR directly)."""
+    app, base = server
+    session_id = create_session(base, tmp_path / 'proj-tool-timeout-text')
+    r = httpx.post(
+        f'{base}/sessions/{session_id}/runs',
+        json={
+            'prompt': 'do the thing',
+            'model': 'codingdude-test:tool-timeout-text',
+        },
+        headers=auth(),
+        timeout=30,
+    )
+    run_id = r.json()['run_id']
+
+    events = collect_sse(base, run_id, timeout=30)
+    types = [e['type'] for e in events]
+    assert types.count('AUTO_RESUMED') == 0, types
+    assert events[-1]['type'] == 'RUN_ERROR', types
+    assert 'command timed out' in str(events[-1].get('message', ''))
+
+
 def test_terminal_trace_events_carry_run_id(server, tmp_path):
     """#305 hygiene: R31 provenance — terminal trace events (RUN_FINISHED
     etc.) were the only un-stamped events in the session trace, which broke
