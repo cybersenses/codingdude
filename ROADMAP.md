@@ -1217,3 +1217,12 @@ Directions in scope (research doc §"Most actionable directions"):
 6. Graded autonomy dial — an 'assisted' mode between gated-interactive and --yolo (sandbox + evidence + evaluator; consent only for always-gated classes).
 
 Non-goal (process, not feature): institutionalized harness re-simplification after model upgrades — tracked as review checklist, not tickets.
+
+## R81 — Per-run model selection in the composer (model types per run)
+**Status:** open
+
+User finding: the composer model select exists (Prompt.jsx:151-164) but is slot-alias based (main/subagent/fallback/vision) — and with a single-provider config all slots resolve to the same model string, so the menu shows identical no-op entries. vision=null is silently dropped. There is NO way to pick an arbitrary model per run from the UI, even though the backend already accepts an arbitrary provider:model string on POST /runs (server → worker --model → _model_from_name → infer_model).
+
+Frontend-essential per core directive #21: no ticket under this umbrella closes until the composer surface ships.
+
+Scope: (1) composer model picker offers configured slots AND arbitrary provider:model entry (combobox/datalist pattern already proven in ModelsConfig.jsx); (2) stop the silent .catch(() => {}) on the /models fetch in App.jsx — a failed fetch must not silently remove the picker (disabled state with a readable message instead); (3) the resolved model actually sent rides the run (App.jsx startRun already resolves slot → name; keep honest labeling of what will be used); (4) optional small backend: /models could expose the function-registry lineup so real options are listed without typing.
