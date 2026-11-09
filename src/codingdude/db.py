@@ -634,8 +634,11 @@ class Database:
         ).fetchone()
         return dict(row) if row else None
 
-    def create_session(self, workdir: Path, title: str | None = None) -> str:
-        session_id = uuid.uuid4().hex
+    def create_session(
+        self, workdir: Path, title: str | None = None,
+        session_id: str | None = None,
+    ) -> str:
+        session_id = session_id or uuid.uuid4().hex
         now = utc_now_iso()
         self._conn.execute(
             'INSERT INTO sessions (session_id, workdir, created_at, updated_at, title)'

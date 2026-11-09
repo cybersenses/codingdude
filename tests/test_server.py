@@ -849,3 +849,215 @@ def test_configure_file_logging_writes_server_log(tmp_path):
     text = (tmp_path / 'server.log').read_text(encoding='utf-8')
     assert 'PROBE_LINE xyzzy' in text
     assert any(h for h in logging.getLogger().handlers if h is handler) is False
+
+
+def _answer(base: str, run_id: str, answers: dict, path_prefix: str = '') -> dict:
+    r = httpx.post(
+        f'{base}{path_prefix}/runs/{run_id}/ask',
+        json={'answers': answers},
+        headers=auth(),
+        timeout=10,
+    )
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_two_ask_user_roundtrip(server, tmp_path):
+    """ask_user ×2 -> both answered via POST /ask -> run finishes, model saw both.
+
+    Regression seam for the 2026-11-08 live failure (run bgLc0JzgEDs): the
+    worker parked on the second ask_user future until Stop. Proves the whole
+    server-side delivery chain (endpoint -> channel.inbox -> ws pump -> worker
+    reader -> pending_ask future) for SEQUENTIAL asks, not just the first.
+    """
+    app, base = server
+    workdir = tmp_path / 'ask-proj'
+    session_id = create_session(base, workdir)
+    r = httpx.post(
+        f'{base}/sessions/{session_id}/runs',
+        json={'prompt': 'ask me two things', 'model': 'codingdude-test:ask2',
+              'long_run': 'unattended'},
+        headers=auth(),
+        timeout=30,
+    )
+    assert r.status_code == 200, r.text
+    run_id = r.json()['run_id']
+
+    seen = []
+    asks_answered = set()
+    with httpx.stream(
+        'GET', f'{base}/runs/{run_id}/events', headers=auth(), timeout=30
+    ) as resp:
+        for line in resp.iter_lines():
+            if not line.startswith('data: '):
+                continue
+            event = json.loads(line.removeprefix('data: '))
+            seen.append(event)
+            if event['type'] == 'ASK_USER':
+                questions = event.get('questions') or []
+                for q in questions:
+                    if q.get('question') == 'q-one?' and 'q-one?' not in asks_answered:
+                        asks_answered.add('q-one?')
+                        time.sleep(0.2)
+                        _answer(base, run_id, {'q-one?': 'a-one'})
+                    elif q.get('question') == 'q-two?' and 'q-two?' not in asks_answered:
+                        asks_answered.add('q-two?')
+                        time.sleep(0.2)
+                        _answer(base, run_id, {'q-two?': 'a-two'})
+            if event['type'] in TERMINAL_EVENTS:
+                break
+
+    types = [e['type'] for e in seen]
+    assert types.count('ASK_USER') == 2, types
+    assert asks_answered == {'q-one?', 'q-two?'}
+    assert types[-1] == 'RUN_FINISHED', types
+    contents = ''.join(
+        e.get('delta', '') for e in seen if e['type'] == 'TEXT_MESSAGE_CONTENT'
+    )
+    assert 'ask2-ok' in contents, contents
+
+
+def test_ask_answer_via_api_prefix(server, tmp_path):
+    """Second answer posted the way the browser does (/api/... prefix, after an
+    idle gap) -> middleware strips the prefix and the worker still resolves."""
+    app, base = server
+    workdir = tmp_path / 'ask-proj-prefix'
+    session_id = create_session(base, workdir)
+    r = httpx.post(
+        f'{base}/sessions/{session_id}/runs',
+        json={'prompt': 'ask me two things', 'model': 'codingdude-test:ask2'},
+        headers=auth(),
+        timeout=30,
+    )
+    run_id = r.json()['run_id']
+
+    seen = []
+    with httpx.stream(
+        'GET', f'{base}/runs/{run_id}/events', headers=auth(), timeout=30
+    ) as resp:
+        for line in resp.iter_lines():
+            if not line.startswith('data: '):
+                continue
+            event = json.loads(line.removeprefix('data: '))
+            seen.append(event)
+            if event['type'] == 'ASK_USER':
+                questions = [q.get('question') for q in (event.get('questions') or [])]
+                if 'q-one?' in questions:
+                    _answer(base, run_id, {'q-one?': 'a-one'})
+                elif 'q-two?' in questions:
+                    time.sleep(1.0)  # idle gap, like a human reading the card
+                    _answer(base, run_id, {'q-two?': 'a-two'}, path_prefix='/api')
+            if event['type'] in TERMINAL_EVENTS:
+                break
+
+    contents = ''.join(
+        e.get('delta', '') for e in seen if e['type'] == 'TEXT_MESSAGE_CONTENT'
+    )
+    assert 'ask2-ok' in contents, contents
+
+
+# ---- #305: model-request timeout resilience (single worker auto-resume) ----
+
+
+def test_worker_auto_resumes_once_after_model_timeout(server, tmp_path):
+    """#305: the live long-run failure (run WwDMwohNfhU, 2026-11-09): the
+    model request stalled and the whole run died with RUN_ERROR "Request
+    timed out.". pydantic-ai retries cover tool failures only — transport
+    timeouts are explicitly not retried (ModelSettings timeout=300,
+    run_pipeline.py). The worker must resume ONCE with a continuation
+    prompt and finish, and the resumed run must keep the session row the
+    first attempt's husk cleanup deleted."""
+    app, base = server
+    session_id = create_session(base, tmp_path / 'proj-timeout-once')
+    r = httpx.post(
+        f'{base}/sessions/{session_id}/runs',
+        json={'prompt': 'do the thing', 'model': 'codingdude-test:timeout-once'},
+        headers=auth(),
+        timeout=30,
+    )
+    assert r.status_code == 200, r.text
+    run_id = r.json()['run_id']
+
+    events = collect_sse(base, run_id, timeout=30)
+    types = [e['type'] for e in events]
+    assert types.count('AUTO_RESUMED') == 1, types
+    assert types[-1] == 'RUN_FINISHED', types
+    contents = ''.join(
+        e.get('delta', '') for e in events if e['type'] == 'TEXT_MESSAGE_CONTENT'
+    )
+    assert 'timeout-recovered' in contents
+    # The resumed run re-enters engine.run with the same session id after
+    # attempt 1 deleted the fresh empty session — the row must exist again.
+    assert app.state.db.session_workdir(session_id) is not None
+
+
+def test_worker_reports_error_after_second_timeout(server, tmp_path):
+    """#305: the resume is bounded — a second timeout is terminal (RUN_ERROR
+    with the original message), never another resume loop."""
+    app, base = server
+    session_id = create_session(base, tmp_path / 'proj-timeout-always')
+    r = httpx.post(
+        f'{base}/sessions/{session_id}/runs',
+        json={'prompt': 'do the thing', 'model': 'codingdude-test:timeout-always'},
+        headers=auth(),
+        timeout=30,
+    )
+    run_id = r.json()['run_id']
+
+    events = collect_sse(base, run_id, timeout=30)
+    types = [e['type'] for e in events]
+    assert types.count('AUTO_RESUMED') == 1, types
+    assert events[-1]['type'] == 'RUN_ERROR', types
+    assert 'timed out' in str(events[-1].get('message', '')).lower()
+
+
+def test_terminal_trace_events_carry_run_id(server, tmp_path):
+    """#305 hygiene: R31 provenance — terminal trace events (RUN_FINISHED
+    etc.) were the only un-stamped events in the session trace, which broke
+    run-scoped trace queries during the live long-run post-mortem."""
+    app, base = server
+    home = tmp_path / 'home'
+    session_id = create_session(base, tmp_path / 'proj-termstamp')
+    r = httpx.post(
+        f'{base}/sessions/{session_id}/runs',
+        json={'prompt': 'say hi', 'model': 'codingdude-test:echo'},
+        headers=auth(),
+        timeout=30,
+    )
+    run_id = r.json()['run_id']
+    collect_sse(base, run_id)
+
+    trace = (home / 'traces' / f'{session_id}.jsonl').read_text(encoding='utf-8')
+    terminals = [
+        json.loads(line) for line in trace.splitlines()
+        if line.strip() and json.loads(line).get('type') in TERMINAL_EVENTS
+    ]
+    assert terminals, 'no terminal events in trace'
+    assert all(t.get('run_id') == run_id for t in terminals), terminals
+
+
+def test_failed_run_records_nonzero_exit_code(server, tmp_path):
+    """#305 hygiene: the reaper must not overwrite the worker's truthful end
+    code with the process code — a delivered terminal means the worker exits
+    0 even when the run failed, and the live row showed status=failed with
+    exit_code=0 (run WwDMwohNfhU). A failed run must read exit_code 1."""
+    app, base = server
+    session_id = create_session(base, tmp_path / 'proj-exitcode')
+    r = httpx.post(
+        f'{base}/sessions/{session_id}/runs',
+        json={'prompt': 'do the thing', 'model': 'codingdude-test:timeout-always'},
+        headers=auth(),
+        timeout=30,
+    )
+    run_id = r.json()['run_id']
+    collect_sse(base, run_id)
+
+    deadline = time.time() + 30
+    row: dict = {}
+    while time.time() < deadline:
+        row = app.state.db.get_run(run_id) or {}
+        if row.get('status') == 'failed' and row.get('exit_code') is not None:
+            break
+        time.sleep(0.3)
+    assert row.get('status') == 'failed', row
+    assert row.get('exit_code') == 1, row
