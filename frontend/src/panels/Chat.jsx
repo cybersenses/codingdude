@@ -94,7 +94,9 @@ export function Chat({ messages, streaming, onStop, onDecide, sessionId, suggest
               <EditBlock key={ei} edit={ed} sessionId={sessionId}
                 onRevert={() => onEditRevert(i, ed)} />
             ))}
-            {m.ask && runId && <AskUserCard ask={m.ask} runId={runId} />}
+            {m.ask && runId && (
+              <AskUserCard key={m.ask.id} ask={m.ask} runId={runId} />
+            )}
             {m.gate && !m.gate.startsWith('plan:') && <ApprovalCard command={m.gate} onDecide={onDecide} />}
             {m.gate && m.gate.startsWith('plan:') && sessionId && (
               <>

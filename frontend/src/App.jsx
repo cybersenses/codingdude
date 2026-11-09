@@ -65,6 +65,9 @@ export default function App() {
   const [models, setModels] = useState(null)
   const [model, setModel] = useState(() => localStorage.getItem('cd-model') || '')
   const [yolo, setYolo] = useState(() => localStorage.getItem('cd-yolo') === '1')
+  // #300 DE-6: long-run work-mode level ('' = off). Deliberately NOT persisted
+  // — the feature contract is per-run opt-in, never a sticky default.
+  const [longRun, setLongRun] = useState('')
   const [suggestMode, setSuggestMode] = useState(() => localStorage.getItem('cd-suggest') === '1')
   const [fixLoop, setFixLoop] = useState(false)
   const runRef = useRef(null)
@@ -206,6 +209,11 @@ export default function App() {
   // afterwards (stream end after terminal, channel reaped) must settle
   // silently, never surface "lost connection" (post-reaper bouncing popups).
   const terminalSeenRef = useRef(null)
+  // Sequential ask_user calls render as separate cards: each new ask gets a
+  // fresh sequence id used as the card's React key. Without it the second
+  // ask reuses the first card's already-sent instance (which renders null)
+  // and the run parks forever waiting on an answer nobody can give.
+  const askSeqRef = useRef(0)
   useEffect(() => {
     if (!loggedIn) return
     let stop = false
@@ -235,7 +243,13 @@ export default function App() {
         if (!msgs.length) return msgs
         const copy = [...msgs]
         const last = { ...copy[copy.length - 1] }
-        if (p.kind === 'ask') last.ask = { questions: p.questions, answered: false }
+        if (p.kind === 'ask') {
+          last.ask = {
+            questions: p.questions,
+            answered: false,
+            id: ++askSeqRef.current, // fresh card instance on reattach
+          }
+        }
         else last.gate = p.command
         copy[copy.length - 1] = last
         return copy
@@ -329,6 +343,7 @@ export default function App() {
         fixLoop,
         image ? image.b64 : null,
         yolo,
+        longRun || null,
       )
       .then(({ run_id }) => {
         runRef.current = run_id
@@ -453,7 +468,11 @@ export default function App() {
               setStatus('waiting for approval')
             }
             if (ev.type === 'ASK_USER') {
-              last.ask = { questions: ev.questions || [], answered: false }
+              last.ask = {
+                questions: ev.questions || [],
+                answered: false,
+                id: ++askSeqRef.current, // new key → the next ask remounts a fresh, answerable card
+              }
             }
             if (ev.type === 'REVIEW_FINDINGS') last.review = ev.findings
             if (['RUN_FINISHED', 'RUN_ERROR', 'RUN_CANCELLED', 'WORKER_HALTED'].includes(ev.type)) {
@@ -617,6 +636,8 @@ export default function App() {
     setModel,
     yolo,
     setYolo,
+    longRun,
+    setLongRun,
     notify,
     toggleNotify,
   }
