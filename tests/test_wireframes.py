@@ -210,3 +210,35 @@ def test_wireframe_rejects_bool_version(store):
     pack['version'] = True  # True == 1 in Python; a bool is not a version
     with pytest.raises(ValueError, match='version must be 1'):
         store.emit_wireframe(pack, 'bool version')
+
+
+async def test_revision_loop_emit_edit_reemit(db, session):
+    """#315 contract: the revision loop end to end — emit -> user inline edit
+    -> agent reads it back -> whole-pack re-emission, newest-first."""
+    tools = build_artifacts_toolset(db, session).tools
+    out = tools['emit_wireframe'].function(_minimal_pack(), 'Config redesign')
+    first_id = re.search(r'id=([A-Za-z0-9_-]+)', out).group(1)
+
+    # The user edits the pack inline (respond's content branch)…
+    edited = _minimal_pack()
+    edited['screens'][0]['regions'][1]['label'] = 'Provider settings (user edit)'
+    ArtifactStore(db, session).respond(first_id, {'content': json.dumps(edited)})
+
+    # …the agent reads that edit back as a requirement…
+    feedback = json.loads(tools['get_artifact_feedback'].function(first_id))
+    assert 'Provider settings (user edit)' in feedback['content']
+
+    # …and re-emits the WHOLE pack incorporating it.
+    revised = json.loads(feedback['content'])
+    revised['screens'][0]['regions'][0]['notes'] = 'kept; nav unchanged per user'
+    out2 = tools['emit_wireframe'].function(revised, 'Config redesign — revised')
+    second_id = re.search(r'id=([A-Za-z0-9_-]+)', out2).group(1)
+    assert second_id != first_id
+
+    listed = ArtifactStore(db, session).list()  # newest first
+    assert listed[0]['id'] == second_id
+    assert listed[0]['payload']['screens'][0]['regions'][1]['label'] == 'Provider settings (user edit)'
+    assert listed[1]['id'] == first_id
+    # The original keeps the user's edit on record; the new pack is pending.
+    assert ArtifactStore(db, session).feedback(first_id) is not None
+    assert ArtifactStore(db, session).feedback(second_id) is None
