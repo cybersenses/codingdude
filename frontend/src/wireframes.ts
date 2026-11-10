@@ -74,8 +74,7 @@ function parseFlow(raw: unknown): WireframeFlow | null {
   return { from: str(f.from), to: str(f.to), trigger: str(f.trigger), label: str(f.label) }
 }
 
-export function parseWireframe(payload: unknown): WireframeVm {
-  const problems: string[] = []
+export function parseWireframe(payload: unknown): WireframeVm {  const problems: string[] = []
   const vm: WireframeVm = { ok: false, screens: [], flows: [], problems }
   const pack = payload !== null && typeof payload === 'object' && !Array.isArray(payload)
     ? (payload as Record<string, unknown>)
@@ -104,4 +103,69 @@ export function parseWireframe(payload: unknown): WireframeVm {
     }
   }
   return vm
+}
+
+// R85 #316: click-to-focus toggle table — pure so it specs independently of
+// the DOM (re-click clears, other screen moves).
+export function applyFocus(current: string | null, screenId: string | null): string | null {
+  return current === screenId ? null : screenId
+}
+
+// R85 #316 (REQ-4): layered layout for the SVG node-link flow map.
+// Longest-path layering over flows; cycles are capped by the relaxation
+// budget so they can never hang; screens keep input order inside a layer.
+export interface FlowMapPos {
+  x: number
+  y: number
+}
+
+export interface FlowLayout {
+  /** Screen ids grouped by layer, layers ordered shallow → deep. */
+  layers: string[][]
+  /** Grid position per screen id (layer column, row within its layer). */
+  pos: Record<string, FlowMapPos>
+}
+
+export const FLOW_MAP_GRID = { colW: 170, rowH: 44 }
+
+export function layoutScreens(
+  screens: { id: string }[],
+  flows: { from: string; to: string }[],
+): FlowLayout {
+  const ids = screens.map((s) => s.id).filter((id) => typeof id === 'string' && id !== '')
+  const depth = new Map(ids.map((id) => [id, 0]))
+  const incoming = new Map(ids.map((id) => [id, [] as string[]]))
+  for (const f of flows) {
+    if (depth.has(f.from) && depth.has(f.to)) incoming.get(f.to)!.push(f.from)
+  }
+  const order = new Map(ids.map((id, i) => [id, i])) // input order, for layer rows
+  for (let round = 0; round <= ids.length; round++) {
+    let changed = false
+    for (const id of ids) {
+      const ps = incoming.get(id)!
+      if (ps.length === 0) continue
+      const d = Math.max(...ps.map((p) => depth.get(p)!)) + 1
+      if (d !== depth.get(id) && d <= ids.length) {
+        depth.set(id, d)
+        changed = true
+      }
+    }
+    if (!changed) break
+  }
+  const byDepth = new Map<number, string[]>()
+  for (const id of ids) {
+    const d = depth.get(id)!
+    if (!byDepth.has(d)) byDepth.set(d, [])
+    byDepth.get(d)!.push(id)
+  }
+  const layers: string[][] = []
+  const pos: Record<string, FlowMapPos> = {}
+  for (const d of [...byDepth.keys()].sort((a, b) => a - b)) {
+    const row = byDepth.get(d)!.sort((a, b) => order.get(a)! - order.get(b)!)
+    layers.push(row)
+    row.forEach((id, i) => {
+      pos[id] = { x: d * FLOW_MAP_GRID.colW, y: i * FLOW_MAP_GRID.rowH }
+    })
+  }
+  return { layers, pos }
 }

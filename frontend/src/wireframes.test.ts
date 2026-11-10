@@ -106,7 +106,7 @@ describe('WireframeView (render smoke)', () => {
     expect(html).toContain('Header')
     expect(html).toContain('header') // widget tag
     expect(html).toContain('title + search') // notes
-    expect(html).toContain('open detail') // flow label
+    expect(html).toContain('click item') // flow trigger on the map edge
   })
 
   it('degrades garbage payloads to a warning line', () => {
@@ -134,4 +134,96 @@ describe('Artifacts routing (render smoke)', () => {
     expect(html).not.toContain('renderer:') // only shows on degradation
   })
 })
+
+// R85 #316: click-to-focus — the pure half lives at the seam so the toggle
+// table is spec'd independently of the DOM.
+import { applyFocus } from './wireframes'
+
+describe('applyFocus', () => {
+  it('focuses a screen from no focus', () => {
+    expect(applyFocus(null, 's1')).toBe('s1')
+  })
+  it('re-clicking the focused screen clears focus', () => {
+    expect(applyFocus('s1', 's1')).toBeNull()
+  })
+  it('clicking another screen moves focus', () => {
+    expect(applyFocus('s1', 's2')).toBe('s2')
+  })
+})
+
+describe('WireframeView focus (render smoke)', () => {
+  const TWO = {
+    version: 1,
+    screens: [
+      { id: 'a', title: 'Alpha', template: '"x"', regions: [{ name: 'x', widget: 'text', label: 'X', notes: '' }] },
+      { id: 'b', title: 'Beta', template: '"y"', regions: [{ name: 'y', widget: 'text', label: 'Y', notes: '' }] },
+    ],
+    flows: [
+      { from: 'a', to: 'b', trigger: 'click', label: 'next' },
+      { from: 'b', to: 'a', trigger: 'back', label: '' },
+    ],
+  }
+  it('marks the focused screen and its flows, not the others', () => {
+    const html = renderToString(createElement(WireframeView, { payload: TWO, initialFocused: 'a' }))
+    expect(html).toMatch(/data-focused="true"[^<]*<[^>]*>|<[^>]*data-focused="true"/)
+    expect((html.match(/data-focused="true"/g) ?? []).length).toBe(4) // screen box a + map node a + both edges touching a
+    expect(html).toContain('data-screen="b"')
+  })
+  it('no focus by default', () => {
+    const html = renderToString(createElement(WireframeView, { payload: TWO }))
+    expect(html).not.toContain('data-focused="true"')
+  })
+})
+
+// R85 #316 contract (REQ-4): WireframeFlowMap — SVG node-link overview with a
+// layered layout, click-to-focus via scrollIntoView. The layout is pure seam.
+import { layoutScreens } from './wireframes'
+import { WireframeFlowMap } from './wireframes/WireframeFlowMap.jsx'
+
+describe('layoutScreens', () => {
+  it('chains layer by layer (columns deepen, rows stack within a layer)', () => {
+    const lay = layoutScreens([{ id: 'a' }, { id: 'b' }, { id: 'c' }], [{ from: 'a', to: 'b' }, { from: 'b', to: 'c' }])
+    expect(lay.layers).toEqual([['a'], ['b'], ['c']])
+    expect(lay.pos.a).toEqual({ x: 0, y: 0 })
+    expect(lay.pos.c.x).toBeGreaterThan(lay.pos.b.x)
+    expect(lay.pos.b.y).toBe(0)
+  })
+  it('roots share layer 0 in input order (rows stack), consumers follow', () => {
+    const lay = layoutScreens([{ id: 'a' }, { id: 'b' }, { id: 'c' }], [{ from: 'a', to: 'c' }, { from: 'b', to: 'c' }])
+    expect(lay.layers).toEqual([['a', 'b'], ['c']])
+    expect(lay.pos.b.y).toBeGreaterThan(lay.pos.a.y)
+    expect(lay.pos.c.x).toBeGreaterThan(lay.pos.a.x)
+  })
+  it('cycles never hang and lose no screen', () => {
+    const lay = layoutScreens([{ id: 'a' }, { id: 'b' }], [{ from: 'a', to: 'b' }, { from: 'b', to: 'a' }])
+    expect(lay.layers.flat().sort()).toEqual(['a', 'b'])
+  })
+  it('empty in, empty out', () => {
+    expect(layoutScreens([], []).layers).toEqual([])
+  })
+})
+
+describe('WireframeFlowMap (render smoke)', () => {
+  const MAP = {
+    screens: [
+      { id: 'a', title: 'Alpha', template: '', regions: [] },
+      { id: 'b', title: 'Beta', template: '', regions: [] },
+    ],
+    flows: [{ from: 'a', to: 'b', trigger: 'click', label: 'next' }],
+  }
+  it('renders an SVG node for each screen and a labelled edge per flow', () => {
+    const html = renderToString(createElement(WireframeFlowMap, { screens: MAP.screens, flows: MAP.flows }))
+    expect(html).toContain('<svg')
+    expect(html).toContain('data-map-node="a"')
+    expect(html).toContain('data-map-node="b"')
+    expect(html).toContain('data-map-edge="a:b"')
+    expect(html).toContain('click')
+  })
+  it('marks the focused node and its edges', () => {
+    const html = renderToString(createElement(WireframeFlowMap, { screens: MAP.screens, flows: MAP.flows, initialFocused: 'a' }))
+    expect((html.match(/data-focused="true"/g) ?? []).length).toBe(2) // node a + edge a->b
+  })
+})
+
+
 

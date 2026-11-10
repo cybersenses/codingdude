@@ -16,18 +16,32 @@
 // R85 #314: lo-fi wireframe renderer (Q2c: neutral grayscale). All parsing
 // lives in the pure seam wireframes.ts — this component only renders its
 // view model, so a malformed pack degrades to a warning line, never a crash.
-import React from 'react'
-import { parseWireframe } from './wireframes'
+import React, { useEffect, useRef, useState } from 'react'
+import { applyFocus, parseWireframe } from './wireframes'
+import { WireframeFlowMap } from './wireframes/WireframeFlowMap.jsx'
 
 const WIDGETS = new Set(['nav', 'header', 'form', 'table', 'list', 'text', 'chart', 'actions', 'tabs', 'image', 'code', 'placeholder'])
 
-export function WireframeView({ payload, theme = 'lofi' }) {
+export function WireframeView({ payload, theme = 'lofi', initialFocused = null }) {
+  const [focused, setFocused] = useState(initialFocused)
+  // A re-emitted pack (revision loop) invalidates focus — screen ids may differ.
+  // Intentionally keyed on payload identity only (no react-hooks plugin here).
+  useEffect(() => { setFocused(initialFocused) }, [payload])
   const vm = parseWireframe(payload)
   if (!vm.ok) {
     return <div className="text-[10px] text-danger">{vm.problems.join(' · ')}</div>
   }
   // Q11a: the theme prop is reserved from day one; only 'lofi' (Q2c) is wired.
   const notes = !theme || theme === 'lofi' ? [] : [`unknown theme "${theme}" — rendering lofi`]
+  // REQ-4 click-to-focus: focusing (from the map or a screen title) scrolls
+  // that screen's canvas box into view. SSR never runs effects, so this is
+  // browser-only by construction.
+  const boxRefs = useRef({})
+  useEffect(() => {
+    const el = focused ? boxRefs.current[focused] : null
+    if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [focused])
+  const setFocus = (id) => setFocused((f) => applyFocus(f, id))
   return (
     <div className="space-y-2">
       {notes.length > 0 && (
@@ -36,9 +50,28 @@ export function WireframeView({ payload, theme = 'lofi' }) {
       {vm.problems.length > 0 && (
         <div className="text-[9px] text-neutral-500">renderer: {vm.problems.join(' · ')}</div>
       )}
+      {vm.flows.length > 0 && (
+        <div className="rounded border border-neutral-800 bg-neutral-950 p-2">
+          <div className="mb-1 text-[10px] font-semibold text-neutral-300">flow map</div>
+          <WireframeFlowMap screens={vm.screens} flows={vm.flows} focused={focused} onFocus={setFocus} />
+        </div>
+      )}
       {vm.screens.map((s) => (
-        <div key={s.id} className="rounded border border-neutral-800 bg-neutral-950 p-2">
-          <div className="mb-1 text-[10px] font-semibold text-neutral-300">{s.title || s.id}</div>
+        <div
+          key={s.id}
+          data-screen={s.id}
+          data-focused={focused === s.id ? 'true' : undefined}
+          ref={(el) => { boxRefs.current[s.id] = el }}
+          className={focused === s.id
+            ? 'rounded border border-accent bg-neutral-950 p-2'
+            : 'rounded border border-neutral-800 bg-neutral-950 p-2'}
+        >
+          <button
+            className="mb-1 block text-left text-[10px] font-semibold text-neutral-300 hover:text-neutral-100"
+            aria-pressed={focused === s.id}
+            title="click to focus this screen"
+            onClick={() => setFocus(s.id)}
+          >{s.title || s.id}</button>
           <div
             className="grid gap-1"
             style={s.template ? { gridTemplateAreas: s.template } : undefined}
@@ -61,20 +94,6 @@ export function WireframeView({ payload, theme = 'lofi' }) {
           </div>
         </div>
       ))}
-      {vm.flows.length > 0 && (
-        <div className="rounded border border-neutral-800 bg-neutral-950 p-2">
-          <div className="mb-1 text-[10px] font-semibold text-neutral-300">flows</div>
-          {vm.flows.map((f, i) => (
-            <div key={i} className="text-[10px] text-neutral-400">
-              <span className="text-neutral-200">{f.from}</span>
-              <span className="text-neutral-500"> → </span>
-              <span className="text-neutral-200">{f.to}</span>
-              {f.trigger && <span className="text-neutral-500"> · {f.trigger}</span>}
-              {f.label && <span className="text-neutral-500"> — {f.label}</span>}
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   )
 }
