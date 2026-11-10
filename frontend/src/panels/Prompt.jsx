@@ -13,9 +13,10 @@
 //
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
-import React, { useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { call } from '../api'
 import { checklistPrompt } from '../checklists'
+import { registerComposerPrefill } from '../composerPrefill'
 
 // R59 P0: moved verbatim out of App.jsx. The prompt row sits directly above the
 // chat panel and is docked with it in P1.
@@ -90,6 +91,13 @@ export function ModelPicker({ models, model, setModel }) {
 
 export function Prompt({ onSend, disabled, running = false, suggestMode, setSuggestMode, fixLoop, setFixLoop, models, modelsError, model, setModel, yolo, setYolo, longRun, setLongRun, notify, toggleNotify }) {
   const [text, setText] = useState('')
+  // R85 #317 (REQ-7): the composer prefill seam's composer half — panels
+  // (wireframe implement buttons) call prefillComposer; this registration is
+  // the only writer of the seam's setter slot, cleared on unmount.
+  useEffect(() => {
+    registerComposerPrefill(setText)
+    return () => registerComposerPrefill(null)
+  }, [])
   const [image, setImage] = useState(null) // {b64, name}
   const [checklists, setChecklists] = useState(null) // null = picker not opened yet
   const fileRef = useRef(null)

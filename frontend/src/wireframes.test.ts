@@ -151,18 +151,19 @@ describe('applyFocus', () => {
   })
 })
 
+const TWO = {
+  version: 1,
+  screens: [
+    { id: 'a', title: 'Alpha', template: '"x"', regions: [{ name: 'x', widget: 'text', label: 'X', notes: '' }] },
+    { id: 'b', title: 'Beta', template: '"y"', regions: [{ name: 'y', widget: 'text', label: 'Y', notes: '' }] },
+  ],
+  flows: [
+    { from: 'a', to: 'b', trigger: 'click', label: 'next' },
+    { from: 'b', to: 'a', trigger: 'back', label: '' },
+  ],
+}
+
 describe('WireframeView focus (render smoke)', () => {
-  const TWO = {
-    version: 1,
-    screens: [
-      { id: 'a', title: 'Alpha', template: '"x"', regions: [{ name: 'x', widget: 'text', label: 'X', notes: '' }] },
-      { id: 'b', title: 'Beta', template: '"y"', regions: [{ name: 'y', widget: 'text', label: 'Y', notes: '' }] },
-    ],
-    flows: [
-      { from: 'a', to: 'b', trigger: 'click', label: 'next' },
-      { from: 'b', to: 'a', trigger: 'back', label: '' },
-    ],
-  }
   it('marks the focused screen and its flows, not the others', () => {
     const html = renderToString(createElement(WireframeView, { payload: TWO, initialFocused: 'a' }))
     expect(html).toMatch(/data-focused="true"[^<]*<[^>]*>|<[^>]*data-focused="true"/)
@@ -224,6 +225,18 @@ describe('WireframeFlowMap (render smoke)', () => {
     expect((html.match(/data-focused="true"/g) ?? []).length).toBe(2) // node a + edge a->b
   })
 })
+
+// R85 #317 (REQ-7): per-screen implement button — prefills the composer via
+// the exported store setter.
+describe('WireframeView implement handoff (render smoke)', () => {
+  it('renders an implement button per screen carrying screen + pack identity', () => {
+    const html = renderToString(createElement(WireframeView, { payload: TWO, pack: { title: 'Admin pack', id: 'wf_9' } }))
+    expect((html.match(/data-implement="/g) ?? []).length).toBe(2) // one per screen
+    expect(html).toContain('data-implement="a"')
+    expect(html).toContain('data-implement="b"')
+  })
+})
+
 
 
 

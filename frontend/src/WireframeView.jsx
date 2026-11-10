@@ -19,10 +19,11 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { applyFocus, parseWireframe } from './wireframes'
 import { WireframeFlowMap } from './wireframes/WireframeFlowMap.jsx'
+import { implementPrompt, prefillComposer } from './composerPrefill'
 
 const WIDGETS = new Set(['nav', 'header', 'form', 'table', 'list', 'text', 'chart', 'actions', 'tabs', 'image', 'code', 'placeholder'])
 
-export function WireframeView({ payload, theme = 'lofi', initialFocused = null }) {
+export function WireframeView({ payload, theme = 'lofi', initialFocused = null, pack = null }) {
   const [focused, setFocused] = useState(initialFocused)
   // A re-emitted pack (revision loop) invalidates focus — screen ids may differ.
   // Intentionally keyed on payload identity only (no react-hooks plugin here).
@@ -66,12 +67,23 @@ export function WireframeView({ payload, theme = 'lofi', initialFocused = null }
             ? 'rounded border border-accent bg-neutral-950 p-2'
             : 'rounded border border-neutral-800 bg-neutral-950 p-2'}
         >
-          <button
-            className="mb-1 block text-left text-[10px] font-semibold text-neutral-300 hover:text-neutral-100"
-            aria-pressed={focused === s.id}
-            title="click to focus this screen"
-            onClick={() => setFocus(s.id)}
-          >{s.title || s.id}</button>
+          <span className="flex items-center gap-1">
+            <button
+              className="block text-left text-[10px] font-semibold text-neutral-300 hover:text-neutral-100"
+              aria-pressed={focused === s.id}
+              title="click to focus this screen"
+              onClick={() => setFocus(s.id)}
+            >{s.title || s.id}</button>
+            {/* REQ-7 / Q6b+Q12b: per-screen implement handoff — prefills the
+                composer; sending stays the user's act. */}
+            <button
+              type="button"
+              data-implement={s.id}
+              className="rounded border border-neutral-700 px-1 py-0.5 text-[9px] normal-case text-neutral-400 hover:text-neutral-100"
+              title="prefill the composer with an implement prompt for this screen"
+              onClick={() => prefillComposer(implementPrompt(s.title || s.id, pack?.title ?? '', pack?.id ?? ''))}
+            >implement</button>
+          </span>
           <div
             className="grid gap-1"
             style={s.template ? { gridTemplateAreas: s.template } : undefined}

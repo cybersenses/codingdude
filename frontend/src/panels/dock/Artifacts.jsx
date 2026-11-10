@@ -155,7 +155,7 @@ export function Artifacts({ sessionId, initialItems = [] }) {
               ))}
             </div>
           ) : a.kind === 'wireframe' ? (
-            <WireframeView payload={a.payload} theme="lofi" />
+            <WireframeView payload={a.payload} theme="lofi" pack={{ title: a.title, id: a.id }} />
           ) : a.status !== 'pending' ? (
             <pre className="whitespace-pre-wrap text-[10px] text-neutral-300">{a.response?.content ?? a.payload.markdown}</pre>
           ) : (
