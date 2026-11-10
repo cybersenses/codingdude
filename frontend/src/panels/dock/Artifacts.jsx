@@ -16,11 +16,12 @@
 import React, { useEffect, useState } from 'react'
 import { api, call } from '../../api'
 import { Mermaid } from '../../ui.jsx'
+import { WireframeView } from '../../WireframeView.jsx'
 
 // R59 P0: moved verbatim out of App.jsx's DockPanel tab body. Live-pushed via
 // SSE with a polling fallback; becomes the `artifacts` panel in P2.
-export function Artifacts({ sessionId }) {
-  const [items, setItems] = useState([])
+export function Artifacts({ sessionId, initialItems = [] }) {
+  const [items, setItems] = useState(initialItems)
   const [drafts, setDrafts] = useState({})
   // #242 seam: a failed poll or mutation must be visible, not "no artifacts yet".
   const [pollError, setPollError] = useState(null)
@@ -153,6 +154,8 @@ export function Artifacts({ sessionId }) {
                 >{opt}</button>
               ))}
             </div>
+          ) : a.kind === 'wireframe' ? (
+            <WireframeView payload={a.payload} theme="lofi" />
           ) : a.status !== 'pending' ? (
             <pre className="whitespace-pre-wrap text-[10px] text-neutral-300">{a.response?.content ?? a.payload.markdown}</pre>
           ) : (

@@ -1264,3 +1264,8 @@ Findings from the 2026-11-09 trace forensics (run mY5V_HxeMdk): post-RUN_FINISHE
 **User report:** other than chat back-and-forth there is no elegant way to show how screens should be designed and how workflows connect them.
 
 **Direction (needs a PRD before build):** agent-driven wireframing in the product — generate low-fidelity screen mockups as renderable artifacts plus an explicit flow view (screens + transitions between them), riding the existing artifacts system (choice cards / spec blocks / HTML render) so the user reviews and revises screens inline. Open questions: fidelity level, where wireframes live (Artifacts tab vs new surface), how flows are authored/edited, whether screens can graduate into implementation tickets.
+
+## R86 — Platform tooling & doc hygiene (catch-all umbrella)
+**Status:** open
+
+Small tracked issues in codingdude's own tooling/docs that don't belong to feature umbrellas.
