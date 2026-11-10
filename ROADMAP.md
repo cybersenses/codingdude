@@ -1259,7 +1259,7 @@ Findings from the 2026-11-09 trace forensics (run mY5V_HxeMdk): post-RUN_FINISHE
 2. Config screen restructured into guided sections: Providers → Lineup assignment (pick per slot from reachable models) → Function staffing → Advanced (limits/pricing). Copy explains what each section does; per-provider Test keys inline.
 
 ## R85 — R85: Wireframes — elegant way to design screens and workflows
-**Status:** open
+**Status:** done
 
 **User report:** other than chat back-and-forth there is no elegant way to show how screens should be designed and how workflows connect them.
 
