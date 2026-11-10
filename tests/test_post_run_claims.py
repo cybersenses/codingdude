@@ -533,3 +533,142 @@ async def test_next_run_waits_for_pending_extraction(tmp_path, db, home):
     assert second.status == 'complete'
     assert order == ['extracted', 'turn']
     await engine.drain_post_run()
+
+
+def audit_capture_model(captured: list[str], response_text: str = _UNSUPPORTED):
+    """Extraction model that records every audit prompt it is handed (the
+    seam under test: what evidence actually reaches the auditor) and
+    answers with the given verdict text."""
+    def fn(messages: list[ModelMessage], info):
+        for m in messages:
+            for p in m.parts:
+                text = getattr(p, 'content', None)
+                if isinstance(text, str) and 'RECORDED COMMAND RESULTS' in text:
+                    captured.append(text)
+        return ModelResponse(parts=[TextPart(content=response_text)])
+    return scripted(fn)
+
+
+def seeded_tool_result(db, workdir, tool_name: str, content: str,
+                       session_id: str = 'sess-evidence'):
+    """A session whose persisted history holds one tool result — the
+    evidence shape the claims auditor reads."""
+    from pydantic_ai.messages import ModelRequest, ToolReturnPart
+
+    from codingdude.messages import encode_messages
+
+    db.create_session(workdir, session_id=session_id)
+    payload = encode_messages([ModelRequest(parts=[ToolReturnPart(
+        tool_name=tool_name, content=content, tool_call_id='call-1')])])
+    db.replace_messages(session_id, [payload])
+    return session_id
+
+
+async def test_audit_sees_gate_output_tail(tmp_path, db, home):
+    """#312: the audit evidence keeps the END of each shell result. A
+    gate's pass/fail summary ('3 passed') sits at the tail of a long
+    output; the old head slice (~120 chars) hid it, so true 'tests pass'
+    claims got challenged with no evidence in the auditor's window."""
+    from codingdude.approvals import ApprovalPolicy
+
+    noise = 'x' * 3000
+    captured: list[str] = []
+    events: list[dict] = []
+    engine = Engine(config=load_config(), db=db,
+                    extraction_model=audit_capture_model(captured))
+    outcome = await engine.run(
+        prompt='do the thing',
+        workdir=git_workdir_clean(tmp_path),
+        model=tool_run_model(
+            'shell', {'command': f'echo {noise}; echo 3 passed;'
+                                 ' echo more >> a.txt'}),
+        approvals=ApprovalPolicy(yolo=True),
+        emit=events.append,
+    )
+    assert outcome.status == 'complete'
+    await engine.drain_post_run()
+    assert 'CLAIMS_CHECKING' in [e['type'] for e in events]
+    assert captured, 'the auditor must receive the recorded command results'
+    assert any('3 passed' in p for p in captured), (
+        'the gate summary at the output tail must reach the auditor'
+    )
+
+
+async def test_audit_evidence_includes_evaluator_verdicts(tmp_path, db, home):
+    """#312: verdict-bearing tool results (evaluate_work / submit_verdict)
+    reach the auditor. 'Evaluator verdict: PASS' claims were structurally
+    invisible — the extraction only read shell/run_coverage — so true
+    verdict claims got challenged."""
+    from types import SimpleNamespace
+
+    from pydantic_ai.models.function import FunctionModel
+
+    from codingdude.approvals import ApprovalPolicy
+    from codingdude.run_pipeline import PostRunPipeline, RunServices
+
+    captured: list[str] = []
+    extractor = audit_capture_model(captured)
+    services = RunServices(config=load_config(), db=db, config_home=home,
+                           extraction_model=lambda: extractor)
+    session_id = seeded_tool_result(
+        db, tmp_path, 'evaluate_work',
+        'evaluation [release]: PASS — contract is met')
+    pipeline = PostRunPipeline(services)
+    result = SimpleNamespace(
+        output='Evaluator verdict: PASS. Work complete.',
+        new_messages=lambda: [],
+    )
+    resolved = FunctionModel(
+        lambda m, i: ModelResponse(parts=[TextPart(content='corrected')]))
+    await pipeline.verify_claims(
+        session_id, result, tmp_path, ApprovalPolicy(yolo=True),
+        lambda e: None, resolved=resolved)
+    assert captured
+    assert any('evaluation [release]: PASS' in p for p in captured), (
+        'the evaluator verdict must reach the auditor'
+    )
+
+
+async def test_audit_evidence_window_is_bounded_and_recent(tmp_path, db, home):
+    """#312: the overall evidence window is bounded, and the MOST RECENT
+    results survive the cap — the final summary cites the last checks, so
+    a cap that keeps only the oldest entries audits the wrong evidence."""
+    from types import SimpleNamespace
+
+    from pydantic_ai.messages import ModelRequest, ToolReturnPart
+    from pydantic_ai.models.function import FunctionModel
+
+    from codingdude.approvals import ApprovalPolicy
+    from codingdude.messages import encode_messages
+    from codingdude.run_pipeline import PostRunPipeline, RunServices
+
+    captured: list[str] = []
+    extractor = audit_capture_model(captured)
+    services = RunServices(config=load_config(), db=db, config_home=home,
+                           extraction_model=lambda: extractor)
+    session_id = 'sess-window'
+    db.create_session(tmp_path, session_id=session_id)
+    entries = [
+        ModelRequest(parts=[ToolReturnPart(
+            tool_name='shell',
+            content='exit code: 0\n' + 'y' * 2000 + f' marker{i}',
+            tool_call_id=f'call-{i}')])
+        for i in range(40)
+    ]
+    db.replace_messages(
+        session_id, [encode_messages([m]) for m in entries])
+    pipeline = PostRunPipeline(services)
+    result = SimpleNamespace(output='All gates pass.', new_messages=lambda: [])
+    resolved = FunctionModel(
+        lambda m, i: ModelResponse(parts=[TextPart(content='corrected')]))
+    await pipeline.verify_claims(
+        session_id, result, tmp_path, ApprovalPolicy(yolo=True),
+        lambda e: None, resolved=resolved)
+    assert captured
+    prompt = captured[-1]
+    assert 'marker39' in prompt, (
+        'the newest evidence must survive the window cap'
+    )
+    assert 'marker0' not in prompt, (
+        'the cap must actually bound the evidence window'
+    )
