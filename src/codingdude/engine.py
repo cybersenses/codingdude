@@ -628,9 +628,8 @@ class Engine:
             session_id, workdir, result, prepared, agent_spec,
             approvals=approvals, fix_loop=fix_loop, test_command=test_command,
             max_test_iterations=max_test_iterations, emit=emit, traced=traced,
-            started=started, lane=lane,
-            run_changed=bool(run_touched)
-            or self._diff_fingerprint(workdir) != diff_before,
+            started=started, lane=lane, diff_before=diff_before,
+            run_touched=run_touched,
         )
 
     def _detect_phase(
@@ -962,9 +961,16 @@ class Engine:
         traced,
         started,
         lane=None,
-        run_changed: bool = True,
+        diff_before: str = '',
+        run_touched: list | None = None,
     ) -> RunOutcome:
-        """Persist, run the fix loop if asked, record usage, spawn the tail."""
+        """Persist, run the fix loop if asked, record usage, spawn the tail.
+
+        #310: `diff_before` + `run_touched` carry the run-scoped gate
+        signals; `run_changed` is evaluated HERE — after the fix loop — so
+        fix-loop-only edits arm the audit like any other change (the
+        release evaluator caught the pre-fix-loop evaluation as a
+        misgating edge)."""
         self._history.persist(session_id, result.all_messages())
         # Prefer the provider's own token count for the final request (it
         # includes instructions + history); fall back to the estimate.
@@ -993,6 +999,11 @@ class Engine:
             session_id, prepared.model_name, sum_usages(usages), started, traced
         )
         self._services.check_budget(session_id)
+        # #310: the gate signals are evaluated here — AFTER the fix loop —
+        # so fix-loop-only edits arm the audit like any other change.
+        run_changed = (
+            bool(run_touched) or self._diff_fingerprint(workdir) != diff_before
+        )
         # Post-run passes (extraction ∥ claims audit) run in the background:
         # RUN_FINISHED must not wait ~90s on them (user friction). The next
         # turn drains them before its prompt is assembled, so extraction

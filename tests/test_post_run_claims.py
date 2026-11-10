@@ -400,6 +400,47 @@ async def test_verifier_toolset_is_narrowed(tmp_path, db, home):
         assert forbidden not in names
 
 
+async def test_fix_loop_edit_arms_audit(tmp_path, db, home):
+    """#310 (evaluator finding): the gate is evaluated AFTER the fix loop —
+    a run whose only change is a fix-loop retry edit still gets audited,
+    not silently skipped. RED evidence: before the ordering fix this test
+    failed with CLAIMS_SKIPPED/no_run_changes (7 failed suite run)."""
+    from codingdude.approvals import ApprovalPolicy
+
+    extractor = scripted(lambda m, i: ModelResponse(
+        parts=[TextPart(content=_UNSUPPORTED)]))
+    turn = {'n': 0}
+
+    def fix_loop_model(messages: list[ModelMessage], info):
+        if not any(isinstance(p, ToolCallPart) for m in messages for p in m.parts):
+            turn['n'] += 1
+            if turn['n'] == 1:
+                # Main turn: answers without touching anything.
+                return ModelResponse(parts=[TextPart(content='Done.')])
+            # Fix-loop retry round: the edit happens here.
+            return ModelResponse(parts=[ToolCallPart(
+                tool_name='write_file',
+                args={'path': 'made.txt', 'content': 'x\n'})])
+        return ModelResponse(parts=[TextPart(content='Fixed.')])
+
+    events: list[dict] = []
+    engine = Engine(config=load_config(), db=db, extraction_model=extractor)
+    outcome = await engine.run(
+        prompt='do the thing',
+        workdir=git_workdir_clean(tmp_path),
+        model=scripted(fix_loop_model),
+        fix_loop=True,
+        test_command='exit 1',  # the suite "fails" once, forcing a retry round
+        approvals=ApprovalPolicy(yolo=True),
+        emit=events.append,
+    )
+    assert outcome.status == 'complete'
+    await engine.drain_post_run()
+    types = [e['type'] for e in events]
+    assert 'CLAIMS_SKIPPED' not in types
+    assert 'CLAIMS_CHECKING' in types
+
+
 async def test_next_run_waits_for_pending_extraction(tmp_path, db, home):
     """A follow-up turn must not start before the previous turn's memory
     extraction has landed (the extraction result feeds memory recall)."""
