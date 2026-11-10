@@ -173,6 +173,96 @@ async def test_run_returns_before_extraction_finishes(tmp_path, db, home):
     assert 'MEMORY_EXTRACTED' in [e['type'] for e in events]
 
 
+async def test_drain_cut_retry_still_reports_unverified(tmp_path, db, home):
+    """#308: the worker drain bound can cut the claims-retry mid-flight
+    (live: run mY5V_HxeMdk, 2026-11-09 — the retry re-ran gates for ~96s,
+    then the drain expired and the worker exited with NO claims verdict at
+    all, because CancelledError bypassed the 'report unverified either way'
+    fall-through). A cut retry must still emit CLAIMS_UNVERIFIED, and the
+    drain must cancel the tail (not abandon it pending)."""
+    extractor = scripted(lambda m, i: ModelResponse(
+        parts=[TextPart(content=_UNSUPPORTED)]))
+
+    retry_running = asyncio.Event()
+    release_retry = asyncio.Event()
+
+    async def run_then_block(messages, info):
+        """Call 1: the run itself. Later calls: the retry round — block
+        until the test has fired the drain bound (the live race shape)."""
+        if retry_running.is_set():
+            await release_retry.wait()
+            return ModelResponse(parts=[TextPart(content='corrected')])
+        retry_running.set()
+        return ModelResponse(parts=[TextPart(content='Done. Tests pass.')])
+
+    async def stream_run_then_block(messages, info):
+        response = await run_then_block(messages, info)
+        yield response.parts[0].content
+
+    events: list[dict] = []
+    engine = Engine(config=load_config(), db=db, extraction_model=extractor)
+    outcome = await engine.run(
+        prompt='do the thing',
+        workdir=git_workdir_with_diff(tmp_path),
+        model=FunctionModel(run_then_block, stream_function=stream_run_then_block),
+        emit=events.append,
+    )
+    assert outcome.status == 'complete'
+    for _ in range(500):
+        if retry_running.is_set():
+            break
+        await asyncio.sleep(0.01)
+    assert retry_running.is_set()  # the retry round is in flight...
+    try:
+        # ...and the drain bound fires while it runs (worker drain expiry).
+        await engine.drain_post_run(timeout=0.1)
+        types = [e['type'] for e in events]
+        assert 'CLAIMS_ADDRESSED' not in types  # the retry never completed
+        unverified = [e for e in events if e['type'] == 'CLAIMS_UNVERIFIED']
+        assert unverified, 'a cut retry must still report its claims unverified'
+        assert unverified[0].get('reason') == 'cancelled'
+        assert any(_UNSUPPORTED in c for c in unverified[0]['claims'])
+        # The tail must END on the drain bound — not linger pending until
+        # the process exit kills it mid-flight.
+        assert not engine._pending_post_run or all(
+            t.done() for t in engine._pending_post_run.values()
+        )
+    finally:
+        release_retry.set()
+        await engine.drain_post_run()
+
+
+async def test_post_run_events_carry_phase_markers(tmp_path, db, home):
+    """#309: post-RUN_FINISHED activity must be attributable in the trace.
+    The tail stamps phase='post-run' on every event it emits and brackets
+    itself with POST_RUN_BEGIN / POST_RUN_END — so the retry agent's raw
+    tool events between the markers can never read as live run activity."""
+    extractor = scripted(lambda m, i: ModelResponse(
+        parts=[TextPart(content=_UNSUPPORTED + '\na durable fact')]))
+
+    events: list[dict] = []
+    engine = Engine(config=load_config(), db=db, extraction_model=extractor)
+    outcome = await engine.run(
+        prompt='do the thing',
+        workdir=git_workdir_with_diff(tmp_path),
+        model=run_model('Done. Tests pass.'),
+        emit=events.append,
+    )
+    assert outcome.status == 'complete'
+    await engine.drain_post_run()
+    types = [e['type'] for e in events]
+    for expected in ('POST_RUN_BEGIN', 'POST_RUN_END'):
+        assert expected in types
+    begin, end = types.index('POST_RUN_BEGIN'), types.index('POST_RUN_END')
+    for marker in ('MEMORY_EXTRACTING', 'CLAIMS_CHECKING', 'CLAIMS_RETRY'):
+        assert begin < types.index(marker) < end, (
+            f'{marker} must sit inside the POST_RUN bracket'
+        )
+    stamped = {e['type'] for e in events if e.get('phase') == 'post-run'}
+    assert {'POST_RUN_BEGIN', 'POST_RUN_END', 'MEMORY_EXTRACTED',
+            'CLAIMS_UNVERIFIED'} <= stamped
+
+
 async def test_next_run_waits_for_pending_extraction(tmp_path, db, home):
     """A follow-up turn must not start before the previous turn's memory
     extraction has landed (the extraction result feeds memory recall)."""

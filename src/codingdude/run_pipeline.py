@@ -561,6 +561,16 @@ class PostRunPipeline:
                 session_id, [encode_messages([m]) for m in retry.all_messages()]
             )
             emit({'type': 'CLAIMS_ADDRESSED', 'response': str(retry.output)[:1500]})
+        except asyncio.CancelledError:
+            # #308: the drain bound cancelled the retry mid-flight (live: run
+            # mY5V_HxeMdk lost its verdict exactly this way — CancelledError
+            # is a BaseException, so the fall-through below never ran). Emit
+            # the verdict anyway, then propagate: the task must still end
+            # cancelled so the drain's cancellation gather completes.
+            if emit:
+                emit({'type': 'CLAIMS_UNVERIFIED', 'claims': unsupported,
+                      'reason': 'cancelled'})
+            raise
         except Exception as exc:  # noqa: BLE001 — best effort; report unverified either way
             logger.warning(
                 'claims-retry round failed for session %s (%s: %s); claims remain '

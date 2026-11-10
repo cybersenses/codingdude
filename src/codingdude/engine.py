@@ -50,6 +50,11 @@ from .vision import build_run_prompt
 # turn: each pass is already bounded by _POST_RUN_LLM_TIMEOUT_S (run_pipeline).
 _POST_RUN_DRAIN_TIMEOUT_S = 300.0
 
+# After the drain bound fires, cancelled tails get this much grace to run
+# their cleanup (emit the terminal claims verdict, close up) before the
+# waiter abandons them (#308).
+_POST_RUN_CANCEL_GRACE_S = 10.0
+
 
 def _zai_fallback(model_name: str, base_url: str | None) -> Model:
     """Build the ZAI fallback model, optionally pointed at a custom endpoint."""
@@ -984,27 +989,39 @@ class Engine:
 
     async def _post_run_tail(self, session_id: str, result, workdir, approvals,
                              traced, resolved, history, toolsets, instructions) -> None:
-        """Extraction + claims audit, concurrent, best-effort — never fails a run."""
+        """Extraction + claims audit, concurrent, best-effort — never fails a run.
+
+        #309: every event the tail emits carries phase='post-run' and the tail
+        brackets itself with POST_RUN_BEGIN / POST_RUN_END, so post-RUN_FINISHED
+        activity (including the retry agent's raw tool events between the
+        markers) can never read as live run activity in the trace."""
+        def post_traced(event: dict) -> None:
+            traced({**event, 'phase': 'post-run'})
+
         try:
+            post_traced({'type': 'POST_RUN_BEGIN'})
             # #24: extraction and the claims audit are independent — run them
             # concurrently so the tail costs max(), not sum().
             if self._diff_nonempty(session_id):
                 await asyncio.gather(
-                    self._post.extract_memory(session_id, workdir, emit=traced),
+                    self._post.extract_memory(session_id, workdir, emit=post_traced),
                     self._post.verify_claims(
-                        session_id, result, workdir, approvals, traced,
+                        session_id, result, workdir, approvals, post_traced,
                         resolved=resolved, history=history,
                         toolsets=toolsets, instructions=instructions,
                     ),
                 )
             else:
-                traced({'type': 'CLAIMS_SKIPPED', 'reason': 'empty_diff'})
-                await self._post.extract_memory(session_id, workdir, emit=traced)
+                post_traced({'type': 'CLAIMS_SKIPPED', 'reason': 'empty_diff'})
+                await self._post.extract_memory(session_id, workdir, emit=post_traced)
         except Exception:  # noqa: BLE001 — background tail must never crash the engine
             logging.getLogger(__name__).warning(
                 'post-run passes failed for session %s', session_id, exc_info=True
             )
         finally:
+            # POST_RUN_END in finally: the bracket closes even when the drain
+            # bound cancels the tail mid-flight (#308/#309).
+            post_traced({'type': 'POST_RUN_END'})
             self._pending_post_run.pop(session_id, None)
 
     async def drain_post_run(self, timeout: float = _POST_RUN_DRAIN_TIMEOUT_S) -> None:
@@ -1017,7 +1034,31 @@ class Engine:
             await asyncio.wait_for(asyncio.wait(tasks), timeout=timeout)
         except TimeoutError:
             logging.getLogger(__name__).warning(
-                'post-run passes still pending after %ss; continuing', timeout
+                'post-run passes still pending after %ss; cancelling them', timeout
+            )
+            await self._cancel_post_run_tasks(tasks)
+
+    async def _cancel_post_run_tasks(self, tasks: list) -> None:
+        """Cancel tails past the drain bound and LET THEIR CLEANUP RUN (#308).
+
+        `wait_for(asyncio.wait(tasks))` on timeout abandons the tasks —
+        asyncio.wait() does not cancel pending tasks — so a tail cut at the
+        bound died with process exit mid-flight and its cancellation handler
+        never ran (the claims verdict of run mY5V_HxeMdk was lost exactly
+        this way). Cancelling and awaiting lets `except CancelledError`
+        handlers emit their terminal events; the grace bound keeps a handler
+        that ignores cancellation from wedging shutdown."""
+        for t in tasks:
+            t.cancel()
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=_POST_RUN_CANCEL_GRACE_S,
+            )
+        except TimeoutError:
+            logging.getLogger(__name__).warning(
+                'post-run tail ignored cancellation for %ss; abandoning',
+                _POST_RUN_CANCEL_GRACE_S,
             )
 
     async def _drain_pending_post_run(self) -> None:
