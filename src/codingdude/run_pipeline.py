@@ -483,7 +483,7 @@ class PostRunPipeline:
 
     async def verify_claims(self, session_id: str, result, workdir: Path,
                             approvals, emit, resolved=None, history=None,
-                            toolsets=None, instructions=None) -> None:
+                            instructions=None) -> None:
         """Anti-slop: cross-check the final summary's verification claims against
         recorded tool results; re-execute explicitly claimed verifications once;
         give the model one round to address unsupported claims."""
@@ -521,6 +521,15 @@ class PostRunPipeline:
                 auditor.run(audit_prompt), timeout=_POST_RUN_LLM_TIMEOUT_S
             )
         except Exception:  # noqa: BLE001 — verification must never fail the run
+            # Review finding on b3817ad: this half previously returned bare,
+            # leaving CLAIMS_CHECKING with no terminal event and no log —
+            # the same silent-catch class the retry half was fixed for (#23).
+            logger.warning(
+                'claims audit failed for session %s; claims remain unverified',
+                session_id, exc_info=True,
+            )
+            if emit:
+                emit({'type': 'CLAIMS_UNVERIFIED', 'reason': 'audit_failed'})
             return
         self._services.record_model_usage(session_id, extraction_model, audit.usage)
         unsupported = [
@@ -542,9 +551,21 @@ class PostRunPipeline:
         # round was the 8000s post-run stall tail.
         if emit:
             emit({'type': 'CLAIMS_RETRY', 'claims': unsupported})
+        # #311: the verifier does NOT run with the run's full toolsets —
+        # it gets the narrowed read+shell surface (build_verifier_toolsets),
+        # wrapped in the same error-feedback seam as every agent.
+        from .processes import ProcessRegistry
+        from .tool_errors import error_feedback_toolset
+
+        shell_bin = shell_bin_for(self._services.config, workdir)
+        registry = ProcessRegistry(
+            on_event=emit, db=self._services.db, session_id=session_id,
+        )
         retry_agent: Agent = Agent(
             model=resolved, instructions=instructions or load_prompt('base_instructions'),
-            toolsets=toolsets,
+            toolsets=[error_feedback_toolset(build_verifier_toolsets(
+                workdir, approvals, shell_bin, registry=registry,
+            ))],
         )
         try:
             retry = await asyncio.wait_for(
@@ -560,7 +581,8 @@ class PostRunPipeline:
             self._services.db.replace_messages(
                 session_id, [encode_messages([m]) for m in retry.all_messages()]
             )
-            emit({'type': 'CLAIMS_ADDRESSED', 'response': str(retry.output)[:1500]})
+            if emit:
+                emit({'type': 'CLAIMS_ADDRESSED', 'response': str(retry.output)[:1500]})
         except asyncio.CancelledError:
             # #308: the drain bound cancelled the retry mid-flight (live: run
             # mY5V_HxeMdk lost its verdict exactly this way — CancelledError
@@ -576,4 +598,34 @@ class PostRunPipeline:
                 'claims-retry round failed for session %s (%s: %s); claims remain '
                 'unverified', session_id, type(exc).__name__, exc,
             )
-        emit({'type': 'CLAIMS_UNVERIFIED', 'claims': unsupported})
+        if emit:
+            emit({'type': 'CLAIMS_UNVERIFIED', 'claims': unsupported})
+
+
+def shell_bin_for(config, workdir: Path) -> str:
+    """The shell binary for `workdir`: project config override, else the
+    global default. One home for the resolution that used to be copied at
+    every shell-seam call site (review finding on b3817ad)."""
+    from .config import load_project_config
+
+    return load_project_config(workdir).get('shell', config.shell.default)
+
+
+def build_verifier_toolsets(workdir: Path, approvals, shell_bin: str,
+                            registry=None) -> list:
+    """#311: the claims-retry verifier's narrowed toolset.
+
+    Post-terminal verification needs exactly two capabilities: read the
+    tree (list_dir/read_file/grep/glob) and re-run claimed verifications
+    (shell). Everything else the run carried — edit tools, delegation,
+    ask cards, sandbox exec — is verification-inappropriate: the verifier
+    audits a finished run and must not mutate what it audits (live: run
+    mY5V_HxeMdk's full-toolset retry re-ran builds and UI probes for ~2
+    minutes post-terminal)."""
+    from .tools import build_shell_toolset, build_toolset
+
+    return [
+        build_toolset(workdir, read_only=True),
+        build_shell_toolset(workdir, approvals, shell_bin=shell_bin,
+                            registry=registry),
+    ]
