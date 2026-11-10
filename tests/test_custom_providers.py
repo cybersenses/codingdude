@@ -275,3 +275,79 @@ def test_verify_allows_http_on_localhost(monkeypatch):
     results = verify_provider_keys(config, timeout_s=1.0)
     # No server listening: a connection error, NOT the scheme rejection.
     assert 'non-https' not in (results['ollama']['detail'] or '')
+
+
+# ---- R84a: the provider catalog (curated, runtime-verified entries) ----
+
+def test_provider_catalog_lists_only_loadable_providers():
+    """Every catalog entry's provider module must import in this install.
+    groq/mistral/cohere/xai/bedrock need optional SDKs the shipped venv does
+    not have — advertising them would fail exactly at the run the user
+    configured them for."""
+    from pydantic_ai.providers import infer_provider_class
+
+    from codingdude.config import PROVIDER_CATALOG
+    for name in PROVIDER_CATALOG:
+        infer_provider_class(name)  # ImportError/ValueError here = catalog lie
+
+
+def test_provider_catalog_wiring_facts():
+    """Env vars and canonical endpoints, verified against the installed
+    pydantic-ai provider sources (R84a fact-check, .scratch evidence)."""
+    from codingdude.config import PROVIDER_CATALOG
+
+    assert PROVIDER_CATALOG['openai'].env_var == 'OPENAI_API_KEY'
+    assert PROVIDER_CATALOG['anthropic'].env_var == 'ANTHROPIC_API_KEY'
+    assert PROVIDER_CATALOG['google'].env_var == 'GOOGLE_API_KEY'
+    assert PROVIDER_CATALOG['deepseek'].env_var == 'DEEPSEEK_API_KEY'
+    assert PROVIDER_CATALOG['zai'].env_var == 'ZAI_API_KEY'
+    # pydantic-ai's GitHubProvider reads GITHUB_API_KEY only (no GITHUB_PAT
+    # fallback) — the catalog carries the name the runtime actually resolves.
+    assert PROVIDER_CATALOG['github'].env_var == 'GITHUB_API_KEY'
+    assert PROVIDER_CATALOG['github'].base_url == 'https://models.github.ai/inference'
+    assert PROVIDER_CATALOG['ollama'].needs_key is False
+    assert PROVIDER_CATALOG['ollama'].base_url == 'http://localhost:11434/v1'
+    assert PROVIDER_CATALOG['openrouter'].base_url == 'https://openrouter.ai/api/v1'
+
+
+def test_models_payload_exposes_provider_catalog(tmp_path):
+    home = tmp_path / 'home'
+    home.mkdir(parents=True)
+    payload = models_payload(load_config(home))
+    catalog = payload['provider_catalog']
+    names = [e['name'] for e in catalog]
+    assert 'openai' in names and 'zai' in names
+    entry = next(e for e in catalog if e['name'] == 'openrouter')
+    assert entry['label'] == 'OpenRouter'
+    assert entry['env_var'] == 'OPENROUTER_API_KEY'
+    assert entry['base_url'] == 'https://openrouter.ai/api/v1'
+
+
+def test_verify_uses_catalog_smoke_for_openai_compatible_entries(monkeypatch):
+    """A catalog provider saved without an explicit base_url is smoke-tested
+    against the catalog's canonical endpoint instead of 'untested'."""
+    for n in ('ZAI_API_KEY', 'DEEPSEEK_API_KEY', 'GITHUB_PAT'):
+        monkeypatch.delenv(n, raising=False)
+    from dataclasses import replace
+
+    calls = []
+
+    def fake_transport(url, headers, body):
+        calls.append(url)
+        return (200, '{}')
+
+    config = replace(Config.defaults(), providers={
+        'openrouter': ProviderDef(api_key=OR_KEY),   # no base_url stored
+        'openai': ProviderDef(api_key=OR_KEY),
+    })
+    results = verify_provider_keys(config, transport=fake_transport)
+    assert results['openrouter']['ok'] is True
+    assert results['openai']['ok'] is True
+    assert 'https://openrouter.ai/api/v1/chat/completions' in calls
+    assert 'https://api.openai.com/v1/chat/completions' in calls
+    # A non-catalog name without base_url stays honestly untested.
+    config2 = replace(Config.defaults(), providers={
+        'mystery': ProviderDef(api_key=OR_KEY)})
+    results2 = verify_provider_keys(config2, transport=fake_transport)
+    assert results2['mystery']['ok'] is None
+    assert 'base_url' in results2['mystery']['detail']

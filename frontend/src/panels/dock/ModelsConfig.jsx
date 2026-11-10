@@ -13,7 +13,7 @@
 //
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
-import React, { useState } from 'react'
+import React, { useRef, useState } from 'react'
 import { call } from '../../api'
 
 // R50 #209: user-managed LLM configuration editor.
@@ -64,6 +64,7 @@ export function ModelsConfig({ data, setData }) {
   const [newProv, setNewProv] = useState({ name: '', key: '', base_url: '', env_var: '' })
   const [verify, setVerify] = useState(null)
   const [verifying, setVerifying] = useState(false)
+  const keyInputRef = useRef(null)
 
   // No configError branch here: a failed /config/models fetch is surfaced by
   // the dock's own error banner (#231), one path for every tab.
@@ -93,6 +94,26 @@ export function ModelsConfig({ data, setData }) {
     }])
   )
   const setKey = (n, patch) => setKeys({ ...keyDraft, [n]: { ...keyDraft[n], ...patch } })
+
+  // R84b: catalog-driven add — pick a provider, only the key is asked for.
+  // The free-text row below stays the single write path; the catalog merely
+  // pre-fills it, so what will be saved is always visible.
+  const catalog = cfg.provider_catalog || []
+  const configuredNames = new Set(Object.keys(cfg.providers || {}))
+  const catalogChoices = catalog.filter((e) => !configuredNames.has(e.name))
+  const pickedCatalog = catalog.find((e) => e.name === newProv.name) || null
+  const CUSTOM_PROV = '__custom-prov'
+  const pickFromCatalog = (name) => {
+    if (!name || name === CUSTOM_PROV) {
+      setNewProv({ name: '', key: '', base_url: '', env_var: '' })
+      return
+    }
+    const e = catalog.find((x) => x.name === name)
+    if (!e) return
+    setNewProv({ name: e.name, key: '', base_url: e.base_url || '', env_var: e.env_var || '' })
+    // The next action is always "paste the key" — meet the user there.
+    requestAnimationFrame(() => keyInputRef.current && keyInputRef.current.focus())
+  }
 
   const newProvDirty = !!(newProv.name || newProv.key || newProv.base_url)
   const save = async () => {
@@ -152,22 +173,154 @@ export function ModelsConfig({ data, setData }) {
   const numField = (label, k) => (
     <CfgNumField key={k} label={label} value={model[k]} onChange={(v) => set(k, v)} />
   )
+  const hint = (text) => (
+    <div className="pl-[8.5rem] text-[9px] text-neutral-600">{text}</div>
+  )
+  // Lineup fields suggest every known prefix: configured providers plus the
+  // curated catalog (R84a) — the union the runtime can actually route.
+  const prefixSuggest = [...new Set([
+    ...(cfg.provider_prefixes || []),
+    ...catalog.map((e) => `${e.name}:`),
+  ])]
 
   return (
     <div className="flex h-full flex-col gap-3 overflow-auto p-1 text-ink">
       <div className="text-[10px] text-neutral-500">
         ~/.codingdude/config.toml — provider keys are stored there, masked in this UI.
+        Setup order: providers first, then model lineup — a slot can only bind a model its
+        provider can reach.
       </div>
       {(cfg.warnings || []).length > 0 && (
         <div className="rounded border border-warning/40 bg-warning/10 px-2 py-1 text-[11px] text-warning">
           {(cfg.warnings || []).map((w) => <div key={w}>{w}</div>)}
         </div>
       )}
+
       <div className="space-y-1.5 rounded border border-line bg-surface p-3">
-        <div className="text-[10px] uppercase tracking-wide text-ink-muted">Model lineup (provider:model)</div>
-        {field('main', 'main')}
-        {field('subagent', 'subagent')}
-        {field('fallback', 'fallback')}
+        <div className="text-[10px] uppercase tracking-wide text-ink-muted">1 · Providers</div>
+        <div className="text-[10px] text-neutral-500">
+          A model only works when its provider has a key. Pick a provider from the list —
+          key is all you type. Anything else (a gateway, a self-hosted endpoint): choose
+          Custom. OpenAI-compatible endpoints only.
+        </div>
+        <datalist id="provider-model-suggest">
+          {prefixSuggest.map((p) => (
+            <option key={p} value={p} />
+          ))}
+        </datalist>
+        {Object.entries(keyDraft).map(([name, e]) => e.del ? null : (
+          <div key={name} className="space-y-1 rounded border border-line p-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-mono text-[11px] text-neutral-400">{name}</span>
+              <span className="flex items-center gap-1">
+                {verify && name in verify && (
+                  <span className={`text-[10px] ${verify[name].ok ? 'text-success' : 'text-danger'}`}>
+                    {verify[name].ok ? '✓ auth ok' : `✗ ${verify[name].status || ''} ${verify[name].detail || 'failed'}`.slice(0, 60)}
+                  </span>
+                )}
+                {cfg.providers?.[name] && (
+                  <button type="button" title={e.clear ? 'undo clear' : 'clear stored key on save'}
+                    className="rounded border border-line px-1.5 py-0.5 text-[10px] text-neutral-400 hover:text-danger"
+                    onClick={() => setKey(name, { clear: !e.clear, key: '' })}
+                  >{e.clear ? 'undo' : 'clear'}</button>
+                )}
+                <button type="button" title="delete this provider"
+                  className="rounded border border-line px-1.5 py-0.5 text-[10px] text-neutral-400 hover:text-danger"
+                  onClick={() => setKey(name, { del: true })}
+                >remove</button>
+              </span>
+            </div>
+            <input
+              type="password"
+              className="min-w-0 w-full rounded border border-line bg-surface px-2 py-0.5 font-mono text-[11px] text-ink"
+              value={e.key}
+              placeholder={e.clear ? 'cleared on save' : (cfg.providers?.[name] ? '● key set — leave blank to keep' : 'api key')}
+              onChange={(ev) => setKey(name, { key: ev.target.value, clear: false })}
+            />
+            <div className="flex gap-2">
+              <input
+                className="min-w-0 flex-1 rounded border border-line bg-surface px-2 py-0.5 font-mono text-[11px] text-ink"
+                value={e.base_url}
+                placeholder="base URL (https://…/v1)"
+                onChange={(ev) => setKey(name, { base_url: ev.target.value })}
+              />
+              <input
+                className="w-28 min-w-0 rounded border border-line bg-surface px-2 py-0.5 font-mono text-[11px] text-ink"
+                value={e.env_var}
+                placeholder="env var"
+                onChange={(ev) => setKey(name, { env_var: ev.target.value })}
+              />
+            </div>
+          </div>
+        ))}
+        <div className="space-y-1">
+          <select
+            className="w-full rounded border border-line bg-surface px-2 py-1 font-mono text-[11px] text-ink"
+            value=""
+            aria-label="Add a provider"
+            title="Known providers — the key is all you type"
+            onChange={(e) => {
+              const name = e.target.value
+              e.target.value = ''
+              pickFromCatalog(name)
+            }}
+          >
+            <option value="">add from catalog…</option>
+            {catalogChoices.map((e) => (
+              <option key={e.name} value={e.name}>{e.label}</option>
+            ))}
+            <option value={CUSTOM_PROV}>Custom (OpenAI-compatible)…</option>
+          </select>
+          <div className="flex gap-2">
+            <input
+              className="w-28 min-w-0 rounded border border-line bg-surface px-2 py-0.5 font-mono text-[11px] text-ink"
+              placeholder="name" value={newProv.name}
+              onChange={(e) => setNewProv({ ...newProv, name: e.target.value.replace(/[^A-Za-z0-9_-]/g, '').replace(/^[^A-Za-z0-9]+/, '') })}
+            />
+            <input
+              ref={keyInputRef}
+              type="password"
+              className="min-w-0 flex-1 rounded border border-line bg-surface px-2 py-0.5 font-mono text-[11px] text-ink"
+              placeholder={pickedCatalog && !pickedCatalog.needs_key ? 'no key needed' : 'api key'} value={newProv.key}
+              onChange={(e) => setNewProv({ ...newProv, key: e.target.value })}
+            />
+          </div>
+          <div className="flex gap-2">
+            <input
+              className="min-w-0 flex-1 rounded border border-line bg-surface px-2 py-0.5 font-mono text-[11px] text-ink"
+              placeholder="base URL (https://…/v1)" value={newProv.base_url}
+              onChange={(e) => setNewProv({ ...newProv, base_url: e.target.value })}
+            />
+            <input
+              className="w-28 min-w-0 rounded border border-line bg-surface px-2 py-0.5 font-mono text-[11px] text-ink"
+              placeholder="env var" value={newProv.env_var || ''}
+              onChange={(e) => setNewProv({ ...newProv, env_var: e.target.value })}
+            />
+          </div>
+          {pickedCatalog && pickedCatalog.note && (
+            <div className="text-[9px] text-neutral-500">{pickedCatalog.note}</div>
+          )}
+        </div>
+        <button
+          type="button"
+          className="rounded border border-line px-2 py-0.5 text-[11px] text-neutral-400 hover:text-ink disabled:opacity-40"
+          disabled={verifying}
+          onClick={testKeys}
+        >{verifying ? 'Testing…' : 'Test keys'}</button>
+      </div>
+
+      <div className="space-y-1.5 rounded border border-line bg-surface p-3">
+        <div className="text-[10px] uppercase tracking-wide text-ink-muted">2 · Model lineup</div>
+        <div className="text-[10px] text-neutral-500">
+          Bind <span className="font-mono">provider:model</span> to each slot. main = your chats ·
+          subagent = delegated work · fallback = safety net when main fails · vision = image input.
+        </div>
+        {field('main', 'main', 'e.g. zai:glm-5.3-flash')}
+        {hint('the default chat model — every conversation starts here')}
+        {field('subagent', 'subagent', 'e.g. zai:glm-5.3-flash')}
+        {hint('delegated work: research, plan steps, reviewers')}
+        {field('fallback', 'fallback', 'e.g. zai:glm-5.3-flash')}
+        {hint('used when main fails or is rate-limited')}
         {field('fallback base url', 'fallback_base_url', 'optional endpoint override')}
         <div className="text-[10px] text-neutral-500">
           Z.AI has two plans with different endpoints. GLM Coding Plan keys are rejected by the
@@ -179,32 +332,16 @@ export function ModelsConfig({ data, setData }) {
           >set the coding-plan endpoint</button>
         </div>
         {field('vision', 'vision', 'e.g. zai:glm-5v (optional)')}
-        <label className="flex items-center gap-2 text-[11px]">
-          <span className="w-32 shrink-0 text-neutral-500">thinking</span>
-          <select
-            className="min-w-0 flex-1 rounded border border-line bg-surface px-1 py-0.5 font-mono text-[11px] text-ink"
-            value={model.thinking ?? ''}
-            onChange={(e) => set('thinking', e.target.value || null)}
-          >
-            <option value="">(provider default)</option>
-            <option value="off">off</option>
-            {(cfg.thinking_levels || []).map((lvl) => (
-              <option key={lvl} value={lvl}>{lvl}</option>
-            ))}
-          </select>
-        </label>
-        {numField('max tokens', 'max_tokens')}
-        {numField('context limit', 'context_limit')}
-        {numField('request limit', 'request_limit')}
+        {hint('image input routing; empty = images rejected')}
       </div>
 
       <div className="space-y-1.5 rounded border border-line bg-surface p-3">
-        <div className="text-[10px] uppercase tracking-wide text-ink-muted">Function profiles</div>
+        <div className="text-[10px] uppercase tracking-wide text-ink-muted">3 · Function staffing</div>
         <div className="text-[10px] text-neutral-500">
-          Staffing by cognitive function: an explicit model/thinking wins for
-          that function's delegate sessions; otherwise the subagent slot
-          staffs it. Tool policies are registry-locked — configuration tunes
-          cost and quality, never capability.
+          Optional per-function overrides: an explicit model/thinking wins for that
+          function's delegate sessions; otherwise the subagent slot staffs it.
+          Tool policies are registry-locked — configuration tunes cost and quality,
+          never capability.
         </div>
         {(cfg.function_specs || []).map((spec) => (
           <div key={spec.name} className="space-y-1 rounded border border-line p-2">
@@ -237,88 +374,30 @@ export function ModelsConfig({ data, setData }) {
         ))}
       </div>
 
-      <div className="space-y-1.5 rounded border border-line bg-surface p-3">
-        <div className="text-[10px] uppercase tracking-wide text-ink-muted">Providers</div>
-        <div className="text-[10px] text-neutral-500">
-          User-defined OpenAI-compatible providers. A name with a base URL makes
-          `name:model` bindings work everywhere. Keys stored in
-          ~/.codingdude/config.toml, never displayed; blank keeps a set key.
+      <details className="rounded border border-line bg-surface p-3">
+        <summary className="cursor-pointer text-[10px] uppercase tracking-wide text-ink-muted">
+          4 · Advanced — thinking &amp; limits
+        </summary>
+        <div className="mt-2 space-y-1.5">
+          <label className="flex items-center gap-2 text-[11px]">
+            <span className="w-32 shrink-0 text-neutral-500">thinking</span>
+            <select
+              className="min-w-0 flex-1 rounded border border-line bg-surface px-1 py-0.5 font-mono text-[11px] text-ink"
+              value={model.thinking ?? ''}
+              onChange={(e) => set('thinking', e.target.value || null)}
+            >
+              <option value="">(provider default)</option>
+              <option value="off">off</option>
+              {(cfg.thinking_levels || []).map((lvl) => (
+                <option key={lvl} value={lvl}>{lvl}</option>
+              ))}
+            </select>
+          </label>
+          {numField('max tokens', 'max_tokens')}
+          {numField('context limit', 'context_limit')}
+          {numField('request limit', 'request_limit')}
         </div>
-        <datalist id="provider-model-suggest">
-          {(cfg.provider_prefixes || []).map((p) => (
-            <option key={p} value={`${p}:`} />
-          ))}
-        </datalist>
-        {Object.entries(keyDraft).map(([name, e]) => e.del ? null : (
-          <div key={name} className="flex flex-wrap items-center gap-2 text-[11px]">
-            <span className="w-28 shrink-0 font-mono text-neutral-500">{name}</span>
-            <input
-              type="password"
-              className="w-40 min-w-0 flex-1 rounded border border-line bg-surface px-2 py-0.5 font-mono text-[11px] text-ink"
-              value={e.key}
-              placeholder={e.clear ? 'cleared on save' : (cfg.providers?.[name] ? '● set — leave blank to keep' : 'api key')}
-              onChange={(ev) => setKey(name, { key: ev.target.value, clear: false })}
-            />
-            <input
-              className="w-48 min-w-0 flex-1 rounded border border-line bg-surface px-2 py-0.5 font-mono text-[11px] text-ink"
-              value={e.base_url}
-              placeholder="base URL (https://…/v1)"
-              onChange={(ev) => setKey(name, { base_url: ev.target.value })}
-            />
-            <input
-              className="w-32 min-w-0 rounded border border-line bg-surface px-2 py-0.5 font-mono text-[11px] text-ink"
-              value={e.env_var}
-              placeholder="env var (optional)"
-              onChange={(ev) => setKey(name, { env_var: ev.target.value })}
-            />
-            {cfg.providers?.[name] && (
-              <button type="button" title={e.clear ? 'undo clear' : 'clear stored key on save'}
-                className="rounded border border-line px-1.5 py-0.5 text-[10px] text-neutral-400 hover:text-danger"
-                onClick={() => setKey(name, { clear: !e.clear, key: '' })}
-              >{e.clear ? 'undo' : 'clear'}</button>
-            )}
-            <button type="button" title="delete this provider"
-              className="rounded border border-line px-1.5 py-0.5 text-[10px] text-neutral-400 hover:text-danger"
-              onClick={() => setKey(name, { del: true })}
-            >remove</button>
-            {verify && name in verify && (
-              <span className={verify[name].ok ? 'text-success' : 'text-danger'}>
-                {verify[name].ok ? '✓ auth ok' : `✗ ${verify[name].status || ''} ${verify[name].detail || 'failed'}`.slice(0, 60)}
-              </span>
-            )}
-          </div>
-        ))}
-        <div className="flex flex-wrap items-center gap-2 text-[11px]">
-          <span className="w-28 shrink-0 text-[10px] uppercase text-neutral-500">add</span>
-          <input
-            className="w-28 min-w-0 rounded border border-line bg-surface px-2 py-0.5 font-mono text-[11px] text-ink"
-            placeholder="name" value={newProv.name}
-            onChange={(e) => setNewProv({ ...newProv, name: e.target.value.replace(/[^A-Za-z0-9_-]/g, '').replace(/^[^A-Za-z0-9]+/, '') })}
-          />
-          <input
-            type="password"
-            className="w-40 min-w-0 flex-1 rounded border border-line bg-surface px-2 py-0.5 font-mono text-[11px] text-ink"
-            placeholder="api key" value={newProv.key}
-            onChange={(e) => setNewProv({ ...newProv, key: e.target.value })}
-          />
-          <input
-            className="w-48 min-w-0 flex-1 rounded border border-line bg-surface px-2 py-0.5 font-mono text-[11px] text-ink"
-            placeholder="base URL (https://…/v1)" value={newProv.base_url}
-            onChange={(e) => setNewProv({ ...newProv, base_url: e.target.value })}
-          />
-          <input
-            className="w-32 min-w-0 rounded border border-line bg-surface px-2 py-0.5 font-mono text-[11px] text-ink"
-            placeholder="env var (optional)" value={newProv.env_var || ''}
-            onChange={(e) => setNewProv({ ...newProv, env_var: e.target.value })}
-          />
-        </div>
-        <button
-          type="button"
-          className="rounded border border-line px-2 py-0.5 text-[11px] text-neutral-400 hover:text-ink disabled:opacity-40"
-          disabled={verifying}
-          onClick={testKeys}
-        >{verifying ? 'Testing…' : 'Test keys'}</button>
-      </div>
+      </details>
 
       {msg && (
         <div className={`rounded px-2 py-1 text-[11px] ${msg.ok ? 'bg-success/15 text-brand-300' : 'bg-danger/15 text-danger'}`}>
@@ -334,7 +413,7 @@ export function ModelsConfig({ data, setData }) {
         <button
           className="rounded border border-line px-3 py-1 text-[11px] text-neutral-400 hover:text-ink disabled:opacity-40"
           disabled={!draft && !keys}
-          onClick={() => { setDraft(null); setKeys(null); setMsg(null); setVerify(null) }}
+          onClick={() => { setDraft(null); setKeys(null); setMsg(null); setVerify(null); setNewProv({ name: '', key: '', base_url: '', env_var: '' }) }}
         >Revert</button>
       </div>
     </div>
