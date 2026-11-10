@@ -55,6 +55,11 @@ _POST_RUN_DRAIN_TIMEOUT_S = 300.0
 # waiter abandons them (#308).
 _POST_RUN_CANCEL_GRACE_S = 10.0
 
+# _diff_fingerprint value when `git diff HEAD` cannot run (no git, not a
+# repo, commitless HEAD). Stable across calls so before/after equality
+# means "no tracked-file change" (#310).
+_DIFF_UNAVAILABLE = 'unavailable'
+
 
 def _zai_fallback(model_name: str, base_url: str | None) -> Model:
     """Build the ZAI fallback model, optionally pointed at a custom endpoint."""
@@ -319,20 +324,25 @@ class Engine:
 
         return scrubbed_env()
 
-    def _diff_nonempty(self, session_id: str) -> bool:
+    def _diff_fingerprint(self, workdir: Path) -> str:
+        """A stable fingerprint of the working tree's tracked-file delta:
+        sha256 of `git diff HEAD` stdout (#310). 'unavailable' when git is
+        missing, the workdir is not a repo, or HEAD does not exist yet
+        (commitless scratch workdirs) — stable, so before/after equality
+        then correctly means "no tracked-file change happened here"."""
+        import hashlib
         import subprocess
 
-        workdir = self._db.session_workdir(session_id)
-        if not workdir:
-            return False
         try:
             result = subprocess.run(
                 ['git', 'diff', 'HEAD'], cwd=workdir,
-                capture_output=True, text=True, timeout=30,
+                capture_output=True, timeout=30,
             )
         except (OSError, subprocess.SubprocessError):
-            return False
-        return bool(result.stdout.strip())
+            return _DIFF_UNAVAILABLE
+        if result.returncode != 0:
+            return _DIFF_UNAVAILABLE
+        return hashlib.sha256(result.stdout).hexdigest()
 
     def _make_tracer(self, session_id: str, workdir: Path, trace: bool, emit,
                      run_id: str | None = None):
@@ -503,6 +513,13 @@ class Engine:
 
         traced = self._make_tracer(session_id, workdir, trace, emit, run_id=run_id)
         boot_event = self._boot_project(workdir)
+        # #310: the claims-audit gate is run-scoped. Two signals arm it:
+        # edit-tool events this run produced, and any movement of the
+        # tracked-file diff between now and run end (shell-mediated work).
+        # A standing dirty file alone (ROADMAP-by-convention repos) arms
+        # nothing — a turn that changed nothing gets no audit.
+        diff_before = self._diff_fingerprint(workdir)
+        run_touched: list[str] = []
 
         # #297 DE-3: the long-run lane — one container-tier sandbox when
         # Docker is usable, an honestly-degraded host tier otherwise. The
@@ -550,6 +567,8 @@ class Engine:
                 self.checkpoints.capture_file(session_id, cp_holder[0], workdir, abs_path)
 
             def on_edit_dispatch(ec: dict) -> None:
+                if ec.get('type') == 'EDIT_APPLIED':
+                    run_touched.append(str(ec.get('path', '')))
                 traced(ec)
                 if on_event:
                     on_event(ec)
@@ -610,6 +629,8 @@ class Engine:
             approvals=approvals, fix_loop=fix_loop, test_command=test_command,
             max_test_iterations=max_test_iterations, emit=emit, traced=traced,
             started=started, lane=lane,
+            run_changed=bool(run_touched)
+            or self._diff_fingerprint(workdir) != diff_before,
         )
 
     def _detect_phase(
@@ -941,6 +962,7 @@ class Engine:
         traced,
         started,
         lane=None,
+        run_changed: bool = True,
     ) -> RunOutcome:
         """Persist, run the fix loop if asked, record usage, spawn the tail."""
         self._history.persist(session_id, result.all_messages())
@@ -978,7 +1000,7 @@ class Engine:
         self._pending_post_run[session_id] = asyncio.create_task(
             self._post_run_tail(session_id, result, workdir, approvals, traced,
                                 prepared.resolved, agent_spec.history,
-                                agent_spec.toolsets, agent_spec.instructions)
+                                agent_spec.instructions, run_changed=run_changed)
         )
         return RunOutcome(
             session_id=session_id,
@@ -988,13 +1010,17 @@ class Engine:
         )
 
     async def _post_run_tail(self, session_id: str, result, workdir, approvals,
-                             traced, resolved, history, toolsets, instructions) -> None:
+                             traced, resolved, history, instructions,
+                             *, run_changed: bool) -> None:
         """Extraction + claims audit, concurrent, best-effort — never fails a run.
 
-        #309: every event the tail emits carries phase='post-run' and the tail
-        brackets itself with POST_RUN_BEGIN / POST_RUN_END, so post-RUN_FINISHED
-        activity (including the retry agent's raw tool events between the
-        markers) can never read as live run activity in the trace."""
+        #310: the audit is gated on the RUN's changes (edit-tool events or a
+        moved diff fingerprint), not on the workdir being dirty — a standing
+        dirty file no longer fires the audit every turn. #309: every event
+        the tail emits carries phase='post-run' and the tail brackets itself
+        with POST_RUN_BEGIN / POST_RUN_END, so post-RUN_FINISHED activity
+        (including the retry agent's raw tool events between the markers)
+        can never read as live run activity in the trace."""
         def post_traced(event: dict) -> None:
             traced({**event, 'phase': 'post-run'})
 
@@ -1002,17 +1028,17 @@ class Engine:
             post_traced({'type': 'POST_RUN_BEGIN'})
             # #24: extraction and the claims audit are independent — run them
             # concurrently so the tail costs max(), not sum().
-            if self._diff_nonempty(session_id):
+            if run_changed:
                 await asyncio.gather(
                     self._post.extract_memory(session_id, workdir, emit=post_traced),
                     self._post.verify_claims(
                         session_id, result, workdir, approvals, post_traced,
                         resolved=resolved, history=history,
-                        toolsets=toolsets, instructions=instructions,
+                        instructions=instructions,
                     ),
                 )
             else:
-                post_traced({'type': 'CLAIMS_SKIPPED', 'reason': 'empty_diff'})
+                post_traced({'type': 'CLAIMS_SKIPPED', 'reason': 'no_run_changes'})
                 await self._post.extract_memory(session_id, workdir, emit=post_traced)
         except Exception:  # noqa: BLE001 — background tail must never crash the engine
             logging.getLogger(__name__).warning(

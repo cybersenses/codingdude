@@ -483,7 +483,7 @@ class PostRunPipeline:
 
     async def verify_claims(self, session_id: str, result, workdir: Path,
                             approvals, emit, resolved=None, history=None,
-                            toolsets=None, instructions=None) -> None:
+                            instructions=None) -> None:
         """Anti-slop: cross-check the final summary's verification claims against
         recorded tool results; re-execute explicitly claimed verifications once;
         give the model one round to address unsupported claims."""
@@ -542,9 +542,24 @@ class PostRunPipeline:
         # round was the 8000s post-run stall tail.
         if emit:
             emit({'type': 'CLAIMS_RETRY', 'claims': unsupported})
+        # #311: the verifier does NOT run with the run's full toolsets —
+        # it gets the narrowed read+shell surface (build_verifier_toolsets),
+        # wrapped in the same error-feedback seam as every agent.
+        from .config import load_project_config
+        from .processes import ProcessRegistry
+        from .tool_errors import error_feedback_toolset
+
+        shell_bin = load_project_config(workdir).get(
+            'shell', self._services.config.shell.default
+        )
+        registry = ProcessRegistry(
+            on_event=emit, db=self._services.db, session_id=session_id,
+        )
         retry_agent: Agent = Agent(
             model=resolved, instructions=instructions or load_prompt('base_instructions'),
-            toolsets=toolsets,
+            toolsets=[error_feedback_toolset(build_verifier_toolsets(
+                workdir, approvals, shell_bin, registry=registry,
+            ))],
         )
         try:
             retry = await asyncio.wait_for(
@@ -577,3 +592,23 @@ class PostRunPipeline:
                 'unverified', session_id, type(exc).__name__, exc,
             )
         emit({'type': 'CLAIMS_UNVERIFIED', 'claims': unsupported})
+
+
+def build_verifier_toolsets(workdir: Path, approvals, shell_bin: str,
+                            registry=None) -> list:
+    """#311: the claims-retry verifier's narrowed toolset.
+
+    Post-terminal verification needs exactly two capabilities: read the
+    tree (list_dir/read_file/grep/glob) and re-run claimed verifications
+    (shell). Everything else the run carried — edit tools, delegation,
+    ask cards, sandbox exec — is verification-inappropriate: the verifier
+    audits a finished run and must not mutate what it audits (live: run
+    mY5V_HxeMdk's full-toolset retry re-ran builds and UI probes for ~2
+    minutes post-terminal)."""
+    from .tools import build_shell_toolset, build_toolset
+
+    return [
+        build_toolset(workdir, read_only=True),
+        build_shell_toolset(workdir, approvals, shell_bin=shell_bin,
+                            registry=registry),
+    ]

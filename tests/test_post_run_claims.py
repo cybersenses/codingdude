@@ -15,14 +15,20 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """Post-run claims pipeline: bounded retry round, real logging, parallel tail.
 
-Covers #23 (unbounded claims-retry agent round was the 8000s stall tail)
-and #24 (extraction + claims audit run concurrently).
+Covers #23 (unbounded claims-retry agent round was the 8000s stall tail),
+#24 (extraction + claims audit run concurrently), #308/#309 (verdict at the
+drain bound + post-run phase markers), and #310 (run-scoped audit gating).
 """
 
 import asyncio
 
 from helpers import scripted
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+)
 from pydantic_ai.models.function import FunctionModel
 
 from codingdude.config import load_config
@@ -31,8 +37,8 @@ from codingdude.engine import Engine
 _UNSUPPORTED = 'the reviewer could not verify that the tests pass'
 
 
-def git_workdir_with_diff(tmp_path) -> object:
-    """A git repo whose working tree differs from HEAD (claims path active)."""
+def _git_repo(tmp_path) -> object:
+    """A git repo with one tracked file."""
     import subprocess
 
     w = tmp_path / 'gitproj'
@@ -45,8 +51,21 @@ def git_workdir_with_diff(tmp_path) -> object:
     (w / 'a.txt').write_text('one\n')
     git('add', '.')
     git('commit', '-m', 'init')
+    return w
+
+
+def git_workdir_with_diff(tmp_path) -> object:
+    """A git repo whose working tree differs from HEAD before the run starts
+    (standing dirty file — the diff-gate #310 replaces)."""
+    w = _git_repo(tmp_path)
     (w / 'a.txt').write_text('one\ntwo\n')
     return w
+
+
+def git_workdir_clean(tmp_path) -> object:
+    """A git repo with a clean tree: only the run's own changes can arm
+    the audit gate."""
+    return _git_repo(tmp_path)
 
 
 def run_model(text: str):
@@ -55,15 +74,27 @@ def run_model(text: str):
     return scripted(fn)
 
 
-def flaky_run_model(text: str, raise_on_call: int):
-    """Run model that answers normally, then explodes on a later call
-    (simulating the claims-retry round crashing)."""
-    calls = {'n': 0}
+def tool_run_model(tool_name: str, tool_args: dict, final_text: str = 'Done. Tests pass.'):
+    """Call 1 issues the tool call; later calls answer with final_text."""
     def fn(messages: list[ModelMessage], info):
-        calls['n'] += 1
-        if calls['n'] >= raise_on_call:
+        if not any(isinstance(p, ToolCallPart) for m in messages for p in m.parts):
+            return ModelResponse(parts=[ToolCallPart(tool_name=tool_name, args=tool_args)])
+        return ModelResponse(parts=[TextPart(content=final_text)])
+    return scripted(fn)
+
+
+def flaky_run_model(tool_name: str, tool_args: dict, final_text: str,
+                    raise_on_post_tool_call: int):
+    """Tool-call turn, then a normal answer, then explode on a later call
+    (simulating the claims-retry round crashing)."""
+    post = {'n': 0}
+    def fn(messages: list[ModelMessage], info):
+        if not any(isinstance(p, ToolCallPart) for m in messages for p in m.parts):
+            return ModelResponse(parts=[ToolCallPart(tool_name=tool_name, args=tool_args)])
+        post['n'] += 1
+        if post['n'] >= raise_on_post_tool_call:
             raise RuntimeError('provider exploded')
-        return ModelResponse(parts=[TextPart(content=text)])
+        return ModelResponse(parts=[TextPart(content=final_text)])
     return scripted(fn)
 
 
@@ -76,8 +107,8 @@ async def test_claims_retry_is_evented_and_addressed(tmp_path, db, home):
     engine = Engine(config=load_config(), db=db, extraction_model=extractor)
     outcome = await engine.run(
         prompt='do the thing',
-        workdir=git_workdir_with_diff(tmp_path),
-        model=run_model('Done. Tests pass.'),
+        workdir=git_workdir_clean(tmp_path),
+        model=tool_run_model('write_file', {'path': 'made.txt', 'content': 'x\n'}),
         emit=events.append,
     )
     assert outcome.status == 'complete'
@@ -102,8 +133,10 @@ async def test_claims_retry_failure_is_logged_not_silent(tmp_path, db, home, cap
     with caplog.at_level(logging.WARNING, logger='codingdude.run_pipeline'):
         outcome = await engine.run(
             prompt='do the thing',
-            workdir=git_workdir_with_diff(tmp_path),
-            model=flaky_run_model('Done.', raise_on_call=2),
+            workdir=git_workdir_clean(tmp_path),
+            model=flaky_run_model(
+                'write_file', {'path': 'made.txt', 'content': 'x\n'},
+                'Done.', raise_on_post_tool_call=2),
             emit=events.append,
         )
     assert outcome.status == 'complete'
@@ -126,8 +159,8 @@ async def test_extraction_and_claims_run_concurrently(tmp_path, db, home):
     engine = Engine(config=load_config(), db=db, extraction_model=extractor)
     outcome = await engine.run(
         prompt='do the thing',
-        workdir=git_workdir_with_diff(tmp_path),
-        model=run_model('Done. Tests pass.'),
+        workdir=git_workdir_clean(tmp_path),
+        model=tool_run_model('write_file', {'path': 'made.txt', 'content': 'x\n'}),
         emit=events.append,
     )
     assert outcome.status == 'complete'
@@ -187,8 +220,13 @@ async def test_drain_cut_retry_still_reports_unverified(tmp_path, db, home):
     release_retry = asyncio.Event()
 
     async def run_then_block(messages, info):
-        """Call 1: the run itself. Later calls: the retry round — block
-        until the test has fired the drain bound (the live race shape)."""
+        """Call 1 edits a file (arms the gate). Later calls: the retry
+        round — block until the test has fired the drain bound (the live
+        race shape)."""
+        if not any(isinstance(p, ToolCallPart) for m in messages for p in m.parts):
+            return ModelResponse(parts=[ToolCallPart(
+                tool_name='write_file',
+                args={'path': 'made.txt', 'content': 'x\n'})])
         if retry_running.is_set():
             await release_retry.wait()
             return ModelResponse(parts=[TextPart(content='corrected')])
@@ -197,13 +235,24 @@ async def test_drain_cut_retry_still_reports_unverified(tmp_path, db, home):
 
     async def stream_run_then_block(messages, info):
         response = await run_then_block(messages, info)
-        yield response.parts[0].content
+        for i, part in enumerate(response.parts):
+            if hasattr(part, 'tool_name'):
+                from pydantic_ai.models.function import DeltaToolCall
+
+                args = part.args
+                if not isinstance(args, str):
+                    import json
+
+                    args = json.dumps(args)
+                yield {i: DeltaToolCall(name=part.tool_name, json_args=args)}
+            elif hasattr(part, 'content') and isinstance(part.content, str):
+                yield part.content
 
     events: list[dict] = []
     engine = Engine(config=load_config(), db=db, extraction_model=extractor)
     outcome = await engine.run(
         prompt='do the thing',
-        workdir=git_workdir_with_diff(tmp_path),
+        workdir=git_workdir_clean(tmp_path),
         model=FunctionModel(run_then_block, stream_function=stream_run_then_block),
         emit=events.append,
     )
@@ -244,8 +293,8 @@ async def test_post_run_events_carry_phase_markers(tmp_path, db, home):
     engine = Engine(config=load_config(), db=db, extraction_model=extractor)
     outcome = await engine.run(
         prompt='do the thing',
-        workdir=git_workdir_with_diff(tmp_path),
-        model=run_model('Done. Tests pass.'),
+        workdir=git_workdir_clean(tmp_path),
+        model=tool_run_model('write_file', {'path': 'made.txt', 'content': 'x\n'}),
         emit=events.append,
     )
     assert outcome.status == 'complete'
@@ -261,6 +310,94 @@ async def test_post_run_events_carry_phase_markers(tmp_path, db, home):
     stamped = {e['type'] for e in events if e.get('phase') == 'post-run'}
     assert {'POST_RUN_BEGIN', 'POST_RUN_END', 'MEMORY_EXTRACTED',
             'CLAIMS_UNVERIFIED'} <= stamped
+
+
+async def test_dirty_workdir_without_run_changes_skips_audit(tmp_path, db, home):
+    """#310: the audit gate is run-scoped, not workdir-scoped. A standing
+    dirty file (this repo's own ROADMAP.md-by-convention) must not fire the
+    claims audit on every turn: a turn that changed nothing gets
+    CLAIMS_SKIPPED and no audit; memory extraction still runs."""
+    extractor = scripted(lambda m, i: ModelResponse(
+        parts=[TextPart(content=_UNSUPPORTED)]))
+
+    events: list[dict] = []
+    engine = Engine(config=load_config(), db=db, extraction_model=extractor)
+    outcome = await engine.run(
+        prompt='what does this repo do',
+        workdir=git_workdir_with_diff(tmp_path),
+        model=run_model('It is a coding agent.'),
+        emit=events.append,
+    )
+    assert outcome.status == 'complete'
+    await engine.drain_post_run()
+    types = [e['type'] for e in events]
+    assert 'CLAIMS_CHECKING' not in types
+    skipped = [e for e in events if e['type'] == 'CLAIMS_SKIPPED']
+    assert skipped and skipped[0].get('reason') == 'no_run_changes'
+    assert 'MEMORY_EXTRACTED' in types
+
+
+async def test_run_edit_arms_audit_in_clean_workdir(tmp_path, db, home):
+    """#310: a run that edits a file gets audited even from a clean tree —
+    which also covers commitless/scratch workdirs, where `git diff HEAD`
+    has nothing to compare against at all."""
+    extractor = scripted(lambda m, i: ModelResponse(
+        parts=[TextPart(content=_UNSUPPORTED)]))
+
+    events: list[dict] = []
+    engine = Engine(config=load_config(), db=db, extraction_model=extractor)
+    outcome = await engine.run(
+        prompt='do the thing',
+        workdir=git_workdir_clean(tmp_path),
+        model=tool_run_model('write_file', {'path': 'made.txt', 'content': 'x\n'}),
+        emit=events.append,
+    )
+    assert outcome.status == 'complete'
+    await engine.drain_post_run()
+    assert 'CLAIMS_CHECKING' in [e['type'] for e in events]
+
+
+async def test_run_shell_change_arms_audit(tmp_path, db, home):
+    """#310: shell-mediated tracked-file changes arm the gate too — the
+    diff fingerprint moved during the run even though no edit-tool event
+    fired."""
+    from codingdude.approvals import ApprovalPolicy
+
+    extractor = scripted(lambda m, i: ModelResponse(
+        parts=[TextPart(content=_UNSUPPORTED)]))
+
+    events: list[dict] = []
+    engine = Engine(config=load_config(), db=db, extraction_model=extractor)
+    outcome = await engine.run(
+        prompt='do the thing',
+        workdir=git_workdir_clean(tmp_path),
+        model=tool_run_model('shell', {'command': 'echo three >> a.txt'}),
+        approvals=ApprovalPolicy(yolo=True),
+        emit=events.append,
+    )
+    assert outcome.status == 'complete'
+    await engine.drain_post_run()
+    assert 'CLAIMS_CHECKING' in [e['type'] for e in events]
+
+
+async def test_verifier_toolset_is_narrowed(tmp_path, db, home):
+    """#311: the claims-retry verifier runs post-terminal with a narrowed
+    toolset — read-only file tools plus the shell (it must be able to
+    re-run claimed verifications like `uv run pytest`). It never carries
+    the run's full surface: no edit tools, no delegation, no ask cards,
+    no sandbox exec."""
+    from codingdude.approvals import ApprovalPolicy
+    from codingdude.run_pipeline import build_verifier_toolsets
+
+    toolsets = build_verifier_toolsets(
+        tmp_path, ApprovalPolicy(yolo=True), shell_bin='powershell')
+    names: set[str] = set()
+    for ts in toolsets:
+        names |= set(ts.tools)
+    assert {'list_dir', 'read_file', 'grep', 'glob', 'shell'} <= names
+    for forbidden in ('edit_file', 'write_file', 'edit_symbol', 'delegate',
+                      'ask_user', 'exec_in_sandbox', 'run_coverage'):
+        assert forbidden not in names
 
 
 async def test_next_run_waits_for_pending_extraction(tmp_path, db, home):
