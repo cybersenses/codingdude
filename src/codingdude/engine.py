@@ -40,6 +40,7 @@ from .run_pipeline import (
     PostRunPipeline,
     PromptAssembler,
     RunServices,
+    shell_bin_for,
 )
 from .tools import (
     GateRequired,
@@ -517,8 +518,10 @@ class Engine:
         # edit-tool events this run produced, and any movement of the
         # tracked-file diff between now and run end (shell-mediated work).
         # A standing dirty file alone (ROADMAP-by-convention repos) arms
-        # nothing — a turn that changed nothing gets no audit.
-        diff_before = self._diff_fingerprint(workdir)
+        # nothing — a turn that changed nothing gets no audit. The
+        # fingerprint runs in a thread: a wedged git must stall a worker
+        # thread, not the event loop (review finding on b3817ad).
+        diff_before = await asyncio.to_thread(self._diff_fingerprint, workdir)
         run_touched: list[str] = []
 
         # #297 DE-3: the long-run lane — one container-tier sandbox when
@@ -827,10 +830,7 @@ class Engine:
                 lambda pattern: self._db.record_pattern_approval(session_id, pattern)
             )
 
-        from .config import load_project_config
-        project_shell = load_project_config(workdir).get(
-            'shell', self._config.shell.default
-        )
+        project_shell = shell_bin_for(self._config, workdir)
         subagent = subagent_model or self._build_subagent_model()
 
         from .plugins import PluginContext, build_all
@@ -961,7 +961,7 @@ class Engine:
         traced,
         started,
         lane=None,
-        diff_before: str = '',
+        diff_before: str,
         run_touched: list | None = None,
     ) -> RunOutcome:
         """Persist, run the fix loop if asked, record usage, spawn the tail.
@@ -979,11 +979,7 @@ class Engine:
         # Fix-until-green loop: run the tests, feed failures back, repeat.
         usages = [result.usage]
         if fix_loop and approvals is not None:
-            from .config import load_project_config
-
-            shell_bin = load_project_config(workdir).get(
-                'shell', self._config.shell.default
-            )
+            shell_bin = shell_bin_for(self._config, workdir)
             result, retry_usages = await self._run_fix_loop(
                 session_id, prepared.resolved, agent_spec.instructions,
                 agent_spec.toolsets, agent_spec.history, result, workdir,
@@ -1000,18 +996,19 @@ class Engine:
         )
         self._services.check_budget(session_id)
         # #310: the gate signals are evaluated here — AFTER the fix loop —
-        # so fix-loop-only edits arm the audit like any other change.
-        run_changed = (
-            bool(run_touched) or self._diff_fingerprint(workdir) != diff_before
-        )
-        # Post-run passes (extraction ∥ claims audit) run in the background:
+        # so fix-loop-only edits arm the audit like any other change. The
+        # fingerprint runs in a thread: a wedged git must stall a worker
+        # thread, not the event loop (review finding on b3817ad).
+        diff_after = await asyncio.to_thread(self._diff_fingerprint, workdir)
+        run_changed = bool(run_touched) or diff_after != diff_before
+        # Post-run passes (extraction + claims audit) run in the background:
         # RUN_FINISHED must not wait ~90s on them (user friction). The next
         # turn drains them before its prompt is assembled, so extraction
         # still lands before it can matter (see _drain_pending_post_run).
         self._pending_post_run[session_id] = asyncio.create_task(
             self._post_run_tail(session_id, result, workdir, approvals, traced,
-                                prepared.resolved, agent_spec.history,
-                                agent_spec.instructions, run_changed=run_changed)
+                                prepared.resolved, agent_spec,
+                                run_changed=run_changed)
         )
         return RunOutcome(
             session_id=session_id,
@@ -1021,7 +1018,7 @@ class Engine:
         )
 
     async def _post_run_tail(self, session_id: str, result, workdir, approvals,
-                             traced, resolved, history, instructions,
+                             traced, resolved, agent_spec: AgentSpec,
                              *, run_changed: bool) -> None:
         """Extraction + claims audit, concurrent, best-effort — never fails a run.
 
@@ -1044,8 +1041,8 @@ class Engine:
                     self._post.extract_memory(session_id, workdir, emit=post_traced),
                     self._post.verify_claims(
                         session_id, result, workdir, approvals, post_traced,
-                        resolved=resolved, history=history,
-                        instructions=instructions,
+                        resolved=resolved, history=agent_spec.history,
+                        instructions=agent_spec.instructions,
                     ),
                 )
             else:

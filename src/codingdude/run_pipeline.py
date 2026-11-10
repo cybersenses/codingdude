@@ -521,6 +521,15 @@ class PostRunPipeline:
                 auditor.run(audit_prompt), timeout=_POST_RUN_LLM_TIMEOUT_S
             )
         except Exception:  # noqa: BLE001 — verification must never fail the run
+            # Review finding on b3817ad: this half previously returned bare,
+            # leaving CLAIMS_CHECKING with no terminal event and no log —
+            # the same silent-catch class the retry half was fixed for (#23).
+            logger.warning(
+                'claims audit failed for session %s; claims remain unverified',
+                session_id, exc_info=True,
+            )
+            if emit:
+                emit({'type': 'CLAIMS_UNVERIFIED', 'reason': 'audit_failed'})
             return
         self._services.record_model_usage(session_id, extraction_model, audit.usage)
         unsupported = [
@@ -545,13 +554,10 @@ class PostRunPipeline:
         # #311: the verifier does NOT run with the run's full toolsets —
         # it gets the narrowed read+shell surface (build_verifier_toolsets),
         # wrapped in the same error-feedback seam as every agent.
-        from .config import load_project_config
         from .processes import ProcessRegistry
         from .tool_errors import error_feedback_toolset
 
-        shell_bin = load_project_config(workdir).get(
-            'shell', self._services.config.shell.default
-        )
+        shell_bin = shell_bin_for(self._services.config, workdir)
         registry = ProcessRegistry(
             on_event=emit, db=self._services.db, session_id=session_id,
         )
@@ -575,7 +581,8 @@ class PostRunPipeline:
             self._services.db.replace_messages(
                 session_id, [encode_messages([m]) for m in retry.all_messages()]
             )
-            emit({'type': 'CLAIMS_ADDRESSED', 'response': str(retry.output)[:1500]})
+            if emit:
+                emit({'type': 'CLAIMS_ADDRESSED', 'response': str(retry.output)[:1500]})
         except asyncio.CancelledError:
             # #308: the drain bound cancelled the retry mid-flight (live: run
             # mY5V_HxeMdk lost its verdict exactly this way — CancelledError
@@ -591,7 +598,17 @@ class PostRunPipeline:
                 'claims-retry round failed for session %s (%s: %s); claims remain '
                 'unverified', session_id, type(exc).__name__, exc,
             )
-        emit({'type': 'CLAIMS_UNVERIFIED', 'claims': unsupported})
+        if emit:
+            emit({'type': 'CLAIMS_UNVERIFIED', 'claims': unsupported})
+
+
+def shell_bin_for(config, workdir: Path) -> str:
+    """The shell binary for `workdir`: project config override, else the
+    global default. One home for the resolution that used to be copied at
+    every shell-seam call site (review finding on b3817ad)."""
+    from .config import load_project_config
+
+    return load_project_config(workdir).get('shell', config.shell.default)
 
 
 def build_verifier_toolsets(workdir: Path, approvals, shell_bin: str,

@@ -149,6 +149,37 @@ async def test_claims_retry_failure_is_logged_not_silent(tmp_path, db, home, cap
                for r in caplog.records)
 
 
+async def test_audit_failure_still_reports_unverified(tmp_path, db, home, caplog):
+    """A crash inside the audit half (before any retry) must not be silent
+    either: CLAIMS_CHECKING fired, so a terminal verdict must close it.
+    Review finding on b3817ad: the audit half swallowed every failure with
+    a bare return — CLAIMS_CHECKING left with no closing event, no log."""
+    import logging
+
+    def exploding_extractor(messages, info):
+        raise RuntimeError('audit exploded')
+
+    extractor = scripted(exploding_extractor)
+
+    events: list[dict] = []
+    engine = Engine(config=load_config(), db=db, extraction_model=extractor)
+    with caplog.at_level(logging.WARNING, logger='codingdude.run_pipeline'):
+        outcome = await engine.run(
+            prompt='do the thing',
+            workdir=git_workdir_clean(tmp_path),
+            model=tool_run_model('write_file', {'path': 'made.txt', 'content': 'x\n'}),
+            emit=events.append,
+        )
+    assert outcome.status == 'complete'
+    await engine.drain_post_run()
+    types = [e['type'] for e in events]
+    assert 'CLAIMS_CHECKING' in types
+    assert 'CLAIMS_RETRY' not in types  # the audit died before any retry
+    unverified = [e for e in events if e['type'] == 'CLAIMS_UNVERIFIED']
+    assert unverified and unverified[0].get('reason') == 'audit_failed'
+    assert caplog.records  # the failure is logged with context, not swallowed
+
+
 async def test_extraction_and_claims_run_concurrently(tmp_path, db, home):
     """Both post-run passes complete when run together (#24); each still
     emits its phase events."""
@@ -355,6 +386,33 @@ async def test_run_edit_arms_audit_in_clean_workdir(tmp_path, db, home):
     assert outcome.status == 'complete'
     await engine.drain_post_run()
     assert 'CLAIMS_CHECKING' in [e['type'] for e in events]
+
+
+async def test_commitless_workdir_edit_arms_audit(tmp_path, db, home):
+    """#310: a commitless workdir (no git repo at all) must arm the audit
+    via edit events — `git diff HEAD` has nothing to compare against there,
+    so without the edit signal the gate could never fire. (Review finding
+    on b3817ad: the test claiming this coverage used a repo WITH a
+    commit.)"""
+    extractor = scripted(lambda m, i: ModelResponse(
+        parts=[TextPart(content=_UNSUPPORTED)]))
+
+    scratch = tmp_path / 'scratch'
+    scratch.mkdir()
+
+    events: list[dict] = []
+    engine = Engine(config=load_config(), db=db, extraction_model=extractor)
+    outcome = await engine.run(
+        prompt='do the thing',
+        workdir=scratch,
+        model=tool_run_model('write_file', {'path': 'made.txt', 'content': 'x\n'}),
+        emit=events.append,
+    )
+    assert outcome.status == 'complete'
+    await engine.drain_post_run()
+    types = [e['type'] for e in events]
+    assert 'CLAIMS_CHECKING' in types
+    assert 'CLAIMS_SKIPPED' not in types
 
 
 async def test_run_shell_change_arms_audit(tmp_path, db, home):
