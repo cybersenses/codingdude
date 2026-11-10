@@ -26,11 +26,124 @@ from __future__ import annotations
 import json
 import secrets
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 from pydantic_ai.toolsets import FunctionToolset
 
 from .db import utc_now_iso as _now
+
+
+def _check_optional_strings(
+    obj: dict, fields: tuple[str, ...], where: str, errors: list[str]
+) -> None:
+    """Optional fields must be strings when present; absent is fine (tolerant)."""
+    for field in fields:
+        if field in obj and not isinstance(obj[field], str):
+            errors.append(f'{where}.{field} must be a string when present')
+
+
+def _validate_wireframe_region(
+    region: object, where: str, areas: set[str], names: set[str], errors: list[str]
+) -> None:
+    """A region must name a unique template area; widget/label/notes are strings
+    when present. Unknown widget values pass (tolerant content, R85)."""
+    if not isinstance(region, dict):
+        errors.append(f'{where} must be an object')
+        return
+    name = region.get('name')
+    if not isinstance(name, str) or not name:
+        errors.append(f'{where}.name must be a non-empty string')
+    elif name in names:
+        errors.append(f'{where}.name {name!r} is duplicated')
+    elif name not in areas:
+        errors.append(f'{where}.name {name!r} is not an area in template')
+    else:
+        names.add(name)
+    _check_optional_strings(region, ('widget', 'label', 'notes'), where, errors)
+
+
+def _validate_wireframe_screen(
+    screen: object, index: int, ids: set[str], errors: list[str]
+) -> None:
+    """One screen: unique id, string title, grid template, regions tied to areas."""
+    where = f'screens[{index}]'
+    if not isinstance(screen, dict):
+        errors.append(f'{where} must be an object')
+        return
+    screen_id = screen.get('id')
+    if not isinstance(screen_id, str) or not screen_id:
+        errors.append(f'{where}.id must be a non-empty string')
+    elif screen_id in ids:
+        errors.append(f'{where}.id {screen_id!r} is duplicated')
+    else:
+        ids.add(screen_id)
+    if not isinstance(screen.get('title'), str):
+        errors.append(f'{where}.title must be a string')
+    template = screen.get('template')
+    if not isinstance(template, str) or not template.strip():
+        errors.append(f'{where}.template must be a non-empty string')
+        template = ''
+    # grid-template-areas tokens; quoted rows and '.' filler cells are allowed.
+    areas = set(template.replace('"', ' ').split()) - {'.'}
+    regions = screen.get('regions')
+    if not isinstance(regions, list) or not regions:
+        errors.append(f'{where}.regions must be a non-empty list')
+        return
+    names: set[str] = set()
+    for j, region in enumerate(regions):
+        _validate_wireframe_region(region, f'{where}.regions[{j}]', areas, names, errors)
+
+
+def _validate_wireframe_flow(
+    flow: object, index: int, ids: set[str], errors: list[str]
+) -> None:
+    """A flow edge references known screen ids; trigger/label are optional strings."""
+    where = f'flows[{index}]'
+    if not isinstance(flow, dict):
+        errors.append(f'{where} must be an object')
+        return
+    for field in ('from', 'to'):
+        ref = flow.get(field)
+        if not isinstance(ref, str) or not ref:
+            errors.append(f'{where}.{field} must be a non-empty string')
+        elif ref not in ids:
+            errors.append(f'{where}.{field} {ref!r} is not a known screen id')
+    _check_optional_strings(flow, ('trigger', 'label'), where, errors)
+
+
+def _validate_wireframe(payload: dict) -> None:
+    """R85 DSL v1: strict structure, tolerant content. Unknown widgets and extra
+    fields pass through (the renderer degrades them to generic boxes); every
+    structural violation is batched into ONE readable ValueError so the agent
+    can self-correct in a single turn."""
+    if not isinstance(payload, dict):
+        raise ValueError('invalid wireframe payload: payload must be a JSON object')
+    errors: list[str] = []
+    version = payload.get('version')
+    if isinstance(version, bool) or version != 1:  # True == 1 in Python; not a version
+        errors.append('version must be 1')
+    screens = payload.get('screens')
+    if not isinstance(screens, list) or not screens:
+        errors.append('screens must be a non-empty list')
+        screens = []
+    ids: set[str] = set()
+    for i, screen in enumerate(screens):
+        _validate_wireframe_screen(screen, i, ids, errors)
+    flows = payload.get('flows', [])
+    if not isinstance(flows, list):
+        errors.append('flows must be a list when present')
+    else:
+        for i, flow in enumerate(flows):
+            _validate_wireframe_flow(flow, i, ids, errors)
+    if errors:
+        raise ValueError('invalid wireframe payload: ' + '; '.join(errors))
+
+
+# Per-kind payload validation at the _emit chokepoint, keyed by kind so future
+# kinds slot in without touching _emit again.
+_EMIT_VALIDATORS: dict[str, Callable[[dict], None]] = {
+    'wireframe': _validate_wireframe,
+}
 
 
 class ArtifactStore:
@@ -56,6 +169,10 @@ class ArtifactStore:
     def emit_html(self, name: str, html: str) -> str:
         """Publish an HTML artifact the UI renders inline (sandboxed iframe)."""
         return self._emit('html', name, {'html': html})
+
+    def emit_wireframe(self, payload: dict, title: str) -> str:
+        """Publish a wireframe pack (screens + flows) rendered in the Artifacts tab."""
+        return self._emit('wireframe', title, payload)
 
     def record_qa(self, questions: list, answers) -> str:
         """Auto-capture an answered ask_user round as decision history."""
@@ -83,6 +200,9 @@ class ArtifactStore:
         status: str = 'pending',
         response: dict | None = None,
     ) -> str:
+        validator = _EMIT_VALIDATORS.get(kind)
+        if validator is not None:
+            validator(payload)
         artifact_id = secrets.token_urlsafe(8)
         self._db._conn.execute(
             'INSERT INTO artifacts'
@@ -213,6 +333,29 @@ def build_artifacts_toolset(db, session_id: str) -> FunctionToolset:
         artifact_id = store.emit_html(name, html)
         return f'html artifact emitted (id={artifact_id}); it renders inline in the UI.'
 
+    def emit_wireframe(payload: dict, title: str) -> str:
+        """Publish a wireframe pack (screens + flows) stored for the Artifacts tab.
+
+        payload shape (DSL v1):
+        {"version": 1, "screens": [...], "flows": [...]}
+        Each screen: {"id": str, "title": str, "template": "<grid-template-areas>",
+          "regions": [{"name": str (a template area), "widget": str,
+                       "label": str, "notes": str}]}.
+        Widget vocabulary v1: nav, header, form, table, list, text, chart,
+        actions, tabs, image, code, placeholder — unknown values are fine, they
+        render as a generic labeled box.
+        flows: [{"from": screen id, "to": screen id, "trigger": str, "label": str}].
+        Structural violations (version != 1, duplicated ids, a region naming an
+        area that is not in the template, unknown screen references) come back
+        as ONE message listing every problem — fix all of them and re-emit the
+        whole pack.
+        """
+        artifact_id = store.emit_wireframe(payload, title)
+        return (
+            f'wireframe pack emitted (id={artifact_id}); stored for the '
+            'Artifacts tab renderer.'
+        )
+
     def get_artifact_feedback(artifact_id: str) -> str:
         """Read the user's answer for an artifact (pick or edited content)."""
         feedback = store.feedback(artifact_id)
@@ -220,4 +363,7 @@ def build_artifacts_toolset(db, session_id: str) -> FunctionToolset:
             return 'pending — user has not answered yet'
         return json.dumps(feedback)
 
-    return FunctionToolset([emit_choice_card, emit_spec_block, emit_html, get_artifact_feedback])
+    return FunctionToolset([
+        emit_choice_card, emit_spec_block, emit_html, emit_wireframe,
+        get_artifact_feedback,
+    ])
