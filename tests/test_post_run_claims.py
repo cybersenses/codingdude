@@ -549,18 +549,20 @@ def audit_capture_model(captured: list[str], response_text: str = _UNSUPPORTED):
     return scripted(fn)
 
 
-def seeded_tool_result(db, workdir, tool_name: str, content: str,
-                       session_id: str = 'sess-evidence'):
-    """A session whose persisted history holds one tool result — the
-    evidence shape the claims auditor reads."""
+def seeded_tool_results(db, workdir, entries, session_id: str = 'sess-evidence'):
+    """A session whose persisted history holds tool results — the evidence
+    shape the claims auditor reads. entries: (tool_name, content) pairs."""
     from pydantic_ai.messages import ModelRequest, ToolReturnPart
 
     from codingdude.messages import encode_messages
 
     db.create_session(workdir, session_id=session_id)
-    payload = encode_messages([ModelRequest(parts=[ToolReturnPart(
-        tool_name=tool_name, content=content, tool_call_id='call-1')])])
-    db.replace_messages(session_id, [payload])
+    payloads = [
+        encode_messages([ModelRequest(parts=[ToolReturnPart(
+            tool_name=name, content=content, tool_call_id=f'call-{i}')])])
+        for i, (name, content) in enumerate(entries)
+    ]
+    db.replace_messages(session_id, payloads)
     return session_id
 
 
@@ -595,10 +597,13 @@ async def test_audit_sees_gate_output_tail(tmp_path, db, home):
 
 
 async def test_audit_evidence_includes_evaluator_verdicts(tmp_path, db, home):
-    """#312: verdict-bearing tool results (evaluate_work / submit_verdict)
-    reach the auditor. 'Evaluator verdict: PASS' claims were structurally
-    invisible — the extraction only read shell/run_coverage — so true
-    verdict claims got challenged."""
+    """#312: verdict-bearing tool results reach the auditor. 'Evaluator
+    verdict: PASS' claims were structurally invisible — the extraction only
+    read shell/run_coverage — so true verdict claims got challenged. The
+    review round on c19464f named the remaining carriers: auto-release
+    evaluation verdicts ride on release_ticket/update_execution_step
+    results, and delegated sub-agent evidence arrives as the delegate
+    tool's final report."""
     from types import SimpleNamespace
 
     from pydantic_ai.models.function import FunctionModel
@@ -610,9 +615,17 @@ async def test_audit_evidence_includes_evaluator_verdicts(tmp_path, db, home):
     extractor = audit_capture_model(captured)
     services = RunServices(config=load_config(), db=db, config_home=home,
                            extraction_model=lambda: extractor)
-    session_id = seeded_tool_result(
-        db, tmp_path, 'evaluate_work',
-        'evaluation [release]: PASS — contract is met')
+    session_id = seeded_tool_results(db, tmp_path, [
+        ('evaluate_work',
+         'evaluation [manual]: PASS — contract is met'),
+        ('release_ticket',
+         'attempt #7 → done\nevaluation [release]: PASS — contract is met'),
+        ('update_execution_step',
+         'step 0 → done (evidence recorded)\n'
+         'evaluation [milestone]: PASS — milestone met'),
+        ('delegate',
+         'Sub-agent report: all gates green — 1148 passed, ruff clean'),
+    ])
     pipeline = PostRunPipeline(services)
     result = SimpleNamespace(
         output='Evaluator verdict: PASS. Work complete.',
@@ -624,8 +637,20 @@ async def test_audit_evidence_includes_evaluator_verdicts(tmp_path, db, home):
         session_id, result, tmp_path, ApprovalPolicy(yolo=True),
         lambda e: None, resolved=resolved)
     assert captured
-    assert any('evaluation [release]: PASS' in p for p in captured), (
-        'the evaluator verdict must reach the auditor'
+    prompt = captured[-1]
+    assert 'evaluation [manual]: PASS' in prompt, (
+        'the manual evaluate_work verdict must reach the auditor'
+    )
+    assert 'evaluation [release]: PASS' in prompt, (
+        'the auto-release verdict (release_ticket result) must reach the'
+        ' auditor'
+    )
+    assert 'evaluation [milestone]: PASS' in prompt, (
+        'the milestone verdict (update_execution_step result) must reach'
+        ' the auditor'
+    )
+    assert '1148 passed, ruff clean' in prompt, (
+        'the delegate report must reach the auditor'
     )
 
 

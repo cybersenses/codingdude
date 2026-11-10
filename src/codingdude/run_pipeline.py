@@ -45,13 +45,24 @@ _POST_RUN_LLM_TIMEOUT_S = 120
 
 #: Tools whose results carry verification evidence for the claims audit
 #: (#312): evaluate_work/submit_verdict verdicts were invisible, so true
-#: 'Evaluator verdict: PASS' claims got challenged.
+#: 'Evaluator verdict: PASS' claims got challenged. Review round on
+#: c19464f: auto-release verdicts ride on release_ticket/update_execution_
+#: step results, delegated evidence arrives as the delegate tool's final
+#: report — all three added. submit_verdict is kept defensively: its
+#: ToolReturnPart never persists today (the evaluator agent's messages are
+#: throwaway; the verdict lands in evaluations_json), but the name is
+#: evidence-shaped if that ever changes.
 _AUDIT_EVIDENCE_TOOLS = frozenset({
     'shell', 'run_coverage', 'evaluate_work', 'submit_verdict',
+    'release_ticket', 'update_execution_step', 'delegate',
 })
 #: Per-entry budget — keep the TAIL of each result: gate verdicts
 #: ('7 passed', 'clean') sit at the end of long outputs; the old head
-#: slice (~120 chars) hid exactly the lines that verify a claim.
+#: slice (~120 chars) hid exactly the lines that verify a claim. Honest
+#: trade: for results longer than this budget the leading 'exit code: N'
+#: header falls off (the old head slice always kept it) — pass/fail is
+#: still visible via the tail's verdict lines; silent-success commands
+#: (empty output) keep their header whole.
 _AUDIT_ENTRY_CHARS = 600
 #: Overall evidence window (was 4000 — one long gate output evicted
 #: everything else). Newest entries survive the cap; old ones fall off,
