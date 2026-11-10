@@ -31,6 +31,28 @@ export interface ModelSend {
 
 const DEFAULT: ModelSend = { send: null, literal: false, label: 'default (main)' }
 
+/** The `<select>`'s extra option for a free-typed `provider:model` literal. */
+export const CUSTOM_OPTION = '__custom'
+
+/** Which option the composer's model `<select>` highlights for `selected`.
+ *
+ * R83: the datalist combobox this replaces filtered its suggestions against
+ * the input's own value, so a persisted pick locked the dropdown to that one
+ * entry. A real `<select>` never filters; this function keeps its highlight
+ * truthful to resolveModelSend's send decision — same truth, one contract:
+ * a null slot highlights the default (that is what would be sent), an
+ * unknown literal highlights the custom option (that is what would be sent),
+ * and with no /models payload a persisted selection still shows its text as
+ * custom rather than silently masquerading as the default. */
+export function pickerSelection(models: ModelsInfo | null, selected: string): string {
+  if (!selected) return ''
+  if (!models) return CUSTOM_OPTION
+  const resolved = models.models[selected]
+  if (resolved) return selected
+  if (selected in models.models) return '' // null slot: sends default → highlights default
+  return CUSTOM_OPTION
+}
+
 export function resolveModelSend(
   models: ModelsInfo | null, selected: string,
 ): ModelSend {

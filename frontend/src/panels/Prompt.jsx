@@ -19,7 +19,74 @@ import { checklistPrompt } from '../checklists'
 
 // R59 P0: moved verbatim out of App.jsx. The prompt row sits directly above the
 // chat panel and is docked with it in P1.
-import { modelOptions, resolveModelSend } from '../modelpick'
+import { modelOptions, pickerSelection, resolveModelSend, CUSTOM_OPTION } from '../modelpick'
+
+// R83: the composer's model picker. A native <select> (never filters its
+// options — the datalist combobox this replaces offered only entries matching
+// the already-typed text, locking a persisted pick to itself) plus a
+// free-typed custom input. The send contract stays resolveModelSend.
+export function ModelPicker({ models, model, setModel }) {
+  const selection = pickerSelection(models, model)
+  const [customOpen, setCustomOpen] = useState(selection === CUSTOM_OPTION)
+  const showSuffix = () => {
+    const send = resolveModelSend(models, model)
+    return !send.literal && send.send
+      ? <span className="text-[10px] text-neutral-500">→ {send.send}</span>
+      : null
+  }
+  if (customOpen) {
+    return (
+      <span className="flex items-center gap-1">
+        <select
+          className="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-ink"
+          value={CUSTOM_OPTION}
+          aria-label="Model"
+          title="Per-run model: a configured slot, or a custom provider:model typed below."
+          onChange={(e) => {
+            setCustomOpen(false)
+            setModel(e.target.value)
+          }}
+        >
+          <option value="">default (main)</option>
+          {modelOptions(models).map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+          <option value={CUSTOM_OPTION}>custom…</option>
+        </select>
+        <input
+          className="w-36 min-w-0 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-ink"
+          value={model}
+          placeholder="provider:model"
+          aria-label="Custom model"
+          autoFocus
+          onChange={(e) => setModel(e.target.value)}
+        />
+        {showSuffix()}
+      </span>
+    )
+  }
+  return (
+    <span className="flex items-center gap-1">
+      <select
+        className="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-ink"
+        value={selection}
+        aria-label="Model"
+        title="Per-run model: a configured slot, or custom… to type provider:model. Default = the configured main model."
+        onChange={(e) => {
+          if (e.target.value === CUSTOM_OPTION) { setCustomOpen(true); return }
+          setModel(e.target.value)
+        }}
+      >
+        <option value="">default (main)</option>
+        {modelOptions(models).map((o) => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+        <option value={CUSTOM_OPTION}>custom…</option>
+      </select>
+      {showSuffix()}
+    </span>
+  )
+}
 
 export function Prompt({ onSend, disabled, running = false, suggestMode, setSuggestMode, fixLoop, setFixLoop, models, modelsError, model, setModel, yolo, setYolo, longRun, setLongRun, notify, toggleNotify }) {
   const [text, setText] = useState('')
@@ -150,8 +217,12 @@ export function Prompt({ onSend, disabled, running = false, suggestMode, setSugg
         <input type="checkbox" checked={fixLoop} onChange={(e) => setFixLoop(e.target.checked)} />
         fix until green
       </label>
-      {/* #307: combobox — configured slots as datalist quick options, plus
-          free-typed `provider:model` passthrough. resolveModelSend owns what
+      {/* #307: models-unavailable keeps its honest error state. R83: the
+          datalist combobox is gone — Chromium filtered its suggestions against
+          the input's own value, so a persisted pick (localStorage cd-model)
+          locked the dropdown to that one entry. A real <select> always shows
+          every slot plus a visible "default (main)" reset; "custom…" reveals
+          the free-text provider:model input. resolveModelSend still owns what
           is sent; the suffix shows the resolved name so an alias choice is
           never mistaken for the literal string. */}
       {modelsError ? (
@@ -165,28 +236,7 @@ export function Prompt({ onSend, disabled, running = false, suggestMode, setSugg
           <option value="">models unavailable</option>
         </select>
       ) : (
-        <span className="flex items-center gap-1">
-          <input
-            className="w-36 min-w-0 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-ink"
-            value={model}
-            list="cd-model-options"
-            placeholder="default (main)"
-            aria-label="Model"
-            title="Per-run model: pick a configured slot from the list or type provider:model. Empty = configured default (main)."
-            onChange={(e) => setModel(e.target.value)}
-          />
-          <datalist id="cd-model-options">
-            {modelOptions(models).map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </datalist>
-          {(() => {
-            const send = resolveModelSend(models, model)
-            return !send.literal && send.send
-              ? <span className="text-[10px] text-neutral-500">→ {send.send}</span>
-              : null
-          })()}
-        </span>
+        <ModelPicker models={models} model={model} setModel={setModel} />
       )}
       <label className={`flex items-center gap-1 text-[10px] ${yolo ? 'text-danger' : 'text-neutral-400'}`} title="yolo = the approval-policy switch: auto-approve every gated action for this session. It is NOT the long-run mode — see --long-run.">
         <input type="checkbox" checked={yolo} onChange={(e) => setYolo(e.target.checked)} />
