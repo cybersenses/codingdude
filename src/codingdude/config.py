@@ -625,6 +625,99 @@ def verify_provider_keys(
             for name, d in sorted(names.items())}
 
 
+def list_provider_models(
+    config: Config, timeout_s: float = 10.0, transport=None,
+) -> dict[str, dict]:
+    """Reachable-model ids per configured provider (#321 lineup picker).
+
+    One GET {root}/models per OpenAI-compatible provider — the catalog marks
+    native providers (anthropic/google) by having no endpoint to ask, so they
+    report `ok None` and free-text stays. Root resolution mirrors
+    verify_provider_keys: the stored base_url wins, then the coding-plan
+    fallback for providers that prefer it, then the catalog's canonical
+    root. `transport` is injectable for tests (default: http.client, same
+    (url, headers, body) signature as the smoke probe). Returns
+    {provider: {'configured', 'ok', 'status', 'detail', 'models'}} — ids
+    sorted, no secrets, read-only (no config writes).
+    """
+    import json as _json
+    from urllib.parse import urlsplit
+
+    def _get(url: str, headers: dict, _body: None) -> tuple[int, str]:
+        import http.client
+
+        parts = urlsplit(url)
+        host = parts.hostname or ''
+        loopback = host in ('localhost', '127.0.0.1', '::1')
+        if parts.scheme not in ('https', 'http'):
+            return 0, f'unsupported url scheme: {parts.scheme!r}'
+        if parts.scheme == 'http' and not loopback:
+            # Local OpenAI-compatible endpoints (Ollama, LM Studio) are the
+            # common http case; anything else must be https.
+            return 0, 'non-https url rejected (http allowed only on localhost)'
+        conn_cls = (
+            http.client.HTTPSConnection if parts.scheme == 'https'
+            else http.client.HTTPConnection)
+        conn = conn_cls(parts.netloc, timeout=timeout_s)
+        try:
+            conn.request('GET', parts.path or '/', headers=headers)
+            resp = conn.getresponse()
+            # Model catalogs are the largest bodies this endpoint sees
+            # (openrouter ~hundreds of entries); 64k bounds the read.
+            return resp.status, resp.read(65_536).decode('utf-8', 'replace')
+        except OSError as exc:
+            return 0, str(exc)
+        finally:
+            conn.close()
+
+    send = transport or _get
+
+    def _root(name: str, d: ProviderDef) -> str:
+        catalog = PROVIDER_CATALOG.get(name)
+        base = d.base_url
+        if not base and catalog is not None:
+            if catalog.smoke_prefers_fallback_base_url:
+                base = config.models.fallback_base_url
+            base = base or catalog.base_url or catalog.smoke_url
+        return (base or '').rstrip('/') + '/models'
+
+    def _result(name: str, key: str | None, d: ProviderDef) -> dict:
+        catalog = PROVIDER_CATALOG.get(name)
+        needs_key = catalog.needs_key if catalog is not None else True
+        if needs_key and not key:
+            return {'configured': False, 'ok': None, 'status': None,
+                    'detail': 'no key', 'models': []}
+        root = _root(name, d)
+        if not root[:-len('/models')]:
+            return {'configured': True, 'ok': None, 'status': None,
+                    'detail': 'no OpenAI-compatible endpoint — not listed',
+                    'models': []}
+        headers = {'Authorization': f'Bearer {key}'} if key else {}
+        status, body = send(root, headers, None)
+        if status != 200:
+            return {'configured': True, 'ok': False, 'status': status or None,
+                    'detail': body[:200], 'models': []}
+        try:
+            data = _json.loads(body).get('data') or []
+        except ValueError:
+            return {'configured': True, 'ok': False, 'status': status,
+                    'detail': 'unexpected /models response shape', 'models': []}
+        ids = sorted(str(m['id']) for m in data
+                     if isinstance(m, dict) and m.get('id'))
+        return {'configured': True, 'ok': True, 'status': status,
+                'detail': None, 'models': ids}
+
+    # Configured providers, plus legacy ones whose env key alone is set —
+    # the same population verify_provider_keys probes.
+    names = dict(config.providers)
+    env = os.environ
+    for legacy, env_name in _LEGACY_ENV_VARS.items():
+        if legacy not in names and env.get(env_name):
+            names[legacy] = ProviderDef()
+    return {name: _result(name, provider_effective_key(name, d), d)
+            for name, d in sorted(names.items())}
+
+
 CODING_PLAN_BASE_URL = 'https://api.z.ai/api/coding/paas/v4'
 
 

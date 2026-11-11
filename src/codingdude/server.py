@@ -1830,6 +1830,14 @@ def create_app(
 
         return {'providers': verify_provider_keys(load_config(home))}
 
+    @app.get('/config/provider-models')
+    def get_config_provider_models(_: None = Depends(authorize)) -> dict:
+        """Reachable-model ids per configured provider (#321 lineup picker).
+        Read-only live catalog fetch; never returns key values."""
+        from .config import list_provider_models, load_config
+
+        return {'providers': list_provider_models(load_config(home))}
+
     class ExecIn(BaseModel):
         command: str
 

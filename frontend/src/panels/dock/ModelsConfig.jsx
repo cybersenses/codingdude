@@ -15,6 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import React, { useRef, useState } from 'react'
 import { call } from '../../api'
+import { fetchStatusText, lineupSuggestions } from '../../lineup'
 
 // R50 #209: user-managed LLM configuration editor.
 // Field-level edits stay in a local draft; Save PUTs the whole lineup and
@@ -24,7 +25,7 @@ import { call } from '../../api'
 // poll re-renders constantly), remounting the inputs and stealing focus.
 //
 // R59 P0: moved verbatim out of App.jsx. Becomes the `config` panel in P2.
-export function CfgTextField({ label, value, onChange, placeholder }) {
+export function CfgTextField({ label, value, onChange, placeholder, list }) {
   return (
     <label className="flex items-center gap-2 text-[11px]">
       <span className="w-32 shrink-0 text-neutral-500">{label}</span>
@@ -32,7 +33,7 @@ export function CfgTextField({ label, value, onChange, placeholder }) {
         className="min-w-0 flex-1 rounded border border-line bg-surface px-2 py-0.5 font-mono text-[11px] text-ink"
         value={value ?? ''}
         placeholder={placeholder || ''}
-        list="provider-model-suggest"
+        list={list || undefined}
         onChange={(e) => onChange(e.target.value || null)}
       />
     </label>
@@ -64,6 +65,10 @@ export function ModelsConfig({ data, setData }) {
   const [newProv, setNewProv] = useState({ name: '', key: '', base_url: '', env_var: '' })
   const [verify, setVerify] = useState(null)
   const [verifying, setVerifying] = useState(false)
+  // #321: reachable-model ids from GET /config/provider-models — fetched on
+  // demand, merged into the lineup datalist by lineupSuggestions.
+  const [fetchedModels, setFetchedModels] = useState(null)
+  const [fetchingModels, setFetchingModels] = useState(false)
   const keyInputRef = useRef(null)
 
   // No configError branch here: a failed /config/models fetch is surfaced by
@@ -167,8 +172,21 @@ export function ModelsConfig({ data, setData }) {
     } finally { setVerifying(false) }
   }
 
-  const field = (label, k, placeholder) => (
-    <CfgTextField key={k} label={label} value={model[k]} placeholder={placeholder} onChange={(v) => set(k, v)} />
+  // #321: fetch the reachable-model catalog so the lineup fields suggest
+  // full provider:model options. Read-only; failures surface per provider
+  // in the merge (bare prefixes stay) and hard failures in msg.
+  const fetchModels = async () => {
+    setFetchingModels(true); setMsg(null)
+    try {
+      const r = await call('/config/provider-models')
+      setFetchedModels(r.providers)
+    } catch (err) {
+      setMsg({ ok: false, text: String(err instanceof Error ? err.message : err) })
+    } finally { setFetchingModels(false) }
+  }
+
+  const field = (label, k, placeholder, list = 'provider-model-suggest') => (
+    <CfgTextField key={k} label={label} value={model[k]} placeholder={placeholder} list={list} onChange={(v) => set(k, v)} />
   )
   const numField = (label, k) => (
     <CfgNumField key={k} label={label} value={model[k]} onChange={(v) => set(k, v)} />
@@ -177,11 +195,11 @@ export function ModelsConfig({ data, setData }) {
     <div className="pl-[8.5rem] text-[9px] text-neutral-600">{text}</div>
   )
   // Lineup fields suggest every known prefix: configured providers plus the
-  // curated catalog (R84a) — the union the runtime can actually route.
-  const prefixSuggest = [...new Set([
-    ...(cfg.provider_prefixes || []),
-    ...catalog.map((e) => `${e.name}:`),
-  ])]
+  // curated catalog (R84a) — the union the runtime can actually route. After
+  // a model-list fetch (#321) they suggest full reachable provider:model ids
+  // instead, with unlistable providers keeping their bare prefix.
+  const suggestions = lineupSuggestions(cfg, fetchedModels)
+  const statusText = fetchStatusText(fetchedModels)
 
   return (
     <div className="flex h-full flex-col gap-3 overflow-auto p-1 text-ink">
@@ -204,7 +222,7 @@ export function ModelsConfig({ data, setData }) {
           Custom. OpenAI-compatible endpoints only.
         </div>
         <datalist id="provider-model-suggest">
-          {prefixSuggest.map((p) => (
+          {suggestions.map((p) => (
             <option key={p} value={p} />
           ))}
         </datalist>
@@ -315,13 +333,24 @@ export function ModelsConfig({ data, setData }) {
           Bind <span className="font-mono">provider:model</span> to each slot. main = your chats ·
           subagent = delegated work · fallback = safety net when main fails · vision = image input.
         </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="rounded border border-line px-2 py-0.5 text-[11px] text-neutral-400 hover:text-ink disabled:opacity-40"
+            disabled={fetchingModels}
+            onClick={fetchModels}
+          >{fetchingModels ? 'Fetching…' : 'Fetch model list'}</button>
+          {statusText && (
+            <span className="text-[10px] text-neutral-500">{statusText} — pick from the suggestions, or keep typing a literal.</span>
+          )}
+        </div>
         {field('main', 'main', 'e.g. zai:glm-5.3-flash')}
         {hint('the default chat model — every conversation starts here')}
         {field('subagent', 'subagent', 'e.g. zai:glm-5.3-flash')}
         {hint('delegated work: research, plan steps, reviewers')}
         {field('fallback', 'fallback', 'e.g. zai:glm-5.3-flash')}
         {hint('used when main fails or is rate-limited')}
-        {field('fallback base url', 'fallback_base_url', 'optional endpoint override')}
+        {field('fallback base url', 'fallback_base_url', 'optional endpoint override', null)}
         <div className="text-[10px] text-neutral-500">
           Z.AI has two plans with different endpoints. GLM Coding Plan keys are rejected by the
           standard API —{' '}
@@ -353,6 +382,7 @@ export function ModelsConfig({ data, setData }) {
               label="model"
               value={model.functions?.[spec.name]?.model ?? ''}
               placeholder="(subagent slot)"
+              list="provider-model-suggest"
               onChange={(v) => setFunction(spec.name, 'model', v)}
             />
             <label className="flex items-center gap-2 text-[11px]">
