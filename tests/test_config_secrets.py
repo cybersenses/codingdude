@@ -152,3 +152,60 @@ def test_config_verify_route_never_echoes_keys(tmp_path, monkeypatch):
     assert r.status_code == 200
     assert r.json()["providers"]["github"]["ok"] is False
     assert "ghp_whatever" not in r.text
+
+
+def test_verify_github_profiles_via_pat_endpoint(tmp_path, monkeypatch):
+    """#320: GitHub Models proves a PAT with a GET on api.github.com/user —
+    catalog-driven (smoke_profile), not a name special case. The former
+    special case ignored a stored inference base_url; that behavior holds."""
+    from codingdude.config import load_config, verify_provider_keys
+
+    monkeypatch.delenv("ZAI_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("GITHUB_PAT", raising=False)
+    cfg_path = config_home() / "config.toml"
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg_path.write_text('[providers]\ngithub = "ghp_x"\n', encoding="utf-8")
+
+    calls = []
+
+    def fake_transport(url, headers, body):
+        calls.append((url, body))
+        return (200, '{"login":"someone"}')
+
+    results = verify_provider_keys(load_config(config_home()), transport=fake_transport)
+    assert results["github"] == {
+        "configured": True, "ok": True, "status": 200, "detail": None,
+    }
+    # profile probe: GET with a Bearer header, no chat body, on the PAT endpoint
+    assert calls == [("https://api.github.com/user", None)]
+
+
+def test_verify_smoke_urls_are_catalog_driven(tmp_path, monkeypatch):
+    """#320: one smoke table. A bare zai prefers the lineup's coding-plan
+    fallback_base_url (catalog flag, was a name special case); deepseek smokes
+    its canonical endpoint from the catalog (was the _LEGACY_SMOKE_URLS map).
+    Both are chat probes — a POST body rides along."""
+    from codingdude.config import load_config, verify_provider_keys
+
+    monkeypatch.delenv("ZAI_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("GITHUB_PAT", raising=False)
+    cfg_path = config_home() / "config.toml"
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg_path.write_text(
+        f'[models]\nfallback_base_url = "{CODING_PLAN_URL}"\n'
+        '[providers]\nzai = "sk-z"\ndeepseek = "sk-d"\n', encoding="utf-8")
+
+    calls = []
+
+    def fake_transport(url, headers, body):
+        calls.append((url, body))
+        return (200, "{}")
+
+    results = verify_provider_keys(load_config(config_home()), transport=fake_transport)
+    assert results["zai"]["ok"] is True
+    assert results["deepseek"]["ok"] is True
+    urls = dict(calls)
+    assert (f"{CODING_PLAN_URL}/chat/completions", results["zai"]) and urls[f"{CODING_PLAN_URL}/chat/completions"] is not None
+    assert urls["https://api.deepseek.com/v1/chat/completions"] is not None
