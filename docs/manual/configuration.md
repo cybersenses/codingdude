@@ -13,6 +13,13 @@ is either a built-in (`deepseek`, `zai`, `openai`, `anthropic`, `google`,
 `github`, `groq`, `mistral`, `ollama`, `bedrock`) or any name you define
 under `[providers.<name>]`.
 
+In the Settings tab's model lineup, **Fetch model list** queries each
+configured OpenAI-compatible provider live and turns its model ids into
+datalist suggestions (`provider:model-id`), so you can pick instead of
+typing from memory. Native providers (anthropic, google) have no
+OpenAI-compatible listing endpoint — their fields stay free-text. The
+fetch is read-only; typing a literal id always still works.
+
 ## Worked examples
 
 ### 1. DeepSeek (the default)

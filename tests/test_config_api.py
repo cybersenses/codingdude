@@ -186,3 +186,185 @@ def test_get_warns_when_zai_fallback_lacks_coding_plan_endpoint(tmp_path):
 
     c.put("/config/models", json={"models": {"fallback_base_url": CODING_PLAN_URL}})
     assert c.get("/config/models").json()["warnings"] == []
+
+
+# ---- #321: reachable-model listing for the lineup slot picker ----
+
+
+def _write_providers(text):
+    cfg = config_home() / "config.toml"
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text(text, encoding="utf-8")
+
+
+def test_provider_models_lists_reachable_models(tmp_path, monkeypatch):
+    """#321: one GET {root}/models per OpenAI-compatible provider with the
+    effective key; ids ride back sorted; the endpoint never echoes secrets."""
+    import json
+
+    from codingdude.config import list_provider_models, load_config
+
+    monkeypatch.delenv("ZAI_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    client(tmp_path)
+    _write_providers('[providers]\ndeepseek = "sk-d"\n')
+
+    calls = []
+
+    def fake_transport(url, headers, body):
+        calls.append((url, headers.get("Authorization"), body))
+        return (200, json.dumps(
+            {"data": [{"id": "deepseek-v4-pro"}, {"id": "deepseek-v4-flash"}]}))
+
+    out = list_provider_models(load_config(config_home()), transport=fake_transport)
+    assert out["deepseek"] == {
+        "configured": True, "ok": True, "status": 200, "detail": None,
+        "models": ["deepseek-v4-flash", "deepseek-v4-pro"],
+    }
+    # catalog root + GET with a Bearer header, no body — the smoke contract
+    assert calls == [("https://api.deepseek.com/v1/models", "Bearer sk-d", None)]
+
+
+def test_config_provider_models_route_never_echoes_keys(tmp_path, monkeypatch):
+    """GET /config/provider-models is wired and never echoes key material
+    (route test mirrors test_config_verify_route_never_echoes_keys; the
+    function-level tests above carry the listing logic)."""
+    monkeypatch.delenv("ZAI_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("GITHUB_PAT", raising=False)
+    c = client(tmp_path)
+    c.put("/config/models", json={"providers": {"deepseek": "sk-live-secret"}})
+    monkeypatch.setattr(
+        "codingdude.config.list_provider_models",
+        lambda cfg, timeout_s=10.0, transport=None: {
+            "deepseek": {"configured": True, "ok": False, "status": 401,
+                         "detail": '{"error":"invalid key"}', "models": []},
+        })
+    r = c.get("/config/provider-models")
+    assert r.status_code == 200
+    assert r.json()["providers"]["deepseek"]["configured"] is True
+    assert "sk-live-secret" not in r.text
+
+
+def test_provider_models_native_provider_reported_not_listed(tmp_path, monkeypatch):
+    """Q4: anthropic/google have no OpenAI-compatible endpoint in the catalog —
+    reported ok None with an empty list (free-text stays), no request fires."""
+    from codingdude.config import list_provider_models, load_config
+
+    monkeypatch.delenv("ZAI_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("GITHUB_PAT", raising=False)
+    client(tmp_path)
+    _write_providers('[providers]\nanthropic = "sk-ant"\n')
+
+    calls = []
+
+    def fake_transport(url, headers, body):
+        calls.append(url)
+        return (200, "{}")
+
+    out = list_provider_models(load_config(config_home()), transport=fake_transport)
+    assert calls == []
+    assert out["anthropic"]["ok"] is None
+    assert out["anthropic"]["models"] == []
+    assert out["anthropic"]["configured"] is True
+
+
+def test_provider_models_transport_error_is_per_provider(tmp_path, monkeypatch):
+    """One dead endpoint must not blind the others: ok False + empty models
+    for the failed provider, its neighbours still list."""
+    import json
+
+    from codingdude.config import list_provider_models, load_config
+
+    monkeypatch.delenv("ZAI_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("GITHUB_PAT", raising=False)
+    client(tmp_path)
+    _write_providers('[providers]\ndeepseek = "sk-d"\nopenai = "sk-o"\n')
+
+    def fake_transport(url, headers, body):
+        if "deepseek" in url:
+            return (0, "getaddrinfo failed")
+        return (200, json.dumps({"data": [{"id": "gpt-4o"}]}))
+
+    out = list_provider_models(load_config(config_home()), transport=fake_transport)
+    assert out["deepseek"]["ok"] is False
+    assert out["deepseek"]["models"] == []
+    assert "getaddrinfo failed" in out["deepseek"]["detail"]
+    assert out["openai"]["ok"] is True
+    assert out["openai"]["models"] == ["gpt-4o"]
+
+
+def test_provider_models_keyless_local_provider_fetches_without_auth(
+        tmp_path, monkeypatch):
+    """ollama (needs_key False): no key is fine — fetch with no Authorization
+    header. A keyless provider that needs a key is reported unconfigured and
+    never requested."""
+    import json
+
+    from codingdude.config import list_provider_models, load_config
+
+    monkeypatch.delenv("ZAI_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("GITHUB_PAT", raising=False)
+    client(tmp_path)
+    _write_providers(
+        '[providers.ollama]\nbase_url = "http://localhost:11434/v1"\n'
+        '[providers.deepseek]\nenv_var = "DEEPSEEK_X"\n')
+
+    calls = []
+
+    def fake_transport(url, headers, body):
+        calls.append((url, headers.get("Authorization")))
+        return (200, json.dumps({"data": [{"id": "llama3:8b"}]}))
+
+    out = list_provider_models(load_config(config_home()), transport=fake_transport)
+    assert calls == [("http://localhost:11434/v1/models", None)]
+    assert out["ollama"]["models"] == ["llama3:8b"]
+    assert out["deepseek"]["configured"] is False
+    assert out["deepseek"]["models"] == []
+
+
+def test_provider_models_includes_legacy_env_only_provider(tmp_path, monkeypatch):
+    """The legacy trio rides on env vars alone (verify_provider_keys
+    precedent): ZAI_API_KEY set with no [providers] entry still lists."""
+    import json
+
+    from codingdude.config import list_provider_models, load_config
+
+    monkeypatch.setenv("ZAI_API_KEY", "sk-z-env")
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("GITHUB_PAT", raising=False)
+    client(tmp_path)
+    _write_providers("")
+
+    calls = []
+
+    def fake_transport(url, headers, body):
+        calls.append((url, headers.get("Authorization")))
+        return (200, json.dumps({"data": [{"id": "glm-5.3-flash"}]}))
+
+    out = list_provider_models(load_config(config_home()), transport=fake_transport)
+    assert ("https://api.z.ai/api/paas/v4/models", "Bearer sk-z-env") in calls
+    assert out["zai"]["models"] == ["glm-5.3-flash"]
+
+
+def test_provider_models_non_object_response_is_shape_error(tmp_path, monkeypatch):
+    """A JSON-array (or scalar) /models body takes the graceful shape-error
+    path — never an uncaught AttributeError (evaluator nit, #321)."""
+    from codingdude.config import list_provider_models, load_config
+
+    monkeypatch.delenv("ZAI_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("GITHUB_PAT", raising=False)
+    client(tmp_path)
+    _write_providers('[providers]\ndeepseek = "sk-d"\n')
+
+    def fake_transport(url, headers, body):
+        return (200, '["unexpected", "array"]')
+
+    out = list_provider_models(load_config(config_home()), transport=fake_transport)
+    assert out["deepseek"]["ok"] is False
+    assert out["deepseek"]["detail"] == "unexpected /models response shape"
+    assert out["deepseek"]["models"] == []
