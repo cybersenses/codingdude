@@ -1228,7 +1228,7 @@ Frontend-essential per core directive #21: no ticket under this umbrella closes 
 Scope: (1) composer model picker offers configured slots AND arbitrary provider:model entry (combobox/datalist pattern already proven in ModelsConfig.jsx); (2) stop the silent .catch(() => {}) on the /models fetch in App.jsx — a failed fetch must not silently remove the picker (disabled state with a readable message instead); (3) the resolved model actually sent rides the run (App.jsx startRun already resolves slot → name; keep honest labeling of what will be used); (4) optional small backend: /models could expose the function-registry lineup so real options are listed without typing.
 
 ## R82 — Post-run orchestration correctness (claims loop)
-**Status:** open
+**Status:** done
 
 Findings from the 2026-11-09 trace forensics (run mY5V_HxeMdk): post-RUN_FINISHED activity is the claims-verification phase working as designed, but four defects/gaps around it: (1) the drain bound cuts the claims-retry mid-flight and silently discards its verdict + gathered evidence (no CLAIMS_ADDRESSED/CLAIMS_UNVERIFIED ever lands); (2) post-run events are indistinguishable from live run activity in the trace (same run_id, no phase marker); (3) the audit's `git diff HEAD` gating fires every turn in repos that keep a deliberately dirty file; (4) the retry verifier runs with the run's full write-capable toolsets after the run is already terminal.
 
