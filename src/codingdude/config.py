@@ -109,6 +109,115 @@ KNOWN_PROVIDERS = (
     'groq', 'mistral', 'ollama', 'bedrock',
 )
 
+
+@dataclass(frozen=True)
+class CatalogProvider:
+    """One curated PROVIDER_CATALOG entry (R84a): the pick-from-a-list data
+    behind the Settings UI's add-provider flow.
+
+    Facts are verified against the installed pydantic-ai provider sources,
+    not docs from memory. Entries whose provider module needs an optional
+    SDK this install lacks (groq, mistral, cohere, xai, bedrock) are
+    deliberately absent — a catalog entry that cannot load would fail
+    exactly at the run the user configured it for; 'custom' is the escape
+    hatch for those and for anything unlisted.
+
+    `base_url` is stored with a new entry when the provider needs explicit
+    routing (the OpenAI-compatible aggregators) or has exactly one canonical
+    endpoint (GitHub Models — which also dodges pydantic-ai's GitHubProvider
+    reading GITHUB_API_KEY, a name our legacy storage does not inject).
+    Native providers keep None so infer_model builds them.
+    """
+
+    label: str
+    env_var: str | None
+    base_url: str | None = None
+    needs_key: bool = True
+    smoke_url: str | None = None
+    # GitHub Models proves a PAT with a GET on the profile endpoint — its
+    # inference base_url takes a different shape and cannot prove the token.
+    smoke_profile: bool = False
+    # zai: a bare entry (no stored base_url) prefers the lineup's
+    # fallback_base_url — the GLM Coding Plan endpoint split that
+    # _lineup_warnings also flags.
+    smoke_prefers_fallback_base_url: bool = False
+    note: str = ''
+
+
+PROVIDER_CATALOG: dict[str, CatalogProvider] = {
+    'zai': CatalogProvider(
+        label='Z.AI (GLM)', env_var='ZAI_API_KEY',
+        smoke_url='https://api.z.ai/api/paas/v4',
+        smoke_prefers_fallback_base_url=True,
+        note='GLM Coding Plan keys need the coding-plan endpoint — see the lineup warning.',
+    ),
+    'deepseek': CatalogProvider(
+        label='DeepSeek', env_var='DEEPSEEK_API_KEY',
+        smoke_url='https://api.deepseek.com/v1'),
+    'openai': CatalogProvider(
+        label='OpenAI', env_var='OPENAI_API_KEY',
+        smoke_url='https://api.openai.com/v1'),
+    'anthropic': CatalogProvider(
+        label='Anthropic (Claude)', env_var='ANTHROPIC_API_KEY',
+        note='Native provider; the key smoke test does not apply (no OpenAI-compatible endpoint).'),
+    'google': CatalogProvider(
+        label='Google (Gemini)', env_var='GOOGLE_API_KEY',
+        note='GEMINI_API_KEY is accepted too; native provider (no key smoke test).'),
+    'github': CatalogProvider(
+        label='GitHub Models', env_var='GITHUB_API_KEY',
+        base_url='https://models.github.ai/inference',
+        smoke_url='https://api.github.com/user',
+        smoke_profile=True,
+        note='A personal access token works. Stored keys default to the GITHUB_PAT env name unless env_var is set — new entries from this UI set GITHUB_API_KEY.'),
+    'ollama': CatalogProvider(
+        label='Ollama (local)', env_var=None,
+        base_url='http://localhost:11434/v1', needs_key=False,
+        note='Local server; no key needed. Adjust the base URL if your server is elsewhere.'),
+    'openrouter': CatalogProvider(
+        label='OpenRouter', env_var='OPENROUTER_API_KEY',
+        base_url='https://openrouter.ai/api/v1',
+        smoke_url='https://openrouter.ai/api/v1'),
+    'together': CatalogProvider(
+        label='Together AI', env_var='TOGETHER_API_KEY',
+        base_url='https://api.together.xyz/v1',
+        smoke_url='https://api.together.xyz/v1'),
+    'fireworks': CatalogProvider(
+        label='Fireworks AI', env_var='FIREWORKS_API_KEY',
+        base_url='https://api.fireworks.ai/inference/v1',
+        smoke_url='https://api.fireworks.ai/inference/v1'),
+    'cerebras': CatalogProvider(
+        label='Cerebras', env_var='CEREBRAS_API_KEY',
+        base_url='https://api.cerebras.ai/v1',
+        smoke_url='https://api.cerebras.ai/v1'),
+    'moonshotai': CatalogProvider(
+        label='Moonshot AI (Kimi)', env_var='MOONSHOTAI_API_KEY',
+        base_url='https://api.moonshot.ai/v1',
+        smoke_url='https://api.moonshot.ai/v1'),
+    'nebius': CatalogProvider(
+        label='Nebius AI Studio', env_var='NEBIUS_API_KEY',
+        base_url='https://api.studio.nebius.com/v1',
+        smoke_url='https://api.studio.nebius.com/v1'),
+    'sambanova': CatalogProvider(
+        label='SambaNova', env_var='SAMBANOVA_API_KEY',
+        base_url='https://api.sambanova.ai/v1',
+        smoke_url='https://api.sambanova.ai/v1'),
+}
+
+
+def provider_catalog_payload() -> list[dict]:
+    """JSON-safe catalog for GET /config/models (R84a): sorted, no secrets."""
+    return [
+        {
+            'name': name,
+            'label': e.label,
+            'env_var': e.env_var,
+            'base_url': e.base_url,
+            'needs_key': e.needs_key,
+            'note': e.note,
+        }
+        for name, e in sorted(PROVIDER_CATALOG.items())
+    ]
+
 # Built-in providers keep their historical env-var names; custom providers
 # default to <NAME>_API_KEY unless their [providers.<name>] table overrides
 # `env_var`.
@@ -276,6 +385,8 @@ def models_payload(config: Config) -> dict:
         'providers': providers,
         'provider_defs': provider_defs,
         'provider_prefixes': sorted(set(KNOWN_PROVIDERS) | set(config.providers)),
+        # R84a: curated pick-from-a-list entries for the add-provider flow.
+        'provider_catalog': provider_catalog_payload(),
         'thinking_levels': THINKING_LEVELS,
         'warnings': _lineup_warnings(config.models),
     }
@@ -412,12 +523,9 @@ def _clear_provider_key(providers: dict, name: str) -> None:
         providers.pop(name, None)
 
 
-# Default smoke endpoints for the built-in trio (custom providers must
-# declare base_url to be testable).
-_LEGACY_SMOKE_URLS = {
-    'zai': 'https://api.z.ai/api/paas/v4',
-    'deepseek': 'https://api.deepseek.com/v1',
-}
+# #320: the legacy smoke-endpoint map is gone — PROVIDER_CATALOG.smoke_url
+# (plus the smoke_profile / smoke_prefers_fallback_base_url fields) is the
+# single table verify_provider_keys consults.
 
 
 def verify_provider_keys(
@@ -430,8 +538,11 @@ def verify_provider_keys(
     Returns {provider: {'configured', 'ok', 'status', 'detail'}} — no secrets.
 
     #212: providers are user-defined. Each entry is tested against its
-    base_url (or the built-in default endpoint for the legacy trio); a
-    provider with no known endpoint is reported configured but untested.
+    base_url, or the catalog's canonical smoke endpoint (R84a) when none is
+    stored; a provider with no known endpoint is reported configured but
+    untested. #320: the catalog is the single smoke table — the former
+    _LEGACY_SMOKE_URLS parallel map and the name == 'zai'/'github' special
+    cases are catalog fields now.
     """
     from urllib.parse import urlsplit
 
@@ -476,15 +587,25 @@ def verify_provider_keys(
             return {'configured': False, 'ok': False, 'status': None,
                     'detail': 'no key'}
         d = config.providers.get(name, ProviderDef())
-        base = d.base_url
-        if name == 'zai' and not d.base_url:
-            base = config.models.fallback_base_url or _LEGACY_SMOKE_URLS['zai']
-        base = base or _LEGACY_SMOKE_URLS.get(name)
-        if name == 'github' and not d.base_url:
-            status, detail = send('https://api.github.com/user',
-                                  {'Authorization': f'Bearer {key}'}, None)
+        catalog = PROVIDER_CATALOG.get(name)
+        if catalog is not None and catalog.smoke_profile:
+            # Profile-kind providers (GitHub Models): a personal-access token
+            # is proven with a GET on the profile endpoint — the inference
+            # base_url cannot prove the token.
+            profile_url = catalog.smoke_url or ''
+            if not profile_url:
+                return {'configured': True, 'ok': None, 'status': None,
+                        'detail': 'no smoke_url configured — not tested'}
+            status, detail = send(profile_url, {'Authorization': f'Bearer {key}'}, None)
             return {'configured': True, 'ok': status == 200, 'status': status,
                     'detail': None if status == 200 else detail[:200]}
+        # A catalog provider saved without an explicit base_url is
+        # smoke-tested against its canonical endpoint instead of 'untested'.
+        base = d.base_url
+        if not base and catalog is not None:
+            if catalog.smoke_prefers_fallback_base_url:
+                base = config.models.fallback_base_url
+            base = base or catalog.smoke_url
         if not base:
             return {'configured': True, 'ok': None, 'status': None,
                     'detail': 'no base_url configured — not tested'}

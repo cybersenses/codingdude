@@ -23,6 +23,7 @@ Read in order for a guided start, or jump straight to what you need:
 | [Quickstart](manual/quickstart.md) | Install, start, log in, add a project, run your first task, approve and review — the first hour. |
 | [Tour of the screen](manual/tour.md) | What is on screen: sidebar, chat, composer, dock panels, footer, command palette, layout presets. |
 | [Panels reference](manual/panels.md) | Every panel in detail — what it shows, what it is for, when to use it. |
+| [Wireframes](manual/wireframes.md) | Screen-design packs: the flow map, inline DSL editing, implement handoff. |
 | [Daily workflows](manual/workflows.md) | Feature work with plans and gates, reviewing and undoing, cost control, code exploration, delegation, memory, headless/CI. |
 | [Configuration](manual/configuration.md) | The cookbook: worked `config.toml` examples (DeepSeek, Z.AI coding plan, OpenRouter, local Ollama), full key reference, per-project overrides, pricing. |
 | [Extending](manual/extending.md) | MCP servers, skills, directives, checklists. |

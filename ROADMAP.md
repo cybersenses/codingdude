@@ -1231,3 +1231,51 @@ Scope: (1) composer model picker offers configured slots AND arbitrary provider:
 **Status:** open
 
 Findings from the 2026-11-09 trace forensics (run mY5V_HxeMdk): post-RUN_FINISHED activity is the claims-verification phase working as designed, but four defects/gaps around it: (1) the drain bound cuts the claims-retry mid-flight and silently discards its verdict + gathered evidence (no CLAIMS_ADDRESSED/CLAIMS_UNVERIFIED ever lands); (2) post-run events are indistinguishable from live run activity in the trace (same run_id, no phase marker); (3) the audit's `git diff HEAD` gating fires every turn in repos that keep a deliberately dirty file; (4) the retry verifier runs with the run's full write-capable toolsets after the run is already terminal.
+
+## R83 — R83: Composer model picker regression — persisted pick locks the dropdown
+**Status:** done
+
+**Audience:** human
+
+**Shipped:** real `<select>` picker whose highlight is derived from one classifier shared with resolveModelSend (#307, closed by 9ade27c; the classification cascade was deduplicated under #320).
+
+**Symptom (user, since R81 fb54335):** only `fallback` is selectable in the composer's model picker; it appears permanently selected.
+
+**Diagnosed (this session, probed):**
+- Backend healthy: `/api/models` returns main/subagent/fallback/vision; live config.toml has all three set.
+- App.jsx:79 restores `localStorage['cd-model']` at boot; App.jsx:125 persists every pick. A past pick pre-fills the input forever with no clear/reset affordance.
+- Picker is a naked `<input list>` + datalist (Prompt.jsx:169–182); Chromium filters datalist suggestions against the current input value, so a pre-filled box only offers matching entries (mechanism suspected — native popup not capturable; symptom match exact).
+- Probe: synthetic input event → React state → localStorage written (`persisted: 'fallback'` verified live).
+
+**Direction:** replace with a real dropdown that always shows all slots + a visible "default (main)" reset; free-text `provider:model` stays as an explicit secondary mode. `resolveModelSend` (modelpick.ts) remains the single send contract.
+
+## R84 — R84: LLM configuration UX — guided config screen + provider catalog
+**Status:** done
+
+**Audience:** human
+
+**Shipped:** guided config screen (Providers → Model lineup → Function staffing → Advanced), curated provider catalog with key-only setup + Custom escape hatch, Test-keys smoke (R84 wave; the smoke endpoint table is catalog-driven as of #320). Partial per review: per-slot lineup assignment ships as prefix-suggest free text, not a reachable-model picker — tracked as #321.
+
+**User report:** the config screen is a "mush mash nightmare with no real guidance"; adding a provider is "way too complicated".
+
+**Current state (verified):** ModelsConfig.jsx is a single 340-line scroll — lineup (main/subagent/fallback/base_url/vision/thinking/limits), 6 function profiles, provider key rows (key+base_url+env_var+clear+remove), a 4-input free-text add-provider row, test-keys, save/revert. No grouping, no guidance, no reachability signal.
+
+**Assets that already exist:** KNOWN_PROVIDERS (deepseek, zai, openai, anthropic, google, github, groq, mistral, ollama, bedrock) in config.py; provider_env_var defaults; _LEGACY_SMOKE_URLS; verify_provider_keys smoke endpoint (Test keys); save_models merge-not-replace semantics.
+
+**Direction:**
+1. Provider catalog: pick from a curated list → only the API key is asked (base_url/env_var prefilled or not needed); "Custom OpenAI-compatible" remains the escape hatch.
+2. Config screen restructured into guided sections: Providers → Lineup assignment (pick per slot from reachable models) → Function staffing → Advanced (limits/pricing). Copy explains what each section does; per-provider Test keys inline.
+
+## R85 — R85: Wireframes — elegant way to design screens and workflows
+**Status:** done
+
+**Audience:** human
+
+**User report:** other than chat back-and-forth there is no elegant way to show how screens should be designed and how workflows connect them.
+
+**Direction (needs a PRD before build):** agent-driven wireframing in the product — generate low-fidelity screen mockups as renderable artifacts plus an explicit flow view (screens + transitions between them), riding the existing artifacts system (choice cards / spec blocks / HTML render) so the user reviews and revises screens inline. Open questions: fidelity level, where wireframes live (Artifacts tab vs new surface), how flows are authored/edited, whether screens can graduate into implementation tickets.
+
+## R86 — Platform tooling & doc hygiene (catch-all umbrella)
+**Status:** open
+
+Small tracked issues in codingdude's own tooling/docs that don't belong to feature umbrellas.

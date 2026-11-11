@@ -52,7 +52,8 @@ add items and move statuses yourself.
 ## Artifacts
 
 Live interactive artifacts: choice cards, editable spec blocks, decision
-records, and rendered HTML pages.
+records, and rendered HTML pages. The agent's screen designs arrive here too
+— see [Wireframes](wireframes.md).
 
 ## Notes
 

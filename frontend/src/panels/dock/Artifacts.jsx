@@ -16,11 +16,12 @@
 import React, { useEffect, useState } from 'react'
 import { api, call } from '../../api'
 import { Mermaid } from '../../ui.jsx'
+import { WireframeView } from '../../WireframeView.jsx'
 
 // R59 P0: moved verbatim out of App.jsx's DockPanel tab body. Live-pushed via
 // SSE with a polling fallback; becomes the `artifacts` panel in P2.
-export function Artifacts({ sessionId }) {
-  const [items, setItems] = useState([])
+export function Artifacts({ sessionId, initialItems = [] }) {
+  const [items, setItems] = useState(initialItems)
   const [drafts, setDrafts] = useState({})
   // #242 seam: a failed poll or mutation must be visible, not "no artifacts yet".
   const [pollError, setPollError] = useState(null)
@@ -152,6 +153,30 @@ export function Artifacts({ sessionId }) {
                   onClick={() => respond(a.id, { pick: opt })}
                 >{opt}</button>
               ))}
+            </div>
+          ) : a.kind === 'wireframe' ? (
+            <div className="space-y-1">
+              <WireframeView payload={a.payload} theme="lofi" pack={{ title: a.title, id: a.id }} />
+              {/* #320 (REQ-6 inline-edit half): the pack's DSL source is the
+                  spec — edit it right here and save; the agent reads the edit
+                  back via its feedback tool and re-emits the whole pack. Same
+                  drafts + respond({content}) seam as the spec-block editor. */}
+              {a.status === 'pending' && (
+                <div>
+                  <textarea
+                    data-wireframe-edit={a.id}
+                    className="h-28 w-full rounded bg-neutral-950 p-1 font-mono text-[10px] text-neutral-300"
+                    title="the pack's DSL source is the spec — the agent reads your edit back and re-emits the whole pack"
+                    value={drafts[a.id] ?? JSON.stringify(a.payload, null, 2)}
+                    onChange={(e) => setDrafts((d) => ({ ...d, [a.id]: e.target.value }))}
+                  />
+                  <button
+                    className="mt-1 rounded bg-accent px-2 py-0.5 text-[10px] text-accent-fg"
+                    title="save the edited DSL — the agent treats it as the requirement for its next revision"
+                    onClick={() => respond(a.id, { content: drafts[a.id] ?? JSON.stringify(a.payload, null, 2) })}
+                  >save</button>
+                </div>
+              )}
             </div>
           ) : a.status !== 'pending' ? (
             <pre className="whitespace-pre-wrap text-[10px] text-neutral-300">{a.response?.content ?? a.payload.markdown}</pre>

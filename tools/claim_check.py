@@ -103,6 +103,7 @@ STRICT_DOCS = (
     "docs/manual/quickstart.md",
     "docs/manual/tour.md",
     "docs/manual/panels.md",
+    "docs/manual/wireframes.md",
     "docs/manual/workflows.md",
     "docs/manual/configuration.md",
     "docs/manual/extending.md",

@@ -19,7 +19,7 @@
 // what actually rides on the wire and what the UI labels it as.
 import { describe, expect, it } from 'vitest'
 import type { ModelsInfo } from './api'
-import { modelOptions, resolveModelSend } from './modelpick'
+import { CUSTOM_OPTION, modelOptions, pickerSelection, resolveModelSend } from './modelpick'
 
 const lineup: ModelsInfo = {
   default: 'main',
@@ -81,5 +81,70 @@ describe('modelOptions', () => {
   it('drops null slots and tolerates an absent payload', () => {
     expect(modelOptions(null)).toEqual([])
     expect(modelOptions({ default: 'main', models: {} })).toEqual([])
+  })
+})
+
+// R83: what the composer <select> highlights. The datalist combobox it
+// replaces filtered suggestions against the input's own value, so a
+// persisted pick locked the dropdown to that one entry; a real select
+// never filters, and pickerSelection keeps the highlight truthful to
+// resolveModelSend's send decision.
+describe('pickerSelection', () => {
+  it('empty selection highlights the default option', () => {
+    expect(pickerSelection(lineup, '')).toBe('')
+  })
+
+  it('a configured slot highlights itself', () => {
+    expect(pickerSelection(lineup, 'main')).toBe('main')
+    expect(pickerSelection(lineup, 'fallback')).toBe('fallback')
+  })
+
+  it('a null slot highlights the default (resolveModelSend sends the default)', () => {
+    expect(pickerSelection(lineup, 'vision')).toBe('')
+  })
+
+  it('an unknown literal highlights the custom option', () => {
+    expect(pickerSelection(lineup, 'openai:gpt-4o')).toBe(CUSTOM_OPTION)
+  })
+
+  it('a persisted selection with no /models payload highlights custom (text stays visible)', () => {
+    expect(pickerSelection(null, 'main')).toBe(CUSTOM_OPTION)
+    expect(pickerSelection(null, '')).toBe('')
+  })
+})
+
+// #320: the classification cascade used to be written twice (resolveModelSend
+// and pickerSelection each walked the same decision tree). Now one classifier
+// decides the class; the two public functions are faithful mappings over it.
+import { classifySelection } from './modelpick'
+
+describe('classifySelection (#320: one truth, two mappings)', () => {
+  it('classifies every selection shape', () => {
+    expect(classifySelection(lineup, '')).toBe('default')
+    expect(classifySelection(lineup, 'main')).toBe('slot')
+    expect(classifySelection(lineup, 'vision')).toBe('default') // null slot folds into default
+    expect(classifySelection(lineup, 'openai:gpt-4o')).toBe('literal')
+    expect(classifySelection(null, 'main')).toBe('no-models')
+    expect(classifySelection(null, '')).toBe('default')
+  })
+
+  it('highlight and send decision agree per class', () => {
+    const cases: Array<[ModelsInfo | null, string]> = [
+      [lineup, ''], [lineup, 'main'], [lineup, 'vision'],
+      [lineup, 'openai:gpt-4o'], [null, 'main'], [null, ''],
+    ]
+    for (const [models, sel] of cases) {
+      const send = resolveModelSend(models, sel)
+      const highlight = pickerSelection(models, sel)
+      if (send.send === null) {
+        // default sends → the default option; no-models deliberately shows
+        // the persisted text as custom (R83 UX choice, one named branch now).
+        expect(highlight === '' || (models === null && highlight === CUSTOM_OPTION)).toBe(true)
+      } else if (send.literal) {
+        expect(highlight).toBe(CUSTOM_OPTION)
+      } else {
+        expect(highlight).toBe(sel)
+      }
+    }
   })
 })
