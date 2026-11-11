@@ -1,0 +1,2534 @@
+# StyleSeed Design Language
+> Detailed craft rules used inside the composed StyleSeed method
+
+Read `PRODUCT-PRINCIPLES.md`, select an output grammar from `RULESETS.md`, and select a surface
+adapter from `ADAPTERS.md` before applying this file. Several recipes below originated in the
+mobile `consumer-service` grammar; they are defaults for that context, not universal laws for
+editorial, technical, commerce, carousel, document, or marketing outputs. Exact grammar and
+adapter contracts override contextual recipes, but never the core invariants.
+
+## Table of Contents
+
+### Part 1: Core Visual Rules
+| # | Rule | Key Point |
+|---|------|-----------|
+| 1 | [Color Philosophy](#1-color-philosophy) | Stable color roles, identifiable primary action |
+| 2 | [Number/Currency Display](#2-numbercurrency-display-rules) | Big number + small unit, 2:1 ratio |
+| 3 | [Text Hierarchy](#3-text-hierarchy-rules) | 5-level typography system |
+| 4 | [Trend Indicators](#4-trend-indicator-rules) | Up/down arrows with color |
+| 5 | [Gauge/Progress Bar](#5-gaugeprogress-bar-rules) | Linear vs segmented |
+| 6 | [Donut Chart](#6-donut-chart-rules) | Key color highlight, grayscale rest |
+| 7 | [Icon Badge](#7-icon-badge-rules) | Size by context, 10% opacity bg |
+| 8 | [Card Structure](#8-card-internal-structure) | Header → Content → Footer |
+| 9 | [List Item](#9-list-item-rules) | Status dot + text same color |
+| 10 | [Selection UI](#10-selection-ui-rules-toggle--select) | Pill toggle inside consumer-service cards; native controls elsewhere |
+| 11 | [Briefing Cards](#11-briefingalert-card-rules) | Horizontal carousel |
+| 12 | [Shadow System](#12-shadow-system) | Opacity 4-12%, barely visible |
+| 13 | [Page Layout](#13-page-layout-structure) | 430px, space-y-6, pb-24 |
+| 14 | [**Four Section Types**](#14-four-section-types) | **A(mx-6) B(px-6) C(carousel) D(hero)** |
+| 15 | [Card Division](#15-card-internal-division-rules) | border-t between chart and stats |
+| 16 | [Title Margins](#16-title-margin-rules) | Varies by content type |
+| 17 | [Chart Style](#17-chart-style-rules) | Area/bar chart styling |
+| 18 | [**Prohibition Rules**](#18-prohibition-rules-absolute-donts) | **Core floors and contextual defaults** |
+| 19 | [**Page Checklist**](#19-new-page-creation-checklist) | **Step-by-step build guide** |
+| 20 | [Information Pyramid](#20-information-pyramid-structure) | Top = important, bottom = detail |
+| 21 | [Data Density](#21-data-density-rules) | Density by task and viewport |
+
+### Part 2: Extended Rules
+| # | Rule | Key Point |
+|---|------|-----------|
+| 28 | [Scroll & Spacing](#28-scroll--spacing-detail-rules) | Overscroll, carousel snap |
+| 29 | [Loading/Skeleton](#29-loading-state-skeleton-rules) | Match layout shape, 300ms delay |
+| 30 | [Empty/Error States](#30-empty-state--error-state-rules) | Suggest next action |
+| 34 | [Microcopy Tone](#34-microcopy-tone-guide) | Casual, active voice, positive |
+| 38 | [Chart Selection](#38-chart-type-selection-guide) | When to use which chart |
+| 40 | [Applying to Projects](#40-design-system-application-guide) | Preserve intent; adapt the structure |
+| 45 | [Dark Mode](#45-dark-mode-guide) | Card brighter than background |
+| 46 | [Button Design](#46-button-design-rules) | 7 variants, 4 sizes |
+| 50 | [Dark Pattern Prevention](#50-dark-pattern-prevention-rules) | No forced sheets, always dismissable |
+| 59 | [Framer Motion](#59-animation-wrapper-rules-framer-motion) | Preset animations, token mapping |
+
+### Part 3: Page Composition & Visual Rhythm
+| # | Rule | Key Point |
+|---|------|-----------|
+| 61 | [**Visual Rhythm**](#61-visual-rhythm--breaking-monotony) | **Repeat by meaning; vary by priority** |
+| 62 | [**KPI Comparison**](#62-kpi-comparison-and-meaning) | **Real baselines and comparable encodings** |
+| 63 | [**Composition Recipes**](#63-section-composition-recipes) | **SaaS, e-commerce, fintech, analytics** |
+| 64 | [Element Choice](#64-element-choice-by-data-question) | Match the data question |
+| 65 | [Accent Distribution](#65-color-accent-distribution) | Stable color roles |
+| 66 | [Card Size Variation](#66-card-size-variation) | Size by content and comparison |
+| 67 | [Progressive Density](#67-progressive-information-density) | Task-driven density |
+| 68 | [Task Completeness](#68-task-completeness-and-empty-regions) | Required questions, actions, and states |
+| 69 | [Chart + Context](#69-chart--context-pairing) | Clear interpretation context |
+| 70 | [Form & Input Rules](#70-form--input-rules) | Labels above, 40px height, errors never color-alone |
+| 71 | [State Rules](#71-state-rules-empty--loading--error--success) | Empty / loading / error / success on every data surface |
+| 72 | [Accessibility Rules](#72-accessibility-rules-non-negotiable) | Contrast floors, focus rings, 44px targets |
+| 73 | [Responsive & Mobile](#73-responsive--mobile-rules) | Mobile-first, touch, safe areas |
+| 74 | [Rule Priority & Conflict](#74-rule-priority--conflict-resolution) | Product constitution and applicability |
+
+> **Start here:** Rules 14, 18, 19, 61-63 are the most critical for page construction.
+
+---
+
+## 1. Color Philosophy
+
+### Key Color Principle — Stable Roles Create Unity
+- Keep one unmistakable primary action/key color.
+- Additional hues are legal only when the selected output grammar defines a stable semantic,
+  categorical, editorial, or brand role for them.
+- Default to restraint. A color without a repeatable meaning is decoration and should be removed.
+
+```
+✓ Key color usage: primary action, active navigation, selected state, focal data
+✓ Defined extra role: stable chart category, semantic severity, expressive-marketing brand field
+✗ Forbidden: arbitrary rainbow lists, competing CTA colors, component-local decorative hues
+```
+
+### Impact Colors — Small, Strong
+- Urgent/warning colors are used in **very small areas only** (dot, badge text)
+- Never painted across large surfaces
+- **Dot (6px) + text (11px)** combination is the maximum size
+
+| Role | Color | Size | Usage |
+|------|-------|------|-------|
+| Completed/Up | `#6B9B7A` | dot 6px + text 13px | trend %, Completed |
+| Urgent | `#C85A54` | icon 16px + text 12px | "Urgent" badge |
+| In Progress | `#3B82F6` | dot 6px + text 11px | "In Progress" |
+| Pending | `#F59E0B` | dot 6px + text 11px | "Pending" |
+| Notification | `#FF4444` | dot 6px | notification badge (single dot) |
+
+### Grayscale — 5-Level Text Hierarchy
+Pure black (#000) is not a casual default. Use a refined ink ramp; structural hard black is
+reserved for an exact maintained grammar/profile contract such as a high-contrast aesthetic.
+
+| Level | Hex | Role | Example |
+|-------|-----|------|---------|
+| **Strong** | `#2A2A2A` | Strongest emphasis | donut center value, briefing title |
+| **Primary** | `#3C3C3C` | Metrics, section titles | "$48.2K", "Recent Activity" |
+| **Secondary** | `#6A6A6A` | Labels, captions | "Today's Revenue", "Web" |
+| **Tertiary** | `#7A7A7A` | Subtitles, dates, descriptions | "vs. last month", date |
+| **Disabled** | `#9B9B9B` | Inactive, placeholder | inactive nav, unselected period |
+
+### Backgrounds — Depth Through Subtle Differences
+| Background | Hex | Usage |
+|------------|-----|-------|
+| Page | `#FAFAFA` | Full page (not pure white) |
+| Card | `#FFFFFF` | Card interior |
+| List row | `#FAFAF9` | Row background (subtle warm tone) |
+| Inactive | `#E8E6E1` | Progress track, dividers |
+| Key color tint | `#F0E8FF` | Selected row background |
+
+---
+
+## 2. Number/Currency Display Rules
+
+### Core Principle: **Large Numbers + Small Units**
+Numbers are large and bold, units are small and attached so **the eye goes to the number first**.
+
+### Unit Size Ratio Table
+
+| Context | Number Size | Unit Size | Ratio | Gap | Example |
+|---------|------------|-----------|-------|-----|---------|
+| Hero metric | 48px | 24px | **2:1** | `ms-0.5` | 3.8`M` |
+| KPI metric | 36px | 18px | **2:1** | `ms-0.5` | $48.2`K` |
+| Donut center | 24px | 12px | **2:1** | `ms-0.5` | 66`%` |
+| Chart bottom price | 18px | 10px | **1.8:1** | `ms-0.5` | 1,648`/mo` |
+| List amount | 17px | 11px | **1.5:1** | `ms-0.5` | 840`K` |
+| Inventory quantity | 15px | 10px | **1.5:1** | `ms-0.5` | 32.0`GB` |
+
+### Currency Notation
+```
+✓ Abbreviated: number + suffix (3.8M, $48.2K)
+✓ Dollar: symbol prefix ($68.4)
+✓ List price: $ + number ($1,520)
+✓ Thousand separators required (1,870 / 1,648)
+```
+
+### Code Pattern
+```tsx
+{/* Hero: 48px + 24px */}
+<p className="text-text-primary text-[48px] font-bold leading-none">
+  3.8<span className="text-[24px] ms-0.5">M</span>
+</p>
+
+{/* KPI: 36px + 18px */}
+<p className="text-text-primary text-[36px] font-bold leading-none">
+  $48.2<span className="text-[18px] ms-0.5">K</span>
+</p>
+
+{/* List amount: 17px + 11px */}
+<p className="text-text-primary font-bold text-[17px]">
+  840<span className="text-[11px] ms-0.5">K</span>
+</p>
+```
+
+---
+
+## 3. Text Hierarchy Rules
+
+### 5-Level Typography
+
+| Level | Size | Weight | Color | Line Height | Letter Spacing | Usage |
+|-------|------|--------|-------|-------------|----------------|-------|
+| **Display** | 48px | bold | #3C3C3C | none | -0.02em | Hero metric |
+| **Headline** | 36px | bold | #3C3C3C | none | -0.02em | KPI metric |
+| **Title** | 18px | bold | #3C3C3C | snug | — | Section title |
+| **Body** | 14-15px | bold/semi | #2A2A2A~#3C3C3C | normal | — | List name, description |
+| **Label** | 12px | medium | #6A6A6A | normal | 0.05em | Uppercase label |
+| **Caption** | 11px | bold/medium | #6A6A6A~#7A7A7A | normal | — | Status, annotation, unit |
+| **Micro** | 10px | medium | #7A7A7A | normal | — | Donut label, smallest unit |
+
+### Label Style (Uppercase + Letter Spacing)
+All category labels use **uppercase + tracking-wide**:
+```tsx
+className="text-[12px] text-text-secondary font-medium uppercase tracking-[0.05em]"
+// "Today's Revenue", "Active Users", "Revenue Trend"
+```
+
+### CRITICAL: Font Size Implementation in Tailwind v4
+```
+✓ CORRECT:  text-[36px]                        — explicit, predictable
+✗ WRONG:    text-[var(--text-sm)]               — Tailwind reads as COLOR, not font-size!
+✗ WRONG:    text-[length:var(--text-sm)]        — fragile workaround, breaks at scale
+✗ WRONG:    --text-sm: 13px in theme.css        — conflicts with Tailwind --text-* namespace
+
+Font sizes are NOT tokenized as CSS variables. Use explicit px values.
+The "Font Size by Context" table in CLAUDE.md is the canonical reference.
+```
+
+---
+
+## 4. Trend Indicator Rules
+
+### Upward Trend
+```
+Color: #6B9B7A (muted green, not vivid green)
+Icon: TrendingUp (lucide)
+Format: +{number}%
+```
+
+### Trend Patterns by Size
+
+| Context | % Size | Icon Size | Weight | Label |
+|---------|--------|-----------|--------|-------|
+| Hero | 15px | 16px (w-4) | bold | "vs. last month" (13px, #7A7A7A) |
+| KPI card | 13px | 14px (w-3.5) | bold | none |
+| Chart header | 13px | 14px (w-3.5) | bold | none |
+
+### Structure
+```tsx
+{/* Hero trend: % + icon + label */}
+<div className="flex items-center gap-3">
+  <div className="flex items-center gap-1">
+    <span className="text-success text-[15px] font-bold">+12.4%</span>
+    <TrendingUp className="size-4 text-success" strokeWidth={2.5} />
+  </div>
+  <span className="text-[13px] text-text-tertiary font-medium">vs. last month</span>
+</div>
+
+{/* KPI trend: % + icon (no label) */}
+<div className="flex items-center gap-1">
+  <span className="text-success text-[13px] font-bold">+8.2%</span>
+  <TrendingUp className="size-3.5 text-success" strokeWidth={2.5} />
+</div>
+```
+
+### Rules
+- **% text and icon share the same color** (#6B9B7A)
+- Icon `strokeWidth={2.5}` (bolder than standard icons)
+- Secondary label ("vs. last month") uses a **different color (#7A7A7A)**, separated with `gap-3`
+
+---
+
+## 5. Gauge/Progress Bar Rules
+
+### Linear Progress Bar
+
+| Property | Value | Ratio |
+|----------|-------|-------|
+| Track height | `h-4` (16px) | **2/3** of card p-6 (24px) |
+| Track color | `#E8E6E1` | surface-muted |
+| Track corners | `rounded-full` | Fully rounded |
+| Fill color | `var(--brand)` | Key color |
+| Fill corners | `rounded-full` | Fully rounded |
+
+```tsx
+<div className="bg-surface-muted rounded-full h-4 overflow-hidden">
+  <div className="bg-brand h-full w-[30%] rounded-full" />
+</div>
+```
+
+### Discrete Bar Gauge (10-Segment)
+
+| Property | Value | Ratio |
+|----------|-------|-------|
+| Segment height | `h-6` (24px) | **Same** as card p-6 |
+| Segment gap | `gap-1` (4px) | **1/6** of height |
+| Segment corners | `rounded` (4px) | Slightly rounded |
+| Active color | `var(--brand)` | Key color |
+| Inactive color | `#E8E6E1` | surface-muted |
+
+```tsx
+<div className="flex gap-1">
+  {[...Array(10)].map((_, i) => (
+    <div className={`h-6 flex-1 rounded ${i < filled ? 'bg-brand' : 'bg-surface-muted'}`} />
+  ))}
+</div>
+```
+
+### Progress Bar + Label (Horizontal Combination)
+```tsx
+<div className="flex items-center gap-2">
+  <div className="flex-1 bg-surface-muted rounded-full h-4">
+    <div className="bg-brand h-full w-[68%] rounded-full" />
+  </div>
+  <span className="text-[11px] text-text-primary font-bold">68%</span>
+</div>
+```
+
+### Gauge Type Selection Criteria
+
+| Data Characteristic | Gauge Type | Example |
+|--------------------|------------|---------|
+| Continuous ratio (%) | **Linear progress** (h-4) | inventory 30%, visits 68% |
+| Discrete achievement (n/N) | **Segment bar** (h-6) | order completion 9/10 |
+| Continuous ratio + numeric display | **Progress + label** | visits 68% (number beside) |
+| Multi-item ratio comparison | **Donut chart** | usage by category |
+
+### Gauge-to-Card Proportional Relationship
+
+| Gauge | Height | vs. Card Padding | Placement |
+|-------|--------|-----------------|-----------|
+| Linear progress | `h-4` (16px) | 2/3 of padding (24px) | Below metric, card bottom area |
+| Segment bar | `h-6` (24px) | Same as padding (24px) | Below metric, visual weight |
+| Donut chart | `size-32` (128px) | 5x+ padding | Card content center |
+
+Rules:
+- Linear progress (`h-4`) is a **supplementary indicator**, placed small below the metric
+- Segment bar (`h-6`) is a **primary visualization** with equal weight to the metric
+- Gauge fill percentage uses `w-[{n}%]` inline style for dynamic rendering
+- Gauge track is always `bg-surface-muted`, fill is always `bg-brand`
+- Both track and fill use `rounded-full` (linear) or `rounded` (segment)
+
+---
+
+## 6. Donut Chart Rules
+
+### Key Color Highlight Principle
+- **Only the selected item uses the key color (var(--brand))**, the rest are grayscale
+- Unselected opacity: `0.3` (dimmed)
+- Selected glow: `box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 25%, transparent)`
+
+### Chart Dimensions
+
+| Property | Value | Ratio |
+|----------|-------|-------|
+| Container | 128x128px (`size-32`) | — |
+| Inner radius | 50px | **39%** of container |
+| Outer radius | 64px | **50%** of container |
+| Ring thickness | 14px | outer - inner |
+| Segment gap | `paddingAngle={4}` | 4 degrees |
+| Segment corners | `cornerRadius={8}` | Rounded ends |
+| Center number | 24px bold | — |
+| Center label | 10px medium uppercase | — |
+
+### Gray Palette (Unselected Segments)
+```
+#D4D4D4 → #A8A8A8 → #8B8B8B → #6B6B6B
+(from lightest to darkest, mapped to item order)
+```
+
+### Legend List
+- Color dot: `size-3 rounded-full` (12px)
+- Name: 13px semibold #2A2A2A
+- Quantity: 15px bold #2A2A2A
+- Gap: `gap-2.5` (dot-to-name), `space-y-3.5` (row spacing)
+- Clickable: `cursor-pointer`, opacity transition `duration-300`
+
+---
+
+## 7. Icon Badge Rules
+
+### Icon Badges by Size
+
+| Context | Container | Icon | Corners | Background |
+|---------|-----------|------|---------|------------|
+| KPI card | `size-7` (28px) | `size-4` (16px) | `rounded-lg` | `bg-brand/10` |
+| Hero card | `size-8` (32px) | `size-[18px]` | `rounded-xl` | `bg-brand/10` |
+| Nav button | `size-10` (40px) | `size-[18px]` | `rounded-full` | `bg-card` + shadow |
+
+### Rules
+- Background opacity is always **10%** (`/10`)
+- Icon and background base color is always **key color**
+- Icon `strokeWidth={2}` (default), `strokeWidth={2.5}` (trend/emphasis)
+
+---
+
+## 8. Card Internal Structure
+
+### 3-Part Structure: Header → Content → Footer
+
+```
+┌─────────────────────────────────────┐
+│  [🟣] Today's Revenue    ← Header  │  icon badge + label
+│                                     │  (gap-2, mb-3)
+│  $48.2K                  ← Content │  large number + small unit
+│                                     │  (mb-3)
+│  +8.2% ↑                ← Footer  │  trend or gauge
+│                                     │
+│  ─────────── (border-t) ──────────  │  optional divider
+│  Web     Mobile    API   ← Stats   │  bottom grid
+└─────────────────────────────────────┘
+```
+
+### Divider Rules
+- Color: `border-surface-muted` (#E8E6E1)
+- Top spacing: `pt-5` (20px)
+- Bottom spacing: `mt-6` (24px)
+- Bottom grid: `grid grid-cols-{n} gap-3`
+
+---
+
+## 9. List Item Rules
+
+### Status Indicator: **Same-color dot + same-color text**
+```
+●  Completed   →  #22C55E dot + #22C55E text
+●  In Progress →  #3B82F6 dot + #3B82F6 text
+●  Pending     →  #F59E0B dot + #F59E0B text
+```
+
+| Element | Size | Ratio |
+|---------|------|-------|
+| Status dot | `size-1.5` (6px) | — |
+| Dot-to-text gap | `me-1.5` (6px) | Same as dot |
+| Status text | 11px bold | — |
+
+### Highlighted Row (My Item)
+```
+Normal row:   bg-surface-subtle (#FAFAF9)
+My row:       bg-brand-tint (#F0E8FF) + border-2 border-brand
+Normal rank:  bg-surface-muted (#E8E6E1) + text-text-tertiary
+My rank:      bg-brand + text-white
+Normal name:  text-text-primary (#3C3C3C)
+My name:      text-brand
+```
+
+---
+
+## 10. Selection UI Rules (Toggle / Select)
+
+### Selection UI inside consumer-service cards
+
+Scope: the `consumer-service` mobile card recipe. Native selects, radio groups, and checkbox
+filters are valid under other contracts (§18); settings pages, forms, and dense consoles use
+them by default and keep the platform behaviour.
+
+| Pattern | Usage | Position |
+|---------|-------|----------|
+| **Pill toggle** | Period/category switch (2-4 options) | Card header right |
+| **Chart item selection** | Donut/legend item highlight | Inside chart |
+
+Avoid inside consumer-service cards:
+```
+✗ Select dropdown inside a card
+✗ Dropdown selector (with ▼ arrow)
+✗ Radio button groups
+✗ Checkbox filters
+```
+In that recipe, 2-4 options use a **Pill toggle**; 5 or more move to a dedicated page.
+
+### Pattern 1: Capsule Pill Toggle
+```
+Container:     bg-surface-muted rounded-full p-1
+Active button: bg-brand text-white rounded-full shadow
+Inactive:      text-text-disabled (#9B9B9B)
+```
+
+| Property | Active | Inactive |
+|----------|--------|----------|
+| Background | `bg-brand` | transparent |
+| Text | `text-white` | `text-text-disabled` |
+| Corners | `rounded-full` | `rounded-full` |
+| Shadow | `shadow-sm` | none |
+| Size | 11px bold | 11px bold |
+| Padding | `px-4 py-1.5` | `px-4 py-1.5` |
+
+```tsx
+<div className="flex gap-1 bg-surface-muted p-1 rounded-full">
+  <button className="px-4 py-1.5 text-[11px] font-bold rounded-full bg-brand text-white shadow-sm">
+    1W
+  </button>
+  <button className="px-4 py-1.5 text-[11px] font-bold rounded-full text-text-disabled">
+    1M
+  </button>
+</div>
+```
+
+### Pattern 2: Chart Item Selection (Donut)
+- Click to select/deselect one at a time (toggle)
+- Selected: key color + opacity 1.0 + glow
+- Unselected: gray + opacity 0.3
+- Legend rows also change opacity simultaneously (0.4)
+- `cursor-pointer` + `duration-300` on named properties: `transition-opacity` on the fading rows,
+  `transition-[background-color,box-shadow]` on the selected dot
+
+### Pill Toggle Placement Rules
+- In card header, **title on left, toggle on right** (flex justify-between)
+- Toggle belongs in the **header area only**, not the card content area
+
+---
+
+## 11. Briefing/Alert Card Rules
+
+### Horizontal Scroll Carousel
+- Card width: `w-[280px]` fixed
+- Gap: `gap-3` (12px)
+- Scrollbar: hidden (`scrollbar-hide`)
+- Card style: same as normal cards (`rounded-2xl p-6 shadow-card`)
+
+### Badge Color Rules
+- **Urgent**: `#C85A54` (brownish red) — strong but not vivid red
+- **Info/Notice**: `#7A7A7A` (gray) — informational content kept restrained in gray
+- Icon and text share the **same color**
+- `uppercase tracking-wide` emphasis
+
+---
+
+## 12. Shadow System
+
+| Level | Value | Usage |
+|-------|-------|-------|
+| card | `0 1px 3px rgba(0,0,0,0.04)` | All cards default |
+| button | `0 1px 3px rgba(0,0,0,0.06)` | Icon buttons |
+| hover | `0 2px 4px rgba(0,0,0,0.08)` | Hover state |
+| elevated | `0 4px 12px rgba(0,0,0,0.08)` | Floating |
+| modal | `0 8px 24px rgba(0,0,0,0.12)` | Modal/sheet |
+
+Rule: **Opacity is very low** (4-12%). Shadows create **subtle depth** rather than a "floating" feel.
+
+---
+
+## 13. Page Layout Structure
+
+### Page Skeleton
+```
+┌──────────────── max-w-[430px] ────────────────┐
+│  TopBar (px-6 pt-8 pb-6)                      │
+│                                                │
+│  ┌─ space-y-6 ─────────────────────────────┐  │
+│  │  Hero card (mx-6)           ← mt-1      │  │
+│  │  KPI grid (px-6)                         │  │
+│  │  Full card section (mx-6)                │  │
+│  │  Carousel section (px-6)                 │  │
+│  │  Full card section (mx-6)                │  │
+│  │  ...                                     │  │
+│  │                              ← pb-24     │  │
+│  └──────────────────────────────────────────┘  │
+│                                                │
+│  BottomNav (fixed bottom-0)                    │
+└────────────────────────────────────────────────┘
+```
+
+### Key Values
+| Property | Value | Description |
+|----------|-------|-------------|
+| Container max width | `max-w-[430px]` | Mobile viewport |
+| Page background | `#FAFAFA` | Light gray (not pure white) |
+| Section gap | `space-y-6` (24px) | Between all sections |
+| Bottom nav clearance | `pb-24` (96px) | Prevents nav overlap |
+| Bottom-most margin | `h-8` (32px) | Scroll end breathing room |
+
+---
+
+## 14. Four Section Types
+
+### Consumer-service default: content lives inside cards
+
+Scope: `consumer-service` dashboards. Flat reading flow, selectable rows, and uncarded
+sections are valid under other contracts (§18, `METHODOLOGY.md` §2); do not force every view
+into cards there.
+```
+✗ Placing text, metrics, lists, etc. directly outside cards
+✗ Exposing content directly on the page background (#FAFAFA)
+✓ All data/content lives inside a card (bg-card rounded-2xl shadow-card)
+```
+In this recipe only TopBar, BottomNav, and carousel titles sit outside cards. Everything else
+(metrics, charts, lists, text) is wrapped in a card; content placed directly on the page
+background breaks the recipe's rhythm.
+
+### Type A: Full Card — Title Inside Card
+```
+┌── mx-6 ──────────────────────────────────┐
+│  bg-card rounded-2xl p-6 shadow-card     │
+│                                          │
+│  Title (18px bold, mb-4~6)              │
+│  Content                                 │
+│  ─────── border-t ───────  (optional)   │
+│  Bottom stats grid                       │
+└──────────────────────────────────────────┘
+```
+- **Use for**: usage breakdown, charts, recent activity, competitor pricing
+- `mx-6`: 24px left/right margin → card appears to float
+- Title mb: `mb-4` before lists, `mb-6` before charts, `mb-5` before tables
+
+### Type B: Grid Container — Collection of Individual Cards
+```
+┌── px-6 ──────────────────────────────────┐
+│  grid grid-cols-2 gap-4                  │
+│  ┌─────────┐  ┌─────────┐               │
+│  │ Card 1  │  │ Card 2  │               │
+│  │ p-6     │  │ p-6     │               │
+│  └─────────┘  └─────────┘               │
+│  ┌─────────┐  ┌─────────┐               │
+│  │ Card 3  │  │ Card 4  │               │
+│  └─────────┘  └─────────┘               │
+└──────────────────────────────────────────┘
+```
+- **Use for**: KPI grid (4 metric cards)
+- `px-6`: 24px left/right padding → grid feels full-width
+- Each card: independent `rounded-2xl p-6 shadow-card`
+
+### Type C: Carousel — Horizontal Scroll
+```
+┌── px-6 ──────────────────────────────────┐
+│  Title (18px bold, mb-4)  ← outside card │
+│  ┌────────┐ ┌────────┐ ┌────────┐  →→→  │
+│  │ 280px  │ │ 280px  │ │ 280px  │       │
+│  │ card   │ │ card   │ │ card   │       │
+│  └────────┘ └────────┘ └────────┘       │
+│  flex gap-3 overflow-x-auto scrollbar-hide│
+└──────────────────────────────────────────┘
+```
+- **Use for**: briefing cards
+- `px-6`: left/right padding
+- **Title sits outside the card** (above carousel)
+- Fixed card width `w-[280px]`, `flex-shrink-0`
+
+### Type D: Hero Card — Special Large Format
+```
+┌── mx-6 ──────────────────────────────────┐
+│  bg-card rounded-2xl p-8 shadow-card     │
+│  relative overflow-hidden                │
+│                                          │
+│  [background chart/watermark]            │
+│  [🟣] Label                  ← z-10     │
+│  3.8M                        ← 48px     │
+│  +12.4% ↑  vs. last month               │
+└──────────────────────────────────────────┘
+```
+- **Use for**: hero revenue card
+- `p-8` (32px): more generous padding than standard cards
+- Transparent chart/icon watermark in background
+- No title, straight to metric
+
+### mx-6 vs px-6 Usage Criteria
+| Wrapping | Usage | Visual Effect |
+|----------|-------|---------------|
+| `mx-6` | Single card | Card appears **floating** |
+| `px-6` | Multiple cards/carousel | Content feels **full-width** |
+
+---
+
+## 15. Card Internal Division Rules
+
+### When Dividers Are Used
+- When a stats grid follows below a chart, a **divider is required**
+- When separating main content from supporting data
+
+### Divider Structure
+```tsx
+{/* Chart area */}
+<div className="h-40 -mx-2 mb-6">
+  {/* Chart */}
+</div>
+
+{/* Divider + bottom stats */}
+<div className="grid grid-cols-3 gap-3 pt-5 border-t border-surface-muted">
+  {/* Stat items */}
+</div>
+```
+
+### Bottom Stats Grid
+| Columns | Use Case | Example |
+|---------|----------|---------|
+| `grid-cols-3` | 3 price/stat types | Web, Mobile, API |
+| `grid-cols-4` | 4 item types | Remaining days by category |
+
+### Stats Cell Structure
+```tsx
+<div className="text-center">
+  <p className="text-[11px] text-text-secondary mb-1.5~2 font-medium uppercase">
+    {label}
+  </p>
+  <p className="text-text-primary font-bold text-[18~20px] leading-none">
+    {value}
+    <span className="text-[10px] ms-0.5">{unit}</span>
+  </p>
+</div>
+```
+
+---
+
+## 16. Title Margin Rules
+
+The gap between title and content varies by content type:
+
+| Content Type | Title mb | Reason |
+|-------------|----------|--------|
+| List | `mb-4` (16px) | Lists are high-density, so keep close |
+| Table | `mb-5` (20px) | Tables need a bit more room |
+| Chart | `mb-6` (24px) | Charts have heavy visual weight, so give generous space |
+| Donut + legend | `mb-4` (16px) | Compact layout |
+
+---
+
+## 17. Chart Style Rules
+
+### Area Chart
+- Line: `stroke="var(--brand)"` + `strokeWidth={2.5}`
+- Gradient fill: key color 15% → 0% (top → bottom)
+- No dots displayed (`dot={false}`)
+- X-axis: 10px #7A7A7A, axis line/ticks hidden
+- Y-axis: completely hidden
+
+### Bar Chart
+- Only the highest value uses key color, the rest use `#E8E6E1` (surface-muted)
+- Only top corners rounded: `radius={[8, 8, 0, 0]}`
+- Axis lines/ticks hidden
+
+### Chart Heights
+| Chart Type | Height | Margin Adjustment |
+|-----------|--------|-------------------|
+| Area | `h-40` (160px) | `-mx-2` |
+| Bar | `h-44` (176px) | `-mx-1` |
+
+`-mx` negative margin: makes the chart slightly wider than the card padding → visual breathing room
+
+---
+
+## 18. Prohibition Rules (Absolute Don'ts)
+
+The binding prohibitions concern broken meaning, operability, or the approved
+contract: fabricated data, color-only status, hidden essential actions, inaccessible
+controls, and unexplained role drift. They do not ban an aesthetic by name.
+
+The original consumer-dashboard examples use quiet neutrals, soft cards, and a small
+accent allocation. Their hex values, section gaps, card shapes, number ratios, and
+small status dots are contextual examples, not universal prohibitions. Structural
+black, branded backgrounds, flat reading flow, selectable rows, native form controls,
+and purposeful overlays are valid when supported by the selected contract.
+
+Reuse project components where they fit. Compose or extend them for an authorized task
+when a needed pattern is missing; a fixed set of four section types cannot cover every
+product. Surface genuinely unresolved design decisions rather than silently replacing
+the system. Preserve labels, contrast, focus, keyboard access, and safe recovery.
+
+---
+
+## 19. New Page Creation Checklist
+
+1. Resolve the selected artifact's grammar, adapter, page, recipe, and approved tokens.
+2. Name the user's question, comparison, reading promise, or action. Put necessary
+   evidence and controls where that task needs them.
+3. Choose project-native components and containment. Cards, rows, flat sections,
+   images, canvases, and shared panels are options, not a fixed four-type menu.
+4. Check stable color/type/spacing roles and interpretation context. A media-led page
+   and a type-led page can satisfy the same job through different means.
+5. Preserve equivalent presentation in comparisons and collections; change composition
+   where priority or meaning changes, not to force variety.
+6. Implement the owned data/interaction states, keyboard/focus/contrast requirements,
+   responsive transformation, and complete reduced motion.
+7. Run the code and rendered gates. Report actual evidence and unresolved decisions;
+   passing checks does not establish human design acceptance.
+
+---
+
+## 20. Information Pyramid Structure
+
+A summary → supporting evidence → detail pyramid is useful for some personal overviews.
+It is not mandatory for every screen: an exception queue, search result, document,
+or live monitor may lead with a different region. Keep critical evidence available
+without forcing users to hunt below a decorative hero. See §§63 and 67 for alternatives.
+
+---
+
+## 21. Data Density Rules
+
+Choose visible items from the decision, available width, labels, and input mode.
+There is no universal four-item card limit. Small multiples and dense rows are valid
+when they preserve comparison and operability; split or disclose details when they
+impair the current task. Show scope and access to omitted items.
+
+Containment may group data, actions, forms, or media when that relationship is useful.
+Avoid nesting and chrome that duplicate hierarchy. Do not prohibit an input or action
+inside a panel merely because the original consumer example was display-only.
+
+---
+
+## 22. Number Formatting Detailed Rules
+
+### Decimal Point Rules
+| Data Type | Decimals | Example |
+|-----------|----------|---------|
+| Dollar amounts | integer | $48.2K, $1,520 |
+| Million units | 1 decimal place | 3.8M |
+| International pricing | 1 decimal place | $68.4 |
+| Storage (GB) | 1 decimal place | 18.2GB, 32.0GB |
+| Percentage | 1 decimal place | +12.4%, +8.2% |
+| Days/people | integer | 3 days, 247 users |
+
+### Thousand Separators
+- Always use commas: `1,870` / `1,648` / `$1,520`
+- Use `.toLocaleString()`
+
+### Date Format
+- TopBar date: `Day, Month D, YYYY` ("Friday, March 27, 2026")
+- Chart axis: `MM/DD` ("03/20")
+
+---
+
+## 23. Text Wrapping Rules
+
+### Number + Unit: Absolutely No Wrapping
+**All number + unit combinations require `whitespace-nowrap`.**
+
+```tsx
+{/* ✓ Correct usage */}
+<p className="... whitespace-nowrap">
+  $48.2<span className="text-[18px] ms-0.5">K</span>
+</p>
+
+{/* ✗ Forbidden: displaying numbers without nowrap */}
+<p className="...">$48.2K</p>
+```
+
+Applies to every displayed amount: hero metrics, KPI metrics, list amounts, chart prices, donut center, storage quantities.
+
+### Wrapping Behavior by Text Type
+
+| Text Type | Wrapping | Treatment | Example |
+|-----------|----------|-----------|---------|
+| Metric (number + unit) | **Forbidden** | `whitespace-nowrap` | $48.2K |
+| Section title (18px) | **1 line fixed** | `whitespace-nowrap` or `truncate` | "Recent Activity" |
+| Category label (12px) | **1 line fixed** | `whitespace-nowrap` | "Today's Revenue" |
+| Company/name (14px) | **1 line fixed** | `truncate` allowed | "Acme Corp, Downtown" |
+| Briefing title (15px) | **Up to 2 lines** | `leading-tight` | "Storage running low" |
+| Briefing description (13px) | **1 line** | natural wrap | "18.2GB left (3 days)" |
+| Date/annotation (13px) | **1 line** | `whitespace-nowrap` | "March 27, 2026" |
+| Trend % (13-15px) | **1 line fixed** | auto (numeric) | "+12.4%" |
+| Footer text (12px) | **1 line** | `text-center` | "Mobile baseline, 3km radius" |
+
+### When Text Overflows
+```tsx
+{/* Long name: truncate (ellipsis) */}
+<p className="text-text-primary font-bold text-[14px] truncate">
+  Acme Corp, Market Street
+</p>
+{/* → "Acme Corp, Market St..." */}
+
+{/* Briefing title: allow up to 2 lines, clip the rest */}
+<p className="text-[15px] font-bold leading-tight line-clamp-2">
+  Storage running low, consider upgrading your plan
+</p>
+```
+
+### No-Wrap Mandatory List (Must Be 1 Line)
+```
+✓ whitespace-nowrap: numbers + units, dates, trend %, prices
+✓ truncate: company names, addresses, long names
+✗ Forbidden: metrics breaking to 2 lines
+✗ Forbidden: labels breaking to 2 lines
+```
+
+### line-height Usage Context
+| Line Height | Tailwind | Usage |
+|-------------|----------|-------|
+| `leading-none` (1.0) | numbers only | 36-48px metrics (tight, no line gap) |
+| `leading-tight` (1.25) | short multi-line text | briefing title (up to 2 lines) |
+| `leading-snug` (1.35) | titles | section title 18px |
+| `leading-normal` (1.5) | body default | descriptions, annotations, captions |
+
+---
+
+## 24. Interaction Rules
+
+### Clickable Elements (cursor-pointer)
+| Element | Interaction | Feedback |
+|---------|-------------|----------|
+| TopBar icon button | Tap | Shadow change (hover) |
+| Donut chart segment | Tap → select/deselect | opacity 0.3 ↔ 1 + key color change |
+| Donut legend item | Tap → select/deselect | opacity 0.4 ↔ 1 + glow |
+| Period toggle button | Tap → switch | bg-brand + text-white |
+| Bottom nav item | Tap → page switch | text-brand |
+
+### Hover Effect Types
+| Type | Effect | Usage |
+|------|--------|-------|
+| Shadow change | `shadow-card` → `shadow-card-hover` | Icon buttons |
+| Opacity change | `opacity 0.3 ↔ 1` | Donut segments/legend |
+| Glow | `box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 25%, transparent)` | Selected donut dot |
+| Color transition | `text-disabled` → `text-brand` | Nav, toggle |
+
+### Transition Animations
+- Name the properties that change: `transition-colors` for colour,
+  `transition-[color,background-color,box-shadow]` when a shadow or focus ring changes with it,
+  `transition-opacity` for fades, `transition-transform` for movement. `transition-all` is flagged
+  by detector SS003.
+- `duration-300`: donut/legend (slow transition for smooth feel)
+- `duration-[var(--duration-fast)]`: buttons/nav (quick feedback)
+
+### Interaction Forbidden
+
+Scope: the `consumer-service` card recipe. Outside it, selectable rows (§18) and swipe-to-act on
+list rows (§73) are valid.
+
+```
+✗ Hover/click effects on cards themselves
+✗ Hover highlight on list rows
+✗ Swipe gestures (except carousel)
+✗ Long-press/context menus
+```
+
+---
+
+## 25. Icon Detail Rules
+
+### strokeWidth Rules
+| Icon Size | strokeWidth | Usage |
+|-----------|-------------|-------|
+| 128px (watermark) | `1.5` | Hero background decoration |
+| 20px (nav) | `2` | Bottom navigation |
+| 18px (button) | `2.2` | TopBar icon buttons |
+| 16px (badge) | `2` | KPI/hero icon badge |
+| 14-16px (trend) | `2.5` | TrendingUp/Down emphasis |
+| 16px (briefing) | `2.5` | Alert icon emphasis |
+
+Rule: **The smaller the icon, the thicker the strokeWidth** (for legibility). Large icons like watermarks stay thin.
+
+### Icon Size Context
+| Context | Size | Tailwind |
+|---------|------|----------|
+| Bottom nav | 20px | `size-5` |
+| TopBar button | 18px | `size-[18px]` |
+| Hero badge interior | 18px | `size-[18px]` |
+| KPI badge interior | 16px | `size-4` |
+| Trend (hero) | 16px | `size-4` |
+| Trend (KPI) | 14px | `size-3.5` |
+| Briefing badge | 16px | `size-4` |
+| Watermark | 128px | `size-32` |
+
+---
+
+## 26. Opacity Level Rules
+
+| Opacity | Usage | Example |
+|---------|-------|---------|
+| `0.06` | Watermark (barely visible) | Hero background icon |
+| `0.10` (`/10`) | Icon badge background | `bg-brand/10` |
+| `0.15` | Background chart (faintly visible) | Hero background area chart |
+| `0.3` | Unselected UI (donut segments) | Unselected pie slices |
+| `0.4` | Unselected UI (legend text) | Unselected legend rows |
+| `1.0` | Selected/active state | Default |
+
+Rule: **The lower the number, the more decorative**; **the higher, the more informational**.
+
+---
+
+## 27. Layering Rules (z-index / Background Decoration)
+
+### Card Structure with Background Decoration
+```
+Layer 0: Background chart   → absolute inset-0 opacity-[0.15]
+Layer 1: Watermark icon      → absolute right-6 top-1/2 opacity-[0.06]
+Layer 2: Content             → relative z-10
+```
+
+- Card requires `overflow-hidden` (prevents background from overflowing the card)
+- Content uses `relative z-10` to sit above the background
+- **Background decoration is used only in hero cards** (not in standard cards)
+
+---
+
+## Consumer-service recipe summary
+
+The original mobile overview uses a personal summary, soft grouping, brief next actions,
+and progressive detail. Its tables and code above illustrate one implementation.
+Use them only where they fit the selected grammar and approved project system.
+
+- Preserve stable semantic colors, readable values and units, and identifiable actions.
+- Use summary-first order when personal state is the question; prioritize urgent work
+  when it is not. Neither a KPI count nor a card count defines completeness.
+- Soft cards, small accent areas, and reduced unit sizes are options, not universal floors.
+- Use project typography, spacing, geometry, elevation, and state tokens consistently.
+- Keep data meaning, controls, loading/empty/error recovery, and mobile operability intact.
+- Prefer explicit transition properties and complete reduced motion; do not animate
+  consequential values theatrically or delay access to real information.
+
+---
+
+# Part 2: Extended Rules — General Application + Detailed Specs
+
+> The rules below are an extended guide for **applying this design system to any project**.
+
+---
+
+## 28. Scroll & Spacing Detail Rules
+
+### Content End Spacing
+| Position | Value | Reason |
+|----------|-------|--------|
+| Below last section | `h-8` (32px) | Breathing room at scroll end; fingers don't cover content |
+| Above BottomNav | `pb-24` (96px) | Nav doesn't cover content (nav height ~56px + safety margin) |
+| Below TopBar | Auto-handled by section spacing (`space-y-6`) | No extra spacing needed |
+
+### Scroll Behavior — mobile APP chrome (not marketing pages)
+
+> This section governs a mobile **app** shell. A public marketing/landing page follows the
+> **Cinematic tier** instead (see §43) — scroll-linked motion is encouraged there.
+
+```
+OK  TopBar: Always fixed (does not disappear on scroll)
+OK  BottomNav: Always fixed (fixed bottom-0)
+OK  Only main content scrolls
+NO  TopBar collapse/expand (collapsible header prohibited)
+NO  BottomNav hide (scroll-hide prohibited)
+NO  Scroll-jacking / scroll-linked animation on the app shell (parallax prohibited HERE)
+```
+
+### Overscroll
+- Background visible during iOS bounce scroll: maintain `bg-surface-page` (#FAFAFA)
+- Top overscroll: page background color visible above TopBar (not white/black)
+- Bottom overscroll: page background color below last spacing (h-8)
+
+### Carousel Scroll
+```css
+scroll-snap-type: x mandatory;    /* Snap per card */
+scroll-snap-align: start;          /* Card left-aligned */
+-webkit-overflow-scrolling: touch;  /* Smooth momentum */
+scrollbar-width: none;             /* Hide scrollbar */
+```
+
+---
+
+## 29. Loading State (Skeleton) Rules
+
+### Principle: Skeletons match the shape of final content
+```
+OK  Card skeleton: same p-6, rounded-2xl, shadow-card preserved
+OK  Text skeleton: rounded rectangle matching actual text height/width
+NO  Spinner inside a card
+NO  Showing an empty card and filling it later
+```
+
+### Skeleton Style
+```tsx
+{/* Metric skeleton */}
+<div className="h-9 w-[60%] bg-surface-muted rounded-lg animate-pulse" />
+
+{/* Label skeleton */}
+<div className="h-3 w-[40%] bg-surface-muted rounded animate-pulse" />
+
+{/* Icon badge skeleton */}
+<div className="size-7 bg-surface-muted rounded-lg animate-pulse" />
+```
+
+### Skeleton Timing
+- Display delay: **300ms** (prevents flicker on fast loads)
+- Minimum display: **300ms** (disappearing too fast causes visual noise)
+- Animation: `animate-pulse` (1.5s cycle)
+
+### KPI Grid Skeleton Example
+```tsx
+<div className="grid grid-cols-2 gap-4 px-6">
+  {[1,2,3,4].map(i => (
+    <div key={i} className="bg-card rounded-2xl p-6 shadow-[var(--shadow-card)]">
+      <div className="flex items-center gap-2 mb-3">
+        <div className="size-7 bg-surface-muted rounded-lg animate-pulse" />
+        <div className="h-3 w-16 bg-surface-muted rounded animate-pulse" />
+      </div>
+      <div className="h-9 w-24 bg-surface-muted rounded-lg animate-pulse mb-3" />
+      <div className="h-3 w-12 bg-surface-muted rounded animate-pulse" />
+    </div>
+  ))}
+</div>
+```
+
+---
+
+## 30. Empty State & Error State Rules
+
+### Empty State (0 items)
+```
+Centered inside card:
+  Icon container (32px, bg-surface-muted, rounded-xl)
+  + Icon (16px, text-text-tertiary)
+  + Message (14px, text-text-secondary)
+  + (Optional) Helper text (13px, text-text-tertiary)
+```
+- Message tone: **Conversational**, blame the system (not the user)
+- Example: "No activity yet", "Data is being prepared"
+
+### Metric at Zero
+- **Display 0 as-is**: `$0`, `0%`, `0 users`
+- Do not hide or replace with a dash (—)
+- Trend: if 0%, hide trend icon, display only `0%` text (gray)
+
+### Error State (data load failure)
+```
+Centered inside card:
+  AlertCircle icon (32px, text-destructive)
+  + "Couldn't load the data" (14px, text-text-secondary)
+  + Retry button (ghost variant, text-brand, "Try again")
+```
+- If one card fails, only that card shows error; the rest display normally
+- Full page failure: full-screen error (EmptyState pattern)
+
+### Partial Data
+- 1 of 4 KPIs fails: only the failed card shows error, the other 3 are normal
+- Insufficient chart data: "Not enough data" text in the empty area, chart hidden
+
+---
+
+## 31. Negative/Decline Display Rules
+
+### Decline Trend
+| Element | Up | Down |
+|---------|-----|------|
+| Color | `text-success` (#6B9B7A) | `text-destructive` (#D4183D) |
+| Icon | TrendingUp | TrendingDown |
+| Prefix | `+` | `-` |
+| Example | `+12.4%` | `-3.2%` |
+
+### Negative Amounts
+- Use minus sign: `-$1.8K` (parentheses `($1.8K)` prohibited)
+- Negative amount color: `text-destructive`
+- At 0: default text color (#3C3C3C), no trend icon
+
+---
+
+## 32. Large Numbers & Long Text Handling
+
+### Large Number Format
+| Range | Format | Example |
+|-------|--------|---------|
+| up to 9,999 | Comma + $ | $3,500 |
+| 10,000 - 999,999 | K (dollars) | $18.7K, $999K |
+| 1,000,000+ | M (dollars) | $3.8M, $12.5M |
+| 1,000,000,000+ | B (dollars) | $1.2B |
+
+### When Numbers Overflow the Card
+- Bump the unit up one level: `$18,700,000` -> `$18.7M`
+- If still overflowing: reduce decimals `$3.84M` -> `$3.8M`
+- **Never shrink font size** (preserve 2:1 ratio)
+
+### Long Names/Text
+| Element | Max Length | On Overflow |
+|---------|-----------|-------------|
+| Company name (14px) | ~12 chars | `truncate` (ellipsis ...) |
+| Section title (18px) | ~10 chars | `truncate` |
+| Briefing title (15px) | ~20 chars | `line-clamp-2` (2 lines) |
+| Briefing description (13px) | ~25 chars | 1 line, `truncate` on overflow |
+| Label (12px) | ~6 chars | Always 1 line, use abbreviation |
+
+---
+
+## 33. CJK Typography Notes
+
+> These rules apply primarily to Korean, Chinese, and Japanese text. For Latin-only projects, some rules (like `keep-all` word-break) can be adjusted or omitted.
+
+### word-break Rules
+```css
+body {
+  word-break: keep-all;      /* CJK: wrap at word boundaries (spaces) */
+  overflow-wrap: break-word;  /* Handle long English URLs etc. */
+}
+```
+- CJK text: line breaks at word (space) boundaries (no mid-syllable breaks)
+- Latin/numbers: word-level breaks; very long strings use break-word
+
+> **Latin-only note:** For projects using only Latin scripts, `word-break: normal` is usually sufficient. The `keep-all` rule is specifically designed to prevent mid-word breaks in CJK text.
+
+### CJK Minimum Readable Sizes
+| Size | Allowed Content | Prohibited |
+|------|----------------|------------|
+| 10px | Numbers, Latin abbreviations (GB, %) | CJK sentences |
+| 11px | Short status text (2-3 chars: "Done") | CJK descriptions |
+| 12px | Labels (medium weight or above required) | Thin (400) CJK text |
+| 13px+ | All CJK text OK | -- |
+
+### Mixed Number + CJK Text
+- "March sales" -> wrap with `whitespace-nowrap` so the number doesn't get orphaned
+- "8th of 12" -> maintain space between numbers and CJK characters
+
+### CJK Font Metric Correction Rules (Pretendard)
+
+Pretendard (a CJK font) has a **taller ascender than Latin fonts**, which causes more space above the text.
+`leading-none` alone may not achieve visual centering.
+
+> **Latin font note:** When using Latin-only fonts (e.g., Inter, SF Pro), these corrections are generally unnecessary. The metric offsets below apply specifically to CJK fonts like Pretendard, Noto Sans CJK, or similar typefaces with tall ascenders.
+
+#### Problem
+```
++--------------------+
+|   <- more space     |
+|   $18.7K            |  <- visually shifted downward
+|                     |
++--------------------+
+```
+
+#### Correction Methods
+
+**1. Large metric numbers (36-48px) -- `pt` correction**
+```tsx
+{/* Before correction: more space above than below */}
+<p className="text-[36px] font-bold leading-none">$18.7M</p>
+
+{/* After correction: pt-0.5 ~ pt-1 for visual centering */}
+<p className="text-[36px] font-bold leading-none pt-0.5">$18.7M</p>
+```
+
+**2. Vertical alignment in cards -- aligning with icon badges**
+```tsx
+{/* When icon badge (28px) and label (12px) are slightly misaligned */}
+<div className="flex items-center gap-2 mb-3">
+  <div className="size-7 rounded-lg bg-brand/10 flex items-center justify-center">
+    <Icon className="size-4 text-brand" />
+  </div>
+  <p className="text-[12px] text-text-secondary font-medium uppercase tracking-[0.05em] translate-y-[0.5px]">
+    Today's Sales
+  </p>
+</div>
+```
+
+**3. Button text -- `leading-none` + micro correction**
+```tsx
+{/* When button text shifts upward in Pretendard */}
+<Button className="pt-[1px]">Place order</Button>
+```
+
+#### Correction Value Guide
+| Text Size | Correction | Tailwind |
+|-----------|-----------|----------|
+| 48px (hero) | ~2px up | `pt-0.5` |
+| 36px (KPI) | ~1.5px up | `pt-0.5` |
+| 18px (heading) | No correction needed | -- |
+| 14-16px (body) | No correction needed | -- |
+| 12px (label) | 0.5px relative to adjacent element | `translate-y-[0.5px]` |
+
+#### Rules
+- Corrections are **only noticeable at large sizes (36px+)**. Below 14px, usually unnecessary
+- Use `pt-0.5` (2px) or `translate-y-[0.5px]` for micro adjustments
+- **Labels next to icons** require visual verification after `items-center` alignment
+- When using Inter (Latin) only, corrections are unnecessary -- **only applies when using Pretendard or similar CJK fonts**
+- Correction values should be **applied individually after visual inspection**, not globally
+
+---
+
+## 34. Microcopy Tone Guide
+
+### Conversational Tone
+
+A casual-but-polite conversational tone. In English, this means friendly, direct language that avoids corporate stiffness while remaining respectful.
+
+#### Casual vs Formal Tone
+```
+OK  "Couldn't load the data"
+NO  "An error has occurred while retrieving the requested data"
+
+OK  "Please try again"
+NO  "Please retry the operation"
+
+OK  "No activity yet"
+NO  "No data records found"
+```
+
+### Error Messages: Blame the System
+```
+OK  "Your connection seems unstable"
+NO  "A network error has occurred"
+
+OK  "Give it another moment and try again"
+NO  "Error 500: Internal Server Error"
+```
+
+### Empty States: Suggest the Next Action
+```
+OK  "No activity yet. Try creating your first entry."
+NO  "No data"
+```
+
+### Labels/Titles: Use Noun Phrases
+```
+OK  "Sales Overview", "Inventory Status", "Recent Orders"
+NO  "Check your sales", "Verify inventory"
+```
+
+---
+
+## 35. Toast / Feedback Rules
+
+### Toast Position & Style
+```
+Position: Bottom of screen, above BottomNav (bottom-[calc(env(safe-area-inset-bottom)+80px)])
+Style: bg-[#2A2A2A] text-white rounded-2xl px-5 py-3.5 shadow-elevated
+Text: 15px medium, max 2 lines (line-clamp-2)
+```
+
+### Toast Timing
+| Type | Display Duration | Example |
+|------|-----------------|---------|
+| Info | 3 seconds | "Saved successfully" |
+| With action | 5 seconds | "Deleted. Undo" |
+
+### Toast Animation
+- Enter: `translateY(20px)` -> `0` + fade in, `duration-normal` + `ease-out`
+- Exit: fade out only, `duration-fast`
+- Only 1 toast at a time; new toast immediately replaces the previous one
+
+---
+
+## 36. Modal / Sheet Rules
+
+### Bottom Sheet (detail view, filters, etc.)
+```
+Size: 50% of screen (default) / 25% (small confirmation) / 90% (large content)
+Corners: rounded-t-2xl (top only, 16px radius)
+Handle: w-10 h-1 bg-surface-muted rounded-full mx-auto mt-3
+Backdrop: bg-black/40 backdrop-blur-sm
+Close: backdrop tap, swipe down, X button
+```
+
+### Modal vs Page Decision Criteria
+| Content | UI Choice |
+|---------|-----------|
+| Confirmation/warning (short text) | **Bottom sheet (25%)** |
+| Filter/date picker | **Bottom sheet (50%)** |
+| Detailed info (needs scroll) | **Full page push** |
+| Settings | **Full page push** |
+
+---
+
+## 37. Viewport & Responsive Rules
+
+### Default: 430px Mobile Fixed
+```
+max-w-[430px] mx-auto    /* Center when exceeding 430px */
+min-h-screen              /* Minimum screen height */
+bg-surface-page           /* Page background outside 430px */
+```
+
+### Screens Exceeding 430px (Tablet/Desktop)
+- Cards and content **stay within 430px as-is**
+- Area outside 430px: `bg-surface-page` (#FAFAFA) or `bg-background` (#FFF)
+- No font/padding scaling -- maintain mobile proportions
+- **Desktop sidebar/multi-column layouts are outside this system's scope** (design separately)
+
+### Safe Area Handling
+```
+TopBar:    pt-safe (top notch/Dynamic Island)
+BottomNav: pb-safe (bottom home indicator)
+Content:   Automatic (pb-24 provides sufficient clearance)
+```
+- `viewport-fit=cover` required (set in index.html)
+- Left/right safe areas: currently unused (430px container handles this naturally)
+
+---
+
+## 38. Chart Type Selection Guide
+
+### When to Use Which Chart
+
+| Data Characteristic | Chart Type | Reason |
+|--------------------|------------|--------|
+| Change over time | **Area chart** | Visualize trend as filled area |
+| Compare items (by period) | **Bar chart** | Optimal for size comparison |
+| Part-to-whole ratio | **Donut chart** | Visualize composition |
+| Simple progress (%) | **Progress bar** | Express 0-100% |
+| Achievement (n/N) | **Segment bar** | Express discrete progress |
+| Single key figure | **Large number (metric)** | Number is more effective than chart |
+
+### Chart Prohibitions
+```
+NO  3D charts
+NO  Dual-axis charts (dual Y-axis)
+NO  Stacked bar charts
+NO  Radar/radial charts
+NO  More than 1 chart per card
+```
+
+---
+
+## 39. Notification Severity (4 Levels)
+
+| Severity | Background | Left Border | Icon | Text Color | Example |
+|----------|-----------|-------------|------|-----------|---------|
+| Critical | `destructive/8` | 4px `destructive` | AlertCircle | `text-destructive` | Storage depleted |
+| Warning | `warning/8` | 4px `warning` | AlertTriangle | `text-warning` | Price change |
+| Info | `info/8` | 4px `info` | Info | `text-info` | Goal achievement |
+| Success | `success/8` | 4px `success` | CheckCircle | `text-success` | Delivery complete |
+
+### Inline Notification Structure
+```tsx
+<div className="rounded-xl p-4 bg-destructive/8 border-l-4 border-destructive">
+  <div className="flex items-center gap-2">
+    <AlertCircle className="size-4 text-destructive" />
+    <span className="text-[14px] font-medium text-destructive">Storage warning</span>
+  </div>
+</div>
+```
+
+### Inline vs Toast Decision
+| Situation | UI |
+|-----------|-----|
+| Data-related warning (inventory, price) | **Inline** (inside the relevant card) |
+| Action result confirmation (save, delete) | **Toast** |
+| Connection status change | **Toast** |
+| System maintenance | **Page-top banner** |
+
+---
+
+## 40. Design System Application Guide
+
+Adapt by job and approved system, not by swapping a brand color into one fixed page.
+
+1. Resolve the artifact's output grammar and adapter before selecting domain/page bias.
+2. Preserve approved tokens and component roles. A new key color requires semantic
+   role mapping and contrast checks through `PALETTE-RECIPES.md`, not an assumption
+   that unchanged grays will work against every new surface.
+3. Select composition for the actual page: the same finance brand can have a marketing
+   story, a transaction queue, and a personal summary with different structures.
+4. Reuse the design language across those structures through stable type, alignment,
+   color, control, and state roles. Keep task-specific differences explicit.
+5. Render required viewports/states and verify function. Do not call a palette swap
+   a transferred grammar or treat similarity to the demo as success.
+
+---
+
+## 41. Accessibility Essentials
+
+### Touch Targets
+- All interactive elements: minimum **44x44px** tap area
+- Visual size can be smaller (28px icon) -- use invisible padding to reach 44px
+- Minimum **8px** gap between adjacent touch targets
+
+### Color Contrast (WCAG AA)
+- Body text: **4.5:1** or higher (#3C3C3C on #FFF = 9.7:1 OK)
+- Large text (18px+): **3:1** or higher
+- **Never convey information through color alone** -- pair with icon/text (status dot + text)
+
+### Screen Reader
+- Charts must have `aria-label` describing the data
+- Toasts require `role="status"` + `aria-live="polite"`
+- Numbers: provide `aria-label` with spoken form (e.g., `aria-label="eighteen point seven million dollars"`)
+
+### Reduced Motion
+```css
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+```
+- Skeleton pulse animation also stops
+- Number counting animation -> show final value immediately
+- Color transitions are preserved (not considered motion)
+
+---
+
+## 42. Tab & Navigation Details
+
+### Bottom Nav Rules
+| Property | Value |
+|----------|-------|
+| Max tabs | **5** (4 recommended) |
+| Icon size | 20px |
+| Label size | 10px semibold |
+| Active color | `text-brand` |
+| Inactive color | `text-text-disabled` (#9B9B9B) |
+| Notification badge | Top-right of icon `size-1.5 bg-alert-badge` |
+| Re-tap active tab | **Scroll to top of page** |
+
+### Page Transitions
+- Tab switch: **Instant** (no animation)
+- Sub-page push: right-to-left slide (`duration-moderate` 300ms, `ease-out`)
+- Back navigation: left-to-right slide
+- Modal/sheet: bottom-to-top slide
+
+### Back Button
+```
+Position: TopBar left
+Icon: ChevronLeft, 24px, text-text-primary
+Tap area: 44x44px
+```
+
+---
+
+## 43. Animation Details (Motion Choreography)
+
+### Page Entry Stagger
+```
+Card 1: 0ms    delay, opacity 0->1 + translateY(12px)->0
+Card 2: 50ms   delay
+Card 3: 100ms  delay
+Card 4: 150ms  delay
+...
+duration: 200ms (duration-normal)
+easing: ease-out
+```
+- KPI grid (4 cards): top-left -> top-right -> bottom-left -> bottom-right order
+- With `prefers-reduced-motion`: instant opacity 1, no translateY
+
+### Number Counting (Hero Metric Only)
+- 0 -> final value, 600ms, `ease-out`
+- Only on initial load (repeats on refresh, does NOT repeat on tab switch)
+- With `prefers-reduced-motion`: show final value immediately
+
+### Animation Prohibitions — scoped BY SURFACE (read this before you assume "no motion")
+
+**App chrome / dashboard / data / forms (the default *product* surface)** — keep it calm:
+```
+NO  Scroll-JACKING (hijacking scroll speed, trapping the user, shrinking header on a data screen)
+NO  Scroll-linked timelines on an app/data surface
+NO  Pill toggle sliding (selection sliding effect)
+NO  Card zoom in/out on hover in a data grid
+NO  Decorative repetition unrelated to an ongoing state
+    Loading/live indicators require an end condition and a reduced-motion alternative
+NO  Animating numbers / balances / money (except the ONE hero-metric count on load)
+```
+
+**Marketing / landing / brand pages → the Cinematic tier is ALLOWED (below).** The bans above
+exist to keep *product* surfaces calm; they are **wrong for a public brand page** whose whole
+job is to make the product feel designed. family.co / stripe.com / linear.app marketing pages
+are the gold standard and are built on exactly the motion the app-surface list forbids. Don't
+apply dashboard restraint to a landing page — that's how a brand page ends up flat and generic.
+
+### Cinematic tier — marketing / landing / brand pages ONLY
+
+On a public marketing/landing/brand page, motion is part of the craft — use it. **ALLOWED:**
+- **scroll-LINKED choreography** — native scroll drives reveals, sticky/pinned sections,
+  progress, sequential assembly (the "Linear/Stripe, the product builds itself as you scroll"
+  move). This is **not** scroll-jacking: the user keeps full control of scroll speed and can
+  leave any time. *Hijacking* scroll (forcing speed, trapping) stays banned.
+- **Subtle parallax** (depth, a few layers, small offsets), **3D transforms / tilt** on a hero
+  or showcase card, **animated gradients / gradient mesh / video backgrounds** behind the hero,
+  **rich hover** (magnetic, glow, lift, gradient-sweep).
+
+**Guardrails (all required):**
+- **Purposeful** — reveals content or tells the product story; not decorative jitter.
+- **60fps** — animate `transform`/`opacity` only, no layout thrash, keep a performance budget.
+- **Never blocks the first read or the primary action** — hero headline + CTA usable
+  immediately; motion never gates LCP or hides content until you scroll.
+- **`prefers-reduced-motion` fully honored** — with motion off the page is still complete and
+  coherent (content present, just static). Test this; it's the difference between craft and gimmick.
+- **One motion language** even here — one easing family, one seed. Cinematic ≠ chaotic.
+- Still **NO**: autoplaying audio, animating money/numbers as decoration, seizure-risk flashing.
+
+---
+
+## 44. Input & Form Rules (When Used Outside Cards)
+
+> No input fields inside cards. If a form is needed, use a **separate page or bottom sheet**.
+
+### Input Field Style
+```
+Default:  bg-input-background (#F3F3F5) border-transparent rounded-xl h-12 px-4 text-[16px]
+Focus:    border-brand ring-2 ring-brand/20 bg-card
+Error:    border-destructive ring-2 ring-destructive/20 bg-card
+Disabled: opacity-50 cursor-not-allowed
+```
+- **16px required** (prevents iOS zoom on input focus)
+- Label: above input `text-[13px] font-medium text-text-secondary mb-2`
+- Error message: below input `text-[12px] text-destructive font-medium mt-1.5`
+
+### Validation Timing
+- **Validate on blur** (not during typing)
+- For CJK IME: validate after `compositionend` event (no validation during composition)
+
+---
+
+## 45. Dark Mode Guide
+
+### Core Principle: Maintain Card-to-Background Contrast
+The relationship between card (#FFFFFF) and background (#FAFAFA) in light mode must preserve the **same sense of depth** in dark mode.
+Cards must be **brighter than background** for visual section separation.
+
+```
+Light:  background #FAFAFA  ->  card #FFFFFF     (card is brighter OK)
+Dark:   background #121212  ->  card #1E1E1E     (card is brighter OK)
+
+NO: background #1A1A1A -> card #1A1A1A  (same color = card invisible)
+NO: background #1E1E1E -> card #121212  (card is darker = inverted)
+```
+
+### Background Levels (Depth Through Brightness)
+| Level | Hex | Usage | Light Mode Equivalent |
+|-------|-----|-------|----------------------|
+| 0 (furthest back) | `#121212` | Page background (`--surface-page`) | #FAFAFA |
+| 1 | `#1E1E1E` | Card background (`--card`) | #FFFFFF |
+| 2 | `#252525` | List row / sub-card (`--surface-subtle`) | #FAFAF9 |
+| 3 | `#2C2C2C` | Floating / modal | -- |
+
+**Brightness gap between levels: at least `#0C0C0C` (12 steps)**
+Each level must be noticeably brighter than the previous, distinguishable by eye.
+
+### Card Distinction: Shadow -> Border Transition
+Light mode uses `shadow-card` for card separation, but shadows are invisible in dark mode.
+**In dark mode, use a subtle border for card edges:**
+```css
+.dark {
+  --shadow-card: none;
+  --card-border: 1px solid rgba(255, 255, 255, 0.06);
+}
+```
+```tsx
+{/* Card in dark mode */}
+className="bg-card rounded-2xl p-6 shadow-[var(--shadow-card)]
+  dark:border dark:border-white/6"
+```
+
+### Dark Mode CSS Variable Full Mapping
+```css
+.dark {
+  /* Background & Surface */
+  --surface-page: #121212;
+  --card: #1E1E1E;
+  --surface-subtle: #252525;
+  --surface-muted: rgba(255, 255, 255, 0.08);
+  --brand-tint: rgba(114, 31, 229, 0.15);
+
+  /* Text Hierarchy */
+  --text-primary: #E0E0E0;
+  --text-secondary: #A0A0A0;
+  --text-tertiary: #808080;
+  --text-disabled: #555555;
+  --icon-default: #909090;
+
+  /* Key Color & Status (brightened) */
+  --brand: #9B5FFF;
+  --success: #8FBF9A;
+  --destructive: #FF5C5C;
+  --warning: #FFB347;
+  --info: #64B5F6;
+
+  /* Border */
+  --border: rgba(255, 255, 255, 0.08);
+  --alert-badge: #FF5C5C;
+
+  /* Shadow -> Border replacement */
+  --shadow-card: none;
+  --shadow-button: none;
+}
+```
+
+### Dark Mode Checklist
+- [ ] Is card background (#1E1E1E) brighter than page background (#121212)?
+- [ ] Do cards have `dark:border dark:border-white/6` border?
+- [ ] Is list row background (#252525) brighter than card background (#1E1E1E)?
+- [ ] Is the key color switched to the bright version (#9B5FFF)?
+- [ ] Are all 5 text levels inverted to bright colors?
+- [ ] Is the progress track `rgba(255,255,255,0.08)`?
+- [ ] Are card boundaries expressed with borders instead of shadows?
+
+### Dark Mode Prohibitions
+```
+NO  Pure #000000 background (use #121212 even considering OLED burn-in)
+NO  Reusing light mode shadows in dark (they're invisible)
+NO  Making key color darker in dark mode -- must go brighter
+NO  Using same color for card and background (contrast difference required)
+NO  Running dark mode without card borders (shadows alone are invisible)
+```
+
+---
+
+## 46. Button Design Rules
+
+> Based on the design system + Seed Design official specs.
+> Core principle: **not pill but appropriate radius**, **150ms color transition**, **pressed = one step darker**.
+
+### Button Variants (7 Types)
+
+| Variant | Background | Text | Pressed | Usage |
+|---------|-----------|------|---------|-------|
+| `default` (brandSolid) | `bg-brand` | white | `bg-brand/85` | **Primary CTA** (key color) |
+| `neutral` (neutralSolid) | `bg-foreground` | `text-background` | `bg-foreground/90` | Emphasis button (inverse of the page; flips with the theme) |
+| `secondary` (neutralWeak) | `bg-secondary` | text-primary | `bg-accent` | Secondary button (quiet surface) |
+| `destructive` (criticalSolid) | `bg-destructive` | white | `bg-destructive/85` | Dangerous action (delete, etc.) |
+| `outline` | transparent + border | text-primary | `bg-surface-muted/50` | Bordered button |
+| `ghost` | transparent | text-primary | `bg-surface-muted/50` | Minimal button |
+| `brandGhost` | transparent | `text-brand` | `bg-brand/8` | Key color text (retry, etc.) |
+
+### Button Sizes (4 Levels)
+
+| Size | Height | Radius | Text | Padding X | Icon | Usage |
+|------|--------|--------|------|----------|------|-------|
+| `xs` | **32px** | recipe control radius | 13px bold | 14px | 14px | Chips, tags, filters |
+| `sm` | **36px** | recipe control radius | 14px bold | 14px | 14px | Inline secondary |
+| `md` | **40px** | recipe control radius | 14px bold | 16px | 16px | **Default button** |
+| `lg` | **52px** | recipe control radius | 18px bold | 20px | 22px | **Large CTA** |
+| `icon` | **40px** | recipe control radius | -- | -- | 18px | TopBar icons |
+
+Key point: every size takes the **recipe control radius** (`ss-pattern-control` → `--ss-control-radius`,
+set by the brand recipe), so buttons are pill-shaped only when the recipe's controls are.
+
+### Button States
+
+| State | Effect | Transition |
+|-------|--------|-----------|
+| Default | See variant table above | -- |
+| Pressed/Active | Background color **one step darker** | `150ms` ease |
+| Disabled | `bg-surface-muted text-text-disabled` | -- |
+| Focus | `ring-2 ring-brand/20` | -- |
+| Loading | Text -> spinner (16px) swap, size preserved, clicks blocked | -- |
+
+```
+NO  active:scale (shrink effect) -- use color change only
+NO  hover:bg-{color}/90 (darken via opacity) -- use a distinct darker shade
+OK  active:bg-brand/85 (slightly darker on press)
+```
+
+### Primary CTA Placement Rules
+
+**On dashboards**: No CTA buttons in principle (data-viewing pages).
+
+**When CTA is needed on other pages**:
+```tsx
+{/* Fixed bottom CTA (BottomCTA pattern) */}
+<div className="fixed bottom-0 left-0 right-0 px-4 pb-safe bg-card/80 backdrop-blur-lg">
+  <div className="mx-auto max-w-[430px] py-3">
+    <Button size="lg" className="w-full">Place order</Button>
+  </div>
+</div>
+
+{/* Inline CTA (outside card, page level) */}
+<div className="px-6">
+  <Button size="lg" className="w-full">Place order</Button>
+</div>
+```
+
+| Property | Value |
+|----------|-------|
+| Height | `h-[52px]` (lg) |
+| Width | `w-full` |
+| Corners | recipe control radius |
+| Text | 18px bold white |
+| Background | `bg-brand` |
+| When fixed to bottom | `backdrop-blur-lg bg-card/80` + `pb-safe` |
+
+### Button Combination Patterns
+
+#### Primary + Secondary (Side by Side)
+```tsx
+<div className="flex gap-3 px-6">
+  <Button variant="secondary" size="lg" className="flex-1">Close</Button>
+  <Button size="lg" className="flex-1">Confirm</Button>
+</div>
+```
+- `gap-3` (12px) spacing
+- `flex-1` for equal width
+- Primary (key color) on the **right**, Secondary (gray) on the **left**
+
+#### Button + Text Link
+```tsx
+<div className="flex flex-col items-center gap-4 px-6">
+  <Button size="lg" className="w-full">Get started</Button>
+  <Button variant="brandGhost" size="sm">Maybe later</Button>
+</div>
+```
+
+### Icon Button (TopBar Style)
+```tsx
+<button className="relative size-10 rounded-full bg-card shadow-[var(--shadow-button)]
+  flex items-center justify-center
+  active:bg-surface-muted/50 transition-colors duration-150
+  focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
+  <Bell className="size-[18px] text-icon-default" strokeWidth={2.2} />
+</button>
+```
+| Property | Value |
+|----------|-------|
+| Size | `size-10` (40px) |
+| Corners | `rounded-full` (circle) |
+| Background | `bg-card` (white) |
+| Shadow | `shadow-button` (0.06 opacity) |
+| Icon | 18px, `text-icon-default` (#4A5568), strokeWidth 2.2 |
+| Pressed | `active:bg-surface-muted/50` (color change only) |
+| Notification badge | `absolute top-1 right-1 size-1.5 bg-alert-badge rounded-full` |
+
+### Button Spacing & Layout
+| Rule | Value |
+|------|-------|
+| Button-button horizontal gap | `gap-3` (12px) |
+| Button-button vertical gap | `gap-4` (16px) |
+| Button-content gap | `mt-6` (24px) |
+| Fixed bottom CTA safe area | `pb-safe` + `py-3` |
+| Screen left/right margin | `px-4` (16px, global-gutter) or `px-6` (24px) |
+
+### Button Prohibitions
+```
+NO  CTA button inside cards (on dashboards)
+NO  active:scale shrink effect (use color transition only)
+NO  Gradient backgrounds on buttons
+NO  Multi-line text inside buttons
+NO  Icon + text together at sm or smaller sizes
+NO  More than 1 Primary CTA per screen
+```
+
+---
+
+## 47. Badge & Tag Design Rules
+
+### Badge Types (3 Kinds)
+
+#### 1. Status Badge (dot + text)
+```tsx
+<div className="inline-flex items-center">
+  <span className="size-1.5 rounded-full me-1.5" style={{ backgroundColor: color }} />
+  <span className="text-[11px] font-bold" style={{ color }}>Complete</span>
+</div>
+```
+- Dot 6px + text 11px bold
+- Dot and text are the **same color**
+- Gap `me-1.5` (6px)
+
+#### 2. Label Badge (uppercase)
+```tsx
+<span className="text-[12px] font-bold uppercase tracking-[0.05em]"
+  style={{ color: badgeColor }}>
+  URGENT
+</span>
+```
+- 12px bold uppercase + tracking
+- Used with icon (16px) (`gap-1.5`)
+- Color: based on severity (#C85A54 urgent, #7A7A7A notice/info)
+
+#### 3. Pill Badge
+```tsx
+<span className="px-2 py-0.5 bg-brand text-white text-[9px] font-bold
+  rounded uppercase tracking-wider">
+  MY WORKSPACE
+</span>
+```
+| Property | Value |
+|----------|-------|
+| Padding | `px-2 py-0.5` |
+| Background | `bg-brand` (key color) |
+| Text | 9px bold white uppercase |
+| Corners | `rounded` (4px) |
+
+### Badge Usage Principles
+```
+OK  Badges always appear as a supplement alongside another element (name, list row)
+NO  Badge used alone
+NO  Icon + text together inside a badge (pill badge)
+NO  Large badges (h-8 or above)
+```
+
+---
+
+## 48. Divider & Border Detail Rules
+
+### Divider Usage (Only Where Allowed)
+| Position | Style | Spacing |
+|----------|-------|---------|
+| Inside card: between chart and stats | `border-t border-surface-muted` | Above `pt-5`, below `mt-6` |
+| Top of BottomNav | `border-t border-surface-muted` | None |
+
+### Divider Prohibitions
+```
+NO  Between sections (use cards + space-y-6 for separation)
+NO  Between list items (use space-y-3 for separation)
+NO  Card borders (use shadow for separation)
+NO  Vertical dividers
+```
+
+### Border Usage
+| Purpose | Style |
+|---------|-------|
+| Highlighted row | `border-2 border-brand` (selected item) |
+| Input focus | `border-brand ring-2 ring-brand/20` |
+| Input error | `border-destructive ring-2 ring-destructive/20` |
+| Notification left | `border-l-4 border-{severity}` |
+
+**No borders in the default state.** Separating cards with shadow is the design principle.
+
+---
+
+## 49. UX Writing Details (Conversational Tone)
+
+> Principles for a casual-but-polite voice and tone. An extension of section 34 (Microcopy Tone).
+
+### 1. Conversational tone (default voice)
+Use a friendly, conversational voice across product UI. Plain language stays even where the
+content is serious; regulated or legal copy follows `UX-WRITING.md` and keeps the same clarity.
+```
+OK  "Your order is complete"
+NO  "Your order has been successfully processed"
+```
+
+### 2. Active Voice
+```
+OK  "We completed your order" (active)
+NO  "Your order has been completed" (passive) -- only allowed in result notifications
+
+OK  "Sending your verification code"
+NO  "A verification code has been dispatched"
+
+OK  "Applying your discount"
+NO  "The discount has been applied"
+```
+Prefer active constructions: put the action front and center.
+
+### 3. Positive Framing
+```
+OK  "Free shipping on orders over $30"
+NO  "Orders under $30 have a shipping fee"
+
+OK  "Connect to Wi-Fi for a faster experience"
+NO  "Your internet connection is unstable"
+```
+Even error messages should be positive: always include a resolution path.
+
+### 4. Casual but Polite
+```
+OK  "What's your name?"               NO  "Would you kindly provide your full name?"
+OK  "Let us check"                     NO  "We shall verify this for you"
+OK  "Send to Alex"                     NO  "Initiate transfer to Mr. Alexander"
+```
+Strip out unnecessary formality. Be direct and warm.
+
+### 5. Plain Language Over Jargon
+```
+OK  "Check who's sending this"         NO  "Verify sender identity"
+OK  "Send money"                       NO  "Initiate remittance"
+OK  "Please try again"                 NO  "Retry"
+```
+
+### 6. CTA Button Label Rules
+```
+OK  "Place order"   -- action is clear
+OK  "Confirm"       -- outcome is clear
+OK  "Get started"   -- next step is clear
+NO  "Protect your health with fresh ingredients" -- description, not an action
+NO  "Get benefits"  -- too vague
+```
+- CTAs must **clearly state what happens next**
+- No exaggerated/redundant helper text above the CTA
+- One CTA per screen is the principle (secondary buttons are separate)
+
+### 7. Dialog Button Rules
+```
+Left: "Close" (fixed)
+Right: Action CTA ("Confirm", "Delete", etc.)
+
+NO  Using "Cancel" on the left
+    -> Users may think their in-progress work is being cancelled
+```
+
+---
+
+## 50. Dark Pattern Prevention Rules
+
+> These are **launch-blocking** violations per UX best practices.
+
+### Absolute Prohibitions
+```
+NO  Bottom sheet (ad, notification consent) shown immediately on service entry
+NO  Exit-prevention bottom sheet on back navigation
+NO  Screen with no reject option (CTA only, no close/cancel)
+NO  Full-screen ad appearing at unexpected moments
+NO  CTA label so vague that the next action is unpredictable
+```
+
+### Correct Patterns
+```
+OK  Service entry -> show main content immediately
+OK  Notification consent -> request when the user naturally feels the need
+OK  Bottom sheet always closable via "Close" or backdrop tap
+OK  CTA label = action verb + clear outcome
+```
+
+---
+
+## 51. Graphic Resource Usage Principles
+
+### Icon Usage Rules
+- Size: use within **24-40px** range
+- Use only **1** icon/emoji at a time (no parallel placement of 2+)
+- Icons are for **UI function** purposes only
+
+### Graphic Usage Principles
+| Principle | Description |
+|-----------|-------------|
+| Context-appropriate | Serves to aid screen meaning, not decoration |
+| Size matches info density | Simple graphics small, detailed graphics large |
+| One hero per screen | Multiple same-sized graphics -> scattered attention |
+| Don't obscure key info | Graphics must not push out text/CTA |
+| No negative emotions | Begging/pleading/discomfort = dark pattern |
+| No decorative effects | Particles, excessive gradients, meaningless effects |
+
+### Graphic Style
+```
+OK  Simple, clear, clean digital style
+NO  Hand-drawn feel
+NO  Painterly / lyrical style
+NO  Cartoon-style illustration
+NO  Low-resolution graphics
+NO  Particles / tiny effects
+```
+
+### Dark / Light Mode Support
+- Graphics must **look good in both modes**
+- Avoid colors that are too bright or too dark
+- Use **mid-tone** color palettes
+
+---
+
+## 52. Design Reference Width & Resolution
+
+### Reference Width
+| System | Reference Width | Description |
+|--------|----------------|-------------|
+| Reference (375px) | **375px** | Based on iPhone SE/8 |
+| This Design System | **430px** | Based on iPhone Pro Max |
+
+- The 375px reference is common but our Figma original is designed at 430px
+- Screens exceeding 430px: `max-w-[430px] mx-auto` center alignment
+- Screens below 430px: content scales down naturally (watch for fixed px elements)
+
+### Asset Resolution
+- **1x + 2x** preparation is sufficient (3x only when graphic quality is critical)
+- No excessive resolution group management (increases memory, loading delays)
+
+### Test Device Guide
+- **2-3** devices with different aspect ratios
+- **1** device with large Safe Area (iPhone 15 Pro, etc.)
+- **1** small screen device (iPhone SE / compact Android)
+
+---
+
+## 53. Component Composition & Screen Structure Principles
+
+### Screen Composition Order
+```
+1. Navigation (TopBar) -- required, top of every screen
+2. Hero / Main content -- the most important information
+3. Supporting sections -- grouped in cards with space-y-6
+4. BottomNav or BottomCTA -- bottom of screen
+```
+
+### Component Composition Prohibitions
+```
+NO  SectionCard inside SectionCard (nested cards)
+NO  StatCard inside HeroCard (card within card)
+NO  Carousel inside carousel
+NO  Bottom sheet inside bottom sheet
+```
+
+### Component Padding Rules
+- Most design system components have **built-in padding**
+- They look natural even without gap
+- When spacing adjustment is needed, use **auto-layout gap**
+
+### When Creating Custom Components
+- Must **harmonize** with other design system components
+- No arbitrary cropping / color correction / shape distortion
+- Solve with existing pattern combinations when possible
+
+---
+
+## 54. Segment Control Rules
+
+Separate from Pill Toggle (section 10) -- a **tab-style control for selecting one of several options**.
+
+### Style
+```
+Container: bg-surface-muted rounded-xl p-1 gap-1
+Active segment: bg-card text-text-primary shadow-card
+Inactive segment: bg-transparent text-text-disabled
+```
+
+### Sizes
+| Size | Height | Text | Radius | Usage |
+|------|--------|------|--------|-------|
+| sm | 28px | 12px | `rounded-md` | Compact (chart filters) |
+| md | 36px | 14px | `rounded-lg` | Default |
+
+### Pill Toggle vs Segment Control
+| | Pill Toggle | Segment Control |
+|-|-------------|----------------|
+| Active style | `bg-brand text-white` | `bg-card text-text-primary shadow` |
+| Usage | Key color emphasis needed (period switch) | Neutral switching (filter, view mode) |
+| Option count | 2-3 | 2-5 |
+
+---
+
+## 55. Drawer (Side Panel) Rules
+
+### Structure
+```
+Backdrop: bg-black/40 backdrop-blur-sm
+Panel: bg-card shadow-modal, fixed left or right
+Header: px-6 py-4 border-b border-surface-muted, title + X close
+Content: p-6 overflow-y-auto
+Footer (optional): px-6 py-4 border-t border-surface-muted
+```
+
+### Transition Animation
+- Open: `translateX(100%) -> 0` (right side), `duration-moderate` (300ms)
+- Close: `0 -> translateX(100%)`, same duration
+- Backdrop: `opacity 0->1`, `duration-normal` (200ms)
+
+### Use Cases
+- Detail view (list item -> side detail)
+- Filter panel
+- Settings panel
+
+### Drawer vs Bottom Sheet vs Full Page
+| Content | UI |
+|---------|-----|
+| Simple confirmation/selection | Bottom sheet |
+| Detail data (minimal scroll) | **Drawer** |
+| Complex form / long content | Full page push |
+
+---
+
+## 56. Dialog Detail Rules (ConfirmModal)
+
+### Structure
+```
+Backdrop: bg-black/40 backdrop-blur-sm, tap to close
+Card: bg-card rounded-2xl p-5 max-w-sm mx-4 shadow-modal
+Title: 16px semibold text-text-primary, center-aligned
+Message: 14px normal text-text-secondary, center-aligned
+Buttons: horizontal layout, gap-2, both flex-1
+```
+
+### Button Rules
+```
+Left: "Close" -- outline style (border-brand text-brand bg-card)
+Right: Action CTA -- solid style (bg-brand text-white)
+```
+- Button corners: `rounded-full` (pill)
+- Height: `h-11` (44px)
+- **Do NOT use "Cancel" on the left** -> use "Close" consistently
+
+### Dangerous Action Dialog
+```
+Right button: bg-destructive text-white ("Delete")
+Left button: same ("Close")
+```
+
+---
+
+## 57. Custom Icon Creation Rules
+
+### Seed Icon System (`icons/index.tsx`)
+- A **self-contained SVG icon library** usable without Lucide
+- 24x24 viewBox, stroke-based, inherits `currentColor`
+
+### Icon API
+```tsx
+import { Bell, Search, Close } from "@/icons"
+
+<Bell size={18} color="var(--icon-default)" strokeWidth={2.2} />
+<Search size={20} className="text-text-tertiary" />
+```
+
+### Rules for Adding New Icons
+```tsx
+export function MyIcon({ size = 24, color = "currentColor", strokeWidth = 2, className }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} className={className}>
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={strokeWidth} d="..." />
+    </svg>
+  )
+}
+```
+- **Must** use 24x24 viewBox
+- **Must** be stroke-based (fill-based prohibited, except special cases)
+- **Must** default to `currentColor` (inherits parent text-color)
+- **Must** use `strokeLinecap="round" strokeLinejoin="round"`
+
+### Lucide vs Custom Decision Criteria
+| Situation | Choice |
+|-----------|--------|
+| Available in seed icons | **Custom** first |
+| Not available | **Lucide** is OK |
+| Project-specific special icons | Add as custom |
+
+---
+
+## 58. TypeScript Token Usage Rules
+
+### `tokens.ts` -- TS Object Synced with CSS Variables
+
+CSS variables are for Tailwind classes; TS tokens are for **dynamic styling**:
+
+```tsx
+// OK: Tailwind classes (static styles -- most cases)
+<div className="text-text-primary bg-surface-page" />
+
+// OK: TS tokens (dynamic styles -- chart colors, conditionals, etc.)
+import { tokens } from "@/tokens"
+<Bar fill={isMax ? tokens.colors.brand : tokens.colors.surface.muted} />
+<div style={{ boxShadow: tokens.shadows.card }} />
+```
+
+### Usage Criteria
+| Situation | Method |
+|-----------|--------|
+| Static classes | Tailwind (`text-brand`, `bg-card`) |
+| Recharts / chart colors | `tokens.colors.*` |
+| Inline style needed | `tokens.*` |
+| Conditional colors | `tokens.colors.*` |
+| CSS-in-JS values | `tokens.*` |
+
+---
+
+## 59. Animation Wrapper Rules (Framer Motion)
+
+### Framer Motion Usage Patterns
+```tsx
+import { motion, AnimatePresence } from "framer-motion"
+
+// Modal enter/exit
+<AnimatePresence>
+  {isOpen && (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.2 }}
+    />
+  )}
+</AnimatePresence>
+
+// Card entry (stagger)
+<motion.div
+  initial={{ opacity: 0, y: 12 }}
+  animate={{ opacity: 1, y: 0 }}
+  transition={{ duration: 0.2, delay: index * 0.05 }}
+/>
+
+// Button tap
+<motion.button
+  whileTap={{ scale: 0.98 }}
+  transition={{ duration: 0.1 }}
+/>
+```
+
+### Motion Token Mapping
+| CSS Token | Framer Motion | Usage |
+|-----------|---------------|-------|
+| `--duration-fast` (100ms) | `duration: 0.1` | Tap, hover |
+| `--duration-normal` (200ms) | `duration: 0.2` | Entry, fade |
+| `--duration-moderate` (300ms) | `duration: 0.3` | Slide, Drawer |
+| `--ease-spring` | `type: "spring", damping: 25, stiffness: 300` | Modal entry |
+
+### Motion Prohibitions
+```
+NO  CSS transition and Framer Motion on the same element simultaneously
+NO  duration exceeding 0.5s (too slow)
+NO  Full-page animations (only partial elements)
+NO  Scroll-linked motion
+```
+
+---
+
+## 60. Formatting Utility Rules
+
+### `utils/format.ts` Usage
+
+```tsx
+import { formatCurrency, splitNumberUnit, formatPercent, formatDate, formatRelativeTime } from "@/utils/format"
+
+// Currency
+formatCurrency(38000)        // "$38K"
+formatCurrency(3800000)      // "$3.8M"
+
+// Number + unit separation (for JSX)
+const { number, unit } = splitNumberUnit(18700000)
+<p className="text-[36px]">{number}<span className="text-[18px]">{unit}</span></p>
+
+// Trend
+formatPercent(12.4)          // "+12.4%"
+formatPercent(-3.2)          // "-3.2%"
+
+// Date
+formatDate(new Date())       // "Tuesday, April 1, 2026"
+formatRelativeTime(date)     // "3 min ago" / "Yesterday" / "Mar 20"
+```
+
+### Formatting Principles
+- **Always use utility functions for display formatting** (no direct `.toLocaleString()` calls)
+- Automatic currency unit conversion: K -> M -> B
+- Relative time switches to absolute date after 7 days
+- Date ranges: use en-dash (`--`) (standard convention)
+
+---
+---
+
+# Part 3: Page Composition & Visual Rhythm
+
+Composition follows the user's questions and the selected grammar. These principles
+support multiple valid layouts; they do not prescribe one hero, a section count, or
+a quota of chart types. Preserve approved project choices and real data meaning.
+
+---
+
+## 61. Visual Rhythm — Breaking Monotony
+
+Preserve equivalent presentation for equivalent information. Vary composition when
+priority, data question, or narrative role changes. Repetition in comparisons,
+collections, and workflows is valid; decorative variation must not change data
+meaning or interaction expectations.
+
+| Situation | Useful relationship | Failure to avoid |
+|---|---|---|
+| Compare four regions over the same period | Same chart, scale, labels, and panel dimensions | Different chart types make equal questions harder to compare |
+| Scan a work queue | Repeated row structure and stable action positions | Novel anatomy for each item |
+| Explain a product | Composition changes as proposition, evidence, and action change | Repeating generic feature cards that add no evidence |
+| Browse a portfolio | Consistent captions and navigation across different media | Forcing every image into one crop or inventing variation in controls |
+
+A run of equal-height panels may be correct. Tall/compact alternation is an option
+for narrative pacing, not a test every page must pass.
+
+---
+
+## 62. KPI Comparison and Meaning
+
+Choose supporting elements from the metric's meaning, not from a need to vary a grid.
+
+| Element | Apply when | Do not imply |
+|---|---|---|
+| Delta and comparison label | A real, named baseline exists | An improvement merely because the value increased |
+| Progress/capacity bar | A bounded part-to-whole or target exists | A time trend converted to progress for variety |
+| Sparkline | Actual time-series data exists | A decorative or invented history |
+| Status and label | State mapping supports a decision | Severity from an arbitrary color |
+| Value and unit alone | The current value answers the question | A mandatory trend or chart |
+
+Four comparable KPIs may use the same secondary element. Preserve equal scales and
+context for comparison; change weight only when priority differs. Order by task and
+reading direction, not a universal top-left priority.
+
+---
+
+## 63. Section Composition Recipes
+
+These are alternatives selected by the current task, not lists of required sections.
+
+| Task | Possible composition | Why this order |
+|---|---|---|
+| Fulfill orders | Scope/filter → exception queue → selected order detail | The next action is an order, not a revenue hero |
+| Compare regional performance | Shared period/units → equal trend panels → accessible data | Stable repeated encodings support comparison |
+| Check personal finances | Balance and scope → useful actions → transactions; optional trend | Summary helps orientation when personal state is the job |
+| Understand a campaign | Product image or type-led promise → relevant proof → next step | Media and copy establish the proposition together |
+| Diagnose an incident | Alert and freshness → timeline/logs → affected resources | Critical evidence leads, even when dense |
+
+No universal Hero + KPI opening, chart/list alternation, or non-data carousel is
+required. Related charts can share a region when the relationship is clear. Urgent
+alerts must not be pushed to the bottom to satisfy a density pattern.
+
+---
+
+## 64. Element Choice by Data Question
+
+Select representations that answer a question. A ranked list supports ordering;
+a trend supports change over time; a comparison table supports differences;
+a distribution plot supports spread. A dashboard can be a queue without any chart.
+
+Small multiples may repeat area charts, bars, or lists on the same page. Keep scales,
+labels, and legends comparable and surface exceptions. Do not cap a content type at
+two uses or require one chart, one list, and one hero. Conversely, repeated decorative
+containers that obscure distinct priorities need redesign.
+
+---
+
+## 65. Color Accent Distribution
+
+Assign stable roles to action, status, category, brand, and content color. Decide
+allocation from the task and palette; there is no per-page quota of colored badges,
+charts, or sections. A brand field can be large while controls stay legible.
+
+- **Exception queue:** neutral normal states can reserve attention for blocked work.
+- **Health monitor:** repeated healthy signals can verify live coverage when anomalies
+  remain distinguishable. A mostly green grid is not automatically a hierarchy failure.
+- **Categorical comparison:** stable repeated category colors can help match series.
+- **Brand/content:** multicolored imagery or editorial fields need not become action colors.
+
+Same meaning → same mapping within its scope. Never recolor equivalent states for
+variety. Sequential/diverging scales require an explicit value mapping and legend;
+use a diverging scale only when a meaningful reference separates directions.
+A gauge can encode progress through length and brand color, or risk through an
+explicit severity scale. Choose by meaning, provide a non-color cue, and preserve
+an identifiable action. See `PALETTE-RECIPES.md` for validated roles.
+
+---
+
+## 66. Card Size Variation
+
+Size follows content, comparison, and priority. Equal-height panels help compare
+equivalent information; a larger canvas or image may deserve more space than its
+caption or toolbar. Reuse padding/alignment roles and preserve readable charts.
+
+An uneven skyline is not a goal. Do not add empty space, truncate evidence, or change
+chart meaning to alternate heights. Inspect real long labels, empty/error states,
+and responsive layouts before deciding whether a size difference helps.
+
+---
+
+## 67. Progressive Information Density
+
+Overview → detail is useful when users need orientation before drilling down.
+It is one attention model. Monitoring, editing, and search may begin with dense
+working regions and use detail panes, filters, or disclosure instead of vertical layers.
+
+Density, type size, and whitespace do not have to increase or decrease monotonically
+as the page scrolls. Keep comparison evidence together and urgent actions visible.
+Judge whether information needed for the current decision is present and readable.
+
+---
+
+## 68. Task Completeness and Empty Regions
+
+A page is complete when it supports its intended questions, actions, and states.
+There is no minimum or maximum section count. One useful queue can be enough;
+complex tasks may need multiple related regions or separate views.
+
+Preserve stable geometry during loading, filtering, or temporary failure when a shift
+would disrupt orientation. Show an empty state with a relevant explanation or recovery
+where a user expects data. An inapplicable optional section may be omitted or collapsed
+when that does not hide essential scope, permissions, or a next step. Do not manufacture
+content or leave empty cards simply to maintain a composition quota.
+
+---
+
+## 69. Chart + Context Pairing
+
+Place the labels, units, timeframe, reference, and explanation needed to interpret
+a view close to that view or in an unambiguous shared scope. Context should prevent
+misreading, not impose the same anatomy on every chart.
+
+| Question | Context to check | Valid variation |
+|---|---|---|
+| Change over time | Series label, units, period, scale, baseline when comparing | Shared period controls; no mandatory stat footer |
+| Rank categories | Category/value mapping, order, unit | Highlight the selected or relevant item, not automatically the maximum |
+| Part to whole | Whole, parts, units, legend or direct labels | A bar or table may communicate the relation better than a donut |
+| Correlation or distribution | Axes, units, sample/scope, relevant reference | A prominent current-value KPI may be meaningless |
+
+A footer, sparkline, center value, or three-option pill is optional. Shared legends
+and controls must have clear scope, including in narrow layouts. Keep equivalent
+accessible data and source/freshness information where the decision requires it.
+
+---
+
+## Core Composition Principles Summary
+
+1. Equivalent information keeps equivalent presentation.
+2. Vary composition when meaning, priority, or narrative role changes.
+3. Choose charts and supporting metrics from real questions and available data.
+4. Color has stable action, status, category, brand, or content roles.
+5. Density and size follow the current task, not a page-wide numeric quota.
+6. Labels and interpretation context stay attached or clearly shared.
+7. Complete required actions and states; do not invent sections to fill a layout.
+8. Preserve functional/accessibility floors and inspect the actual rendered result.
+
+---
+
+## 70. Form & Input Rules
+
+Apply the form task and selected recipe. Labels, recovery, consent, and operability
+are binding; layout and animation examples are contextual.
+
+1. **Single column.** Multi-column forms make the eye zig-zag. One column, top to
+   bottom. (Exception: short, tightly-related pairs like City/Zip.)
+2. **Labels above fields, never as placeholder.** Placeholder-as-label disappears
+   on focus and fails accessibility. Placeholders are for *examples* only.
+3. **Group by topic** using the selected containment: flat sections, fieldsets, or
+   cards. Neither card wrappers nor a fixed number of fields per group is required.
+4. **Clear completion action within each decision region.** Save and cancel have
+   distinct roles; a nested dialog or popover has its own local decision. Placement
+   and emphasis follow the task without competing actions in the same region.
+5. **Validate on blur, not on every keystroke.** Don't yell at someone mid-typing.
+   Show success/error after the field loses focus or on submit.
+6. **Errors must guide recovery.** "Invalid email" is bad; "Use the format
+   name@domain.com" is good. Pair the error color with text + an icon (never color
+   alone). A subtle `wiggle` on the field is allowed.
+7. **Required vs optional must be explicit** — mark one consistently (usually mark
+   optional, since most are required).
+8. **Don't disable the submit silently.** If disabled, say why ("Fill required
+   fields"). Prefer enabled + validate-on-submit.
+9. **Inputs use `--radius` (md), ≥44px tall on touch, proper keyboard** (`type` /
+   `inputmode` for numbers, email, tel).
+
+## 71. State Rules (Empty / Loading / Error / Success)
+
+Every data surface has four states, not one. Designing only the "happy, full"
+state is the most common AI omission.
+
+1. **Empty explains the state.** Distinguish first use, no matches, no permission,
+   and genuine absence. Offer an applicable next step without inventing an action
+   or requiring an icon + title + button anatomy in every region.
+2. **Loading uses skeletons, not spinners,** for content that has a known shape
+   (lists, cards, tables) — `shimmer` over the real layout. Spinners only for
+   indeterminate, full-page waits.
+3. **Preserve orientation through state changes.** Keep expected regions stable
+   during loading/filtering/failure. An inapplicable optional section may collapse
+   when essential scope and recovery remain available (§68).
+4. **Error states are recoverable.** Show what failed + a retry/next action. Don't
+   dump a stack trace; don't leave a dead screen.
+5. **Success is felt, briefly.** A toast or inline confirmation, then get out of
+   the way. Celebration motion (`pop-in`, `confetti-pop`) only for a genuine
+   milestone (first deposit, course complete), not routine saves.
+6. **Optimistic where safe** — reflect the action immediately, reconcile on
+   response; roll back visibly on failure.
+
+## 72. Accessibility Rules (non-negotiable)
+
+1. **Contrast:** body text ≥ 4.5:1, large text/icons ≥ 3:1 against their
+   background. The "#2A2A2A not #000" rule still must clear contrast on your skin.
+2. **Never convey meaning by color alone.** Status = color **+** dot/icon/text.
+   A red number is also labeled or arrowed.
+3. **Touch targets ≥ 44×44px.** Tiny icon-only buttons get padding to reach it.
+4. **Focus is always visible** — `focus-visible:ring-2 ring-ring ring-offset-2` on
+   every interactive element. Never `outline: none` without a replacement.
+5. **Semantic structure** — one `h1`, logical heading order, real `<button>`/
+   `<a>` (not click-divs), `alt` on images, `aria-label` on icon-only controls,
+   `sr-only` for visually-hidden context.
+6. **Respect `prefers-reduced-motion`** — explicitly disable or substitute nonessential
+   entrance/loop/parallax and interaction movement while preserving useful state feedback.
+   Seeds are static configs: the caller must wire preference handling and verify both modes.
+   Shortening duration alone does not remove spatial changes or repeated motion.
+
+## 73. Responsive & Mobile Rules
+
+Use the artifact's declared viewports and input modes; preserve the task at each size.
+
+1. **Reflow by task priority.** Stack, regroup, disclose, or preserve a bounded
+   horizontal data region when comparison requires it. Keep its scope and scroll
+   affordance clear; avoid page-wide overflow or shrinking columns into unreadable
+   slivers. Keyboard, zoom, labels, and access to all data still apply.
+2. **Use the project's responsive gutter tokens.** `mx-6`/`px-6` are examples for
+   one consumer layout, not mandatory values for every grammar or breakpoint.
+3. **Thumb reach:** primary actions in the bottom third on mobile; sticky
+   action/save bars sit above the keyboard.
+4. **Preserve meaningful hierarchy.** Type, media, and controls can recompose at
+   narrow widths; do not require a hero to remain the largest element if that
+   hides the task. Inspect real text, image crops, and comparison context.
+5. **Touch affordances:** swipe-to-act on list rows (list pages in productivity and
+   operations products, not inside `consumer-service` cards, §24), bottom sheets instead of
+   center modals, ≥44px everything.
+6. **Hover is a bonus, not a requirement** — anything reachable only on hover must
+   also be reachable by tap/focus.
+
+## 74. Rule Priority & Conflict Resolution
+
+`PRODUCT-PRINCIPLES.md` is the single authority definition. This handbook's historic
+prohibitions and numeric examples do not override the selected grammar, adapter,
+or applicable approved project decisions. Preserve accessibility and functional
+floors; interpret card, color, radius, type, and motion examples as contextual
+defaults, not universal bans. Report unresolved conflicts instead of restyling silently.
+
+> Worked example: the same finance product may use equal repeated panels for
+> comparison and a warm image-led landing page. Each uses the approved brand and
+> supports its page task. Neither decorative variation in the panels nor a white
+> landing canvas is required; operability and truthful financial data still are.

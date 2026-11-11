@@ -73,6 +73,68 @@ def test_noop_without_seed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     assert seed_config_home(tmp_path / 'home') == {}
 
 
+def test_seed_skills_backfill_per_skill(seed_src: Path, tmp_path: Path) -> None:
+    """A skills dir the user already owns still gains seed skills it lacks, per skill."""
+    prd = seed_src / 'skills' / 'prd'
+    prd.mkdir()
+    (prd / 'SKILL.md').write_text('# prd\n', encoding='utf-8')
+    home = tmp_path / 'owned-skills-home'
+    (home / 'skills' / 'tdd').mkdir(parents=True)
+    (home / 'skills' / 'tdd' / 'SKILL.md').write_text('# mine\n', encoding='utf-8')
+    seeded = seed_config_home(home)
+    assert set(seeded) == {'skills', 'DIRECTIVES.md', 'tools'}
+    assert (home / 'skills' / 'prd' / 'SKILL.md').read_text(encoding='utf-8') == '# prd\n'
+    assert (home / 'skills' / 'tdd' / 'SKILL.md').read_text(encoding='utf-8') == '# mine\n'
+
+
+def test_seed_tools_backfill_per_tool(seed_src: Path, tmp_path: Path) -> None:
+    """Same per-item granularity for tools: new seed tool arrives, user's tools untouched."""
+    (seed_src / 'tools' / 'new_tool.py').write_text('# new\n', encoding='utf-8')
+    home = tmp_path / 'owned-tools-home'
+    (home / 'tools').mkdir(parents=True)
+    (home / 'tools' / 'native_debug.py').write_text('# mine\n', encoding='utf-8')
+    seeded = seed_config_home(home)
+    assert set(seeded) == {'skills', 'DIRECTIVES.md', 'tools'}
+    assert (home / 'tools' / 'new_tool.py').read_text(encoding='utf-8') == '# new\n'
+    assert (home / 'tools' / 'native_debug.py').read_text(encoding='utf-8') == '# mine\n'
+
+
+def test_seed_backfills_missing_files_in_owned_skill(seed_src: Path, tmp_path: Path) -> None:
+    """A file added to a shipped skill reaches a user-owned copy of that skill.
+
+    Per-file add-missing inside existing skill dirs: the user's edited
+    SKILL.md stays theirs, while a companion doc the seed ships newly is
+    backfilled in.
+    """
+    (seed_src / 'skills' / 'tdd' / 'COMPANION.md').write_text('# companion\n', encoding='utf-8')
+    home = tmp_path / 'owned-skill-home'
+    (home / 'skills' / 'tdd').mkdir(parents=True)
+    (home / 'skills' / 'tdd' / 'SKILL.md').write_text('# mine\n', encoding='utf-8')
+    seeded = seed_config_home(home)
+    assert set(seeded) == {'skills', 'DIRECTIVES.md', 'tools'}
+    assert (home / 'skills' / 'tdd' / 'COMPANION.md').read_text(encoding='utf-8') == '# companion\n'
+    assert (home / 'skills' / 'tdd' / 'SKILL.md').read_text(encoding='utf-8') == '# mine\n'
+
+
+def test_seed_never_touches_user_files_during_file_backfill(seed_src: Path, tmp_path: Path) -> None:
+    """File-granularity backfill never overwrites a file the user already has.
+
+    The user owns both shipped files; nothing is copied and the user's
+    content survives byte-for-byte (skills absent from `seeded` because no
+    copy happened).
+    """
+    (seed_src / 'skills' / 'tdd' / 'NOTES.md').write_text('# seed notes\n', encoding='utf-8')
+    home = tmp_path / 'owned-notes-home'
+    skill = home / 'skills' / 'tdd'
+    skill.mkdir(parents=True)
+    (skill / 'SKILL.md').write_text('# mine\n', encoding='utf-8')
+    (skill / 'NOTES.md').write_text('# my notes\n', encoding='utf-8')
+    seeded = seed_config_home(home)
+    assert set(seeded) == {'DIRECTIVES.md', 'tools'}
+    assert (skill / 'NOTES.md').read_text(encoding='utf-8') == '# my notes\n'
+    assert (skill / 'SKILL.md').read_text(encoding='utf-8') == '# mine\n'
+
+
 def test_real_seed_bundle() -> None:
     """The distro's bundled seed has 40+ skills, tools, and DIRECTIVES.md."""
     seed = Path(__file__).resolve().parents[1] / '.codingdude-seed'
