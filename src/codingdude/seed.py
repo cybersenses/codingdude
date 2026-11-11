@@ -42,19 +42,40 @@ def _seed_dir() -> Path | None:
     return path if path.is_dir() else None
 
 
+def _backfill_children(src: Path, dst: Path) -> bool:
+    """Copy each missing top-level child of `src` into `dst`.
+
+    Per-item granularity: a user-owned `home/skills` still gains seed skills
+    it lacks, while skills the user already has (possibly edited) are never
+    touched. Returns True when anything was copied.
+    """
+    copied = False
+    for child in sorted(src.iterdir()):
+        target = dst / child.name
+        if target.exists():
+            continue
+        dst.mkdir(parents=True, exist_ok=True)
+        if child.is_dir():
+            shutil.copytree(child, target)
+        else:
+            shutil.copy2(child, target)
+        copied = True
+    return copied
+
+
 def seed_config_home(home: Path) -> dict[str, str]:
     """Copy missing seed items into `home`. Returns what was seeded.
 
     Existing files/dirs are left untouched (never overwrite user-owned data).
+    Skills and tools are backfilled per item, so entries added to the seed
+    after a user's first setup still reach existing config homes.
     """
     seed = _seed_dir()
     if seed is None:
         return {}
     seeded: dict[str, str] = {}
     skills_src = seed / 'skills'
-    if skills_src.is_dir() and not (home / 'skills').exists():
-        home.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(skills_src, home / 'skills')
+    if skills_src.is_dir() and _backfill_children(skills_src, home / 'skills'):
         seeded['skills'] = str(home / 'skills')
     directives_src = seed / 'DIRECTIVES.md'
     if directives_src.is_file() and not (home / 'DIRECTIVES.md').exists():
@@ -62,9 +83,7 @@ def seed_config_home(home: Path) -> dict[str, str]:
         shutil.copy2(directives_src, home / 'DIRECTIVES.md')
         seeded['DIRECTIVES.md'] = str(home / 'DIRECTIVES.md')
     tools_src = seed / 'tools'
-    if tools_src.is_dir() and not (home / 'tools').exists():
-        home.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(tools_src, home / 'tools')
+    if tools_src.is_dir() and _backfill_children(tools_src, home / 'tools'):
         seeded['tools'] = str(home / 'tools')
     if seeded:
         logger.info('seeded config home from %s: %s', seed, sorted(seeded))
