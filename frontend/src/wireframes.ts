@@ -63,7 +63,13 @@ function parseScreen(raw: unknown, problems: string[]): WireframeScreen | null {
     }
   }
   const id = str(s.id)
-  if (!id) problems.push('dropped a screen with no id')
+  if (!id) {
+    // #320: the warning used to claim a drop while the screen was still
+    // rendered with id:'' (duplicate-key risk). Drop for real — flows are
+    // dropped the same way, and layoutScreens already filters empty ids.
+    problems.push('dropped a screen with no id')
+    return null
+  }
   return { id, title: str(s.title), template: str(s.template), regions }
 }
 

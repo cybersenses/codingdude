@@ -29,9 +29,6 @@ export function WireframeView({ payload, theme = 'lofi', initialFocused = null, 
   // Intentionally keyed on payload identity only (no react-hooks plugin here).
   useEffect(() => { setFocused(initialFocused) }, [payload])
   const vm = parseWireframe(payload)
-  if (!vm.ok) {
-    return <div className="text-[10px] text-danger">{vm.problems.join(' · ')}</div>
-  }
   // Q11a: the theme prop is reserved from day one; only 'lofi' (Q2c) is wired.
   const notes = !theme || theme === 'lofi' ? [] : [`unknown theme "${theme}" — rendering lofi`]
   // REQ-4 click-to-focus: focusing (from the map or a screen title) scrolls
@@ -39,10 +36,16 @@ export function WireframeView({ payload, theme = 'lofi', initialFocused = null, 
   // browser-only by construction.
   const boxRefs = useRef({})
   useEffect(() => {
+    if (!vm.ok) return
     const el = focused ? boxRefs.current[focused] : null
     if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-  }, [focused])
+  }, [focused, vm.ok])
   const setFocus = (id) => setFocused((f) => applyFocus(f, id))
+  // #320: every hook call lives ABOVE this bail — a mounted instance whose
+  // payload flips valid<->invalid must keep one stable hook order (#310 class).
+  if (!vm.ok) {
+    return <div className="text-[10px] text-danger">{vm.problems.join(' · ')}</div>
+  }
   return (
     <div className="space-y-2">
       {notes.length > 0 && (

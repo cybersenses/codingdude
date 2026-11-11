@@ -84,6 +84,16 @@ describe('parseWireframe', () => {
     expect(vm.problems).toEqual([])
   })
 
+  it('drops id-less screens instead of rendering them with an empty id (#320)', () => {
+    const vm = parseWireframe({
+      version: 1,
+      screens: [{ title: 'no id', regions: [] }, PACK.screens[0]],
+      flows: [],
+    })
+    expect(vm.screens.map((s) => s.id)).toEqual(['s1'])
+    expect(vm.problems.join(' ')).toMatch(/dropped a screen with no id/)
+  })
+
   it('reports truncated packs with one problem line, not a stack trace', () => {
     const vm = parseWireframe({ version: 1, screens: 'nope', flows: undefined })
     expect(vm.ok).toBe(true)
@@ -132,6 +142,23 @@ describe('Artifacts routing (render smoke)', () => {
     const html = renderToString(createElement(Artifacts, { sessionId: 's', initialItems: [artifact] }))
     expect(html).toContain('Library') // wireframe renderer output
     expect(html).not.toContain('renderer:') // only shows on degradation
+  })
+  // #320 (REQ-6 inline-edit half): a pending wireframe card offers the DSL
+  // editor — the same drafts+save respond seam the spec block uses. SSR smoke
+  // asserts presence and pending-gating; the click→respond path reuses the
+  // spec editor's handler shape, whose contract is covered backend-side by
+  // tests/test_wireframes.py::test_respond_accepts_inline_edits_on_a_wireframe.
+  it('offers inline DSL editing on a pending wireframe card', () => {
+    const html = renderToString(createElement(Artifacts, { sessionId: 's', initialItems: [artifact] }))
+    expect(html).toMatch(/data-wireframe-edit="w1"/)
+    expect(html).toMatch(/&quot;version&quot;: 1/) // editor pre-filled with the pretty DSL source
+    expect(html).toContain('>save</button>')
+  })
+  it('hides the editor once the card is answered', () => {
+    const answered = { ...artifact, status: 'answered', response: { content: '{}' } }
+    const html = renderToString(createElement(Artifacts, { sessionId: 's', initialItems: [answered] }))
+    expect(html).not.toContain('data-wireframe-edit')
+    expect(html).toContain('Library') // the renderer still shows the pack
   })
 })
 
@@ -223,6 +250,39 @@ describe('WireframeFlowMap (render smoke)', () => {
   it('marks the focused node and its edges', () => {
     const html = renderToString(createElement(WireframeFlowMap, { screens: MAP.screens, flows: MAP.flows, initialFocused: 'a' }))
     expect((html.match(/data-focused="true"/g) ?? []).length).toBe(2) // node a + edge a->b
+  })
+  it('an explicit focused=null clears the map even when inner state holds an id (#320)', () => {
+    // The parent cleared focus (focus toggle off); `focused ?? inner` used to
+    // resurrect the stale id from the standalone fallback and keep the map marked.
+    const html = renderToString(createElement(WireframeFlowMap, { screens: MAP.screens, flows: MAP.flows, focused: null, initialFocused: 'a' }))
+    expect(html).not.toContain('data-focused="true"')
+  })
+  it('standalone use (no focused prop) still owns focus internally', () => {
+    const html = renderToString(createElement(WireframeFlowMap, { screens: MAP.screens, flows: MAP.flows, initialFocused: 'b' }))
+    expect((html.match(/data-focused="true"/g) ?? []).length).toBe(2) // node b + edge a->b
+  })
+})
+
+// #320 (review blocker): hooks must run unconditionally — the `if (!vm.ok)`
+// early return may sit AFTER every hook call but never between hook groups,
+// or a mounted instance flipping valid<->invalid changes hook count and
+// React crashes (#310 class; ModelsConfig.jsx documents the invariant). The
+// suite is SSR-smoke (no DOM rerender) and there is no react-hooks eslint
+// plugin, so this static ordering test is the guard: it fails while any hook
+// call sits after the bail.
+import { readFileSync } from 'node:fs'
+
+describe('WireframeView hooks invariant (#320)', () => {
+  it('every hook call precedes the vm.ok early return', () => {
+    const src = readFileSync(new URL('./WireframeView.jsx', import.meta.url), 'utf8')
+    const body = src.slice(src.indexOf('export function WireframeView'))
+    const earlyReturn = body.indexOf('if (!vm.ok)')
+    expect(earlyReturn).toBeGreaterThan(-1)
+    for (const hook of ['useState(', 'useRef(', 'useEffect(']) {
+      const at = body.lastIndexOf(hook)
+      expect(at).toBeGreaterThan(-1)
+      expect(at).toBeLessThan(earlyReturn)
+    }
   })
 })
 

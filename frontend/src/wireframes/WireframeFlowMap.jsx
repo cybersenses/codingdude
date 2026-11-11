@@ -26,11 +26,15 @@ const NODE_H = 30
 const PAD = 20
 
 export function WireframeFlowMap({ screens, flows, focused, onFocus, initialFocused = null }) {
+  // #320: `focused === undefined` means standalone (nothing owns focus); an
+  // explicit null means the parent CLEARED focus. `focused ?? inner` conflated
+  // the two, so a stale standalone id kept the map marked after the parent
+  // cleared — the next map click then toggled the wrong way.
+  const controlled = focused !== undefined
   const [inner, setInner] = useState(initialFocused)
-  const cur = focused ?? inner
+  const cur = controlled ? focused : inner
   const set = (id) => {
-    const next = applyFocus(cur, id)
-    setInner(next)
+    if (!controlled) setInner(applyFocus(cur, id))
     if (onFocus) onFocus(id)
   }
   const layout = layoutScreens(screens, flows)
