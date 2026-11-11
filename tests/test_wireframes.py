@@ -242,3 +242,38 @@ async def test_revision_loop_emit_edit_reemit(db, session):
     # The original keeps the user's edit on record; the new pack is pending.
     assert ArtifactStore(db, session).feedback(first_id) is not None
     assert ArtifactStore(db, session).feedback(second_id) is None
+
+class TestWidgetVocabularyPinned:
+    """#320: the widget vocabulary v1 is written in three places — the
+    emit_wireframe tool docstring (the contract agents read), the frontend
+    renderer's WIDGETS set, and the authoring SKILL. One canonical list; this
+    pin keeps them from silently desyncing (the reviewer found nothing
+    enforcing it). Currently green by design — it is a guard, not a fix."""
+
+    CANONICAL = [
+        'nav', 'header', 'form', 'table', 'list', 'text', 'chart',
+        'actions', 'tabs', 'image', 'code', 'placeholder',
+    ]
+
+    def _repo_file(self, *parts: str) -> str:
+        return (Path(__file__).resolve().parents[1] / Path(*parts)).read_text(encoding='utf-8')
+
+    def test_docstring_lists_the_canonical_vocabulary(self):
+        doc = self._repo_file('src', 'codingdude', 'artifacts.py')
+        # The line wraps in source; capture up to the em-dash and split loose.
+        m = re.search(r'Widget vocabulary v1: (.*?) — ', doc, re.S)
+        assert m, 'emit_wireframe docstring lost its vocabulary line'
+        assert [w for w in re.split(r'[\s,]+', m.group(1).strip()) if w] == self.CANONICAL
+
+    def test_frontend_renderer_set_matches(self):
+        src = self._repo_file('frontend', 'src', 'WireframeView.jsx')
+        m = re.search(r'WIDGETS = new Set\(\[([^\]]+)\]\)', src)
+        assert m, 'WireframeView.jsx lost its WIDGETS set'
+        widgets = [w.strip().strip(chr(39) + chr(34)) for w in m.group(1).split(',')]
+        assert widgets == self.CANONICAL
+
+    def test_authoring_skill_matches(self):
+        skill = self._repo_file('.codingdude-seed', 'skills', 'wireframes', 'SKILL.md')
+        m = re.search(r'vocabulary: `([a-z, ]+)`', skill)
+        assert m, 'SKILL.md lost its widget vocabulary line'
+        assert [w.strip() for w in m.group(1).split(',')] == self.CANONICAL
