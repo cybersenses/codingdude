@@ -75,4 +75,4 @@ When the user asks for a "StyleSeed validation", "StyleSeed check", or to "valid
 2. If a lock or registry exists, route to `ss-score` (code gate) and then `ss-verify` (pixel gate) — in that order — and report both results honestly, including skipped gates.
 Do not improvise your own inspection procedure: load the routed skill and follow it.
 
-Not installed in CodingDude (route elsewhere): `ss-reference` (compile references into a grammar), `ss-studio` (multi-direction concepts), `ss-audit` (use `ss-score` + `ss-verify` instead), `ss-update`, `ss-learn`. If a request maps only to a missing skill, say so plainly and pick the nearest installed workflow.
+Not installed in CodingDude (route elsewhere or report absence): `ss-learn` (separately installed upstream; if a request maps only to it, say so plainly and pick the nearest installed workflow).

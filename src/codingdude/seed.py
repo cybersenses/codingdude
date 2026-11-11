@@ -47,18 +47,43 @@ def _backfill_children(src: Path, dst: Path) -> bool:
 
     Per-item granularity: a user-owned `home/skills` still gains seed skills
     it lacks, while skills the user already has (possibly edited) are never
-    touched. Returns True when anything was copied.
+    overwritten. Children that already exist gain files they are missing
+    (per-file add-missing), so new companions shipped inside an existing
+    skill still reach the user. Returns True when anything was copied.
     """
     copied = False
     for child in sorted(src.iterdir()):
         target = dst / child.name
         if target.exists():
+            if child.is_dir() and target.is_dir() and _backfill_files(child, target):
+                copied = True
             continue
         dst.mkdir(parents=True, exist_ok=True)
         if child.is_dir():
             shutil.copytree(child, target)
         else:
             shutil.copy2(child, target)
+        copied = True
+    return copied
+
+
+def _backfill_files(src: Path, dst: Path) -> bool:
+    """Copy files present under `src` but missing in `dst`, recursively.
+
+    Add-missing only: a file the user already has (possibly edited) is never
+    overwritten; a file/dir the user lacks is created from the seed.
+    """
+    copied = False
+    for child in sorted(src.iterdir()):
+        target = dst / child.name
+        if child.is_dir():
+            if _backfill_files(child, target):
+                copied = True
+            continue
+        if target.exists():
+            continue
+        dst.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(child, target)
         copied = True
     return copied
 

@@ -1,0 +1,42 @@
+{"name": "ss-restyle", "description": "Apply one optional StyleSeed aesthetic profile without changing the selected output grammar, product job, or core design judgment.", "triggers": ["ss-restyle", "aesthetic profile"]}
+
+Before this workflow, follow the once-per-session [update preflight](../ss-update/references/update-preflight.md).
+
+
+# Apply an aesthetic profile
+## Registry-first artifact boundary
+
+When `.styleseed/project.json` and `.styleseed/artifacts/index.json` exist, resolve the requested artifact ID first, then read only `.styleseed/bundles/<artifact-id>.md` and `.styleseed/manifests/<artifact-id>.json`. Never fall back to the global legacy bundle for a registry project. Legacy projects may use `.styleseed/effective-rules.md` only when no registry exists.
+
+Read `../ss-reference/references/PRODUCT-PRINCIPLES.md`,
+`../ss-reference/references/RULESETS.md`, `references/PRESETS.md` (in this skill directory),
+and the project's `STYLESEED.md` lock. Profiles are
+coordinated visual axes; output grammars organize attention, information, and action. Keep them
+separate.
+
+## Workflow
+
+1. Validate that the lock has one output grammar. If not, run `ss-setup` first.
+2. Select exactly one profile from `references/PRESETS.md`, or `none`. Never stack profiles.
+3. Apply its coordinated radius, density, type, palette temperature, elevation, motion,
+   composition accent, and signature move **inside the output grammar's allowed ranges**.
+4. Preserve deliberate brand values and required fonts when compatible. If incompatible, the
+   output grammar and core invariants win; explain the conflict.
+5. Update `Aesthetic profile` and affected bounded values in `STYLESEED.md`. Do not rewrite the
+   output grammar or a reference-compiled rule set.
+6. Run `ss-score` to ≥80 and `ss-verify` if renderable. Report the complete effective rule set,
+   not just the profile name.
+
+## Rules
+
+- A profile is optional appearance coordination, not a design-method exemption.
+- `technical` profile does not turn a commerce page into an observability console.
+- `editorial` profile does not justify unreadable serif body in a transaction workflow.
+- `brutalist-lite` still requires coherent states, contrast, and one border language.
+- Use `ss-dial` for one-axis changes and `ss-reference` for a new evidence-derived language.
+
+## CodingDude notes
+
+- Adapted from bitjaru/styleseed `workflows/ss-restyle` (MIT). Upstream invokes skills as `/ss-*` slash commands; here, load with `load_skill`.
+- Shell commands run through CodingDude's approval-gated shell tool.
+- `references/PRESETS.md` ships inside this skill; the principles/rulesets docs ship with `ss-reference`.
