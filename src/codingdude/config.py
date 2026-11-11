@@ -698,10 +698,17 @@ def list_provider_models(
             return {'configured': True, 'ok': False, 'status': status or None,
                     'detail': body[:200], 'models': []}
         try:
-            data = _json.loads(body).get('data') or []
+            payload = _json.loads(body)
         except ValueError:
             return {'configured': True, 'ok': False, 'status': status,
                     'detail': 'unexpected /models response shape', 'models': []}
+        if not isinstance(payload, dict):
+            # A JSON array (or scalar) has no data member — same graceful
+            # shape-error path as malformed JSON, never a crash (evaluator
+            # nit, #321 follow-up).
+            return {'configured': True, 'ok': False, 'status': status,
+                    'detail': 'unexpected /models response shape', 'models': []}
+        data = payload.get('data') or []
         ids = sorted(str(m['id']) for m in data
                      if isinstance(m, dict) and m.get('id'))
         return {'configured': True, 'ok': True, 'status': status,

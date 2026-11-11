@@ -348,3 +348,23 @@ def test_provider_models_includes_legacy_env_only_provider(tmp_path, monkeypatch
     out = list_provider_models(load_config(config_home()), transport=fake_transport)
     assert ("https://api.z.ai/api/paas/v4/models", "Bearer sk-z-env") in calls
     assert out["zai"]["models"] == ["glm-5.3-flash"]
+
+
+def test_provider_models_non_object_response_is_shape_error(tmp_path, monkeypatch):
+    """A JSON-array (or scalar) /models body takes the graceful shape-error
+    path — never an uncaught AttributeError (evaluator nit, #321)."""
+    from codingdude.config import list_provider_models, load_config
+
+    monkeypatch.delenv("ZAI_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("GITHUB_PAT", raising=False)
+    client(tmp_path)
+    _write_providers('[providers]\ndeepseek = "sk-d"\n')
+
+    def fake_transport(url, headers, body):
+        return (200, '["unexpected", "array"]')
+
+    out = list_provider_models(load_config(config_home()), transport=fake_transport)
+    assert out["deepseek"]["ok"] is False
+    assert out["deepseek"]["detail"] == "unexpected /models response shape"
+    assert out["deepseek"]["models"] == []
