@@ -1190,7 +1190,7 @@ Second run-path speed pass, measured this session (probe: .scratch/probe_turn_co
 Post-R78 decision (user-answered): the ~211MB/run streamed-delta bulk is no longer a latency lever (R78 made per-line writes 17.8µs), but the disk + line-count cost is addressable without breaking the replay contract. Design agreed with the user: (1) the trace must keep the ability to reconstruct in-flight model text after a crash (before any tool turn persists) — so deltas are COALESCED, not removed; (2) live SSE stays per-token raw (the UI's delta path is untouched); (3) `[trace] deltas = compact|full` toggle in config.toml, default compact. Compact mode coalesces adjacent same-type delta events (TEXT_MESSAGE_CONTENT / TOOL_CALL_ARGS) into one line per flush window (flush when the next delta would cross flush_bytes or the buffer age reaches flush_ms, checked at append time — no timer task); concatenating deltas still reconstructs text exactly, at chunk-level (not token-level) timing granularity. Eval contract (USER_PROMPT first), R77 O(limit) tail, #79/#289 atomic single-write append, and R31 run_id provenance all preserved.
 
 ## R80 — Long autonomous tasks with preserved integrity
-**Status:** in_progress
+**Status:** done
 
 Umbrella for multi-hour/multi-step autonomous work that keeps CodingDude's integrity rails (claim evidence, gates, consent, review) intact. Grounded in reference/research/long-autonomous-tasks.md (Anthropic harness posts, cwc-long-running-agents primitives, LangGraph durability, Codex/Jules sandbox models, METR horizon data).
 
