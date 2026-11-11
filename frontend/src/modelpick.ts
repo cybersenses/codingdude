@@ -34,39 +34,53 @@ const DEFAULT: ModelSend = { send: null, literal: false, label: 'default (main)'
 /** The `<select>`'s extra option for a free-typed `provider:model` literal. */
 export const CUSTOM_OPTION = '__custom'
 
-/** Which option the composer's model `<select>` highlights for `selected`.
- *
- * R83: the datalist combobox this replaces filtered its suggestions against
- * the input's own value, so a persisted pick locked the dropdown to that one
- * entry. A real `<select>` never filters; this function keeps its highlight
- * truthful to resolveModelSend's send decision — same truth, one contract:
- * a null slot highlights the default (that is what would be sent), an
- * unknown literal highlights the custom option (that is what would be sent),
- * and with no /models payload a persisted selection still shows its text as
- * custom rather than silently masquerading as the default. */
-export function pickerSelection(models: ModelsInfo | null, selected: string): string {
-  if (!selected) return ''
-  if (!models) return CUSTOM_OPTION
+/** How classifySelection reads a persisted selection against the lineup.
+ * 'default' covers both an empty selection and a lineup-known null slot
+ * (a stale persisted key): both send the default. 'no-models' is a failed
+ * /models fetch — the send decision is also the default, but the highlight
+ * deliberately shows the persisted text as custom (R83) so it stays visible. */
+export type PickClass = 'default' | 'slot' | 'literal' | 'no-models'
+
+/** #320: the ONE classifier for a picker selection. resolveModelSend (what
+ * rides the wire) and pickerSelection (what the option highlights) are two
+ * faithful mappings over this — the truth is written once, so the highlight
+ * can never drift from the send decision. */
+export function classifySelection(models: ModelsInfo | null, selected: string): PickClass {
+  if (!selected) return 'default'
+  if (!models) return 'no-models'
   const resolved = models.models[selected]
-  if (resolved) return selected
-  if (selected in models.models) return '' // null slot: sends default → highlights default
-  return CUSTOM_OPTION
+  if (resolved) return 'slot'
+  if (selected in models.models) return 'default' // null slot: stale persisted key
+  return 'literal'
+}
+
+export function pickerSelection(models: ModelsInfo | null, selected: string): string {
+  switch (classifySelection(models, selected)) {
+    case 'default': return '' // null slot sends default → highlights default
+    case 'slot': return selected
+    case 'literal':
+    case 'no-models': return CUSTOM_OPTION
+  }
 }
 
 export function resolveModelSend(
   models: ModelsInfo | null, selected: string,
 ): ModelSend {
-  if (!selected) return { ...DEFAULT }
   // A slot alias only counts when it resolves to a non-empty configured
   // name; a null slot (stale persisted key) falls back to the default —
-  // the raw key would crash the worker's model resolution.
-  const resolved = models?.models[selected]
-  if (resolved) return { send: resolved, literal: false, label: `${selected} — ${resolved}` }
-  // A key the lineup knows but cannot resolve (null slot, stale persisted
-  // selection) is NOT a literal: 'vision' as a raw model name would crash
-  // the worker's model resolution. The default is the safe send.
-  if (!models || selected in models.models) return { ...DEFAULT }
-  return { send: selected, literal: true, label: selected }
+  // the raw key would crash the worker's model resolution. 'vision' as a
+  // raw model name is not a literal.
+  switch (classifySelection(models, selected)) {
+    case 'default':
+    case 'no-models':
+      return { ...DEFAULT }
+    case 'slot': {
+      const resolved = models!.models[selected]
+      return { send: resolved, literal: false, label: `${selected} — ${resolved}` }
+    }
+    case 'literal':
+      return { send: selected, literal: true, label: selected }
+  }
 }
 
 /** Datalist quick options: every configured slot with an honest

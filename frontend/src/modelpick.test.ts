@@ -112,3 +112,39 @@ describe('pickerSelection', () => {
     expect(pickerSelection(null, '')).toBe('')
   })
 })
+
+// #320: the classification cascade used to be written twice (resolveModelSend
+// and pickerSelection each walked the same decision tree). Now one classifier
+// decides the class; the two public functions are faithful mappings over it.
+import { classifySelection } from './modelpick'
+
+describe('classifySelection (#320: one truth, two mappings)', () => {
+  it('classifies every selection shape', () => {
+    expect(classifySelection(lineup, '')).toBe('default')
+    expect(classifySelection(lineup, 'main')).toBe('slot')
+    expect(classifySelection(lineup, 'vision')).toBe('default') // null slot folds into default
+    expect(classifySelection(lineup, 'openai:gpt-4o')).toBe('literal')
+    expect(classifySelection(null, 'main')).toBe('no-models')
+    expect(classifySelection(null, '')).toBe('default')
+  })
+
+  it('highlight and send decision agree per class', () => {
+    const cases: Array<[ModelsInfo | null, string]> = [
+      [lineup, ''], [lineup, 'main'], [lineup, 'vision'],
+      [lineup, 'openai:gpt-4o'], [null, 'main'], [null, ''],
+    ]
+    for (const [models, sel] of cases) {
+      const send = resolveModelSend(models, sel)
+      const highlight = pickerSelection(models, sel)
+      if (send.send === null) {
+        // default sends → the default option; no-models deliberately shows
+        // the persisted text as custom (R83 UX choice, one named branch now).
+        expect(highlight === '' || (models === null && highlight === CUSTOM_OPTION)).toBe(true)
+      } else if (send.literal) {
+        expect(highlight).toBe(CUSTOM_OPTION)
+      } else {
+        expect(highlight).toBe(sel)
+      }
+    }
+  })
+})
