@@ -44,7 +44,10 @@ REQ-1 <one testable behavior>
 REQ-2 ... (each requirement: user-visible, atomic, verifiable)
 
 ## Success Metrics
-How we'll know it worked, with numbers where possible.
+How we'll know it worked, with numbers where possible. Include at least one **guardrail** — existing behavior that must not regress while the new outcomes land (latency, cost, reliability).
+
+## Dependencies & Risks
+Product-level only: what this depends on, what could sink it (adoption, scope collisions, upstream reliance). Implementation risks belong in `tech-design`.
 
 ## Open Questions
 - Q1 ... (each blocking REQs it touches)
@@ -54,11 +57,18 @@ How we'll know it worked, with numbers where possible.
 
 - Every requirement has a REQ id and reads as testable behavior, not a solution.
 - Non-Goals and Open Questions are populated, not boilerplate.
+- Success Metrics include a guardrail, not only new-feature outcomes.
+- Product-level dependencies/risks are named here; implementation risks are left to the tech design.
 - The PRD lives in the Planning data (`list_planning` shows it), not an orphan file.
 - Downstream artifacts cite REQ ids: roadmap bodies, tech-design traceability, tickets.
 
 ## Common mistakes
 
 - **Solution leakage** — "REQ-3: use Redis" is a design decision, not a requirement. Move it to `tech-design`; record the trade-off via `record_decision`.
+- **Infra risks in the PRD** — "the DB might not scale" is a tech-design risk. PRD risks are product-level: adoption, scope collisions, vendor reliance.
 - **Mega-PRD** — one PRD per product or epic; split when requirements exceed ~15.
 - **Silent edits** — `update_prd` with a full body clobbers; `read_prd` first, merge, then write.
+
+---
+
+Completeness informed by industry PRD practice: deanpeters/Product-Manager-Skills `prd-development` (CC BY-NC-SA — concepts only, no text reused) and snarktank/ralph `prd` (MIT).
