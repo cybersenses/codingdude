@@ -263,6 +263,192 @@ describe('WireframeFlowMap (render smoke)', () => {
   })
 })
 
+// R87 #325 (REQ-D): the map reads like an overview, not a stub — nodes carry
+// the screen's region count, trigger/label move into hover titles (no text
+// spam on the canvas), and the arrowhead contract is pinned by test.
+describe('WireframeFlowMap v2 (render smoke, R87-C)', () => {
+  const V2 = {
+    screens: [
+      { id: 'a', title: 'Alpha', template: '', regions: [{ name: 'x' }, { name: 'y' }, { name: 'z' }] },
+      { id: 'b', title: 'Beta', template: '', regions: [{ name: 'x' }] },
+    ],
+    flows: [{ from: 'a', to: 'b', trigger: 'click', label: 'next' }],
+  }
+  it('nodes carry their screen title and region count', () => {
+    const html = renderToString(createElement(WireframeFlowMap, { screens: V2.screens, flows: V2.flows }))
+    expect(html).toContain('data-map-regions="3"')
+    expect(html).toContain('data-map-regions="1"')
+    expect(html).toContain('3 regions')
+    expect(html).toContain('1 region')
+  })
+  it('edges keep arrowheads and move trigger/label into a hover title', () => {
+    const html = renderToString(createElement(WireframeFlowMap, { screens: V2.screens, flows: V2.flows }))
+    expect(html).toContain('<marker')
+    expect(html).toMatch(/marker-end="url\(#wfm-arrow\)"/)
+    expect(html).toContain('<title>click</title>')
+    expect(html).not.toMatch(/<text[^>]*>click</) // no visible trigger text on the canvas
+  })
+})
+
+// R87 #323 (REQ-A): proportions — authored column/row weights become real fr
+// tracks so a wireframe's layout means something. Pure seam, same never-throws
+// contract: invalid authored values degrade to an equal split + a problems[]
+// entry, never a crash.
+import { screenTracks } from './wireframes'
+
+const SHAPE4x3 = '"strip strip strip strip" "nav rail main chat" "nav rail dock composer"'
+
+describe('screenTracks (R87-A proportions)', () => {
+  it('maps authored columns onto the template column count as fr tracks', () => {
+    const t = screenTracks({ template: SHAPE4x3, columns: [16, 20, 44, 20] })
+    expect(t.columns).toBe('16fr 20fr 44fr 20fr')
+    expect(t.rows).toBe('1fr 1fr 1fr') // 3 template rows, no authored rows → equal
+  })
+  it('authored rows are honored as fr tracks too', () => {
+    const t = screenTracks({ template: SHAPE4x3, columns: [16, 20, 44, 20], rows: [2, 1, 1] })
+    expect(t.rows).toBe('2fr 1fr 1fr')
+  })
+  it('missing columns/rows fall back to an equal split with no problems', () => {
+    const t = screenTracks({ template: SHAPE4x3 })
+    expect(t.columns).toBe('1fr 1fr 1fr 1fr')
+    expect(t.rows).toBe('1fr 1fr 1fr')
+  })
+  it('a wrong-length columns list falls back + reports one problem', () => {
+    const problems: string[] = []
+    const t = screenTracks({ template: SHAPE4x3, columns: [16, 20] }, problems)
+    expect(t.columns).toBe('1fr 1fr 1fr 1fr')
+    expect(problems.join(' ')).toMatch(/columns/i)
+  })
+  it('non-positive, non-finite, and non-number entries fall back + report', () => {
+    for (const bad of [[0, 20, 44, 20], [-1, 20, 44, 20], [NaN, 20, 44, 20], ['x', 20, 44, 20]]) {
+      const problems: string[] = []
+      const t = screenTracks({ template: SHAPE4x3, columns: bad as number[] }, problems)
+      expect(t.columns).toBe('1fr 1fr 1fr 1fr')
+      expect(problems.length).toBe(1)
+    }
+  })
+  it('fractional weights are preserved verbatim', () => {
+    const t = screenTracks({ template: SHAPE4x3, columns: [0.16, 0.2, 0.44, 0.2] })
+    expect(t.columns).toBe('0.16fr 0.2fr 0.44fr 0.2fr')
+  })
+  it('no template → empty tracks (regions stack; renderer skips grid styles)', () => {
+    const t = screenTracks({ template: '', columns: [1, 2] })
+    expect(t.columns).toBe('')
+    expect(t.rows).toBe('')
+  })
+})
+
+describe('parseWireframe carries proportions (R87-A)', () => {
+  it('keeps valid authored columns/rows on the screen, no problems', () => {
+    const vm = parseWireframe({
+      version: 1,
+      screens: [{ id: 'p', title: 'P', template: SHAPE4x3, columns: [16, 20, 44, 20], rows: [2, 1, 1], regions: [] }],
+      flows: [],
+    })
+    expect(vm.ok).toBe(true)
+    expect(vm.screens[0].columns).toEqual([16, 20, 44, 20])
+    expect(vm.screens[0].rows).toEqual([2, 1, 1])
+    expect(vm.problems).toEqual([])
+  })
+  it('drops invalid columns/rows (key absent) + reports, pack still renders', () => {
+    const vm = parseWireframe({
+      version: 1,
+      screens: [{ id: 'p', title: 'P', template: '"a"', columns: ['x'], rows: [0], regions: [] }],
+      flows: [],
+    })
+    expect(vm.ok).toBe(true)
+    expect(vm.screens[0]).not.toHaveProperty('columns')
+    expect(vm.screens[0]).not.toHaveProperty('rows')
+    expect(vm.problems.join(' ')).toMatch(/dropped/i)
+  })
+  it('absent columns/rows stay absent (old packs keep their shape)', () => {
+    const vm = parseWireframe({ version: 1, screens: [{ id: 's', title: 't', template: '', regions: [] }], flows: [] })
+    expect(vm.screens[0]).toEqual({ id: 's', title: 't', template: '', regions: [] })
+  })
+})
+
+// R87 #324 (REQ-B/C): the v2 renderer reads as a drawing, not a spreadsheet —
+// authored proportions land in the grid style, every screen is a fixed 16:10
+// frame with a title bar, each known widget draws a lo-fi sketch glyph
+// (data-glyph), notes move out of the drawing into the region's title
+// attribute, and the flow map renders AFTER the screen canvases.
+describe('WireframeView v2 (render smoke, R87-B)', () => {
+  const FRAME_PACK = {
+    version: 1,
+    screens: [
+      {
+        id: 'w',
+        title: 'Workspace',
+        template: '"strip strip strip strip" "nav rail main chat" "nav rail dock composer"',
+        columns: [16, 20, 44, 20],
+        rows: [2, 1, 1],
+        regions: [
+          { name: 'strip', widget: 'header', label: 'Strip', notes: 'status band' },
+          { name: 'nav', widget: 'nav', label: 'Nav', notes: '' },
+          { name: 'rail', widget: 'list', label: 'Rail', notes: '' },
+          { name: 'main', widget: 'code', label: 'Main', notes: '' },
+          { name: 'dock', widget: 'table', label: 'Dock', notes: '' },
+          { name: 'chat', widget: 'text', label: 'Chat', notes: '' },
+          { name: 'composer', widget: 'form', label: 'Composer', notes: '' },
+        ],
+      },
+    ],
+    flows: [{ from: 'w', to: 'w', trigger: 'click', label: 'loop' }],
+  }
+
+  it('puts authored proportions into the grid style', () => {
+    const html = renderToString(createElement(WireframeView, { payload: FRAME_PACK }))
+    expect(html).toMatch(/grid-template-columns:16fr 20fr 44fr 20fr/)
+    expect(html).toMatch(/grid-template-rows:2fr 1fr 1fr/)
+  })
+  it('frames each screen as a fixed 16:10 canvas with a title bar', () => {
+    const html = renderToString(createElement(WireframeView, { payload: FRAME_PACK }))
+    expect(html).toMatch(/aspect-ratio:16\s*\/\s*10/)
+    expect(html).toMatch(/data-screen-title="Workspace"/)
+  })
+  it('draws a sketch glyph per known widget kind', () => {
+    const html = renderToString(createElement(WireframeView, { payload: FRAME_PACK }))
+    for (const w of ['header', 'nav', 'list', 'code', 'table', 'text', 'form']) {
+      expect(html).toContain(`data-glyph="${w}"`)
+    }
+  })
+  it('covers every glyph kind including placeholder hatch (R87-B full vocab)', () => {
+    const kinds = ['nav', 'header', 'form', 'table', 'list', 'text', 'chart', 'actions', 'tabs', 'image', 'code', 'placeholder']
+    const pack = {
+      version: 1,
+      screens: [{
+        id: 'all', title: 'All',
+        template: `"${kinds.join(' ')}"`,
+        columns: kinds.map(() => 1),
+        regions: kinds.map((k) => ({ name: k, widget: k, label: k, notes: '' })),
+      }],
+      flows: [],
+    }
+    const html = renderToString(createElement(WireframeView, { payload: pack }))
+    for (const k of kinds) expect(html).toContain(`data-glyph="${k}"`)
+    expect(html).not.toContain('data-glyph="generic"')
+  })
+  it('unknown widgets render generic (no sketch), not a fake one', () => {
+    const pack = {
+      version: 1,
+      screens: [{ id: 'g', title: 'G', template: '"x"', columns: [1], regions: [{ name: 'x', widget: 'mystery', label: 'M', notes: '' }] }],
+      flows: [],
+    }
+    const html = renderToString(createElement(WireframeView, { payload: pack }))
+    expect(html).toContain('data-glyph="generic"')
+  })
+  it('keeps notes out of the drawing — title attribute only, no notes block', () => {
+    const html = renderToString(createElement(WireframeView, { payload: FRAME_PACK }))
+    expect(html).toContain('status band') // survives as hover text
+    expect(html).not.toMatch(/<div[^>]*>status band/) // no notes block in the body
+  })
+  it('renders the flow map after the screen canvases', () => {
+    const html = renderToString(createElement(WireframeView, { payload: FRAME_PACK }))
+    expect(html.indexOf('data-screen="w"')).toBeGreaterThan(-1)
+    expect(html.indexOf('flow map')).toBeGreaterThan(html.indexOf('data-screen="w"'))
+  })
+})
+
 // #320 (review blocker): hooks must run unconditionally — the `if (!vm.ok)`
 // early return may sit AFTER every hook call but never between hook groups,
 // or a mounted instance flipping valid<->invalid changes hook count and

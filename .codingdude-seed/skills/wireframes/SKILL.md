@@ -18,6 +18,7 @@ A wireframe pack is a versioned artifact (screens + flows) the user sees rendere
 2. **Lo-fi: structure over polish.** Regions, hierarchy, and flows — no colors, fonts, spacing detail, or brand styling. If a `notes` field talks about visual styling, delete it; that is a later, themed pass.
 3. **Name only real mechanisms.** Reference only what exists: the Artifacts tab, the flow map (click a node/edge to focus a screen), the per-screen `implement` button, inline pack edits. Do not invent panels, comparison views, or export paths.
 4. **One pack per screen-set.** All screens of one workflow go in one pack so the flow map shows the whole picture.
+5. **Give every grid screen its proportions.** Author `columns` (and `rows` when rows differ) on every screen that has a `template`. Proportions are what make the drawing read as a layout; a pack without them renders as an equal-width label spreadsheet.
 
 ## DSL v1 reference
 
@@ -35,6 +36,7 @@ A wireframe pack is a versioned artifact (screens + flows) the user sees rendere
 ```
 
 - `template`: CSS grid-template-areas, quoted rows. Every region `name` must appear in its screen's template (a `'.'` filler cell is fine).
+- `columns` / `rows`: optional per-screen weight lists (positive numbers, one per template track), e.g. `"columns": [16, 20, 44, 20]`. They map straight onto the grid as fr tracks. Without them every track renders equal-width.
 - `widget` vocabulary: `nav, header, form, table, list, text, chart, actions, tabs, image, code, placeholder` — unknown values render as a generic box, but prefer the vocabulary.
 - `flows` `from`/`to` must reference existing screen ids. `trigger`/`label` optional. A single screen needs no flows.
 - Unknown extra keys are tolerated; structural violations come back as ONE error listing every problem — fix all of them, then re-emit the whole pack.
@@ -57,6 +59,7 @@ Per screen, the UI's `implement` button prefills the composer with: `Implement t
 | "Delta" or partial packs on revision | Always re-emit the complete pack |
 | Ignoring the user's inline edits | Their edits are requirements; read feedback first |
 | Redesigning without reading the current screen | Read first, cite keeps/changes in `notes` |
+| Grid screens without `columns`/`rows` | Proportions are the wireframe - the equal-width fallback reads as mush (R87 lesson) |
 | Inventing rendering features (comparison views, exports) | Only the Artifacts tab, flow map, implement button exist |
 | One region name missing from `template` | Validation fails — check every region against the template before emitting |
 

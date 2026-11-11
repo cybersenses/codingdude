@@ -21,8 +21,10 @@
 import React, { useState } from 'react'
 import { applyFocus, FLOW_MAP_GRID, layoutScreens } from '../wireframes'
 
-const NODE_W = 120
-const NODE_H = 30
+// R87 #325 (WireframeFlowMap)
+
+export const NODE_W = 140
+const NODE_H = 44
 const PAD = 20
 
 export function WireframeFlowMap({ screens, flows, focused, onFocus, initialFocused = null }) {
@@ -43,6 +45,10 @@ export function WireframeFlowMap({ screens, flows, focused, onFocus, initialFocu
   const height = Math.max(...layout.layers.map((l) => l.length), 1) * FLOW_MAP_GRID.rowH + PAD * 2
   const node = (id) => layout.pos[id] ?? { x: 0, y: 0 }
   const hot = (id) => cur !== null && (id === cur)
+  const regionCount = (id) => {
+    const s = screens.find((sc) => sc.id === id)
+    return s && Array.isArray(s.regions) ? s.regions.length : 0
+  }
   return (
     <svg
       className="w-full"
@@ -68,6 +74,9 @@ export function WireframeFlowMap({ screens, flows, focused, onFocus, initialFocu
         const d = `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`
         return (
           <g key={i} data-map-edge={`${f.from}:${f.to}`} data-focused={live ? 'true' : undefined}>
+            {/* R87-C: trigger/label live in the hover title — the canvas keeps
+                no visible text spam; the flow story surfaces on hover. */}
+            {(f.trigger || f.label) && <title>{f.trigger || f.label}</title>}
             <path
               d={d}
               className={live ? 'stroke-accent' : 'stroke-neutral-600'}
@@ -76,11 +85,6 @@ export function WireframeFlowMap({ screens, flows, focused, onFocus, initialFocu
               markerEnd="url(#wfm-arrow)"
             />
             <path d={d} stroke="transparent" fill="none" strokeWidth={14} className="cursor-pointer" onClick={() => set(f.to)} />
-            {(f.trigger || f.label) && (
-              <text x={mx} y={(y1 + y2) / 2 - 3} textAnchor="middle" className="fill-neutral-500" style={{ fontSize: 8 }}>
-                {f.trigger || f.label}
-              </text>
-            )}
           </g>
         )
       })}
@@ -89,24 +93,32 @@ export function WireframeFlowMap({ screens, flows, focused, onFocus, initialFocu
         const p = node(id)
         const x = p.x + PAD
         const y = p.y + PAD
+        const n = regionCount(id)
         return (
           <g
             key={id}
             data-map-node={id}
+            data-map-regions={n}
             data-focused={hot(id) ? 'true' : undefined}
             className="cursor-pointer"
             onClick={() => set(id)}
           >
+            {/* R87-C: a node says what the screen is and how dense it is —
+                title + region count, not a bare pill. */}
+            <title>{`${s.title || id} — ${n} region${n === 1 ? '' : 's'}`}</title>
             <rect
               x={x}
               y={y}
               width={NODE_W}
               height={NODE_H}
-              rx={4}
+              rx={5}
               className={hot(id) ? 'fill-neutral-900 stroke-accent' : 'fill-neutral-900 stroke-neutral-700'}
             />
             <text x={x + 8} y={y + 19} className="fill-neutral-200" style={{ fontSize: 10 }}>
               {s.title || id}
+            </text>
+            <text x={x + 8} y={y + 34} className="fill-neutral-500" style={{ fontSize: 8 }}>
+              {`${n} region${n === 1 ? '' : 's'}`}
             </text>
           </g>
         )
