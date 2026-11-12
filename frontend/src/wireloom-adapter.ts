@@ -20,7 +20,7 @@
 // being hand-rolled Sketch glyphs. Grammar facts (bare containers take no
 // colon; annotation is a window SIBLING; col <px>|fill) were probed against
 // the installed 0.7.0, not assumed.
-import type { WireframeRegion, WireframeScreen } from './wireframes'
+import type { WireframeRegion, WireframeScreen, WireframeVm } from './wireframes'
 
 // fr→px heuristic from the design: fr weights cannot be expressed (ColWidth
 // is px|fill by construction), so proportions map onto a fixed content
@@ -70,7 +70,10 @@ function regionChildren(r: WireframeRegion): string[] {
     case 'form':
       return [`input placeholder="${label}"`, 'input placeholder=""', `button "${label}" primary`]
     case 'table':
-      return ['grid cols=3 rows=3:', ...Array.from({ length: 9 }, () => '  cell "·"')]
+      // R87 #330 visual gate: a 3-col grid (≈288px) was the widest band in
+      // narrow layouts and read as clipped at the window border; 2×3 stays
+      // a believable data grid without dominating the canvas.
+      return ['grid cols=2 rows=3:', ...Array.from({ length: 6 }, () => '  cell "·"')]
     case 'list':
       return ['list:', `  slot "${label}"`, '  slot "·"', '  slot "·"']
     case 'chart':
@@ -86,9 +89,12 @@ function regionChildren(r: WireframeRegion): string[] {
     case 'placeholder':
       return [`slot "${label}"`]
     case 'text':
+      // R87 #330 visual gate: the section eyebrow already carries the label,
+      // so repeating it as body text read as duplication — the body is the
+      // notes line when authored, else muted placeholder dots.
       return r.notes
-        ? [`text "${label}"`, `text "${esc(r.notes)}" muted`]
-        : [`text "${label}"`]
+        ? [`text "${esc(r.notes)}" muted`]
+        : ['text "······" muted', 'text "·····" muted']
     default:
       return [`slot "${label}"`]
   }
@@ -175,6 +181,39 @@ export function compileScreen(s: WireframeScreen, _problems: ProblemSink): strin
 export interface RenderOutcome {
   svg: string | null
   problem: string | null
+}
+
+export interface PackRender {
+  svgById: Record<string, string>
+  problems: string[]
+}
+
+/**
+ * Compile + render every screen of a parsed pack. The pack-level seam the
+ * view consumes (one effect + one state on the component side): screen svgs
+ * come back keyed by screen id; failures become problem lines, never throws.
+ * `isStale` lets the caller discard a superseded payload's late resolve
+ * (revision loop); `idBase` scopes the render-element ids per artifact so
+ * two mounted packs can't collide on svg internal ids.
+ */
+export async function renderPackScreens(
+  vm: Pick<WireframeVm, 'screens'>,
+  theme: 'default' | 'dark',
+  isStale: () => boolean = () => false,
+  idBase = 'wf',
+): Promise<PackRender> {
+  const svgById: Record<string, string> = {}
+  const problems: string[] = []
+  const base = idBase.replace(/[^a-zA-Z0-9_-]/g, '') || 'wf'
+  for (const s of vm.screens) {
+    if (isStale()) break
+    const source = compileScreen(s, problems)
+    const out = await renderScreen(`${base}-${s.id}`, source, theme)
+    if (isStale()) break
+    if (out.svg) svgById[s.id] = out.svg
+    else problems.push(`${s.id}: ${out.problem ?? 'render failed'}`)
+  }
+  return { svgById, problems }
 }
 
 /**

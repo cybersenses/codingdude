@@ -110,13 +110,15 @@ import { WireframeView } from './WireframeView.jsx'
 import { Artifacts } from './panels/dock/Artifacts.jsx'
 
 describe('WireframeView (render smoke)', () => {
-  it('renders screens, regions, widget tags, and flows', () => {
+  it('renders the screen title, its canvas box, and the flow trigger', () => {
     const html = renderToString(createElement(WireframeView, { payload: PACK }))
     expect(html).toContain('Library')
-    expect(html).toContain('Header')
-    expect(html).toContain('header') // widget tag
-    expect(html).toContain('title + search') // notes
+    expect(html).toContain('data-screen="s1"')
     expect(html).toContain('click item') // flow trigger on the map edge
+    // v3: region content lives inside the asynchronously rendered wireloom
+    // SVG — the SSR shell carries only the frame, so no glyph internals.
+    expect(html).toContain('data-wireloom-pending="s1"')
+    expect(html).not.toContain('<g data-wireloom') 
   })
 
   it('degrades garbage payloads to a warning line', () => {
@@ -367,12 +369,12 @@ describe('parseWireframe carries proportions (R87-A)', () => {
   })
 })
 
-// R87 #324 (REQ-B/C): the v2 renderer reads as a drawing, not a spreadsheet —
-// authored proportions land in the grid style, every screen is a fixed 16:10
-// frame with a title bar, each known widget draws a lo-fi sketch glyph
-// (data-glyph), notes move out of the drawing into the region's title
-// attribute, and the flow map renders AFTER the screen canvases.
-describe('WireframeView v2 (render smoke, R87-B)', () => {
+// R87 #330 (v3): the hand-rolled Sketch glyph renderer is replaced by
+// compiled Wireloom SVG (wireloom-adapter). The SSR shell keeps the frame
+// contract — 16:10 canvas, title bar, pending placeholder per screen, flow
+// map after the canvases — while region content arrives via the async
+// render seam (renderPackScreens, covered in wireloom-adapter.test.ts).
+describe('WireframeView v3 (render smoke, R87 #330)', () => {
   const FRAME_PACK = {
     version: 1,
     screens: [
@@ -396,50 +398,19 @@ describe('WireframeView v2 (render smoke, R87-B)', () => {
     flows: [{ from: 'w', to: 'w', trigger: 'click', label: 'loop' }],
   }
 
-  it('puts authored proportions into the grid style', () => {
-    const html = renderToString(createElement(WireframeView, { payload: FRAME_PACK }))
-    expect(html).toMatch(/grid-template-columns:16fr 20fr 44fr 20fr/)
-    expect(html).toMatch(/grid-template-rows:2fr 1fr 1fr/)
-  })
   it('frames each screen as a fixed 16:10 canvas with a title bar', () => {
     const html = renderToString(createElement(WireframeView, { payload: FRAME_PACK }))
     expect(html).toMatch(/aspect-ratio:16\s*\/\s*10/)
     expect(html).toMatch(/data-screen-title="Workspace"/)
   })
-  it('draws a sketch glyph per known widget kind', () => {
+  it('shows one pending placeholder per screen before the SVG lands', () => {
     const html = renderToString(createElement(WireframeView, { payload: FRAME_PACK }))
-    for (const w of ['header', 'nav', 'list', 'code', 'table', 'text', 'form']) {
-      expect(html).toContain(`data-glyph="${w}"`)
-    }
+    expect(html).toContain('data-wireloom-pending="w"')
+    expect(html).not.toContain('data-glyph=') // Sketch glyphs are gone in v3
+    expect(html).not.toContain('data-wireloom-svg')
   })
-  it('covers every glyph kind including placeholder hatch (R87-B full vocab)', () => {
-    const kinds = ['nav', 'header', 'form', 'table', 'list', 'text', 'chart', 'actions', 'tabs', 'image', 'code', 'placeholder']
-    const pack = {
-      version: 1,
-      screens: [{
-        id: 'all', title: 'All',
-        template: `"${kinds.join(' ')}"`,
-        columns: kinds.map(() => 1),
-        regions: kinds.map((k) => ({ name: k, widget: k, label: k, notes: '' })),
-      }],
-      flows: [],
-    }
-    const html = renderToString(createElement(WireframeView, { payload: pack }))
-    for (const k of kinds) expect(html).toContain(`data-glyph="${k}"`)
-    expect(html).not.toContain('data-glyph="generic"')
-  })
-  it('unknown widgets render generic (no sketch), not a fake one', () => {
-    const pack = {
-      version: 1,
-      screens: [{ id: 'g', title: 'G', template: '"x"', columns: [1], regions: [{ name: 'x', widget: 'mystery', label: 'M', notes: '' }] }],
-      flows: [],
-    }
-    const html = renderToString(createElement(WireframeView, { payload: pack }))
-    expect(html).toContain('data-glyph="generic"')
-  })
-  it('keeps notes out of the drawing — title attribute only, no notes block', () => {
+  it('keeps notes out of the shell — they ride the SVG annotations', () => {
     const html = renderToString(createElement(WireframeView, { payload: FRAME_PACK }))
-    expect(html).toContain('status band') // survives as hover text
     expect(html).not.toMatch(/<div[^>]*>status band/) // no notes block in the body
   })
   it('renders the flow map after the screen canvases', () => {
@@ -462,7 +433,10 @@ describe('WireframeView hooks invariant (#320)', () => {
   it('every hook call precedes the vm.ok early return', () => {
     const src = readFileSync(new URL('./WireframeView.jsx', import.meta.url), 'utf8')
     const body = src.slice(src.indexOf('export function WireframeView'))
-    const earlyReturn = body.indexOf('if (!vm.ok)')
+    // R87 #330: match the JSX-returning bail, not the scroll effect's inner
+    // `if (!vm.ok) return` guard — hook-internal conditionals are legal; the
+    // invariant is that every hook call precedes the component's bail.
+    const earlyReturn = body.indexOf('if (!vm.ok) {\n    return')
     expect(earlyReturn).toBeGreaterThan(-1)
     for (const hook of ['useState(', 'useRef(', 'useEffect(']) {
       const at = body.lastIndexOf(hook)

@@ -59,7 +59,6 @@ describe('compileScreen — widget mapping', () => {
     expect(src).toMatch(/grid cols=\d+ rows=\d+:/)
     expect(src).toMatch(/cell "/)
   })
-
   it('list maps to slots including the label row', () => {
     const src = compileScreen(screen({ regions: [region({ widget: 'list', label: 'Inbox' })] }), [])
     expect(src).toContain('list:')
@@ -91,12 +90,17 @@ describe('compileScreen — widget mapping', () => {
     expect(src).toMatch(/text "···/m)
   })
 
-  it('text maps to the label plus muted notes line', () => {
-    const src = compileScreen(screen({
+  it('text maps to a muted notes line or placeholder dots, never repeating the label', () => {
+    const withNotes = compileScreen(screen({
       regions: [region({ widget: 'text', label: 'Summary', notes: 'explains the change' })],
     }), [])
-    expect(src).toContain('text "Summary"')
-    expect(src).toContain('text "explains the change" muted')
+    expect(withNotes).toContain('text "explains the change" muted')
+    expect(withNotes).not.toMatch(/^\s+text "Summary"$/m)
+    const noNotes = compileScreen(screen({
+      regions: [region({ widget: 'text', label: 'Summary', notes: '' })],
+    }), [])
+    expect(noNotes).toMatch(/text "·····+" muted/m)
+    expect(noNotes).not.toMatch(/^\s+text "Summary"$/m)
   })
 
   it('placeholder and unknown widgets both fall back to a slot', () => {
@@ -120,7 +124,7 @@ describe('compileScreen — layout', () => {
     const src = compileScreen(s, [])
     expect(src).toContain('row:')
     expect(src.indexOf('list:')).toBeLessThan(src.indexOf('text "Top"'))
-    expect(src.indexOf('text "Body"')).toBeGreaterThan(src.indexOf('text "Top"'))
+    expect(src.indexOf('section "Body"')).toBeGreaterThan(src.indexOf('text "Top"'))
   })
 
   it('equal or absent weights emit fill columns; unequal emit proportional px', () => {
@@ -214,5 +218,58 @@ describe('renderScreen — async wrapper', () => {
     const out = await renderScreen('id2', 'bogus', 'dark')
     expect(out.svg).toBeNull()
     expect(out.problem).toContain('Line 2, col 3')
+  })
+})
+
+// R87 #330 (tech design #4): the pack-level render seam the view consumes.
+// Async orchestration lives here — the component stays a thin adapter (one
+// effect + one state), keeping the #320 hook-order invariant trivial.
+import { renderPackScreens } from './wireloom-adapter'
+import type { WireframeVm } from './wireframes'
+
+const vmOf = (screens: WireframeVm['screens']): WireframeVm => ({ ok: true, screens, flows: [], problems: [] })
+
+describe('renderPackScreens — pack orchestration', () => {
+  const two = vmOf([
+    { id: 'a', title: 'A', template: '"x"', regions: [{ name: 'x', widget: 'text', label: 'X', notes: '' }] },
+    { id: 'b', title: 'B', template: '"y"', regions: [{ name: 'y', widget: 'chart', label: 'Y', notes: 'note here' }] },
+  ])
+
+  it('renders every screen into an id-keyed map', async () => {
+    const out = await renderPackScreens(two, 'dark', () => false, 'wf1')
+    expect(Object.keys(out.svgById).sort()).toEqual(['a', 'b'])
+    expect(out.svgById.a).toContain('<svg')
+    expect(out.problems).toEqual([])
+  })
+
+  it('forwards theme and a pack-scoped render id per screen', async () => {
+    const { render } = await import('wireloom')
+    await renderPackScreens(two, 'default', () => false, 'pack id!')
+    expect(render).toHaveBeenCalledWith('packid-a', expect.any(String), { theme: 'default' })
+    expect(render).toHaveBeenCalledWith('packid-b', expect.any(String), { theme: 'default' })
+  })
+
+  it('one failing screen becomes a problem line; the rest still render', async () => {
+    const { render } = await import('wireloom')
+    ;(render as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('Line 3, col 5: bad thing'))
+    const out = await renderPackScreens(two, 'dark', () => false, 'p')
+    expect(out.svgById.b).toContain('<svg')
+    expect(out.svgById.a).toBeUndefined()
+    expect(out.problems.join(' ')).toMatch(/a.*render failed.*bad thing/s)
+  })
+
+  it('aborting via isStale stops collecting screens', async () => {
+    const out = await renderPackScreens(two, 'dark', () => true, 'p')
+    expect(Object.keys(out.svgById)).toEqual([])
+  })
+
+  it('compilation problems flow into the pack problems', async () => {
+    const broken: WireframeVm = {
+      ok: true, flows: [], problems: [],
+      screens: [{ id: 'a', title: '', template: '', regions: [{ name: '', widget: '', label: '', notes: '' }] }],
+    }
+    const out = await renderPackScreens(broken, 'dark', () => false, 'p')
+    expect(out.svgById.a).toContain('<svg')
+    expect(out.problems).toEqual([])
   })
 })

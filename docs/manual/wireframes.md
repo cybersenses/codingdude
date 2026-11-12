@@ -14,9 +14,10 @@ A pack is one JSON document (DSL v1) listing:
   `columns`/`rows` proportions (the agent should always author these —
   relative sizes are what make the drawing read as a layout), and the regions
   on it (`nav`, `form`, `table`, …). Every screen renders in a fixed 16:10
-  frame with a title bar, and each known widget draws a small sketch inside
-  its region — nav bars, a chart squiggle, form fields — rather than a text
-  tag; region notes are hover text, kept out of the drawing.
+  frame with a title bar. Each region is compiled to a real lo-fi drawing —
+  window chrome, form fields, list rows, tables, chart frames — via the
+  Wireloom renderer; region notes become visible annotation callouts with
+  leader lines (wireloom annotations), not hover text.
 - **flows** — the edges between screens (`from`, `to`, a trigger, a label).
 
 Structure is validated the moment the agent emits: a broken pack comes back
@@ -49,10 +50,11 @@ Sending it stays your call.
 
 ## Lo-fi now, styled later
 
-Packs are deliberately lo-fi: grayscale boxes and structure, no colors or
-brand styling — structure first, skin later. A `theme` prop already exists
-on the renderer (defaulting to `lofi`); wiring real themes into it is a
-planned future step, not a shipped one.
+Packs are deliberately lo-fi: grayscale structure, sketch-style widgets, no
+brand styling — structure first, skin later. The drawing comes from the
+Wireloom library (rendered in its dark theme inside the app's dark shell);
+the renderer's `theme` prop remains reserved (`lofi`) for future styled
+themes — not a shipped feature.
 
 ## Worked example — "design the config screen and its flow"
 
