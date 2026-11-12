@@ -266,11 +266,15 @@ class TestWidgetVocabularyPinned:
         assert [w for w in re.split(r'[\s,]+', m.group(1).strip()) if w] == self.CANONICAL
 
     def test_frontend_renderer_set_matches(self):
-        src = self._repo_file('frontend', 'src', 'WireframeView.jsx')
-        m = re.search(r'WIDGETS = new Set\(\[([^\]]+)\]\)', src)
-        assert m, 'WireframeView.jsx lost its WIDGETS set'
-        widgets = [w.strip().strip(chr(39) + chr(34)) for w in m.group(1).split(',')]
-        assert widgets == self.CANONICAL
+        # R87 #330 moved rendering to the wireloom adapter (v3 swap deleted the
+        # sketch glyphs from WireframeView.jsx); the vocabulary's frontend home
+        # is now the adapter's region-content switch. Case ORDER is not a
+        # contract — the set is.
+        src = self._repo_file('frontend', 'src', 'wireloom-adapter.ts')
+        m = re.search(r'switch \(r\.widget\) \{(.*?)\n    \}', src, re.S)
+        assert m, 'wireloom-adapter.ts lost its widget switch'
+        widgets = re.findall(r"case '([a-z]+)':", m.group(1))
+        assert sorted(widgets) == sorted(self.CANONICAL)
 
     def test_authoring_skill_matches(self):
         skill = self._repo_file('.codingdude-seed', 'skills', 'wireframes', 'SKILL.md')

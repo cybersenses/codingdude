@@ -154,13 +154,20 @@ export function Artifacts({ sessionId, initialItems = [] }) {
               )}
             </span>
           </div>
-          {a.kind === 'html' ? (
+          {a.kind === 'html' && a.payload ? (
             <iframe
               title={a.id}
               sandbox=""
               className="h-64 w-full rounded bg-white"
               srcDoc={a.payload.html}
             />
+          ) : !a.payload ? (
+            // SSE deltas once shipped raw DB rows (payload_json, no payload);
+            // reading a.payload.* of undefined took down the whole tree.
+            // Degrade to a notice — the header above still shows kind/status.
+            <div data-payload-missing={a.id} className="text-[10px] text-neutral-500">
+              payload unavailable for this card (stale stream frame)
+            </div>
           ) : a.kind === 'qa' ? (
             <div className="space-y-1">
               {a.payload.questions.map((q, i) => (

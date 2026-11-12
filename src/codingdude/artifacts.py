@@ -285,9 +285,9 @@ class ArtifactStore:
                 for artifact_id, status in current.items():
                     previous = seen.get(artifact_id)
                     if previous is None:
-                        yield {'event': 'emitted', 'artifact': self._get(artifact_id)}
+                        yield {'event': 'emitted', 'artifact': self._get_mapped(artifact_id)}
                     elif previous != status:
-                        yield {'event': 'answered', 'artifact': self._get(artifact_id)}
+                        yield {'event': 'answered', 'artifact': self._get_mapped(artifact_id)}
             seen = current
             time.sleep(poll_seconds)
 
@@ -298,6 +298,15 @@ class ArtifactStore:
         if row is None:
             raise KeyError(f'no artifact with id {artifact_id!r}')
         return dict(row)
+
+    def _get_mapped(self, artifact_id: str) -> dict:
+        """_get() shaped like list() rows: payload deserialized, payload_json gone.
+
+        SSE deltas feed the Artifacts panel verbatim — an unmapped raw row
+        makes kind-specific rendering read a.payload.* of undefined and
+        crashes the React tree.
+        """
+        return self._as_dict(self._get(artifact_id))
 
     @staticmethod
     def _as_dict(row) -> dict:

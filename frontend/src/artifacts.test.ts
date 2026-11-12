@@ -171,3 +171,22 @@ describe('Artifacts focus scroll/ring (R87-D, jsdom)', () => {
     await act(async () => root.unmount())
   })
 })
+
+describe('Artifacts payload-less cards (SSE delta crash class)', () => {
+  // The backend once shipped SSE 'emitted'/'answered' deltas as raw DB rows
+  // (payload_json instead of a mapped payload). A replaced html card then
+  // read a.payload.html of undefined and took down the whole React tree.
+  // The panel must degrade to a notice, never crash, for ANY kind.
+  const rawRow = (id: string, kind: string): never =>
+    ({ id, kind, title: id, status: 'answered', payload_json: '{}' }) as never
+  const kinds = ['html', 'qa', 'choice', 'decision', 'spec']
+  for (const kind of kinds) {
+    it(`renders a notice instead of crashing for a payload-less ${kind} card`, () => {
+      const html = renderToString(createElement(Artifacts, {
+        sessionId: 's',
+        initialItems: [rawRow(`raw-${kind}`, kind)],
+      }))
+      expect(html).toContain('data-payload-missing')
+    })
+  }
+})
