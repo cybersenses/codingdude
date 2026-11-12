@@ -1281,6 +1281,6 @@ Findings from the 2026-11-09 trace forensics (run mY5V_HxeMdk): post-RUN_FINISHE
 Small tracked issues in codingdude's own tooling/docs that don't belong to feature umbrellas.
 
 ## R87 — R87: Wireframes v2 — renderer quality + artifact surfacing in chat
-**Status:** open
+**Status:** done
 
 Live-use feedback on the R85 wireframes feature (first real pack emitted 2026-11-11): (1) emitted wireframes/HTML artifacts have zero chat presence — the only surface is the Artifacts dock panel, repeating the #189 bug class; (2) the renderer output "a kid with a crayon could have done better" — no proportions (grid auto-sizing), no widget affordances (widget vocab rendered as text tags), notes crammed inline, minimal flow map. Wave: DSL proportions, widget sketches, screen frames, flow map v2, chat card + View deep-link, visual-gate evidence.
