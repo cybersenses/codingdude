@@ -108,11 +108,13 @@ describe('WireframeView v3 (render smoke, R87 #330)', () => {
 // React crashes (#310 class; ModelsConfig.jsx documents the invariant). The
 // suite is SSR-smoke (no DOM rerender) and there is no react-hooks eslint
 // plugin, so this static ordering test is the guard: it fails while any hook
-// call sits after the bail.
+// call sits after the bail. The source is EOL-normalized first: CI checks
+// the repo out with core.autocrlf=true (CRLF), so raw-\n matchers only work
+// on LF checkouts.
 describe('WireframeView hooks invariant (#320)', () => {
   it('every hook call precedes the vm.ok early return', () => {
     const src = readFileSync(new URL('./WireframeView.jsx', import.meta.url), 'utf8')
-    const body = src.slice(src.indexOf('export function WireframeView'))
+    const body = src.replace(/\r\n/g, '\n').slice(src.indexOf('export function WireframeView'))
     const earlyReturn = body.indexOf('if (!vm.ok) {\n    return')
     expect(earlyReturn).toBeGreaterThan(-1)
     for (const hook of ['useState(', 'useRef(', 'useEffect(']) {
