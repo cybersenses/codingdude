@@ -110,15 +110,9 @@ import { WireframeView } from './WireframeView.jsx'
 import { Artifacts } from './panels/dock/Artifacts.jsx'
 
 describe('WireframeView (render smoke)', () => {
-  it('renders screens, regions, widget tags, and flows', () => {
-    const html = renderToString(createElement(WireframeView, { payload: PACK }))
-    expect(html).toContain('Library')
-    expect(html).toContain('Header')
-    expect(html).toContain('header') // widget tag
-    expect(html).toContain('title + search') // notes
-    expect(html).toContain('click item') // flow trigger on the map edge
-  })
-
+  // R87 #330: the first smoke's v2-internal assertions (widget tags, notes
+  // text in the SSR shell) moved to wireframe-view-v3.test.tsx — the shell
+  // no longer carries them; region content arrives in the async SVG.
   it('degrades garbage payloads to a warning line', () => {
     const html = renderToString(createElement(WireframeView, { payload: { version: 3 } }))
     expect(html).toMatch(/unsupported wireframe version/i)
@@ -263,28 +257,114 @@ describe('WireframeFlowMap (render smoke)', () => {
   })
 })
 
-// #320 (review blocker): hooks must run unconditionally — the `if (!vm.ok)`
-// early return may sit AFTER every hook call but never between hook groups,
-// or a mounted instance flipping valid<->invalid changes hook count and
-// React crashes (#310 class; ModelsConfig.jsx documents the invariant). The
-// suite is SSR-smoke (no DOM rerender) and there is no react-hooks eslint
-// plugin, so this static ordering test is the guard: it fails while any hook
-// call sits after the bail.
-import { readFileSync } from 'node:fs'
-
-describe('WireframeView hooks invariant (#320)', () => {
-  it('every hook call precedes the vm.ok early return', () => {
-    const src = readFileSync(new URL('./WireframeView.jsx', import.meta.url), 'utf8')
-    const body = src.slice(src.indexOf('export function WireframeView'))
-    const earlyReturn = body.indexOf('if (!vm.ok)')
-    expect(earlyReturn).toBeGreaterThan(-1)
-    for (const hook of ['useState(', 'useRef(', 'useEffect(']) {
-      const at = body.lastIndexOf(hook)
-      expect(at).toBeGreaterThan(-1)
-      expect(at).toBeLessThan(earlyReturn)
-    }
+// R87 #325 (REQ-D): the map reads like an overview, not a stub — nodes carry
+// the screen's region count, trigger/label move into hover titles (no text
+// spam on the canvas), and the arrowhead contract is pinned by test.
+describe('WireframeFlowMap v2 (render smoke, R87-C)', () => {
+  const V2 = {
+    screens: [
+      { id: 'a', title: 'Alpha', template: '', regions: [{ name: 'x' }, { name: 'y' }, { name: 'z' }] },
+      { id: 'b', title: 'Beta', template: '', regions: [{ name: 'x' }] },
+    ],
+    flows: [{ from: 'a', to: 'b', trigger: 'click', label: 'next' }],
+  }
+  it('nodes carry their screen title and region count', () => {
+    const html = renderToString(createElement(WireframeFlowMap, { screens: V2.screens, flows: V2.flows }))
+    expect(html).toContain('data-map-regions="3"')
+    expect(html).toContain('data-map-regions="1"')
+    expect(html).toContain('3 regions')
+    expect(html).toContain('1 region')
+  })
+  it('edges keep arrowheads and move trigger/label into a hover title', () => {
+    const html = renderToString(createElement(WireframeFlowMap, { screens: V2.screens, flows: V2.flows }))
+    expect(html).toContain('<marker')
+    expect(html).toMatch(/marker-end="url\(#wfm-arrow\)"/)
+    expect(html).toContain('<title>click</title>')
+    expect(html).not.toMatch(/<text[^>]*>click</) // no visible trigger text on the canvas
   })
 })
+
+// R87 #323 (REQ-A): proportions — authored column/row weights become real fr
+// tracks so a wireframe's layout means something. Pure seam, same never-throws
+// contract: invalid authored values degrade to an equal split + a problems[]
+// entry, never a crash.
+import { screenTracks } from './wireframes'
+
+const SHAPE4x3 = '"strip strip strip strip" "nav rail main chat" "nav rail dock composer"'
+
+describe('screenTracks (R87-A proportions)', () => {
+  it('maps authored columns onto the template column count as fr tracks', () => {
+    const t = screenTracks({ template: SHAPE4x3, columns: [16, 20, 44, 20] })
+    expect(t.columns).toBe('16fr 20fr 44fr 20fr')
+    expect(t.rows).toBe('1fr 1fr 1fr') // 3 template rows, no authored rows → equal
+  })
+  it('authored rows are honored as fr tracks too', () => {
+    const t = screenTracks({ template: SHAPE4x3, columns: [16, 20, 44, 20], rows: [2, 1, 1] })
+    expect(t.rows).toBe('2fr 1fr 1fr')
+  })
+  it('missing columns/rows fall back to an equal split with no problems', () => {
+    const t = screenTracks({ template: SHAPE4x3 })
+    expect(t.columns).toBe('1fr 1fr 1fr 1fr')
+    expect(t.rows).toBe('1fr 1fr 1fr')
+  })
+  it('a wrong-length columns list falls back + reports one problem', () => {
+    const problems: string[] = []
+    const t = screenTracks({ template: SHAPE4x3, columns: [16, 20] }, problems)
+    expect(t.columns).toBe('1fr 1fr 1fr 1fr')
+    expect(problems.join(' ')).toMatch(/columns/i)
+  })
+  it('non-positive, non-finite, and non-number entries fall back + report', () => {
+    for (const bad of [[0, 20, 44, 20], [-1, 20, 44, 20], [NaN, 20, 44, 20], ['x', 20, 44, 20]]) {
+      const problems: string[] = []
+      const t = screenTracks({ template: SHAPE4x3, columns: bad as number[] }, problems)
+      expect(t.columns).toBe('1fr 1fr 1fr 1fr')
+      expect(problems.length).toBe(1)
+    }
+  })
+  it('fractional weights are preserved verbatim', () => {
+    const t = screenTracks({ template: SHAPE4x3, columns: [0.16, 0.2, 0.44, 0.2] })
+    expect(t.columns).toBe('0.16fr 0.2fr 0.44fr 0.2fr')
+  })
+  it('no template → empty tracks (regions stack; renderer skips grid styles)', () => {
+    const t = screenTracks({ template: '', columns: [1, 2] })
+    expect(t.columns).toBe('')
+    expect(t.rows).toBe('')
+  })
+})
+
+describe('parseWireframe carries proportions (R87-A)', () => {
+  it('keeps valid authored columns/rows on the screen, no problems', () => {
+    const vm = parseWireframe({
+      version: 1,
+      screens: [{ id: 'p', title: 'P', template: SHAPE4x3, columns: [16, 20, 44, 20], rows: [2, 1, 1], regions: [] }],
+      flows: [],
+    })
+    expect(vm.ok).toBe(true)
+    expect(vm.screens[0].columns).toEqual([16, 20, 44, 20])
+    expect(vm.screens[0].rows).toEqual([2, 1, 1])
+    expect(vm.problems).toEqual([])
+  })
+  it('drops invalid columns/rows (key absent) + reports, pack still renders', () => {
+    const vm = parseWireframe({
+      version: 1,
+      screens: [{ id: 'p', title: 'P', template: '"a"', columns: ['x'], rows: [0], regions: [] }],
+      flows: [],
+    })
+    expect(vm.ok).toBe(true)
+    expect(vm.screens[0]).not.toHaveProperty('columns')
+    expect(vm.screens[0]).not.toHaveProperty('rows')
+    expect(vm.problems.join(' ')).toMatch(/dropped/i)
+  })
+  it('absent columns/rows stay absent (old packs keep their shape)', () => {
+    const vm = parseWireframe({ version: 1, screens: [{ id: 's', title: 't', template: '', regions: [] }], flows: [] })
+    expect(vm.screens[0]).toEqual({ id: 's', title: 't', template: '', regions: [] })
+  })
+})
+
+// R87 #330: the v2 renderer smoke describe (glyph internals, fr-track grid
+// styles, notes-as-hover-text) moved to wireframe-view-v3.test.tsx — its
+// assertions described the replaced v2 implementation, so the adapted v3
+// contract lives beside the v3 renderer tests instead of here.
 
 // R85 #317 (REQ-7): per-screen implement button — prefills the composer via
 // the exported store setter.

@@ -20,7 +20,7 @@ import { mergeProcesses } from './processes'
 import { pickPending } from './pending'
 import { resolveModelSend } from './modelpick'
 import { clearPendingPrompts } from './askUser'
-import { pendingArtifacts } from './artifacts'
+import { pendingArtifacts, emittedArtifacts } from './artifacts'
 import { parseRevealArgs } from './citations'
 
 // Chrome (fixed surfaces) and panels (dockable in P1). App keeps only the
@@ -409,6 +409,9 @@ export default function App() {
     }
   }, [activeSession])
   const pending = pendingArtifacts(artifactsAll)
+  // R87 #326: emitted artifacts (wireframes, html) surface in chat with a
+  // View deep-link — the Artifacts dock panel alone hid them (#189 class).
+  const emitted = emittedArtifacts(artifactsAll)
 
   // Watchdog (R2): a live run that emits nothing for a while must not look
   // dead — surface "still working…" with the quiet duration.
@@ -705,6 +708,7 @@ export default function App() {
         sessionId={activeSession}
         prompt={promptProps}
         pending={pending}
+        emitted={emitted}
         chat={chatProps}
         footer={footerProps}
         reviewDiff={focusDiffTab}

@@ -129,12 +129,21 @@ def test_watch_yields_snapshot_then_deltas(store):
     delta = next(events)
     assert delta == {'event': 'emitted', 'artifact': delta['artifact']}
     assert delta['artifact']['id'] == spec_id
+    # Deltas feed the Artifacts panel verbatim (SSE 'emitted' replaces the
+    # card in place): they must be mapped dicts like list() rows — payload
+    # deserialized, payload_json gone — or kind-specific rendering reads
+    # a.payload.* of undefined and crashes the React tree (the 'html'
+    # TypeError crash class).
+    assert delta['artifact']['payload'] == {'markdown': 'draft'}
+    assert 'payload_json' not in delta['artifact']
 
     store.respond(choice_id, {'pick': 'a'})
     delta = next(events)
     assert delta['event'] == 'answered'
     assert delta['artifact']['id'] == choice_id
     assert delta['artifact']['status'] == 'answered'
+    assert delta['artifact']['payload']['options'] == ['a', 'b']
+    assert 'payload_json' not in delta['artifact']
     events.close()
 
 

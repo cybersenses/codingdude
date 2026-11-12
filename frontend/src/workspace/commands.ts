@@ -138,20 +138,34 @@ export function runCommand(
     const pid = id.slice(5)
     const spec = panelSpec(pid)
     if (!spec || openIds.includes(pid)) return false
+    const inGrid = (panelId: string | undefined) =>
+      panelId !== undefined && api.getPanel(panelId)?.group.api.location.type === 'grid'
     // Reference the active panel *unless it lives outside the grid* — a
     // floating or popped-out active panel would otherwise pull the new panel
     // into its floating overlay / OS window, which reads as "Show did
     // nothing" in the main window (probed in .scratch/p4_popout_probe.py).
     const activeId = api.activePanel?.id
-    const activeInGrid =
-      activeId !== undefined &&
-      api.getPanel(activeId)?.group.api.location.type === 'grid'
-    const reference = activeInGrid ? activeId : openIds.find((oid) => api.getPanel(oid)?.group.api.location.type === 'grid')
+    // R87 #328: a deep-link open of Artifacts (chat-card View, nav, palette)
+    // must not merge into the active group as a tab — that buried the editor
+    // behind Artifacts (EditorArtifacts strip) and persisted the merged
+    // layout on the debounced save. Dock it as its own group BELOW the editor
+    // instead (mirrors diff-below-editor), falling back to any grid-resident
+    // panel when the editor is closed or lives outside the grid. Every other
+    // panel keeps the historic dock-within-active placement.
+    const anyGridPanel = openIds.find(inGrid)
+    const reference =
+      pid === 'artifacts'
+        ? openIds.includes('editor') && inGrid('editor')
+          ? 'editor'
+          : anyGridPanel
+        : inGrid(activeId)
+          ? activeId
+          : anyGridPanel
     api.addPanel({
       ...panelOptions(spec),
       // An empty layout has no reference: dockview seeds the first group.
       ...(reference !== undefined
-        ? { position: { direction: 'within', referencePanel: reference } }
+        ? { position: { direction: pid === 'artifacts' ? 'below' : 'within', referencePanel: reference } }
         : {}),
     })
     api.getPanel(pid)?.api.setActive()

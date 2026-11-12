@@ -30,7 +30,8 @@ import { FileTree } from '../panels/Explorer.jsx'
 import { EditorPane } from '../panels/Editor.jsx'
 import { Chat } from '../panels/Chat.jsx'
 import { Prompt } from '../panels/Prompt.jsx'
-import { PendingArtifactCard } from '../cards/chatCards.jsx'
+import { PendingArtifactCard, EmittedArtifactCard } from '../cards/chatCards.jsx'
+import { ARTIFACT_FOCUS_EVENT } from '../artifacts'
 import { WorkspaceContext, useShell } from './shellContext'
 import { createSessionStore } from '../store/sessionData'
 import { sessionTopics, requiresSession } from '../store/sessionTopics'
@@ -121,11 +122,12 @@ function EditorPanel() {
 }
 
 function ChatPanel() {
-  const { sessionId, prompt, pending, chat, onRefreshArtifacts } = useShell()
+  const { sessionId, prompt, pending, emitted, chat, onRefreshArtifacts } = useShell()
   return (
     <div data-panel="chat" className="flex h-full min-h-0 flex-col overflow-hidden bg-neutral-950">
       <Prompt {...prompt} />
       <PendingArtifactCard items={pending} onResponded={onRefreshArtifacts} />
+      <EmittedArtifactCard items={emitted} onResponded={onRefreshArtifacts} />
       <Chat sessionId={sessionId} {...chat} />
     </div>
   )
@@ -288,7 +290,7 @@ const SAVE_DEBOUNCE_MS = 400
 // grabbable even though the cap is looser than the container.
 const floatingBounds = () => ({ width: window.innerWidth, height: window.innerHeight })
 
-export function Workspace({ error, agentStrip, sidebar, fileWs, onAsk, sessionId, prompt, pending, chat, footer, onRefreshArtifacts, workdir, reviewDiff = 0 }) {
+export function Workspace({ error, agentStrip, sidebar, fileWs, onAsk, sessionId, prompt, pending, emitted = [], chat, footer, onRefreshArtifacts, workdir, reviewDiff = 0 }) {
   const [api, setApi] = useState(null)
   const apiRef = useRef(null)
   // "layout reset (…)" / "dropped panels …" — surfaced once, dismissed by click.
@@ -409,6 +411,18 @@ export function Workspace({ error, agentStrip, sidebar, fileWs, onAsk, sessionId
     return () => window.removeEventListener('cd-open-file', onOpenFile)
   }, [])
 
+  // R87 #326: the chat card's View button fires cd-focus-artifact; the shell
+  // opens (or focuses) the Artifacts panel, which itself scrolls to and rings
+  // the artifact — one event, two halves, like cd-open-file.
+  useEffect(() => {
+    const onFocusArtifact = (e) => {
+      if (!(e.detail && e.detail.id)) return
+      showPanelRef.current('artifacts')
+    }
+    window.addEventListener(ARTIFACT_FOCUS_EVENT, onFocusArtifact)
+    return () => window.removeEventListener(ARTIFACT_FOCUS_EVENT, onFocusArtifact)
+  }, [])
+
   const shell = {
     sidebar,
     fileWs,
@@ -417,6 +431,7 @@ export function Workspace({ error, agentStrip, sidebar, fileWs, onAsk, sessionId
     sessionId,
     prompt,
     pending,
+    emitted,
     chat,
     onRefreshArtifacts,
     // P2: store-backed panels + the wiring the new panels need. The footer's

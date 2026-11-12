@@ -13,10 +13,11 @@
 //
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { api, call } from '../../api'
 import { Mermaid } from '../../ui.jsx'
 import { WireframeView } from '../../WireframeView.jsx'
+import { ARTIFACT_FOCUS_EVENT, takeArtifactFocusRequest } from '../../artifacts'
 
 // R59 P0: moved verbatim out of App.jsx's DockPanel tab body. Live-pushed via
 // SSE with a polling fallback; becomes the `artifacts` panel in P2.
@@ -26,6 +27,10 @@ export function Artifacts({ sessionId, initialItems = [] }) {
   // #242 seam: a failed poll or mutation must be visible, not "no artifacts yet".
   const [pollError, setPollError] = useState(null)
   const [mutError, setMutError] = useState(null)
+  // R87-D: deep-link target — the chat card's View button fires
+  // cd-focus-artifact; this panel scrolls to and rings that artifact.
+  const [focusId, setFocusId] = useState(null)
+  const itemRefs = useRef({})
 
   useEffect(() => {
     if (!sessionId) return
@@ -58,6 +63,32 @@ export function Artifacts({ sessionId, initialItems = [] }) {
     es.onerror = () => { es.close(); startPolling() }
     return () => { closed = true; es.close(); if (fallback) clearTimeout(fallback) }
   }, [sessionId])
+
+  useEffect(() => {
+    const onFocus = (e) => {
+      const id = e.detail && e.detail.id
+      if (id) {
+        // Consume the bus twin so a stale request can never fire a later mount.
+        takeArtifactFocusRequest()
+        setFocusId(id)
+      }
+    }
+    window.addEventListener(ARTIFACT_FOCUS_EVENT, onFocus)
+    return () => window.removeEventListener(ARTIFACT_FOCUS_EVENT, onFocus)
+  }, [])
+  // R87-D: a View click on a CLOSED panel dispatched before this listener
+  // existed — the bus still holds the request; consume it at mount.
+  useEffect(() => {
+    const pending = takeArtifactFocusRequest()
+    if (pending) setFocusId(pending)
+  }, [])
+  // SSR never runs effects, so the scroll is browser-only by construction
+  // (same shape as WireframeView's focus scroll).
+  useEffect(() => {
+    if (!focusId) return
+    const el = itemRefs.current[focusId]
+    if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'start', behavior: 'smooth' })
+  }, [focusId, items])
 
   async function respond(id, body) {
     try {
@@ -101,7 +132,15 @@ export function Artifacts({ sessionId, initialItems = [] }) {
         from, spec blocks you can edit, and HTML pages it renders for you right here.
       </p>
       {items.map((a) => (
-        <div key={a.id} className="rounded border border-neutral-800 bg-neutral-900 p-2">
+        <div
+          key={a.id}
+          data-artifact={a.id}
+          data-focused={focusId === a.id ? 'true' : undefined}
+          ref={(el) => { itemRefs.current[a.id] = el }}
+          className={focusId === a.id
+            ? 'rounded border border-accent bg-neutral-900 p-2'
+            : 'rounded border border-neutral-800 bg-neutral-900 p-2'}
+        >
           <div className="mb-1 flex items-center justify-between">
             <span className="text-[11px] font-semibold text-neutral-200">{a.title}</span>
             <span className="flex items-center gap-2 text-[9px] uppercase text-neutral-500">
@@ -115,13 +154,20 @@ export function Artifacts({ sessionId, initialItems = [] }) {
               )}
             </span>
           </div>
-          {a.kind === 'html' ? (
+          {a.kind === 'html' && a.payload ? (
             <iframe
               title={a.id}
               sandbox=""
               className="h-64 w-full rounded bg-white"
               srcDoc={a.payload.html}
             />
+          ) : !a.payload ? (
+            // SSE deltas once shipped raw DB rows (payload_json, no payload);
+            // reading a.payload.* of undefined took down the whole tree.
+            // Degrade to a notice — the header above still shows kind/status.
+            <div data-payload-missing={a.id} className="text-[10px] text-neutral-500">
+              payload unavailable for this card (stale stream frame)
+            </div>
           ) : a.kind === 'qa' ? (
             <div className="space-y-1">
               {a.payload.questions.map((q, i) => (

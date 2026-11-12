@@ -16,6 +16,7 @@
 import React, { useEffect, useState } from 'react'
 import { call } from '../api'
 import { buildAnswers } from '../askUser'
+import { requestArtifactFocus } from '../artifacts'
 
 // R59 P0: moved verbatim out of App.jsx. These six render inside the chat
 // transcript and share one lifecycle (they appear mid-run and settle with the
@@ -241,8 +242,56 @@ export function PendingArtifactCard({ items, onResponded }) {
   )
 }
 
-export function ApprovalCard({ command, onDecide }) {
+// R87 #326: emitted artifacts (wireframe packs, html pages) surface in chat —
+// read-only, unlike PendingArtifactCard: nothing to answer, but a View button
+// fires the shared cd-focus-artifact event so the shell opens the Artifacts
+// panel scrolled and ringed on that artifact. Same dismiss seam as pending
+// cards so a stale pack can leave the conversation.
+export function EmittedArtifactCard({ items, onResponded }) {
+  const [errs, setErrs] = useState({})
+  if (!items.length) return null
+  const view = (item) => {
+    // Bus + event: the shell activates the Artifacts panel on the event; the
+    // bus makes the focus request survive the panel mounting closed.
+    requestArtifactFocus(item.id)
+  }
+  const dismiss = (item) => {
+    call(`/artifacts/${item.id}/dismiss`, { method: 'POST' })
+      .then(onResponded)
+      .catch((e) => setErrs((m) => ({ ...m, [item.id]: String(e) })))
+  }
   return (
+    <div className="my-2 overflow-hidden rounded-lg border border-brand-400/50 bg-surface">
+      <div className="border-b border-line bg-brand-400/10 px-3 py-2 text-xs font-semibold text-brand-300">
+        Fresh from the agent — {items.length} artifact{items.length > 1 ? 's' : ''}
+      </div>
+      {items.map((item) => (
+        <div key={item.id} className="flex items-center gap-2 border-b border-line px-3 py-2 last:border-b-0">
+          <span aria-hidden="true">{item.kind === 'wireframe' ? '📐' : '🖼️'}</span>
+          <span className="text-xs text-ink">{item.title}</span>
+          <span className="font-mono text-[9px] uppercase text-ink-muted">{item.kind}</span>
+          <span className="ml-auto flex items-center gap-1">
+            <button
+              data-view-artifact={item.id}
+              className="rounded bg-brand px-2 py-0.5 text-[10px] text-brand-fg hover:bg-brand-hover"
+              title="open this artifact in the Artifacts panel, scrolled into view"
+              onClick={() => view(item)}
+            >View</button>
+            <button
+              data-dismiss-artifact={item.id}
+              className="rounded border border-line px-1.5 py-0.5 text-[9px] text-ink-muted hover:text-ink"
+              title="retire this card — nothing pending is lost; the artifact stays in the Artifacts panel"
+              onClick={() => dismiss(item)}
+            >dismiss</button>
+          </span>
+          {errs[item.id] && <span className="text-[10px] text-danger">{errs[item.id]}</span>}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+export function ApprovalCard({ command, onDecide }) {  return (
     <div className="my-2 overflow-hidden rounded-lg border border-warning/50 bg-surface">
       <div className="flex items-center gap-2 border-b border-line bg-warning/10 px-3 py-2">
         <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-warning"></span>

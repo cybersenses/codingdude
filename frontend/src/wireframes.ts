@@ -30,6 +30,13 @@ export interface WireframeScreen {
   title: string
   /** CSS grid-template-areas value ('"nav header" ...'); '' → stack regions. */
   template: string
+  /**
+   * R87-A: authored track weights (all positive numbers). Length must match
+   * the template's track count — set at parse time or dropped with a problem.
+   * Absent → the renderer splits tracks equally.
+   */
+  columns?: number[]
+  rows?: number[]
   regions: WireframeRegion[]
 }
 
@@ -51,6 +58,24 @@ export interface WireframeVm {
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : '')
 
+// R87-A: an authored weights list is a non-empty array of positive finite
+// numbers. Anything else (wrong values, wrong length handled at track time)
+// is rejected so a mangled payload degrades, never crashes.
+function isWeights(v: unknown): v is number[] {
+  return Array.isArray(v) && v.length > 0
+    && v.every((n) => typeof n === 'number' && Number.isFinite(n) && n > 0)
+}
+
+// R87-A: keep valid authored weights on the screen; drop present-but-invalid
+// ones with a problem line (tolerant parse, #314 contract). Absent stays
+// absent — undefined means "not authored", not "empty".
+function weightsOr(v: unknown, field: string, id: string, problems: string[]): number[] | undefined {
+  if (v === undefined || v === null) return undefined
+  if (isWeights(v)) return v
+  problems.push(`dropped invalid ${field} for screen '${id}'`)
+  return undefined
+}
+
 function parseScreen(raw: unknown, problems: string[]): WireframeScreen | null {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null
   const s = raw as Record<string, unknown>
@@ -70,7 +95,16 @@ function parseScreen(raw: unknown, problems: string[]): WireframeScreen | null {
     problems.push('dropped a screen with no id')
     return null
   }
-  return { id, title: str(s.title), template: str(s.template), regions }
+  const columns = weightsOr(s.columns, 'columns', id, problems)
+  const rows = weightsOr(s.rows, 'rows', id, problems)
+  return {
+    id,
+    title: str(s.title),
+    template: str(s.template),
+    ...(columns !== undefined ? { columns } : {}),
+    ...(rows !== undefined ? { rows } : {}),
+    regions,
+  }
 }
 
 function parseFlow(raw: unknown): WireframeFlow | null {
@@ -115,6 +149,46 @@ export function parseWireframe(payload: unknown): WireframeVm {  const problems:
 // the DOM (re-click clears, other screen moves).
 export function applyFocus(current: string | null, screenId: string | null): string | null {
   return current === screenId ? null : screenId
+}
+
+// R87-A (#323): grid track sizes for a screen. Authored weights become fr
+// tracks; anything absent or invalid falls back to an equal split across the
+// template's own track count (a wrong *count* is reported as a problem, a
+// merely-absent list is the normal v1-pack path and stays silent).
+export interface ScreenTracks {
+  columns: string
+  rows: string
+}
+
+function templateShape(template: string): { cols: number; rows: number } | null {
+  const quoted = template.match(/"[^"]*"/g)
+  if (quoted && quoted.length > 0) {
+    const cols = quoted[0].replace(/"/g, '').trim().split(/\s+/).filter((t) => t && t !== '.').length
+    return { cols, rows: quoted.length }
+  }
+  const oneRow = template.trim().split(/\s+/).filter((t) => t && t !== '.')
+  return oneRow.length === 0 ? null : { cols: oneRow.length, rows: 1 }
+}
+
+const equalTracks = (n: number) => Array.from({ length: n }, () => '1fr').join(' ')
+
+function trackList(weights: unknown, count: number, field: string, problems: string[]): string {
+  if (weights === undefined || weights === null) return equalTracks(count)
+  if (isWeights(weights) && weights.length === count) return weights.map((n) => `${n}fr`).join(' ')
+  problems.push(`dropped invalid ${field} (expected ${count} weights) — using equal split`)
+  return equalTracks(count)
+}
+
+export function screenTracks(
+  screen: Pick<WireframeScreen, 'template' | 'columns' | 'rows'>,
+  problems: string[] = [],
+): ScreenTracks {
+  const shape = templateShape(screen.template)
+  if (!shape) return { columns: '', rows: '' }
+  return {
+    columns: trackList(screen.columns, shape.cols, 'columns', problems),
+    rows: trackList(screen.rows, shape.rows, 'rows', problems),
+  }
 }
 
 // R85 #316 (REQ-4): layered layout for the SVG node-link flow map.

@@ -29,6 +29,38 @@ export interface Artifact {
 const ACTIONABLE = new Set(['choice', 'spec'])
 const MAX_INLINE = 3
 
+// R87-D: emitted artifacts (html pages, wireframe packs) are read-only —
+// they surface in chat as a card with a View deep-link, not an answer form.
+const EMITTED = new Set(['html', 'wireframe'])
+
+export const ARTIFACT_FOCUS_EVENT = 'cd-focus-artifact'
+
+// R87-D (post-review): the View request must survive the Artifacts panel
+// being CLOSED at click time — a bare window event is lost while the panel
+// mounts (its listener registers after the dispatch completes). The bus holds
+// the id until a mounted panel consumes it; the event still drives panel
+// activation in the shell (which is always mounted).
+let focusRequest: string | null = null
+
+export function requestArtifactFocus(id: string): void {
+  focusRequest = id
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(ARTIFACT_FOCUS_EVENT, { detail: { id } }))
+  }
+}
+
+export function takeArtifactFocusRequest(): string | null {
+  const id = focusRequest
+  focusRequest = null
+  return id
+}
+
+export function emittedArtifacts(items: Artifact[]): Artifact[] {
+  return items
+    .filter((x) => x.status === 'pending' && EMITTED.has(x.kind))
+    .slice(0, MAX_INLINE)
+}
+
 export function pendingArtifacts(items: Artifact[]): Artifact[] {
   return items
     .filter((a) => a.status === 'pending' && ACTIONABLE.has(a.kind))
