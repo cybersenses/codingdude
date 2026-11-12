@@ -36,10 +36,14 @@ A wireframe pack is a versioned artifact (screens + flows) the user sees rendere
 ```
 
 - `template`: CSS grid-template-areas, quoted rows. Every region `name` must appear in its screen's template (a `'.'` filler cell is fine).
-- `columns` / `rows`: optional per-screen weight lists (positive numbers, one per template track), e.g. `"columns": [16, 20, 44, 20]`. They map straight onto the grid as fr tracks. Without them every track renders equal-width.
+- `columns` / `rows`: optional per-screen weight lists (positive numbers, one per template track), e.g. `"columns": [16, 20, 44, 20]`. `columns` become proportional column widths in the drawing (R87 v3: honored by the Wireloom renderer); `rows` are carried but vertical distribution is the renderer's. Without them every track renders equal-width.
 - `widget` vocabulary: `nav, header, form, table, list, text, chart, actions, tabs, image, code, placeholder` — unknown values render as a generic box, but prefer the vocabulary.
 - `flows` `from`/`to` must reference existing screen ids. `trigger`/`label` optional. A single screen needs no flows.
 - Unknown extra keys are tolerated; structural violations come back as ONE error listing every problem — fix all of them, then re-emit the whole pack.
+
+## How packs render (R87 v3)
+
+Each screen's regions compile to [Wireloom](https://github.com/StardockCorp/Wireloom) source and render as a sketch-style SVG inside a fixed 16:10 frame: window chrome, form fields, list rows, table grids, chart frames. Region `notes` render as visible annotation callouts with leader lines — so keep notes short and functional, one per region at most. Unknown widgets fall back to a labeled slot. The renderer stays lo-fi/dark; there is no styled theme yet.
 
 ## Revision etiquette
 
