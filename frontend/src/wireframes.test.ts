@@ -110,17 +110,9 @@ import { WireframeView } from './WireframeView.jsx'
 import { Artifacts } from './panels/dock/Artifacts.jsx'
 
 describe('WireframeView (render smoke)', () => {
-  it('renders the screen title, its canvas box, and the flow trigger', () => {
-    const html = renderToString(createElement(WireframeView, { payload: PACK }))
-    expect(html).toContain('Library')
-    expect(html).toContain('data-screen="s1"')
-    expect(html).toContain('click item') // flow trigger on the map edge
-    // v3: region content lives inside the asynchronously rendered wireloom
-    // SVG — the SSR shell carries only the frame, so no glyph internals.
-    expect(html).toContain('data-wireloom-pending="s1"')
-    expect(html).not.toContain('<g data-wireloom') 
-  })
-
+  // R87 #330: the first smoke's v2-internal assertions (widget tags, notes
+  // text in the SSR shell) moved to wireframe-view-v3.test.tsx — the shell
+  // no longer carries them; region content arrives in the async SVG.
   it('degrades garbage payloads to a warning line', () => {
     const html = renderToString(createElement(WireframeView, { payload: { version: 3 } }))
     expect(html).toMatch(/unsupported wireframe version/i)
@@ -369,82 +361,10 @@ describe('parseWireframe carries proportions (R87-A)', () => {
   })
 })
 
-// R87 #330 (v3): the hand-rolled Sketch glyph renderer is replaced by
-// compiled Wireloom SVG (wireloom-adapter). The SSR shell keeps the frame
-// contract — 16:10 canvas, title bar, pending placeholder per screen, flow
-// map after the canvases — while region content arrives via the async
-// render seam (renderPackScreens, covered in wireloom-adapter.test.ts).
-describe('WireframeView v3 (render smoke, R87 #330)', () => {
-  const FRAME_PACK = {
-    version: 1,
-    screens: [
-      {
-        id: 'w',
-        title: 'Workspace',
-        template: '"strip strip strip strip" "nav rail main chat" "nav rail dock composer"',
-        columns: [16, 20, 44, 20],
-        rows: [2, 1, 1],
-        regions: [
-          { name: 'strip', widget: 'header', label: 'Strip', notes: 'status band' },
-          { name: 'nav', widget: 'nav', label: 'Nav', notes: '' },
-          { name: 'rail', widget: 'list', label: 'Rail', notes: '' },
-          { name: 'main', widget: 'code', label: 'Main', notes: '' },
-          { name: 'dock', widget: 'table', label: 'Dock', notes: '' },
-          { name: 'chat', widget: 'text', label: 'Chat', notes: '' },
-          { name: 'composer', widget: 'form', label: 'Composer', notes: '' },
-        ],
-      },
-    ],
-    flows: [{ from: 'w', to: 'w', trigger: 'click', label: 'loop' }],
-  }
-
-  it('frames each screen as a fixed 16:10 canvas with a title bar', () => {
-    const html = renderToString(createElement(WireframeView, { payload: FRAME_PACK }))
-    expect(html).toMatch(/aspect-ratio:16\s*\/\s*10/)
-    expect(html).toMatch(/data-screen-title="Workspace"/)
-  })
-  it('shows one pending placeholder per screen before the SVG lands', () => {
-    const html = renderToString(createElement(WireframeView, { payload: FRAME_PACK }))
-    expect(html).toContain('data-wireloom-pending="w"')
-    expect(html).not.toContain('data-glyph=') // Sketch glyphs are gone in v3
-    expect(html).not.toContain('data-wireloom-svg')
-  })
-  it('keeps notes out of the shell — they ride the SVG annotations', () => {
-    const html = renderToString(createElement(WireframeView, { payload: FRAME_PACK }))
-    expect(html).not.toMatch(/<div[^>]*>status band/) // no notes block in the body
-  })
-  it('renders the flow map after the screen canvases', () => {
-    const html = renderToString(createElement(WireframeView, { payload: FRAME_PACK }))
-    expect(html.indexOf('data-screen="w"')).toBeGreaterThan(-1)
-    expect(html.indexOf('flow map')).toBeGreaterThan(html.indexOf('data-screen="w"'))
-  })
-})
-
-// #320 (review blocker): hooks must run unconditionally — the `if (!vm.ok)`
-// early return may sit AFTER every hook call but never between hook groups,
-// or a mounted instance flipping valid<->invalid changes hook count and
-// React crashes (#310 class; ModelsConfig.jsx documents the invariant). The
-// suite is SSR-smoke (no DOM rerender) and there is no react-hooks eslint
-// plugin, so this static ordering test is the guard: it fails while any hook
-// call sits after the bail.
-import { readFileSync } from 'node:fs'
-
-describe('WireframeView hooks invariant (#320)', () => {
-  it('every hook call precedes the vm.ok early return', () => {
-    const src = readFileSync(new URL('./WireframeView.jsx', import.meta.url), 'utf8')
-    const body = src.slice(src.indexOf('export function WireframeView'))
-    // R87 #330: match the JSX-returning bail, not the scroll effect's inner
-    // `if (!vm.ok) return` guard — hook-internal conditionals are legal; the
-    // invariant is that every hook call precedes the component's bail.
-    const earlyReturn = body.indexOf('if (!vm.ok) {\n    return')
-    expect(earlyReturn).toBeGreaterThan(-1)
-    for (const hook of ['useState(', 'useRef(', 'useEffect(']) {
-      const at = body.lastIndexOf(hook)
-      expect(at).toBeGreaterThan(-1)
-      expect(at).toBeLessThan(earlyReturn)
-    }
-  })
-})
+// R87 #330: the v2 renderer smoke describe (glyph internals, fr-track grid
+// styles, notes-as-hover-text) moved to wireframe-view-v3.test.tsx — its
+// assertions described the replaced v2 implementation, so the adapted v3
+// contract lives beside the v3 renderer tests instead of here.
 
 // R85 #317 (REQ-7): per-screen implement button — prefills the composer via
 // the exported store setter.
