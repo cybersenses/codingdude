@@ -53,6 +53,79 @@ async def test_ask_user_headless_raises_model_retry():
         await _fn(build_ask_user_toolset(policy))('[{"question": "Why?"}]')
 
 
+# ---- boundary validation (R90 #336) -----------------------------------------
+# The payload is one opaque JSON string, so pydantic cannot check its shape.
+# A malformed ask (options as {"multi": false} objects) reached the UI verbatim
+# and killed the app with React #31; the trace-proven payloads live verbatim in
+# frontend/src/askUser.test.ts.
+
+async def test_ask_user_rejects_object_options():
+    """Trace payload 2a: option labels missing, each option is {multi: false}."""
+    policy = ApprovalPolicy()
+
+    async def asker(questions):
+        return []
+
+    policy.ask_user = asker
+    payload = json.dumps([
+        {'question': 'What should I do with the steampunk + dino theme?',
+         'options': [{'multi': False}, {'multi': False}, {'multi': False}]},
+    ])
+    with pytest.raises(ModelRetry, match='plain string labels'):
+        await _fn(build_ask_user_toolset(policy))(payload)
+
+
+async def test_ask_user_rejects_empty_question_text():
+    policy = ApprovalPolicy()
+
+    async def asker(questions):
+        return []
+
+    policy.ask_user = asker
+    with pytest.raises(ModelRetry, match=r'questions\[0\]\.question'):
+        await _fn(build_ask_user_toolset(policy))(json.dumps([{'options': ['a']}]))
+
+    with pytest.raises(ModelRetry, match=r'questions\[0\] must be an object'):
+        await _fn(build_ask_user_toolset(policy))(json.dumps(['just a string']))
+
+
+async def test_ask_user_rejects_non_array_payload():
+    policy = ApprovalPolicy()
+
+    async def asker(questions):
+        return []
+
+    policy.ask_user = asker
+    with pytest.raises(ModelRetry, match='JSON array'):
+        await _fn(build_ask_user_toolset(policy))(json.dumps({'question': 'Q?'}))
+
+
+async def test_ask_user_rejects_non_bool_multi():
+    policy = ApprovalPolicy()
+
+    async def asker(questions):
+        return []
+
+    policy.ask_user = asker
+    with pytest.raises(ModelRetry, match=r'questions\[0\]\.multi'):
+        await _fn(build_ask_user_toolset(policy))(
+            json.dumps([{'question': 'Q?', 'multi': 'yes'}]))
+
+
+async def test_ask_user_normalizes_defaults_before_asking():
+    """The asker and the QA recorder see normalized questions, not raw model JSON."""
+    captured = {}
+
+    async def asker(questions):
+        captured['questions'] = questions
+        return [{'question': 'Q?', 'answer': 'yes'}]
+
+    policy = ApprovalPolicy()
+    policy.ask_user = asker
+    await _fn(build_ask_user_toolset(policy))(json.dumps([{'question': 'Q?'}]))
+    assert captured['questions'] == [{'question': 'Q?', 'options': [], 'multi': False}]
+
+
 # ---- engine integration ------------------------------------------------------
 
 async def test_ask_user_engine_integration(home, workdir):

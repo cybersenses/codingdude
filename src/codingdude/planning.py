@@ -191,6 +191,10 @@ async def _review_impl(db, session_id: str, review_model, checklist: str, plan, 
     import subprocess
 
     from pydantic_ai import Agent
+    from pydantic_ai.usage import UsageLimits
+
+    from .prompts import load_prompt
+    from .tools import build_toolset
 
     workdir = db.session_workdir(session_id)
     diff = ''
@@ -209,7 +213,18 @@ async def _review_impl(db, session_id: str, review_model, checklist: str, plan, 
     settings: ModelSettings = ModelSettings(timeout=300)
     if thinking is not None:
         settings['thinking'] = thinking
-    reviewer = Agent(model=review_model, model_settings=settings)
+    # R90 #335: the reviewer needs repo access to honor its own directives
+    # (read the target area, verify before reporting). Same read-only seam as
+    # the evaluator: glob/grep/list_dir/read_file against the session workdir.
+    # Without it the Agent raised "No tools available" for any read attempt
+    # and the directives were unfulfillable by construction.
+    toolsets = [build_toolset(Path(workdir), read_only=True)] if workdir else []
+    reviewer = Agent(
+        model=review_model,
+        instructions=load_prompt('review'),
+        toolsets=toolsets,
+        model_settings=settings,
+    )
     plan_section = ''
     if plan:
         plan_section = (
@@ -222,7 +237,9 @@ async def _review_impl(db, session_id: str, review_model, checklist: str, plan, 
         f'DIRECTIVES:\n{checklist[:2000]}\n\nDIFF:\n{diff[:8000]}'
     )
     try:
-        result = await reviewer.run(prompt)
+        # request_limit bounds the read loop so a tool-happy reviewer cannot
+        # spin inside the 300s timeout (same pattern as the evaluator pass).
+        result = await reviewer.run(prompt, usage_limits=UsageLimits(request_limit=8))
     except Exception:  # noqa: BLE001 — review must never fail the run
         return ''
     output = result.output.strip()

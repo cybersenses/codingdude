@@ -26,8 +26,11 @@ export class ErrorBoundary extends React.Component {
   static getDerivedStateFromError(error) {
     return { error }
   }
-  render() {
+    render() {
     if (this.state.error) {
+      // Card-level containment: a caller may pass a small inline fallback so
+      // one broken card cannot take the workspace down (R90 #336).
+      if (this.props.fallback) return this.props.fallback
       return (
         <div data-ui-crash className="flex h-screen items-center justify-center bg-neutral-900 p-6">
           <div className="max-w-lg rounded-lg border border-danger/60 bg-neutral-950 p-6">
