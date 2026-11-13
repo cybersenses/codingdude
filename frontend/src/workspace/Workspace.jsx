@@ -514,7 +514,7 @@ export function Workspace({ error, agentStrip, sidebar, fileWs, onAsk, sessionId
             and addPanel's focus auto-scroll slid the whole grid 475px up into
             a black void (probed live). overflow-clip forbids scrolling the
             box in any way, programmatic included. */}
-        <div className="min-h-0 flex-1 overflow-clip">
+        <div data-dock-wrapper className="min-h-0 flex-1 overflow-clip">
           <DockviewReact
             theme={themeDark}
             components={COMPONENTS}

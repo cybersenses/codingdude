@@ -1283,4 +1283,21 @@ Small tracked issues in codingdude's own tooling/docs that don't belong to featu
 ## R87 — R87: Wireframes v2 — renderer quality + artifact surfacing in chat
 **Status:** done
 
+**Audience:** human
+
 Live-use feedback on the R85 wireframes feature (first real pack emitted 2026-11-11): (1) emitted wireframes/HTML artifacts have zero chat presence — the only surface is the Artifacts dock panel, repeating the #189 bug class; (2) the renderer output "a kid with a crayon could have done better" — no proportions (grid auto-sizing), no widget affordances (widget vocab rendered as text tags), notes crammed inline, minimal flow map. Wave: DSL proportions, widget sketches, screen frames, flow map v2, chat card + View deep-link, visual-gate evidence.
+
+## R88 — Wireframes View bug: sidebar-band docking + dock-wrapper auto-scroll
+**Status:** done
+
+**Audience:** human
+
+User reports (post-bounce, current bundle): clicking View on a wireframe card makes the screen unusable — "little flat piece with no controls", content strip at top + black void below; refresh fixes.
+
+Probed live 2026-11-13 on the user's exact saved layout (fresh browser, bundle v0.4.0+3404829, server 2c180d4):
+- CLOSED path repro'd: `show:artifacts` with no editor picks `anyGridPanel` → nav (first in openIds) → Artifacts docks as a 305px band inside the sidebar column ("flat piece").
+- After addPanel+setActive the dock wrapper (`min-h-0 flex-1 overflow-hidden`, scrollHeight ~1752 due to parked always-renderer overlays) auto-scrolls 475px → whole grid shifts up, black void below.
+- Matches user's PhotoEvidence screenshot. Refresh resets scroll (+ saves corrupted layout within 400ms debounce in probe).
+- OPEN path (Artifacts already a tab) is benign in probe: setActive only, geometry unchanged.
+
+Fix plan: artifacts fallback prefers chat group via 'within' (never nav; 'below' reserved for editor); belt: wrapper overflow-hidden → overflow-clip so it can never scroll. TDD: flip the two #328 nav pins, add chat/trace/nav-only pins; live Playwright loop re-verification.

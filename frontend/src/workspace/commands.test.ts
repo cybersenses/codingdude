@@ -225,16 +225,10 @@ describe('runCommand', () => {
   })
 })
 
-// R87 #328: the chat card's View deep-link used to dock Artifacts INTO the
-// active group as a tab, burying the editor (EditorArtifacts strip) and
-// persisting the merged layout. Artifacts must open as its own group BELOW
-// the editor instead; every other panel keeps the dock-within-active policy
-// (pinned unmodified in the runCommand block above).
-// R88 #331: the no-editor fallback used anyGridPanel, whose first hit is nav
-// (panel creation order) — View docked Artifacts as a ~305px band inside the
-// sidebar column and the wrapper auto-scroll hid the grid (probed live on the
-// user's saved layout). Without an editor, Artifacts joins the chat group as
-// a tab (its historic home), falling back to any grid panel EXCEPT nav.
+// R87 #328 / R88 #331: Artifacts has its own placement policy - the why and
+// the probed history live on `artifactsPlacement()` in commands.ts. These pin
+// the shapes it must produce; every other panel keeps the dock-within-active
+// policy (pinned unmodified in the runCommand block above).
 describe('show:artifacts deep-link placement (#328, #331)', () => {
   it('docks Artifacts below the editor group instead of burying the editor as a tab', () => {
     const api = fakeApi()
