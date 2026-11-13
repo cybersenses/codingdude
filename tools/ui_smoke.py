@@ -30,7 +30,12 @@ panels' geometry (recorded, not asserted), then opens every remaining catalogue
 panel (fourteen through the command palette, Waterfall by clicking its row in
 the sidebar's panel list - R64) and checks it renders, and finally that Monaco reflows
 with its container: the window is narrowed and restored and the editor must
-narrow with it and come back. Nothing is hidden or moved, so
+narrow with it and come back. Last, the R88 #331 closed-path View probe
+(`view_layout`): the user's saved no-editor layout is seeded, Artifacts is
+closed, a wireframe card's View deep-link is clicked, and the placement/belt/
+scroll contract is asserted — a report without `view_layout` (no emitted
+artifact card in this session) exempts the step, present-without-ok is a
+defect. Nothing is hidden or moved, so
 `renderer: 'always'` — which only matters for a hidden panel — is not what this
 exercises. The hidden-then-revealed variant is NOT covered — see
 `_monaco_reflow` for why the dock cannot hide a panel without UI it has not
@@ -115,7 +120,11 @@ SIDEBAR_PROBE_PANEL = "waterfall"
 # The panel's own error banner (#231): present means the panel's fetch failed.
 # The walk joins this attribute to a panel id via `_panel_banner_selector`.
 POLL_ERROR_SELECTOR = "[data-poll-error]"
-CRASH_MARKER = "UI crashed"
+# The crash boundary's own attribute (chrome/ErrorBoundary.jsx). A *text* scan
+# for its heading false-positived on any session whose chat carries a pasted
+# crash trace - the gate read the user's own paste as a live crash and never
+# reached a single assertion. The marker is structure, not prose.
+CRASH_SELECTOR = "[data-ui-crash]"
 REPO = Path(__file__).resolve().parents[1]
 CATALOGUE_TS = REPO / "frontend" / "src" / "workspace" / "catalogue.ts"
 # Console errors that are the app working as designed, not defects: the boot
@@ -289,7 +298,7 @@ def _walk_dock(page, report: dict, base: str, workdir: str, shots: Path | None) 
 
     _record_sessions(page, report, base, workdir)
 
-    if CRASH_MARKER in page.content():
+    if page.locator(CRASH_SELECTOR).count() > 0:
         report["crashed"] = "on boot"
         return
 
@@ -339,7 +348,7 @@ def _walk_dock(page, report: dict, base: str, workdir: str, shots: Path | None) 
         found += 1
         tab.click()
         page.wait_for_timeout(700)
-        crashed = CRASH_MARKER in page.content()
+        crashed = page.locator(CRASH_SELECTOR).count() > 0
         # `data-panel` is the attribute the shell puts on each panel root — the
         # tab bar saying "Chat" proves a tab exists, not that its body rendered.
         panel = page.locator(f'[data-panel="{panel_id}"]')
@@ -373,6 +382,9 @@ def _walk_dock(page, report: dict, base: str, workdir: str, shots: Path | None) 
     report["tab_count"] = found
     if not report.get("crashed"):
         _monaco_reflow(page, report, shots)
+        # Last: it seeds a layout and reloads the page, which discards any
+        # per-panel state the walk above established.
+        _view_layout(page, report, shots)
 
 
 def _panel_resize(page, report: dict) -> None:
@@ -486,6 +498,16 @@ def _monaco_reflow(page, report: dict, shots: Path | None) -> None:
     if tab is not None:
         tab.click()
         page.wait_for_timeout(300)
+    # #333: the walk leaves Explorer a background tab, and a dock panel that
+    # was never active has not fetched its tree — the README opener then does
+    # not exist and this probe recorded "the editor never mounted" on a healthy
+    # app. Establish the precondition here rather than inheriting tab order.
+    explorer = _dock_tab(page, "Explorer")
+    if explorer is not None:
+        explorer.click()
+        if not _wait_for_tree(page, timeout_ms=30_000):
+            report["monaco"] = "the explorer tree never loaded"
+            return
     # Root-level file in the session's workdir, so the explorer has a stable,
     # unambiguous target to open. A workdir with no README.md fails loudly here
     # rather than silently skipping the check.
@@ -544,6 +566,271 @@ def _monaco_followed_its_container(m: object) -> bool:
     return abs(restored - before) <= 2
 
 
+# ---- R88 #331: the closed-path View probe ------------------------------------
+# Folded out of tools/view_layout_loop.py (a side script nothing ran, so a
+# regression in it could not fail anything). The user's report was specific:
+# clicking View on a wireframe card with the Artifacts panel CLOSED left a
+# ~305px band inside the nav column and the dock wrapper auto-scrolled, leaving
+# a strip at top and a black void below. Both defects are asserted here.
+#
+# The seeded layout is the user's, pasted verbatim from the #331 report:
+# [nav 305][chat-group(chat,config,memory,graph,artifacts) 1110][trace 1110]
+# [8-tab group 505] - no editor leaf, which is what selected the broken path.
+VIEW_LAYOUT_SEED = {
+    "v": 1,
+    "preset": "default",
+    "layout": {
+        "grid": {
+            "root": {
+                "type": "branch",
+                "data": [
+                    {"type": "leaf", "data": {"views": ["nav"], "activeView": "nav", "id": "6"}, "size": 305},
+                    {
+                        "type": "branch",
+                        "data": [
+                            {
+                                "type": "leaf",
+                                "data": {
+                                    "views": ["chat", "config", "memory", "graph", "artifacts"],
+                                    "activeView": "artifacts",
+                                    "id": "3",
+                                },
+                                "size": 659,
+                            },
+                            {"type": "leaf", "data": {"views": ["trace"], "activeView": "trace", "id": "1"}, "size": 194},
+                        ],
+                        "size": 1110,
+                    },
+                    {
+                        "type": "leaf",
+                        "data": {
+                            "views": ["renders", "terminal", "processes", "explorer", "planning", "waterfall", "notes", "output"],
+                            "activeView": "planning",
+                            "id": "2",
+                        },
+                        "size": 505,
+                    },
+                ],
+                "size": 853,
+            },
+            "width": 1920,
+            "height": 853,
+            "orientation": "HORIZONTAL",
+        },
+        "panels": {
+            "nav": {"id": "nav", "contentComponent": "nav", "title": "Projects & sessions", "minimumWidth": 180},
+            "chat": {"id": "chat", "contentComponent": "chat", "title": "Chat", "renderer": "always", "minimumWidth": 280},
+            "config": {"id": "config", "contentComponent": "config", "title": "Config", "renderer": "always"},
+            "memory": {"id": "memory", "contentComponent": "memory", "title": "Memory"},
+            "graph": {"id": "graph", "contentComponent": "graph", "title": "Graph"},
+            "artifacts": {"id": "artifacts", "contentComponent": "artifacts", "title": "Artifacts", "renderer": "always"},
+            "trace": {"id": "trace", "contentComponent": "trace", "title": "Trace"},
+            "renders": {"id": "renders", "contentComponent": "renders", "title": "Renders", "renderer": "always"},
+            "terminal": {"id": "terminal", "contentComponent": "terminal", "title": "Terminal", "renderer": "always"},
+            "processes": {"id": "processes", "contentComponent": "processes", "title": "Processes"},
+            "explorer": {"id": "explorer", "contentComponent": "explorer", "title": "Explorer", "minimumWidth": 140},
+            "planning": {"id": "planning", "contentComponent": "planning", "title": "Planning"},
+            "waterfall": {"id": "waterfall", "contentComponent": "waterfall", "title": "Waterfall"},
+            "notes": {"id": "notes", "contentComponent": "notes", "title": "Notes"},
+            "output": {"id": "output", "contentComponent": "output", "title": "Output"},
+        },
+        "activeGroup": "3",
+    },
+}
+
+_SEED_LAYOUT_JS = """(layout) => {
+  localStorage.setItem('cd-layout-v1', JSON.stringify(layout));
+}"""
+
+_CLOSE_ARTIFACTS_JS = """() => {
+  const tab = [...document.querySelectorAll('.dv-tab')].find(
+    (t) => (t.textContent || '').indexOf('Artifacts') !== -1,
+  );
+  const close = tab && tab.querySelector('.dv-default-tab-action');
+  if (!close) return false;
+  close.click();
+  return true;
+}"""
+
+_ACTIVATE_CHAT_JS = """() => {
+  const tab = [...document.querySelectorAll('.dv-tab')].find(
+    (t) => (t.textContent || '').trim() === 'Chat',
+  );
+  if (!tab) return false;
+  tab.click();
+  return true;
+}"""
+
+_CLICK_VIEW_JS = """() => {
+  // The button lives in the chat panel's render overlay: Playwright's mouse
+  // click reports "outside of the viewport" against dockview's parked overlay
+  // geometry, so dispatch the DOM click the button actually listens for.
+  const card = document.querySelector('button[data-view-artifact]');
+  if (!card) return false;
+  card.click();
+  return true;
+}"""
+
+_MEASURE_LAYOUT_JS = """() => {
+  const box = (el) => {
+    const r = el.getBoundingClientRect();
+    return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) };
+  };
+  const groups = [...document.querySelectorAll('.dv-groupview')].map((g) => ({
+    tabs: [...g.querySelectorAll('.dv-tab')].map((t) => (t.textContent || '').trim()),
+    box: box(g),
+  }));
+  // The wrapper is the element our JSX puts around DockviewReact, tagged
+  // `data-dock-wrapper`: a class-name guess matched dockview's own scroll
+  // container instead (overflow: visible) and failed the belt on a healthy app.
+  const wrapper = document.querySelector('[data-dock-wrapper]');
+  const saved = JSON.parse(localStorage.getItem('cd-layout-v1') || 'null');
+  const leaves = [];
+  const walk = (n) => {
+    if (!n) return;
+    if (n.type === 'leaf') leaves.push(n.data.views);
+    if (n.type === 'branch') (n.data || []).forEach(walk);
+  };
+  if (saved && saved.layout) walk(saved.layout.grid.root);
+  const artifacts = groups.find((g) => g.tabs.indexOf('Artifacts') !== -1);
+  return {
+    wrapper_overflow: wrapper ? getComputedStyle(wrapper).overflow : null,
+    wrapper_scroll_top: wrapper ? wrapper.scrollTop : null,
+    artifacts_box: artifacts ? artifacts.box : null,
+    groups,
+    doc: [document.documentElement.scrollWidth, document.documentElement.scrollHeight],
+    viewport: [window.innerWidth, window.innerHeight],
+    saved_leaves: leaves,
+  };
+}"""
+
+
+def _view_layout_failures(m: dict) -> list[str]:
+    """Every #331 assertion over one measurement set (pure: the tests drive it).
+
+    One entry per shipped defect, so a failure names the bug rather than a
+    generic "layout wrong": the sidebar band, the belt, the void, the document
+    scroll and the persisted layout all fail separately.
+
+    The numeric guards derive from `VIEW_LAYOUT_SEED`'s geometry — nav column
+    305, the chat/trace column pair 1110 wide, grid height 853 — so a seed with
+    a different shape needs these re-derived, not reused.
+    """
+    fails: list[str] = []
+    # The belt: overflow-hidden was still programmatically scrollable, so the
+    # dock wrapper's focus auto-scroll slid the whole grid up.
+    if m.get("wrapper_overflow") != "clip":
+        fails.append(f"belt: wrapper overflow={m.get('wrapper_overflow')}, expected clip")
+    if m.get("wrapper_scroll_top") not in (0, None):
+        fails.append(f"belt: wrapper scrolled (scrollTop={m.get('wrapper_scroll_top')})")
+    # Placement: the center column, not a band inside the nav sidebar.
+    art = m.get("artifacts_box")
+    if not art:
+        fails.append("placement: no Artifacts group after View")
+    elif art["x"] < 300 or art["w"] < 900:
+        fails.append(f"placement: Artifacts landed as a sidebar band {art}")
+    groups = m.get("groups") or []
+    if any((g.get("box") or {}).get("y", 0) < 0 for g in groups):
+        fails.append("void: a group scrolled off-screen top")
+    bottoms = [b for b in ((g.get("box") or {}).get("y", 0) + (g.get("box") or {}).get("h", 0) for g in groups) if b]
+    if bottoms and max(bottoms) < 850:
+        fails.append(f"void: grid ends at y={max(bottoms)} (<850) - black void below")
+    if m.get("doc") != m.get("viewport"):
+        fails.append(f"document scroll {m.get('doc')} != viewport {m.get('viewport')}")
+    # The debounced save must not persist an artifacts-only sidebar leaf.
+    if any(v == ["artifacts"] for v in m.get("saved_leaves") or []):
+        fails.append("save: artifacts-only sidebar leaf persisted")
+    return fails
+
+
+def _await_tab(page, label: str, present: bool, timeout_ms: int = 15_000) -> bool:
+    """Wait until the dock does (or no longer does) show a tab labelled `label`.
+
+    A deterministic condition, not a sleep: the R231 lesson was that a fixed
+    wait photographs whichever state the machine happened to reach.
+    """
+    expression = (
+        "([label, want]) => [...document.querySelectorAll('.dv-tab')]"
+        ".some((t) => (t.textContent || '').includes(label)) === want"
+    )
+    try:
+        page.wait_for_function(expression, arg=[label, present], timeout=timeout_ms)
+        return True
+    except Exception:
+        # The caller records a named reason: a timeout here is a diagnosis, and
+        # swallowing it silently is what turned #231 into a false green.
+        return False
+
+
+def _await_view_card(page, timeout_ms: int) -> bool:
+    """Whether the chat panel rendered a View deep-link (an `emitted` card).
+
+    The card is fed by the artifacts fetch, so its *presence* is the condition
+    — waiting on the dock tab instead raced the fetch and reported "no View
+    button" on a healthy session.
+    """
+    try:
+        page.wait_for_function(
+            "(sel) => document.querySelector(sel) !== null",
+            arg="button[data-view-artifact]",
+            timeout=timeout_ms,
+        )
+        return True
+    except Exception:
+        # Diagnosed by the caller: absence before the run means the step cannot
+        # run, absence after the reload names a failure.
+        return False
+
+
+def _view_layout(page, report: dict, shots: Path | None) -> None:
+    """R88 #331: View on a wireframe card with Artifacts closed, no editor leaf.
+
+    Absent `view_layout` means the step could not run (no emitted artifact card
+    in this session) and `verdict()` exempts it; present-without-`ok` is a
+    defect, like R65's resize probe.
+    """
+    if not _await_view_card(page, timeout_ms=8_000):
+        return
+    probe: dict = {"ok": False}
+    report["view_layout"] = probe
+    page.set_viewport_size({"width": 1920, "height": 949})
+    page.evaluate(_SEED_LAYOUT_JS, VIEW_LAYOUT_SEED)
+    # A real navigation, not `location.reload()` inside the evaluate: the
+    # in-page call destroys the execution context mid-wait, which the tab
+    # predicate below would read as a timeout on a healthy reload.
+    page.reload(wait_until="domcontentloaded")
+    if not _await_tab(page, "Artifacts", present=True):
+        probe["reason"] = "seeded user layout did not restore the Artifacts tab"
+        return
+    if not _await_view_card(page, timeout_ms=20_000):
+        probe["reason"] = "no View button in the chat panel after the layout seed"
+        return
+    if not page.evaluate(_CLOSE_ARTIFACTS_JS):
+        probe["reason"] = "Artifacts tab has no close affordance"
+        return
+    if not _await_tab(page, "Artifacts", present=False):
+        probe["reason"] = "Artifacts tab did not close"
+        return
+    if not page.evaluate(_ACTIVATE_CHAT_JS):
+        probe["reason"] = "no Chat tab to activate before clicking View"
+        return
+    if not page.evaluate(_CLICK_VIEW_JS):
+        probe["reason"] = "no View button in the chat panel"
+        return
+    if not _await_tab(page, "Artifacts", present=True):
+        probe["reason"] = "Artifacts did not reopen after View"
+        return
+    measure = page.evaluate(_MEASURE_LAYOUT_JS)
+    probe.update(measure)
+    if shots:
+        page.screenshot(path=str(shots / "view-layout.png"))
+    fails = _view_layout_failures(measure)
+    if fails:
+        probe["reason"] = "; ".join(fails)
+        return
+    probe["ok"] = True
+
+
 def verdict(report: dict) -> int:
     """1 when the run reveals a defect, else 0.
 
@@ -591,6 +878,11 @@ def verdict(report: dict) -> int:
     # reason key when it ran and did not pass.
     resize = report.get("chat_resize")
     resize_failed = isinstance(resize, dict) and resize.get("resized") is not True
+    # R88 #331: the closed-path View placement/belt probe. Same exemption
+    # pattern: absent means the step could not run (no artifact card emitted in
+    # this session); present-without-ok is a defect.
+    view_layout = report.get("view_layout")
+    view_layout_failed = isinstance(view_layout, dict) and view_layout.get("ok") is not True
     failed = (
         report.get("crashed") is not None
         or report.get("page_errors")
@@ -602,6 +894,7 @@ def verdict(report: dict) -> int:
         or monaco_failed
         or sidebar_failed
         or resize_failed
+        or view_layout_failed
         or any(tab_failed(v) for v in (report.get("tabs") or {}).values())
     )
     return 1 if failed else 0

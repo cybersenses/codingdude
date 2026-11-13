@@ -29,7 +29,7 @@ export class ErrorBoundary extends React.Component {
   render() {
     if (this.state.error) {
       return (
-        <div className="flex h-screen items-center justify-center bg-neutral-900 p-6">
+        <div data-ui-crash className="flex h-screen items-center justify-center bg-neutral-900 p-6">
           <div className="max-w-lg rounded-lg border border-danger/60 bg-neutral-950 p-6">
             <h1 className="mb-2 text-lg font-bold text-danger">UI crashed</h1>
             <pre className="mb-4 whitespace-pre-wrap text-xs text-neutral-400">

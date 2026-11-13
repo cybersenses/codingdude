@@ -128,6 +128,45 @@ export function filterCommands(cmds: PaletteCommand[], query: string): PaletteCo
   return cmds.filter((c) => c.label.toLowerCase().includes(q))
 }
 
+/**
+ * Where a `show:` panel is docked when it is added to the grid.
+ * `reference` undefined = no position argument: an empty layout has nothing to
+ * dock against, so dockview seeds the first group.
+ */
+export interface PanelPlacement {
+  reference?: string
+  direction: 'below' | 'within'
+}
+
+/**
+ * R87 #328 / R88 #331: the Artifacts deep-link placement policy.
+ *
+ * A deep-link open (chat-card View, nav, palette) must not merge into the
+ * active group as a tab — that buried the editor behind an EditorArtifacts
+ * strip and persisted the merged layout on the debounced save. With an editor
+ * present it becomes its own group BELOW it (mirrors diff-below-editor).
+ *
+ * Without an editor the historic `anyGridPanel` fallback picked nav (first in
+ * panel creation order), so Artifacts docked as a ~305px band inside the
+ * sidebar column — probed live 2026-11-13 on the user's saved layout. The
+ * fallback therefore joins the chat group as a tab (its historic home), and
+ * only falls to another grid panel when chat is gone. 'below' stays reserved
+ * for the editor: splitting a fallback group's height would recreate exactly
+ * the cramped band this prevents.
+ */
+export function artifactsPlacement(
+  openIds: string[],
+  inGrid: (panelId?: string) => boolean,
+): PanelPlacement {
+  if (openIds.includes('editor') && inGrid('editor')) {
+    return { reference: 'editor', direction: 'below' }
+  }
+  if (openIds.includes('chat') && inGrid('chat')) {
+    return { reference: 'chat', direction: 'within' }
+  }
+  return { reference: openIds.find((p) => inGrid(p) && p !== 'nav'), direction: 'within' }
+}
+
 export function runCommand(
   id: string,
   api: CommandApi,
@@ -145,27 +184,19 @@ export function runCommand(
     // into its floating overlay / OS window, which reads as "Show did
     // nothing" in the main window (probed in .scratch/p4_popout_probe.py).
     const activeId = api.activePanel?.id
-    // R87 #328: a deep-link open of Artifacts (chat-card View, nav, palette)
-    // must not merge into the active group as a tab — that buried the editor
-    // behind Artifacts (EditorArtifacts strip) and persisted the merged
-    // layout on the debounced save. Dock it as its own group BELOW the editor
-    // instead (mirrors diff-below-editor), falling back to any grid-resident
-    // panel when the editor is closed or lives outside the grid. Every other
-    // panel keeps the historic dock-within-active placement.
+    // R87 #328 / R88 #331: Artifacts has its own placement policy - the why
+    // lives on `artifactsPlacement()`; every other panel keeps the historic
+    // dock-within-active placement.
     const anyGridPanel = openIds.find(inGrid)
-    const reference =
+    const placement: PanelPlacement =
       pid === 'artifacts'
-        ? openIds.includes('editor') && inGrid('editor')
-          ? 'editor'
-          : anyGridPanel
-        : inGrid(activeId)
-          ? activeId
-          : anyGridPanel
+        ? artifactsPlacement(openIds, inGrid)
+        : { reference: inGrid(activeId) ? activeId : anyGridPanel, direction: 'within' }
     api.addPanel({
       ...panelOptions(spec),
       // An empty layout has no reference: dockview seeds the first group.
-      ...(reference !== undefined
-        ? { position: { direction: pid === 'artifacts' ? 'below' : 'within', referencePanel: reference } }
+      ...(placement.reference !== undefined
+        ? { position: { direction: placement.direction, referencePanel: placement.reference } }
         : {}),
     })
     api.getPanel(pid)?.api.setActive()

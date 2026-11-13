@@ -1281,6 +1281,49 @@ Findings from the 2026-11-09 trace forensics (run mY5V_HxeMdk): post-RUN_FINISHE
 Small tracked issues in codingdude's own tooling/docs that don't belong to feature umbrellas.
 
 ## R87 — R87: Wireframes v2 — renderer quality + artifact surfacing in chat
-**Status:** open
+**Status:** done
+
+**Audience:** human
 
 Live-use feedback on the R85 wireframes feature (first real pack emitted 2026-11-11): (1) emitted wireframes/HTML artifacts have zero chat presence — the only surface is the Artifacts dock panel, repeating the #189 bug class; (2) the renderer output "a kid with a crayon could have done better" — no proportions (grid auto-sizing), no widget affordances (widget vocab rendered as text tags), notes crammed inline, minimal flow map. Wave: DSL proportions, widget sketches, screen frames, flow map v2, chat card + View deep-link, visual-gate evidence.
+
+## R88 — Wireframes View bug: sidebar-band docking + dock-wrapper auto-scroll
+**Status:** done
+
+**Audience:** human
+
+User reports (post-bounce, current bundle): clicking View on a wireframe card makes the screen unusable — "little flat piece with no controls", content strip at top + black void below; refresh fixes.
+
+Probed live 2026-11-13 on the user's exact saved layout (fresh browser, bundle v0.4.0+3404829, server 2c180d4):
+- CLOSED path repro'd: `show:artifacts` with no editor picks `anyGridPanel` → nav (first in openIds) → Artifacts docks as a 305px band inside the sidebar column ("flat piece").
+- After addPanel+setActive the dock wrapper (`min-h-0 flex-1 overflow-hidden`, scrollHeight ~1752 due to parked always-renderer overlays) auto-scrolls 475px → whole grid shifts up, black void below.
+- Matches user's PhotoEvidence screenshot. Refresh resets scroll (+ saves corrupted layout within 400ms debounce in probe).
+- OPEN path (Artifacts already a tab) is benign in probe: setActive only, geometry unchanged.
+
+Fix plan: artifacts fallback prefers chat group via 'within' (never nav; 'below' reserved for editor); belt: wrapper overflow-hidden → overflow-clip so it can never scroll. TDD: flip the two #328 nav pins, add chat/trace/nav-only pins; live Playwright loop re-verification.
+
+**Shipped** (commits `a70782b`, `539eccf`, `3d2a64c`, `bd99cbe`): the fallback
+is extracted as `artifactsPlacement()` in frontend/src/workspace/commands.ts
+(chat-group tab, nav excluded, 'below' reserved for the editor); the dock
+wrapper belt uses `overflow-clip` (tagged `data-dock-wrapper`); the closed-path
+probe lives in tools/ui_smoke.py as the `view_layout` step — pure
+`_view_layout_failures()` driven by tests/test_ui_smoke_verdict.py, deterministic
+`wait_for_function` predicates instead of fixed sleeps, crash detection keyed on
+the `data-ui-crash` boundary attribute; the standalone loop script
+tools/view_layout_loop.py is removed. Gate green 2026-11-13: wrapper
+overflow=clip, scrollTop 0, Artifacts docked 1110px wide in the center column,
+document scroll == the 1920x949 viewport. Known sibling gap filed separately
+(#334): non-Artifacts `show:` keeps the historic nav-preferring fallback, so a
+panel shown while the active panel is floating and no editor is open can join
+the nav column — same band shape, ticketed rather than fixed here.
+
+## R89 — R86 review findings carried out of scope
+**Status:** open
+
+**Audience:** human
+
+Catch-all under R86 for review findings that are real but out of scope of the
+ticket they were found on, filed so they are not lost. First entry: the
+non-artifacts `show:` nav-preferring fallback (band-shape docking when the
+active panel is floating/popped out and no editor is open) — surfaced by the
+post-push review of 3df4f9d..bd99cbe while verifying R88 #331's fix scope.

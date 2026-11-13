@@ -334,3 +334,123 @@ def test_visible_key_absence_does_not_fail_a_tab():
     # cannot fail.
     bare_tab = {"crashed": False, "placeholder": False, "poll_error": None, "chars": 40}
     assert verdict(clean(tabs={"Diff": bare_tab})) == 0
+
+
+def test_monaco_probe_establishes_its_own_explorer_precondition():
+    """#333: the probe opened the README from an Explorer that never loaded.
+
+    The walk leaves Explorer a background tab, and a dock panel that was never
+    the active tab has not fetched its tree, so the README opener did not exist
+    and the gate recorded "the editor never mounted" on a healthy app. The
+    probe must now activate Explorer and wait for the tree itself — otherwise
+    the `automaticLayout` regression it guards goes unproven.
+    """
+    src = (
+        Path(__file__).resolve().parents[1] / "tools" / "ui_smoke.py"
+    ).read_text(encoding="utf-8")
+    reflow = src[src.index("def _monaco_reflow") : src.index("def _monaco_followed")]
+    assert '_dock_tab(page, "Explorer")' in reflow
+    assert "_wait_for_tree(" in reflow
+    # The precondition check comes before the README lookup, or it is theatre.
+    assert reflow.index("_wait_for_tree(") < reflow.index('button[title="README.md"]')
+
+
+# ---- R88 #331: the closed-path View probe ------------------------------------
+# It used to live in tools/view_layout_loop.py, a side script nothing ran: a
+# probe that cannot fail the gate rots like any other untested code.
+
+
+def view_report(**overrides) -> dict:
+    """A passing measurement set: center-column Artifacts, no scroll, no void."""
+    measure = {
+        "wrapper_overflow": "clip",
+        "wrapper_scroll_top": 0,
+        "artifacts_box": {"x": 305, "y": 0, "w": 1110, "h": 700},
+        "groups": [
+            {"tabs": ["nav"], "box": {"x": 0, "y": 0, "w": 305, "h": 853}},
+            {"tabs": ["chat", "artifacts"], "box": {"x": 305, "y": 0, "w": 1110, "h": 853}},
+        ],
+        "doc": [1920, 949],
+        "viewport": [1920, 949],
+        "saved_leaves": [["nav"], ["chat", "artifacts"]],
+    }
+    measure.update(overrides)
+    return measure
+
+
+def test_view_layout_probe_pass_and_failures_reach_the_verdict():
+    assert verdict(dock_report(view_layout={"ok": True, **view_report()})) == 0
+    # Ran but did not finish (tab never reopened, no card): not a pass.
+    assert verdict(dock_report(view_layout={"reason": "Artifacts did not reopen"})) == 1
+    assert (
+        verdict(dock_report(view_layout={"ok": False, "reason": "belt: wrapper overflow"}))
+        == 1
+    )
+    # Absent: exempt. A session with no emitted artifact card cannot run the
+    # step, and every pre-R88 report lacks the key (same pattern as chat_resize).
+    assert verdict(dock_report()) == 0
+
+
+def test_view_layout_measurements_fail_on_each_shipped_defect():
+    """Each assertion stands for one half of the bug the user reported."""
+    from ui_smoke import _view_layout_failures  # noqa: PLC0415 - tool import
+
+    assert _view_layout_failures(view_report()) == []
+    # 'below nav': the ~305px sidebar band that made the screen unusable.
+    band = {"x": 0, "y": 0, "w": 305, "h": 700}
+    failures = _view_layout_failures(view_report(artifacts_box=band))
+    assert any("sidebar band" in f for f in failures)
+    # The belt: the wrapper is programmatically scrollable again.
+    assert _view_layout_failures(view_report(wrapper_overflow="hidden"))
+    assert _view_layout_failures(view_report(wrapper_scroll_top=475))
+    # The void: grid shifted up / never reaching the dock bottom.
+    shifted = [{"tabs": ["chat"], "box": {"x": 0, "y": -475, "w": 1920, "h": 853}}]
+    assert any("off-screen" in f for f in _view_layout_failures(view_report(groups=shifted)))
+    short = [{"tabs": ["chat"], "box": {"x": 0, "y": 0, "w": 1920, "h": 190}}]
+    assert any("void" in f for f in _view_layout_failures(view_report(groups=short)))
+    # A page that scrolled, or a save that persisted an artifacts-only leaf.
+    assert _view_layout_failures(view_report(doc=[1920, 2000]))
+    assert _view_layout_failures(view_report(saved_leaves=[["artifacts"]]))
+    # Artifacts sharing the nav leaf is *placement*'s job (x/w above), not the
+    # save check's: it only guards the artifacts-only leaf the split created.
+    assert _view_layout_failures(view_report(saved_leaves=[["nav", "artifacts"]])) == []
+
+
+def test_view_layout_probe_is_wired_into_the_walk_and_cannot_be_deleted():
+    """`verdict()` exempts an absent key, so deleting the probe reads clean.
+
+    Pinned the way R65's resize probe is pinned: the report key, the call site
+    and the parts that make it a test of #331 rather than of dockview — the
+    belt check, a deterministic wait (a fixed sleep photographs whichever state
+    the machine reached), and a labelled failure instead of a raw in-page
+    TypeError when the card is missing.
+    """
+    root = Path(__file__).resolve().parents[1]
+    src = (root / "tools" / "ui_smoke.py").read_text(encoding="utf-8")
+    assert 'report["view_layout"]' in src
+    assert "_view_layout(page, report" in src
+    assert "'clip'" in src or '"clip"' in src
+    assert "wait_for_function" in src
+    assert "no View button" in src
+    # One seam, not two: the standalone loop it was folded out of is gone.
+    assert not (root / "tools" / "view_layout_loop.py").exists()
+
+
+def test_crash_detection_is_structural_not_a_text_scan():
+    """The gate aborted "crashed on boot" on a *healthy* app.
+
+    `CRASH_MARKER in page.content()` matched the boundary's heading inside a
+    chat message - the user's own pasted crash trace from the bug report - so
+    every run in that session returned before its first assertion. The marker
+    is now the boundary's attribute; both halves of that contract are pinned
+    here because neither file's own tests can see the other.
+    """
+    root = Path(__file__).resolve().parents[1]
+    src = (root / "tools" / "ui_smoke.py").read_text(encoding="utf-8")
+    assert 'CRASH_SELECTOR = "[data-ui-crash]"' in src
+    assert "locator(CRASH_SELECTOR)" in src
+    assert "CRASH_MARKER in page.content()" not in src
+    jsx = (root / "frontend" / "src" / "chrome" / "ErrorBoundary.jsx").read_text(
+        encoding="utf-8"
+    )
+    assert "data-ui-crash" in jsx

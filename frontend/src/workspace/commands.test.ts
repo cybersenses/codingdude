@@ -22,11 +22,15 @@ import { PRESETS } from './catalogue'
 
 function fakeApi(overrides: Partial<CommandApi> = {}): CommandApi & { calls: string[] } {
   const calls: string[] = []
-  const panels = [
+  const panels: Array<{ id: string }> = [
     { id: 'nav' },
     { id: 'editor' },
     { id: 'chat' },
   ]
+  // R88 #331: a panels override must also drive getPanel — the placement
+  // fallback consults getPanel(p).group for every open id, so a stale
+  // closure list would report every overridden panel as unknown.
+  if (overrides.panels) panels.splice(0, panels.length, ...overrides.panels)
   const groups = [{ id: 'g1', api: { location: { type: 'grid' } } }]
   const api = {
     calls,
@@ -221,19 +225,18 @@ describe('runCommand', () => {
   })
 })
 
-// R87 #328: the chat card's View deep-link used to dock Artifacts INTO the
-// active group as a tab, burying the editor (EditorArtifacts strip) and
-// persisting the merged layout. Artifacts must open as its own group BELOW
-// the editor instead; every other panel keeps the dock-within-active policy
-// (pinned unmodified in the runCommand block above).
-describe('show:artifacts deep-link placement (#328)', () => {
+// R87 #328 / R88 #331: Artifacts has its own placement policy - the why and
+// the probed history live on `artifactsPlacement()` in commands.ts. These pin
+// the shapes it must produce; every other panel keeps the dock-within-active
+// policy (pinned unmodified in the runCommand block above).
+describe('show:artifacts deep-link placement (#328, #331)', () => {
   it('docks Artifacts below the editor group instead of burying the editor as a tab', () => {
     const api = fakeApi()
     expect(runCommand('show:artifacts', api, ctx())).toBe(true)
     expect(api.calls[0]).toBe('addPanel:artifacts:{"direction":"below","referencePanel":"editor"}')
   })
 
-  it('never references a floating editor; falls back to a grid-resident panel', () => {
+  it('never references a floating editor; joins the grid-resident chat group instead', () => {
     const api = fakeApi()
     const floatGroup = { id: 'g9', api: { location: { type: 'floating' } } }
     ;(api as unknown as { getPanel: unknown }).getPanel = (id: string) => ({
@@ -245,13 +248,25 @@ describe('show:artifacts deep-link placement (#328)', () => {
       group: id === 'editor' ? floatGroup : { id: 'g1', api: { location: { type: 'grid' } } },
     })
     expect(runCommand('show:artifacts', api, ctx())).toBe(true)
-    expect(api.calls[0]).toBe('addPanel:artifacts:{"direction":"below","referencePanel":"nav"}')
+    expect(api.calls[0]).toBe('addPanel:artifacts:{"direction":"within","referencePanel":"chat"}')
   })
 
-  it('falls back to any grid panel when the editor is closed', () => {
+  it('joins the chat group as a tab when the editor is closed', () => {
     const api = fakeApi({ panels: [{ id: 'nav' }, { id: 'chat' }], activePanel: { id: 'chat' } })
     expect(runCommand('show:artifacts', api, ctx())).toBe(true)
-    expect(api.calls[0]).toBe('addPanel:artifacts:{"direction":"below","referencePanel":"nav"}')
+    expect(api.calls[0]).toBe('addPanel:artifacts:{"direction":"within","referencePanel":"chat"}')
+  })
+
+  it('never docks into the nav sidebar column; falls to the next grid panel', () => {
+    const api = fakeApi({ panels: [{ id: 'nav' }, { id: 'trace' }], activePanel: { id: 'trace' } })
+    expect(runCommand('show:artifacts', api, ctx())).toBe(true)
+    expect(api.calls[0]).toBe('addPanel:artifacts:{"direction":"within","referencePanel":"trace"}')
+  })
+
+  it('omits the position when nav is the only open panel (no sidebar docking)', () => {
+    const api = fakeApi({ panels: [{ id: 'nav' }], activePanel: { id: 'nav' } })
+    expect(runCommand('show:artifacts', api, ctx())).toBe(true)
+    expect(api.calls[0]).toBe('addPanel:artifacts:null')
   })
 })
 
