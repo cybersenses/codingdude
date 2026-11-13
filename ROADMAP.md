@@ -1327,3 +1327,10 @@ ticket they were found on, filed so they are not lost. First entry: the
 non-artifacts `show:` nav-preferring fallback (band-shape docking when the
 active panel is floating/popped out and no editor is open) — surfaced by the
 post-push review of 3df4f9d..bd99cbe while verifying R88 #331's fix scope.
+
+## R90 — Reviewer repo access + ask_user payload hardening
+**Status:** in_progress
+
+Two proven defects from the remote reviewer investigation, both fixed and committed at `a753c51` (push pending consent): (1) the review seam constructed a tool-less reviewer whose prompt demanded reads/evidence — now gets the evaluator's read-only toolset + review.md instructions (#335); (2) malformed ask_user payloads (options as {multi:false} objects) crashed the UI with React #31 and dead-parked runs — validated at the tool boundary, normalized at the frontend pure seam, cards contained by a card-level boundary (#336). Gates: pytest 1197 passed/1 skipped, ruff, mypy, vitest 318/318, eslint, build.
+
+Two proven defects from the remote reviewer investigation: (1) the review seam constructs a tool-less reviewer whose prompt demands reads/evidence (remote symptom: "I don't have the repository in this session"); (2) malformed ask_user payloads (options as {multi:false} objects) crash the UI with React #31 and dead-park runs (no ASK_USER_RESOLVED).
