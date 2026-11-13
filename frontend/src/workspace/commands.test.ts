@@ -155,12 +155,12 @@ describe('runCommand', () => {
     expect(api.calls).toEqual(['addPanel:trace:null', 'setActive:trace'])
   })
 
-  it('shows into the grid when the active panel is popped out', () => {
+  it('falls back to a grid-resident panel that is not nav when the active panel is popped out', () => {
     // R59 P4: referencing the active panel while it lives in a popout window
-    // would pull the new panel into that OS window — probed live. The command
-    // must fall back to a grid-resident panel instead.
+    // would pull the new panel into that OS window — probed live. #334: the
+    // grid fallback must also skip nav (the #331 band shape) — chat is the
+    // first non-nav grid panel here.
     const api = fakeApi()
-    const panels = (api as unknown as { panels: Array<{ id: string }> }).panels
     const popGroup = { id: 'g9', api: { location: { type: 'popout' } } }
     ;(api as unknown as { getPanel: unknown }).getPanel = (id: string) => ({
       id,
@@ -168,10 +168,57 @@ describe('runCommand', () => {
         setActive: () => (api as unknown as { calls: string[] }).calls.push(`setActive:${id}`),
         moveTo: () => {},
       },
-      group: id === 'nav' ? { id: 'g1', api: { location: { type: 'grid' } } } : popGroup,
+      group: id === 'editor' ? popGroup : { id: 'g1', api: { location: { type: 'grid' } } },
     })
     expect(runCommand('show:trace', api, ctx())).toBe(true)
-    expect(api.calls[0]).toBe('addPanel:trace:{"direction":"within","referencePanel":"nav"}')
+    expect(api.calls[0]).toBe('addPanel:trace:{"direction":"within","referencePanel":"chat"}')
+  })
+
+  it('falls back to a grid-resident panel that is not nav when the active panel is floating', () => {
+    // #334's literal scenario, pinned separately from the popout shape above:
+    // active panel floating AND a non-nav grid panel present — the reference
+    // must be chat, not the floating active, not nav. Same inGrid-false path,
+    // asserted verbatim so the spec scenario cannot silently regress.
+    const api = fakeApi()
+    const floatGroup = { id: 'g9', api: { location: { type: 'floating' } } }
+    ;(api as unknown as { getPanel: unknown }).getPanel = (id: string) => ({
+      id,
+      api: {
+        setActive: () => (api as unknown as { calls: string[] }).calls.push(`setActive:${id}`),
+        moveTo: () => {},
+      },
+      group: id === 'editor' ? floatGroup : { id: 'g1', api: { location: { type: 'grid' } } },
+    })
+    expect(runCommand('show:trace', api, ctx())).toBe(true)
+    expect(api.calls[0]).toBe('addPanel:trace:{"direction":"within","referencePanel":"chat"}')
+  })
+
+  it('omits the position when nav is the only grid-resident panel (no sidebar band)', () => {
+    // #334: the historic fallback picked nav (first in panel-creation order),
+    // docking the panel as a tab inside the 256px sidebar column — the #331
+    // band shape. With nothing else in the grid, dockview seeds a fresh
+    // group instead (position omitted).
+    const api = fakeApi()
+    const floatGroup = { id: 'g9', api: { location: { type: 'floating' } } }
+    ;(api as unknown as { getPanel: unknown }).getPanel = (id: string) => ({
+      id,
+      api: {
+        setActive: () => (api as unknown as { calls: string[] }).calls.push(`setActive:${id}`),
+        moveTo: () => {},
+      },
+      group: id === 'nav' ? { id: 'g1', api: { location: { type: 'grid' } } } : floatGroup,
+    })
+    expect(runCommand('show:trace', api, ctx())).toBe(true)
+    expect(api.calls[0]).toBe('addPanel:trace:null')
+  })
+
+  it('never references an active nav panel; docks beside the next grid panel instead', () => {
+    // #334: with nav as the active panel (palette opened after clicking in
+    // the sidebar), 'within' nav's group made the panel a sidebar tab that
+    // the debounced save persisted — same band shape as #331.
+    const api = fakeApi({ activePanel: { id: 'nav' } })
+    expect(runCommand('show:trace', api, ctx())).toBe(true)
+    expect(api.calls[0]).toBe('addPanel:trace:{"direction":"within","referencePanel":"editor"}')
   })
 
   it('hides an open panel', () => {

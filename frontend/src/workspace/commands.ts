@@ -139,6 +139,19 @@ export interface PanelPlacement {
 }
 
 /**
+ * First open panel living in the grid that is not nav — the shared deep-link
+ * fallback reference. nav (the sidebar column) must never host a panel: a
+ * 'within' placement there is a tab strip in a ~256px column (#331's band
+ * shape, generalized to every panel family by #334).
+ */
+function firstNonNavGridPanel(
+  openIds: string[],
+  inGrid: (panelId?: string) => boolean,
+): string | undefined {
+  return openIds.find((p) => inGrid(p) && p !== 'nav')
+}
+
+/**
  * R87 #328 / R88 #331: the Artifacts deep-link placement policy.
  *
  * A deep-link open (chat-card View, nav, palette) must not merge into the
@@ -164,7 +177,7 @@ export function artifactsPlacement(
   if (openIds.includes('chat') && inGrid('chat')) {
     return { reference: 'chat', direction: 'within' }
   }
-  return { reference: openIds.find((p) => inGrid(p) && p !== 'nav'), direction: 'within' }
+  return { reference: firstNonNavGridPanel(openIds, inGrid), direction: 'within' }
 }
 
 export function runCommand(
@@ -185,13 +198,21 @@ export function runCommand(
     // nothing" in the main window (probed in .scratch/p4_popout_probe.py).
     const activeId = api.activePanel?.id
     // R87 #328 / R88 #331: Artifacts has its own placement policy - the why
-    // lives on `artifactsPlacement()`; every other panel keeps the historic
-    // dock-within-active placement.
-    const anyGridPanel = openIds.find(inGrid)
+    // lives on `artifactsPlacement()`. Every other panel keeps the historic
+    // dock-within-active placement, with one #334 carve-out: nav is never a
+    // reference — not as the active panel, not as the fallback scan — or the
+    // panel lands as a sidebar-column tab (the #331 band shape) and the
+    // debounced save persists it.
     const placement: PanelPlacement =
       pid === 'artifacts'
         ? artifactsPlacement(openIds, inGrid)
-        : { reference: inGrid(activeId) ? activeId : anyGridPanel, direction: 'within' }
+        : {
+            reference:
+              activeId !== undefined && activeId !== 'nav' && inGrid(activeId)
+                ? activeId
+                : firstNonNavGridPanel(openIds, inGrid),
+            direction: 'within',
+          }
     api.addPanel({
       ...panelOptions(spec),
       // An empty layout has no reference: dockview seeds the first group.
