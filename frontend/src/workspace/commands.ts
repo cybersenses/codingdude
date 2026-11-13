@@ -149,24 +149,33 @@ export function runCommand(
     // must not merge into the active group as a tab — that buried the editor
     // behind Artifacts (EditorArtifacts strip) and persisted the merged
     // layout on the debounced save. Dock it as its own group BELOW the editor
-    // instead (mirrors diff-below-editor), falling back to any grid-resident
-    // panel when the editor is closed or lives outside the grid. Every other
-    // panel keeps the historic dock-within-active placement.
+    // instead (mirrors diff-below-editor).
+    // R88 #331: the no-editor fallback used anyGridPanel, whose first hit is
+    // nav (panel creation order) — View docked Artifacts as a ~305px band
+    // inside the sidebar column and the dock wrapper's focus auto-scroll hid
+    // the grid (probed live 2026-11-13 on the user's saved layout). Without
+    // an editor, Artifacts joins the chat group as a tab (its historic
+    // home); if chat is closed, any grid panel EXCEPT nav. 'below' stays
+    // reserved for the editor — splitting the fallback group's height would
+    // recreate a cramped band. Every other panel keeps the historic
+    // dock-within-active placement.
     const anyGridPanel = openIds.find(inGrid)
+    const anyGridPanelNotNav = openIds.find((p) => inGrid(p) && p !== 'nav')
+    const artifactsFallback =
+      openIds.includes('chat') && inGrid('chat') ? 'chat' : anyGridPanelNotNav
     const reference =
       pid === 'artifacts'
         ? openIds.includes('editor') && inGrid('editor')
           ? 'editor'
-          : anyGridPanel
+          : artifactsFallback
         : inGrid(activeId)
           ? activeId
           : anyGridPanel
+    const direction = pid === 'artifacts' && reference === 'editor' ? 'below' : 'within'
     api.addPanel({
       ...panelOptions(spec),
       // An empty layout has no reference: dockview seeds the first group.
-      ...(reference !== undefined
-        ? { position: { direction: pid === 'artifacts' ? 'below' : 'within', referencePanel: reference } }
-        : {}),
+      ...(reference !== undefined ? { position: { direction, referencePanel: reference } } : {}),
     })
     api.getPanel(pid)?.api.setActive()
     return true

@@ -508,8 +508,13 @@ export function Workspace({ error, agentStrip, sidebar, fileWs, onAsk, sessionId
         )}
         {/* #260 belt: nothing inside the dock may ever scroll the window —
             restored dockview geometry (e.g. a stale floating panel) leaked
-            into document scroll before this. */}
-        <div className="min-h-0 flex-1 overflow-hidden">
+            into document scroll before this. R88 #331: overflow-hidden alone
+            still left the box programmatically scrollable — parked
+            always-renderer overlays inflate its scrollHeight ~2x viewport,
+            and addPanel's focus auto-scroll slid the whole grid 475px up into
+            a black void (probed live). overflow-clip forbids scrolling the
+            box in any way, programmatic included. */}
+        <div className="min-h-0 flex-1 overflow-clip">
           <DockviewReact
             theme={themeDark}
             components={COMPONENTS}
