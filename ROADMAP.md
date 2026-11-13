@@ -1301,3 +1301,29 @@ Probed live 2026-11-13 on the user's exact saved layout (fresh browser, bundle v
 - OPEN path (Artifacts already a tab) is benign in probe: setActive only, geometry unchanged.
 
 Fix plan: artifacts fallback prefers chat group via 'within' (never nav; 'below' reserved for editor); belt: wrapper overflow-hidden → overflow-clip so it can never scroll. TDD: flip the two #328 nav pins, add chat/trace/nav-only pins; live Playwright loop re-verification.
+
+**Shipped** (commits `a70782b`, `539eccf`, `3d2a64c`, `bd99cbe`): the fallback
+is extracted as `artifactsPlacement()` in frontend/src/workspace/commands.ts
+(chat-group tab, nav excluded, 'below' reserved for the editor); the dock
+wrapper belt uses `overflow-clip` (tagged `data-dock-wrapper`); the closed-path
+probe lives in tools/ui_smoke.py as the `view_layout` step — pure
+`_view_layout_failures()` driven by tests/test_ui_smoke_verdict.py, deterministic
+`wait_for_function` predicates instead of fixed sleeps, crash detection keyed on
+the `data-ui-crash` boundary attribute; the standalone loop script
+tools/view_layout_loop.py is removed. Gate green 2026-11-13: wrapper
+overflow=clip, scrollTop 0, Artifacts docked 1110px wide in the center column,
+document scroll == the 1920x949 viewport. Known sibling gap filed separately
+(#334): non-Artifacts `show:` keeps the historic nav-preferring fallback, so a
+panel shown while the active panel is floating and no editor is open can join
+the nav column — same band shape, ticketed rather than fixed here.
+
+## R89 — R86 review findings carried out of scope
+**Status:** open
+
+**Audience:** human
+
+Catch-all under R86 for review findings that are real but out of scope of the
+ticket they were found on, filed so they are not lost. First entry: the
+non-artifacts `show:` nav-preferring fallback (band-shape docking when the
+active panel is floating/popped out and no editor is open) — surfaced by the
+post-push review of 3df4f9d..bd99cbe while verifying R88 #331's fix scope.

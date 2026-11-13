@@ -30,7 +30,12 @@ panels' geometry (recorded, not asserted), then opens every remaining catalogue
 panel (fourteen through the command palette, Waterfall by clicking its row in
 the sidebar's panel list - R64) and checks it renders, and finally that Monaco reflows
 with its container: the window is narrowed and restored and the editor must
-narrow with it and come back. Nothing is hidden or moved, so
+narrow with it and come back. Last, the R88 #331 closed-path View probe
+(`view_layout`): the user's saved no-editor layout is seeded, Artifacts is
+closed, a wireframe card's View deep-link is clicked, and the placement/belt/
+scroll contract is asserted — a report without `view_layout` (no emitted
+artifact card in this session) exempts the step, present-without-ok is a
+defect. Nothing is hidden or moved, so
 `renderer: 'always'` — which only matters for a hidden panel — is not what this
 exercises. The hidden-then-revealed variant is NOT covered — see
 `_monaco_reflow` for why the dock cannot hide a panel without UI it has not
@@ -120,7 +125,6 @@ POLL_ERROR_SELECTOR = "[data-poll-error]"
 # crash trace - the gate read the user's own paste as a live crash and never
 # reached a single assertion. The marker is structure, not prose.
 CRASH_SELECTOR = "[data-ui-crash]"
-CRASH_MARKER = "UI crashed"
 REPO = Path(__file__).resolve().parents[1]
 CATALOGUE_TS = REPO / "frontend" / "src" / "workspace" / "catalogue.ts"
 # Console errors that are the app working as designed, not defects: the boot
@@ -707,6 +711,10 @@ def _view_layout_failures(m: dict) -> list[str]:
     One entry per shipped defect, so a failure names the bug rather than a
     generic "layout wrong": the sidebar band, the belt, the void, the document
     scroll and the persisted layout all fail separately.
+
+    The numeric guards derive from `VIEW_LAYOUT_SEED`'s geometry — nav column
+    305, the chat/trace column pair 1110 wide, grid height 853 — so a seed with
+    a different shape needs these re-derived, not reused.
     """
     fails: list[str] = []
     # The belt: overflow-hidden was still programmatically scrollable, so the
