@@ -34,7 +34,10 @@ from collections.abc import Callable
 from pathlib import Path
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import Caching, ProcessHistory
 from pydantic_ai.models import Model
+
+from .context import ContextManager, mechanical_compact
 
 logger = logging.getLogger(__name__)
 
@@ -252,7 +255,7 @@ class PromptAssembler:
         return model_settings
 
     def agent(self, resolved: Model, instructions: str, toolsets, settings=None,
-              retries: int = 5) -> Agent:
+              retries: int = 5, capabilities: list | None = None) -> Agent:
         """The run's Agent: model + instructions + toolsets + settings.
 
         R25: tool retries — errors are fed back to the model (see
@@ -261,14 +264,75 @@ class PromptAssembler:
         deterministic edit failures (gate findings, staleness races with a
         concurrent writer) were exhausting the old budget before the model
         could re-read and adapt.
+        R91 #337: `capabilities` carries the per-request context guard and
+        prompt caching (see context_capabilities); empty = upstream defaults.
         """
+        kwargs: dict = {}
+        if capabilities:
+            kwargs['capabilities'] = list(capabilities)
         return Agent(
             model=resolved, instructions=instructions, toolsets=toolsets,
-            model_settings=settings, retries=retries,
+            model_settings=settings, retries=retries, **kwargs,
         )
 
 
 _THINKING_PROVIDERS = ('glm', 'deepseek')
+
+
+def context_capabilities(
+    cm: ContextManager, traced: Callable[[dict], None] | None = None, *,
+    per_request: bool = True, prompt_cache: bool = True,
+) -> list:
+    """pydantic-ai capabilities for one run (R91 #337).
+
+    - ProcessHistory: mechanical per-request compaction (LLM-free) when the
+      estimate crosses compact_at — the run-start-only maybe_compact could
+      not stop mid-run growth (providers 400'd a 1.2M-token request). The
+      processor is fail-open: a guard error degrades to sending the
+      history unchanged, it never kills a run. Every firing emits a
+      CONTEXT_COMPACTED trace event (plain dict, like CONTEXT_USAGE);
+      `cleared` counts stubbed/truncated messages, and a firing that
+      reclaimed nothing still reports — silence would hide a history
+      drifting toward the provider 400 this guard exists to stop.
+    - Caching: unified `cache` ModelSettings — cache reads at ~0.1x cost
+      from the second request on (Anthropic explicit breakpoints; implicit-
+      cache models ignore it).
+    """
+    caps: list = []
+    if per_request:
+        def _guard(messages):
+            try:
+                before = cm.usage(messages)
+                if not before.needs_compaction:
+                    return messages
+                compacted, cleared = mechanical_compact(messages, cm)
+                if traced:
+                    after = cm.usage(compacted)
+                    traced({
+                        'type': 'CONTEXT_COMPACTED',
+                        'cleared': cleared,
+                        'before_tokens': before.total_tokens,
+                        'after_tokens': after.total_tokens,
+                        'model_limit': before.model_limit,
+                    })
+                    if after.needs_compaction:
+                        logger.warning(
+                            'per-request compaction insufficient: ~%s tokens '
+                            'vs limit %s (bulk outside tool returns is not '
+                            'reclaimed)', after.total_tokens,
+                            before.model_limit,
+                        )
+                return compacted
+            except Exception as exc:  # noqa: BLE001 - guard must not kill runs
+                logger.warning(
+                    'per-request compaction skipped (guard error): %s', exc
+                )
+                return messages
+
+        caps.append(ProcessHistory(_guard))
+    if prompt_cache:
+        caps.append(Caching())
+    return caps
 
 
 def supports_thinking(model: Model) -> bool:

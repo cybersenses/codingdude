@@ -43,6 +43,10 @@ def _default_config_toml(lineup: ModelLineup) -> str:
         '# Max model requests per run (pydantic-ai default 50 is too low for\n'
         '# long agentic sessions)\n'
         '# request_limit = 500\n'
+        '# Per-request context compaction + prompt caching (R91): stub oversized\n'
+        '# old tool returns before every model request; cache the prompt prefix.\n'
+        '# compact_per_request = true\n'
+        '# prompt_cache = true\n'
         '\n[shell]\n'
         '# "bash" (Git Bash) or "powershell"\n'
         'default = "bash"\n'
@@ -90,6 +94,15 @@ class ModelLineup:
     # Max model requests per run. pydantic-ai defaults to 50, which a long
     # agentic session exhausts; raise it so long runs aren't cut off.
     request_limit: int = 500
+    # Per-request context compaction (R91 #337): before EVERY model request,
+    # when the token estimate crosses `compact_at`, oversized/old tool
+    # returns are stubbed (LLM-free; parts never dropped). Set false to
+    # restore run-start-only compaction.
+    compact_per_request: bool = True
+    # Prompt caching (R91 #337): unified `cache` ModelSettings via
+    # pydantic-ai's Caching capability — cached prefixes read at ~0.1x cost
+    # from the second request on (no-op on implicit-cache models).
+    prompt_cache: bool = True
     # Cost rates per model (R10): name-or-substring -> USD per 1M tokens.
     # e.g. pricing = { deepseek-v4-pro = { input = 0.27, output = 1.1 } }
     # Models without an entry are 'unpriced' (tokens-only accounting).
@@ -280,6 +293,8 @@ class ModelLineupIn(BaseModel):
     max_tokens: int | None = Field(default=None, ge=1)
     context_limit: int | None = Field(default=None, ge=1)
     request_limit: int = Field(default=500, ge=1)
+    compact_per_request: bool = True
+    prompt_cache: bool = True
     pricing: dict[str, dict[str, float]] | None = None
     functions: dict[str, FunctionModelIn] | None = None
 
@@ -365,6 +380,8 @@ def models_payload(config: Config) -> dict:
             'max_tokens': config.models.max_tokens,
             'context_limit': config.models.context_limit,
             'request_limit': config.models.request_limit,
+            'compact_per_request': config.models.compact_per_request,
+            'prompt_cache': config.models.prompt_cache,
             'pricing': config.models.pricing,
         },
         # DE-7a (#298): per-function operator config + the registry specs
@@ -1059,6 +1076,9 @@ def load_config(home: Path | None = None) -> Config:
             max_tokens=models.get('max_tokens', defaults.models.max_tokens),
             context_limit=models.get('context_limit', defaults.models.context_limit),
             request_limit=models.get('request_limit', defaults.models.request_limit),
+            compact_per_request=models.get(
+                'compact_per_request', defaults.models.compact_per_request),
+            prompt_cache=models.get('prompt_cache', defaults.models.prompt_cache),
             pricing=models.get('pricing', defaults.models.pricing),
             functions=_parse_functions(models.get('functions')),
         ),
@@ -1177,6 +1197,8 @@ def apply_project_models(config: Config, workdir: Path) -> Config:
         'max_tokens': config.models.max_tokens,
         'context_limit': config.models.context_limit,
         'request_limit': config.models.request_limit,
+        'compact_per_request': config.models.compact_per_request,
+        'prompt_cache': config.models.prompt_cache,
         'pricing': config.models.pricing,
         # plain dicts: FunctionModelIn validates dict entries; a project
         # override that doesn't touch functions keeps the global ones
@@ -1202,6 +1224,8 @@ def apply_project_models(config: Config, workdir: Path) -> Config:
         max_tokens=validated.max_tokens,
         context_limit=validated.context_limit,
         request_limit=validated.request_limit,
+        compact_per_request=validated.compact_per_request,
+        prompt_cache=validated.prompt_cache,
         pricing=validated.pricing,
         functions={
             name: FunctionModelConfig(
