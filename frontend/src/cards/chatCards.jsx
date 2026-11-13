@@ -15,8 +15,29 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import React, { useEffect, useState } from 'react'
 import { call } from '../api'
-import { buildAnswers } from '../askUser'
+import { buildAnswers, normalizeAskQuestions } from '../askUser'
 import { requestArtifactFocus } from '../artifacts'
+import { ErrorBoundary } from '../chrome/ErrorBoundary'
+
+// R90 #336: chat cards render model-controlled payloads; the only other
+// boundary wraps the entire App, so one broken card used to kill the whole
+// workspace (React #31). Contain each card with a small inline fallback.
+function CardBoundary({ label, children }) {
+  return (
+    <ErrorBoundary
+      fallback={
+        <div
+          data-card-crash
+          className="my-2 rounded border border-danger/50 bg-surface px-3 py-2 text-xs text-danger"
+        >
+          {label} failed to render — the run is unaffected; details in the browser console.
+        </div>
+      }
+    >
+      {children}
+    </ErrorBoundary>
+  )
+}
 
 // R59 P0: moved verbatim out of App.jsx. These six render inside the chat
 // transcript and share one lifecycle (they appear mid-run and settle with the
@@ -93,19 +114,22 @@ export function EditBlock({ edit, sessionId, onRevert }) {
   )
 }
 
-export function AskUserCard({ ask, runId }) {
+export function AskUserCardBody({ ask, runId }) {
   const [picks, setPicks] = useState({})
   const [texts, setTexts] = useState({})
   const [sent, setSent] = useState(false)
   const [error, setError] = useState('')
   const [sending, setSending] = useState(false)
-  if (!ask || !ask.questions || !ask.questions.length) return null
-  if (sent) return null
+  // #336: normalize before render — options are always strings here, so an
+  // object can never reach JSX child position (React #31 came exactly from
+  // trace payloads like {"multi": false} as an option).
+  const questions = normalizeAskQuestions(ask?.questions)
+  if (sent || !questions.length) return null
   const submit = () => {
     if (sending) return
     setSending(true)
     setError('')
-    const out = buildAnswers(ask.questions || [], picks, texts)
+    const out = buildAnswers(questions, picks, texts)
     call(`/runs/${runId}/ask`, { method: 'POST', body: JSON.stringify({ answers: out }) })
       .then(() => setSent(true))
       .catch((e) => { setError(String(e)); setSending(false) })
@@ -116,8 +140,8 @@ export function AskUserCard({ ask, runId }) {
         Questions for you
       </div>
       <div className="space-y-3 px-3 py-2">
-        {(ask.questions || []).map((q) => {
-          const hasOptions = (q.options || []).length > 0
+        {questions.map((q) => {
+          const hasOptions = q.options.length > 0
           const setPick = (fn) => setPicks((a) => ({ ...a, [q.question]: fn(a[q.question]) }))
           const setText = (v) => setTexts((a) => ({ ...a, [q.question]: v }))
           return (
@@ -125,8 +149,8 @@ export function AskUserCard({ ask, runId }) {
             <div className="mb-1 text-xs text-ink">{q.question}</div>
             {hasOptions ? (
               <div className="space-y-1">
-                {(q.options || []).map((o) => (
-                  <label key={o} className="flex items-center gap-2 text-xs text-ink-muted">
+                {q.options.map((o, i) => (
+                  <label key={`${i}:${o}`} className="flex items-center gap-2 text-xs text-ink-muted">
                     <input
                       type={q.multi ? 'checkbox' : 'radio'}
                       name={q.question}
@@ -177,7 +201,15 @@ export function AskUserCard({ ask, runId }) {
   )
 }
 
-export function PendingArtifactCard({ items, onResponded }) {
+export function AskUserCard(props) {
+  return (
+    <CardBoundary label="The question card">
+      <AskUserCardBody {...props} />
+    </CardBoundary>
+  )
+}
+
+export function PendingArtifactCardBody({ items, onResponded }) {
   // #189: choice cards / spec blocks surface here in the chat so the user
   // actually sees them mid-run (the Artifacts tab alone hid them).
   // Every pending card is answerable — one shared header, one body each.
@@ -213,12 +245,12 @@ export function PendingArtifactCard({ items, onResponded }) {
           </div>
           {item.kind === 'choice' ? (
             <div className="flex flex-wrap gap-1">
-              {(item.payload.options || []).map((opt) => (
+              {(item.payload.options || []).map((opt, i) => (
                 <button
-                  key={opt}
+                  key={`${i}:${typeof opt === 'string' ? opt : ''}`}
                   className="rounded bg-neutral-800 px-2 py-0.5 text-[10px] text-neutral-200 hover:bg-brand-700 hover:text-brand-fg"
-                  onClick={() => respond(item, { pick: opt })}
-                >{opt}</button>
+                  onClick={() => respond(item, { pick: typeof opt === 'string' ? opt : '' })}
+                >{typeof opt === 'string' ? opt : '(unlabelled option)'}</button>
               ))}
             </div>
           ) : (
@@ -239,6 +271,14 @@ export function PendingArtifactCard({ items, onResponded }) {
         </div>
       ))}
     </div>
+  )
+}
+
+export function PendingArtifactCard(props) {
+  return (
+    <CardBoundary label="A pending card">
+      <PendingArtifactCardBody {...props} />
+    </CardBoundary>
   )
 }
 

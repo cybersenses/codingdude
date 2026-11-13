@@ -1302,7 +1302,7 @@ Probed live 2026-11-13 on the user's exact saved layout (fresh browser, bundle v
 
 Fix plan: artifacts fallback prefers chat group via 'within' (never nav; 'below' reserved for editor); belt: wrapper overflow-hidden → overflow-clip so it can never scroll. TDD: flip the two #328 nav pins, add chat/trace/nav-only pins; live Playwright loop re-verification.
 
-**Shipped** (commits `a70782b`, `539eccf`, `3d2a64c`, `bd99cbe`): the fallback
+**Shipped** (squash-merged as `7634c0d`, PR #217 — the per-fix commits were rewritten away by that squash): the fallback
 is extracted as `artifactsPlacement()` in frontend/src/workspace/commands.ts
 (chat-group tab, nav excluded, 'below' reserved for the editor); the dock
 wrapper belt uses `overflow-clip` (tagged `data-dock-wrapper`); the closed-path
@@ -1326,4 +1326,11 @@ Catch-all under R86 for review findings that are real but out of scope of the
 ticket they were found on, filed so they are not lost. First entry: the
 non-artifacts `show:` nav-preferring fallback (band-shape docking when the
 active panel is floating/popped out and no editor is open) — surfaced by the
-post-push review of 3df4f9d..bd99cbe while verifying R88 #331's fix scope.
+post-push review of `3df4f9d..7634c0d` (the R88 fix cycle's pre-squash range, rewritten by that squash) while verifying R88 #331's fix scope.
+
+## R90 — Reviewer repo access + ask_user payload hardening
+**Status:** in_progress
+
+Two proven defects from the remote reviewer investigation, both fixed on this branch (PR #221): (1) the review seam constructed a tool-less reviewer whose prompt demanded reads/evidence — now gets the evaluator's read-only toolset + review.md instructions (#335); (2) malformed ask_user payloads (options as {multi:false} objects) crashed the UI with React #31 and dead-parked runs — validated at the tool boundary, normalized at the frontend pure seam, cards contained by a card-level boundary (#336). Gates: pytest 1197 passed/1 skipped, ruff, mypy, vitest 318/318, eslint, build.
+
+Two proven defects from the remote reviewer investigation: (1) the review seam constructs a tool-less reviewer whose prompt demands reads/evidence (remote symptom: "I don't have the repository in this session"); (2) malformed ask_user payloads (options as {multi:false} objects) crash the UI with React #31 and dead-park runs (no ASK_USER_RESOLVED).

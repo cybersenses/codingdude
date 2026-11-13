@@ -25,7 +25,7 @@ import json
 import subprocess
 import sys
 
-from pydantic_ai.messages import ModelResponse, TextPart
+from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
 from codingdude.config import load_config
@@ -34,6 +34,47 @@ from codingdude.engine import Engine
 
 def _scripted(reply: str) -> FunctionModel:
     return FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart(content=reply)]))
+
+
+def _read_first_tool_model() -> FunctionModel:
+    """Reviewer model that tries to read a file before reporting anything.
+
+    Mirrors what the directives the reviewer is handed demand (verify against
+    the actual code): first turn emits a read_file tool call, then the file
+    content becomes the findings.
+    """
+
+    def fn(messages, info):
+        if not any(
+            getattr(p, 'part_kind', '') == 'tool-return'
+            for m in messages for p in m.parts
+        ):
+            return ModelResponse(parts=[
+                ToolCallPart(tool_name='read_file', args={'path': 'review_probe.txt'})
+            ])
+        returns = [
+            str(p.content)
+            for m in messages for p in m.parts
+            if getattr(p, 'part_kind', '') == 'tool-return'
+        ]
+        return ModelResponse(parts=[TextPart(content=returns[0])])
+
+    return FunctionModel(fn)
+
+
+def test_reviewer_can_read_the_workdir(db, workdir):
+    """The review-path reviewer has repo access (R90 #335).
+
+    The remote symptom — "I don't have the repository in this session" — was
+    the reviewer being constructed with no toolsets while its prompt carried
+    read/verify directives. If it cannot execute a read against the session
+    workdir, this test fails.
+    """
+    (workdir / 'review_probe.txt').write_text('REVIEWER-READ-OK', encoding='utf-8')
+    session_id = db.create_session(str(workdir), title='t')
+    engine = Engine(config=load_config(), db=db, extraction_model=_read_first_tool_model())
+    findings = asyncio.run(engine.review(session_id))
+    assert 'REVIEWER-READ-OK' in findings
 
 
 def test_review_returns_model_findings(db, workdir):

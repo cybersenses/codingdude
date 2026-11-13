@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import { describe, expect, it } from 'vitest'
-import { buildAnswers, clearPendingPrompts } from './askUser'
+import { buildAnswers, clearPendingPrompts, normalizeAskQuestions } from './askUser'
 
 const qs = [
   { question: 'Which database?', options: ['postgres', 'sqlite'] },
@@ -79,5 +79,76 @@ describe('clearPendingPrompts (#145)', () => {
     expect(out.every((m) => m.ask === null && m.gate === null)).toBe(true)
     expect(msgs[1].ask).not.toBeNull() // input untouched
     expect(out[2].text).toBe('done')
+  })
+})
+
+// R90 #336: the ask_user tool takes one opaque JSON string, so malformed
+// payloads reached render verbatim; an option object in JSX child position
+// crashed the whole app with React #31. Both payloads below are verbatim
+// from the persisted traces (e46a1498… run 3-yOHDkANqA, bad8698a… run YFg9GBe6sh0).
+describe('normalizeAskQuestions (#336)', () => {
+  const tracePayloadA = [
+    {
+      question: 'What should I do with the steampunk + dino theme?',
+      options: [{ multi: false }, { multi: false }, { multi: false }, { multi: false }],
+    },
+  ]
+  const tracePayloadB = [
+    {
+      question: 'How do you want to fix the reporting quality?',
+      options: [
+        { multi: true, options: ['Always-on answer-structure block ...'] },
+        { multi: true },
+        { multi: false },
+        { multi: false },
+      ],
+      multi: true,
+    },
+  ]
+
+  it('renders the object-options trace payload without any non-string child', () => {
+    const out = normalizeAskQuestions(tracePayloadA)
+    expect(out).toHaveLength(1)
+    expect(out[0].question).toBe('What should I do with the steampunk + dino theme?')
+    expect(out[0].options).toEqual([
+      '(unlabelled option)',
+      '(unlabelled option)',
+      '(unlabelled option)',
+      '(unlabelled option)',
+    ])
+    expect(out[0].multi).toBe(false)
+    // React #31 came from an object in child position — nothing may survive as one
+    expect(out[0].options?.every((o) => typeof o === 'string')).toBe(true)
+  })
+
+  it('normalizes the nested-options trace payload and keeps multi', () => {
+    const out = normalizeAskQuestions(tracePayloadB)
+    expect(out).toHaveLength(1)
+    expect(out[0].question).toBe('How do you want to fix the reporting quality?')
+    expect(out[0].options).toEqual([
+      '(unlabelled option)',
+      '(unlabelled option)',
+      '(unlabelled option)',
+      '(unlabelled option)',
+    ])
+    expect(out[0].multi).toBe(true)
+  })
+
+  it('passes well-formed questions through with defaults filled', () => {
+    const out = normalizeAskQuestions([
+      { question: 'Which database?', options: ['postgres', 'sqlite'] },
+      { question: 'Free text?' },
+    ])
+    expect(out).toEqual([
+      { question: 'Which database?', options: ['postgres', 'sqlite'], multi: false },
+      { question: 'Free text?', options: [], multi: false },
+    ])
+  })
+
+  it('drops garbage entries and survives non-array input', () => {
+    expect(normalizeAskQuestions([null, 42, { noQuestion: true }, { question: 'ok' }]))
+      .toEqual([{ question: 'ok', options: [], multi: false }])
+    expect(normalizeAskQuestions(undefined)).toEqual([])
+    expect(normalizeAskQuestions({ question: 'not an array' })).toEqual([])
   })
 })

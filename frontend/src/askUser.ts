@@ -25,6 +25,28 @@ export interface AskQuestion {
 export type Picks = Record<string, string | string[]>
 export type Texts = Record<string, string>
 
+/**
+ * R90 #336: the ask_user tool accepts one opaque JSON string server-side, so
+ * a malformed payload (options as `{multi: false}` objects — proven twice in
+ * the persisted traces) used to reach JSX child position and crash the whole
+ * app with React #31. Normalize at the pure seam before rendering: every
+ * option becomes a string, multi becomes a real boolean, entries without a
+ * usable question string are dropped. Non-array input yields [].
+ */
+export function normalizeAskQuestions(raw: unknown): AskQuestion[] {
+  if (!Array.isArray(raw)) return []
+  const out: AskQuestion[] = []
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue
+    const q = entry as Record<string, unknown>
+    if (typeof q.question !== 'string' || !q.question) continue
+    const rawOptions = Array.isArray(q.options) ? q.options : []
+    const options = rawOptions.map((o) => (typeof o === 'string' ? o : '(unlabelled option)'))
+    out.push({ question: q.question, options, multi: q.multi === true })
+  }
+  return out
+}
+
 /** #145: pending prompts must not outlive the run. On stop or terminal
  * event, strip ask/gate cards from every message (the worker behind them is
  * gone — answering would just 404). Pure: returns a new array. */

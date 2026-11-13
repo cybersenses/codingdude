@@ -1618,6 +1618,60 @@ def build_audit_toolset(workdir: Path) -> FunctionToolset:
     return FunctionToolset([dependency_audit])
 
 
+def _normalized_questions(payload: object) -> list[dict]:
+    """Validate + normalize the ask_user payload at the tool boundary (R90 #336).
+
+    `questions` arrives as one opaque JSON string, so pydantic cannot see
+    inside it: any JSON shape used to reach the worker broadcast verbatim and
+    then JSX child position in AskUserCard, where option objects
+    ({"multi": false}) crashed the whole UI with React #31 and the run
+    dead-parked. Raises ModelRetry with the concrete fix so the model resends
+    with the option labels intact — coercion would ship blank options.
+    """
+    from pydantic_ai import ModelRetry
+
+    if not isinstance(payload, list) or not payload:
+        raise ModelRetry(
+            'questions must be a non-empty JSON array of question objects, '
+            'e.g. [{"question": "Which database?", '
+            '"options": ["postgres", "sqlite"], "multi": false}]'
+        )
+    normalized: list[dict] = []
+    for i, q in enumerate(payload):
+        if not isinstance(q, dict):
+            raise ModelRetry(
+                f'questions[{i}] must be an object with a "question" key; got {q!r}'
+            )
+        question = q.get('question')
+        if not isinstance(question, str) or not question.strip():
+            raise ModelRetry(
+                f'questions[{i}].question must be a non-empty string asking '
+                f'the user something; got {question!r}'
+            )
+        options = q.get('options', [])
+        if not isinstance(options, list):
+            raise ModelRetry(
+                f'questions[{i}].options must be a list of plain string '
+                f'labels; got {options!r}'
+            )
+        for opt in options:
+            if not isinstance(opt, str):
+                raise ModelRetry(
+                    f'questions[{i}].options must be plain string labels the '
+                    f'user can click; got {opt!r}. "multi" is a flag on the '
+                    'question itself, not an option.'
+                )
+        multi = q.get('multi', False)
+        if not isinstance(multi, bool):
+            raise ModelRetry(
+                f'questions[{i}].multi must be a boolean; got {multi!r}'
+            )
+        normalized.append(
+            {'question': question, 'options': options, 'multi': multi}
+        )
+    return normalized
+
+
 def build_ask_user_toolset(policy, recorder=None):
     """The `ask_user` tool: interactive questions (radios / checkboxes / text).
 
@@ -1636,7 +1690,8 @@ def build_ask_user_toolset(policy, recorder=None):
         Set `"multi": true` when several options may apply — the user sees
         checkboxes instead of radios. Leave `options` empty for a free-text
         question. Even with options, the user always gets an "Other…" field,
-        so they can type an answer you did not list. Returns the answers as JSON.
+        so they can type an answer you did not list. Every `options` entry
+        must be a plain string label. Returns the answers as JSON.
         """
         from pydantic_ai import ModelRetry
 
@@ -1649,6 +1704,7 @@ def build_ask_user_toolset(policy, recorder=None):
             payload = _json.loads(questions) if isinstance(questions, str) else questions
         except _json.JSONDecodeError as exc:
             raise ModelRetry(f'questions must be valid JSON: {exc}') from None
+        payload = _normalized_questions(payload)
         answers = await asker(payload)
         if recorder is not None:
             try:
