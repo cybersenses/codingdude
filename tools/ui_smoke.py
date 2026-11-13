@@ -494,6 +494,16 @@ def _monaco_reflow(page, report: dict, shots: Path | None) -> None:
     if tab is not None:
         tab.click()
         page.wait_for_timeout(300)
+    # #333: the walk leaves Explorer a background tab, and a dock panel that
+    # was never active has not fetched its tree — the README opener then does
+    # not exist and this probe recorded "the editor never mounted" on a healthy
+    # app. Establish the precondition here rather than inheriting tab order.
+    explorer = _dock_tab(page, "Explorer")
+    if explorer is not None:
+        explorer.click()
+        if not _wait_for_tree(page, timeout_ms=30_000):
+            report["monaco"] = "the explorer tree never loaded"
+            return
     # Root-level file in the session's workdir, so the explorer has a stable,
     # unambiguous target to open. A workdir with no README.md fails loudly here
     # rather than silently skipping the check.

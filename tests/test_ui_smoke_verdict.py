@@ -336,6 +336,25 @@ def test_visible_key_absence_does_not_fail_a_tab():
     assert verdict(clean(tabs={"Diff": bare_tab})) == 0
 
 
+def test_monaco_probe_establishes_its_own_explorer_precondition():
+    """#333: the probe opened the README from an Explorer that never loaded.
+
+    The walk leaves Explorer a background tab, and a dock panel that was never
+    the active tab has not fetched its tree, so the README opener did not exist
+    and the gate recorded "the editor never mounted" on a healthy app. The
+    probe must now activate Explorer and wait for the tree itself — otherwise
+    the `automaticLayout` regression it guards goes unproven.
+    """
+    src = (
+        Path(__file__).resolve().parents[1] / "tools" / "ui_smoke.py"
+    ).read_text(encoding="utf-8")
+    reflow = src[src.index("def _monaco_reflow") : src.index("def _monaco_followed")]
+    assert '_dock_tab(page, "Explorer")' in reflow
+    assert "_wait_for_tree(" in reflow
+    # The precondition check comes before the README lookup, or it is theatre.
+    assert reflow.index("_wait_for_tree(") < reflow.index('button[title="README.md"]')
+
+
 # ---- R88 #331: the closed-path View probe ------------------------------------
 # It used to live in tools/view_layout_loop.py, a side script nothing ran: a
 # probe that cannot fail the gate rots like any other untested code.
