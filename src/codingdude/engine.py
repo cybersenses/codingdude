@@ -33,6 +33,7 @@ from pydantic_ai.models.fallback import FallbackModel
 
 from .checkpoints import CheckpointStore
 from .config import Config, ThinkingSetting, parse_thinking
+from .context import ContextManager
 from .db import Database
 from .operator_files import OperatorHalt
 from .run_pipeline import (
@@ -40,6 +41,7 @@ from .run_pipeline import (
     PostRunPipeline,
     PromptAssembler,
     RunServices,
+    context_capabilities,
     shell_bin_for,
 )
 from .tools import (
@@ -168,7 +170,7 @@ class PreparedRun:
     resolved: Model
     model_name: str
     history: list
-    cm: object
+    cm: ContextManager
 
 
 @dataclass
@@ -180,6 +182,11 @@ class AgentSpec:
     instructions: str
     toolsets: list
     history: list
+    # R91 #337: the run's context capabilities (per-request compaction
+    # guard + prompt caching). The fix loop's retry agent reuses the same
+    # list — its message_history is the grown main-run history, so an
+    # unguarded retry would re-ship the over-limit payload the guard stops.
+    capabilities: list | None = None
 
 
 def _utcnow():
@@ -418,7 +425,7 @@ class Engine:
     async def _run_fix_loop(
         self, session_id: str, resolved: Model, instructions: str, toolsets,
         history: list, result, workdir: Path, test_command: str, shell_bin: str,
-        max_test_iterations: int, emit, lane=None,
+        max_test_iterations: int, emit, lane=None, capabilities: list | None = None,
     ) -> tuple[object, list]:
         """Fix-until-green: run the tests, feed failures back, repeat.
 
@@ -454,7 +461,10 @@ class Engine:
                 emit({'type': 'TEST_RUN', 'passed': passed, 'output': test_out})
             if passed:
                 break
-            retry_agent = self._prompts.agent(resolved, instructions, toolsets, retries=1)
+            retry_agent = self._prompts.agent(
+                resolved, instructions, toolsets, retries=1,
+                capabilities=capabilities,
+            )
             history = history + list(result.new_messages()) if result else history
             failure_text = (
                 'The test suite is still failing. Output:\n' + test_out + '\n'
@@ -901,10 +911,17 @@ class Engine:
             # material for the function now staffing the session.
             instructions += '\n\n' + phase.overlay
 
+        caps = context_capabilities(
+            prepared.cm, traced,
+            per_request=self._config.models.compact_per_request,
+            prompt_cache=self._config.models.prompt_cache,
+        )
         agent = self._prompts.agent(
             prepared.resolved, instructions, toolsets,
             self._prompts.model_settings(self._services, prepared.resolved, thinking),
+            capabilities=caps,
         )
+
         # R71 #263: a session's first turn rides the executed kickoff —
         # takeover orientation, or the greenfield interview — composed
         # ahead of build_run_prompt so image attachment is unaffected.
@@ -942,7 +959,7 @@ class Engine:
             traced({'type': 'IMAGE_ATTACHED', 'path': str(image_path)})
         return AgentSpec(
             agent=agent, run_prompt=run_prompt, instructions=instructions,
-            toolsets=toolsets, history=prepared.history,
+            toolsets=toolsets, history=prepared.history, capabilities=caps,
         )
 
     async def _finalize_run(
@@ -984,6 +1001,7 @@ class Engine:
                 session_id, prepared.resolved, agent_spec.instructions,
                 agent_spec.toolsets, agent_spec.history, result, workdir,
                 test_command, shell_bin, max_test_iterations, emit, lane=lane,
+                capabilities=agent_spec.capabilities,
             )
             # #81: the loop returns every request's usage (main + retries);
             # bill the whole sequence exactly once below.

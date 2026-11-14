@@ -1329,8 +1329,23 @@ active panel is floating/popped out and no editor is open) — surfaced by the
 post-push review of `3df4f9d..7634c0d` (the R88 fix cycle's pre-squash range, rewritten by that squash) while verifying R88 #331's fix scope.
 
 ## R90 — Reviewer repo access + ask_user payload hardening
-**Status:** in_progress
+**Status:** done
 
 Two proven defects from the remote reviewer investigation, both fixed on this branch (PR #221): (1) the review seam constructed a tool-less reviewer whose prompt demanded reads/evidence — now gets the evaluator's read-only toolset + review.md instructions (#335); (2) malformed ask_user payloads (options as {multi:false} objects) crashed the UI with React #31 and dead-parked runs — validated at the tool boundary, normalized at the frontend pure seam, cards contained by a card-level boundary (#336). Gates: pytest 1197 passed/1 skipped, ruff, mypy, vitest 318/318, eslint, build.
 
 Two proven defects from the remote reviewer investigation: (1) the review seam constructs a tool-less reviewer whose prompt demands reads/evidence (remote symptom: "I don't have the repository in this session"); (2) malformed ask_user payloads (options as {multi:false} objects) crash the UI with React #31 and dead-park runs (no ASK_USER_RESOLVED).
+
+## R91 — pydantic-ai adoption: per-request compaction, prompt caching, cost accounting (deploy-time levers)
+**Status:** open
+
+From research 2026-11-13 (reference/research/pydantic-ecosystem.md, primary-source). Goal: make CodingDude runs faster and cheaper via upstream pydantic-ai levers instead of hand-rolled code.
+
+Levers (ranked):
+1. Per-request compaction — upstream ProcessHistory / before_model_request / harness TieredCompaction replaces our run-start-only maybe_compact (deepseek 400-class fix). Batched/trigger-based to protect prompt cache. Verify exact plain-Agent API on installed version first.
+2. Prompt caching — Caching capability: 0.1x cache reads on our large static prefix (directives/AGENT.md/skills/tool catalog) from request #2; monitor cache_hit_ratio / WarnOnCacheBusts.
+3. Real cost accounting — surface RequestUsage.cost (genai-prices) per run in worker/UI; UsageLimits(cost_limit, per_request_input_tokens_limit); prices.update_in_background().
+4. Upgrade 2.66.0 → 2.68.0 — OutputTokenLimitExceeded+ModelFallback, service tiers, framing_announcement='when_needed', AskUser on deferred pipeline. Keep <3 pin (v3 TODOs exist, no milestone). Re-verify #253 retry seam after bump.
+5. BatchModelRequests (~50%) for bench.py / evals offline work.
+6. Optional: logfire 5.6.0 local OTLP observability ($0 via send_to_logfire=False + local backend); pydantic 2.14.3 / core 2.50.4 patch bump (check 2.14.2 extra='forbid' JSON change); pydantic-settings 2.16.3. Monty parked (no third-party packages → can't run our tool code).
+
+Status notes: levers 1+2 adopted locally pre-deploy (user decision 2026-11-13). 3 partially — estimator exists but provider-reported cost unused.
