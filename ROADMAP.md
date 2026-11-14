@@ -1348,10 +1348,10 @@ Levers (ranked):
 5. BatchModelRequests (~50%) for bench.py / evals offline work.
 6. Optional: logfire 5.6.0 local OTLP observability ($0 via send_to_logfire=False + local backend); pydantic 2.14.3 / core 2.50.4 patch bump (check 2.14.2 extra='forbid' JSON change); pydantic-settings 2.16.3. Monty parked (no third-party packages → can't run our tool code).
 
-Status notes: levers 1+2 adopted locally pre-deploy (user decision 2026-11-13); lever 2 made general in #338 — every agent carries a cache profile (run vs one-shot), retention/messages/provider-passthrough configurable. 3 partially — estimator exists but provider-reported cost unused.
+Status notes: levers 1+2 adopted locally pre-deploy (user decision 2026-11-13), then shipped in #228; lever 2 made general in #338 — every agent carries a cache profile (run vs one-shot), retention/messages/provider-passthrough configurable. 3 partially — estimator exists but provider-reported cost unused.
 
 ## R92 — Enforce pre-push code review as a hard gate
-**Status:** open
+**Status:** done
 
 Audience: agent
 
