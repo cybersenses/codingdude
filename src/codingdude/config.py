@@ -1064,8 +1064,10 @@ class TelemetryConfig:
 def validate_otlp_endpoint(value, where: str) -> str:
     """An http(s) URL for the local OTLP collector.
 
-    Rejects early and loudly, matching the `[trace] deltas` precedent: silently
-    exporting nowhere is the failure this setting exists to prevent.
+    Rejects a malformed endpoint loudly at this seam; `load_config` catches it
+    and degrades to "tracing off" rather than stopping the worker (see the
+    `[telemetry]` block there) — silently exporting nowhere is the failure this
+    setting exists to prevent, and refusing to start is the opposite failure.
     """
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f'{where}: must be a non-empty http(s) URL')
@@ -1075,6 +1077,17 @@ def validate_otlp_endpoint(value, where: str) -> str:
             f'{where}: {value!r} must start with http:// or https://'
         )
     return endpoint
+
+
+def coerce_bool(value, where: str) -> bool:
+    """A real TOML boolean, not `bool()` of whatever arrived.
+
+    `bool('false')` is True, so one pair of stray quotes in config.toml would
+    silently enable the feature it was meant to disable.
+    """
+    if isinstance(value, bool):
+        return value
+    raise ValueError(f'{where}: expected true or false, got {value!r}')
 
 
 @dataclass(frozen=True)
@@ -1164,14 +1177,24 @@ def load_config(home: Path | None = None) -> Config:
         logging.getLogger(__name__).warning(
             'config.toml [telemetry]: unsupported shape; ignored')
         telemetry_raw = {}
-    telemetry = TelemetryConfig(
-        enabled=bool(telemetry_raw.get(
-            'enabled', defaults.telemetry.enabled)),
-        otlp_endpoint=validate_otlp_endpoint(
-            telemetry_raw.get(
-                'otlp_endpoint', defaults.telemetry.otlp_endpoint),
+    enabled = coerce_bool(
+        telemetry_raw.get('enabled', defaults.telemetry.enabled),
+        where='config.toml [telemetry] enabled',
+    )
+    otlp_endpoint = defaults.telemetry.otlp_endpoint
+    try:
+        otlp_endpoint = validate_otlp_endpoint(
+            telemetry_raw.get('otlp_endpoint', otlp_endpoint),
             where='config.toml [telemetry] otlp_endpoint',
-        ),
+        )
+    except ValueError as exc:
+        # Tracing is optional telemetry: a typo must degrade to "off", never
+        # stop the worker that runs the session (#341 contract).
+        logging.getLogger(__name__).warning('%s - tracing disabled', exc)
+        enabled = False
+    telemetry = TelemetryConfig(
+        enabled=enabled,
+        otlp_endpoint=otlp_endpoint,
         service_name=str(telemetry_raw.get(
             'service_name', defaults.telemetry.service_name)),
     )

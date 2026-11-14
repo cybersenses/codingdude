@@ -1078,6 +1078,45 @@ def _register_new_renders(workdir: Path, started: float, on_render: Callable[[st
         logger.warning('render capture scan failed: %s', exc)
 
 
+class _UsageTotals(NamedTuple):
+    """Token/request counts, either as a snapshot or as a delta between two."""
+
+    requests: int
+    input_tokens: int
+    output_tokens: int
+    cost: float | None = None
+
+
+def _usage_totals(usage) -> _UsageTotals:
+    """Snapshot the numeric fields we bill and report."""
+    return _UsageTotals(
+        requests=getattr(usage, 'requests', 0) or 0,
+        input_tokens=getattr(usage, 'input_tokens', 0) or 0,
+        output_tokens=getattr(usage, 'output_tokens', 0) or 0,
+        cost=None if getattr(usage, 'cost', None) is None
+        else float(usage.cost),
+    )
+
+
+def _usage_delta(before: _UsageTotals, after) -> _UsageTotals:
+    """What *this delegation* spent, not what the session has spent so far.
+
+    R93-A hands the delegated run the parent's `RunUsage` so its spend is
+    visible to the run that caused it. That makes `result.usage` the session's
+    cumulative total, so billing it directly would charge the whole session to
+    every delegation — and the parent bills the same spend again on its own
+    result. The difference against the snapshot taken before the run is the
+    delegation's own share.
+    """
+    now = _usage_totals(after)
+    return _UsageTotals(
+        requests=now.requests - before.requests,
+        input_tokens=now.input_tokens - before.input_tokens,
+        output_tokens=now.output_tokens - before.output_tokens,
+        cost=None if now.cost is None else now.cost - (before.cost or 0.0),
+    )
+
+
 def build_delegation_toolset(
     workdir: Path,
     subagent_model,
@@ -1226,8 +1265,10 @@ def build_delegation_toolset(
         brief = build_brief(task, agent_workdir, cfg.max_requests)
         # R93-A: the delegated run is handed the parent's `ctx.usage`, so its
         # request budget is measured from what the session has already spent
-        # (see delegation.child_usage_limits for why a bare limit is wrong).
-        used_requests = getattr(ctx.usage, 'requests', 0) or 0
+        # (see delegation.child_usage_limits for why a bare limit is wrong),
+        # and its bill is the difference against this snapshot.
+        usage_before = _usage_totals(ctx.usage)
+        used_requests = usage_before.requests
         _emit({'type': 'DELEGATION_STARTED', 'task': task[:200],
                'isolated': isolated, 'delegation_id': delegation_id,
                'write': write, 'function': function,
@@ -1261,7 +1302,7 @@ def build_delegation_toolset(
         # ordering in engine._assemble_agent.
         from .operator_files import operator_files_toolset
 
-        toolsets = [operator_files_toolset(t, workdir) for t in toolsets]
+        toolsets = [operator_files_toolset(toolsets, workdir)]
         instructions = load_prompt('delegation')
         if overlay:
             instructions += '\n\n' + overlay
@@ -1307,19 +1348,18 @@ def build_delegation_toolset(
         finally:
             if isolated:
                 remove_worktree(workdir, sandbox_name)
-        usage = result.usage
-        _bill(usage, function_name=function)
-        cost = getattr(usage, 'cost', None)
+        spent = _usage_delta(usage_before, result.usage)
+        _bill(spent, function_name=function)
         _emit({
             'type': 'DELEGATION_COMPLETED',
             'isolated': isolated,
             'delegation_id': delegation_id,
             'write': write,
             'function': function,
-            'requests': usage.requests or 0,
-            'input_tokens': usage.input_tokens or 0,
-            'output_tokens': usage.output_tokens or 0,
-            'cost_usd': float(cost) if cost is not None else None,
+            'requests': spent.requests,
+            'input_tokens': spent.input_tokens,
+            'output_tokens': spent.output_tokens,
+            'cost_usd': spent.cost,
         })
         output = str(result.output)
         if write and isolated:
@@ -1328,10 +1368,10 @@ def build_delegation_toolset(
                 '\n\nSandbox diff (proposed, not applied):\n' + diff
                 if diff else
                 '\n\n(sandbox tree clean - no changes to integrate)')
-        if cfg.max_cost_usd is not None and cost is not None \
-                and float(cost) > cfg.max_cost_usd:
+        if cfg.max_cost_usd is not None and spent.cost is not None \
+                and spent.cost > cfg.max_cost_usd:
             output += (
-                '\n(note: delegation cost ' + format(float(cost), '.4f')
+                '\n(note: delegation cost ' + format(spent.cost, '.4f')
                 + ' USD exceeded the configured cap of '
                 + str(cfg.max_cost_usd) + ' USD - consider raising '
                 '[delegation].max_cost_usd or splitting the task)'

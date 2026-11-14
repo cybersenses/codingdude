@@ -40,10 +40,13 @@ def _now() -> float:
 
 
 def _created_ns(cp_dir: Path) -> int:
-    """Filesystem creation time of a checkpoint directory, in nanoseconds.
+    """Filesystem timestamp of a checkpoint directory, in nanoseconds.
 
-    Tiebreaker for `_ordered_ids`: `_now()` is a coarse-tick wall clock, so two
-    checkpoints captured in the same tick share `created_at` exactly (#343).
+    Tiebreaker for `_ordered_ids`: `_now()` is a coarse-tick wall clock (~15ms
+    here, measured), so two checkpoints captured in the same tick share
+    `created_at` exactly (#343). This is `st_ctime_ns`, which is the directory's
+    *creation* time on Windows and its *inode-change* time on POSIX — in both
+    cases later for a directory created later, which is all the ordering needs.
     """
     try:
         return cp_dir.stat().st_ctime_ns
@@ -103,7 +106,11 @@ class CheckpointStore:
         ticks (~15ms here), so back-to-back checkpoints can carry the *same*
         stamp and the tie would again fall to a random uuid — which made
         `rewind_to` compute the wrong "later" slice (#343). The directory's
-        creation time breaks the tie at filesystem resolution.
+        filesystem timestamp breaks that tie at nanosecond resolution, which in
+        practice settles it; if two directories ever share that too, the final
+        fallback is the name (a random uuid) and the ambiguity is back. This
+        narrows the window from every same-tick pair to a same-nanosecond pair,
+        not to zero, and rewind is correct in every realistic case.
         """
         if not session_dir.exists():
             return []
@@ -139,12 +146,17 @@ class CheckpointStore:
         (cp_dir / 'metadata.json').write_text(json.dumps(meta), encoding='utf-8')
 
     def list_checkpoints(self, session_id: str) -> list[dict]:
+        """Newest first, ordered the same way `rewind_to` decides "later".
+
+        Sorting by name would disagree with rewind inside a clock tick (#343):
+        the list would claim an order the undo does not honour.
+        """
         session_dir = self._session_dir(session_id)
         if not session_dir.exists():
             return []
         out = []
-        for cp_dir in sorted(session_dir.iterdir(), key=lambda p: p.name, reverse=True):
-            meta = self._read_meta(cp_dir / 'metadata.json')
+        for cp_id in reversed(self._ordered_ids(session_dir)):
+            meta = self._read_meta(session_dir / cp_id / 'metadata.json')
             if meta is None:
                 continue
             out.append({

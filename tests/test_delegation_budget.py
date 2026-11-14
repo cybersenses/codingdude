@@ -141,3 +141,32 @@ async def test_operator_stop_aborts_a_delegation(workdir):
     tool = _tool(build_delegation_toolset(workdir, _chatty(), session_id='s1'))
     with pytest.raises(OperatorHalt):
         await tool.function(_ctx(), task='do work')
+
+
+# ---- a delegation bills its own share, not the session's total ----
+
+
+def test_usage_delta_reports_only_what_the_delegation_spent():
+    """Sharing the accumulator makes result.usage the session total; billing
+    that would charge the whole session to every delegation (and the parent
+    bills the same spend again on its own result)."""
+    from codingdude.tools import _usage_delta, _UsageTotals
+
+    before = _UsageTotals(requests=100, input_tokens=5_000, output_tokens=200)
+    after = SimpleNamespace(requests=104, input_tokens=6_200, output_tokens=520)
+    spent = _usage_delta(before, after)
+    assert (spent.requests, spent.input_tokens, spent.output_tokens) == (4, 1_200, 320)
+    assert spent.cost is None
+
+
+async def test_delegation_bills_the_delta_not_the_session_total(workdir, tmp_path):
+    from codingdude.db import Database
+
+    db = Database.connect(tmp_path / 'home')
+    session_id = db.create_session(workdir)
+    toolset = build_delegation_toolset(workdir, _answer(), session_id=session_id, db=db)
+    # a session that has already made 100 requests
+    await _tool(toolset).function(_ctx(requests=100), task='x')
+    rows = db.session_usage(session_id)
+    assert rows.get('requests') == 1  # this delegation's one request, not 101
+

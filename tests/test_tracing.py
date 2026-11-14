@@ -151,6 +151,23 @@ def test_a_broken_logfire_setup_degrades_instead_of_raising(fake_tracing):
     assert fake_tracing.instrument_calls == 0
 
 
+def test_the_logfire_api_surface_we_call_still_exists():
+    """The fakes above prove our wiring; this proves the API we wire *to*.
+
+    A real collector cannot run here, so this pins the contract instead of the
+    export: if logfire renames a keyword or drops the pydantic-ai instrument,
+    `configure_tracing` starts silently blaming the collector.
+    """
+    import inspect
+
+    import logfire
+
+    params = inspect.signature(logfire.configure).parameters
+    for keyword in ('send_to_logfire', 'service_name', 'additional_span_processors'):
+        assert keyword in params
+    assert callable(logfire.instrument_pydantic_ai)
+
+
 # --- config surface --------------------------------------------------------
 
 
@@ -186,10 +203,20 @@ def test_a_malformed_endpoint_is_rejected_loudly(bad):
         validate_otlp_endpoint(bad, where='test')
 
 
-def test_a_malformed_endpoint_in_config_raises_at_load(tmp_path):
+def test_a_malformed_endpoint_disables_tracing_instead_of_failing_boot(tmp_path):
+    """#341: tracing is optional telemetry — a typo must not stop the worker."""
     (tmp_path / 'config.toml').write_text(
-        '[telemetry]\notlp_endpoint = "4318"\n', encoding='utf-8')
-    with pytest.raises(ValueError, match=r'\[telemetry\]'):
+        '[telemetry]\nenabled = true\notlp_endpoint = "4318"\n', encoding='utf-8')
+    telemetry = load_config(tmp_path).telemetry
+    assert telemetry.enabled is False
+    assert telemetry.otlp_endpoint == TelemetryConfig().otlp_endpoint
+
+
+def test_a_quoted_false_does_not_enable_tracing(tmp_path):
+    """`bool('false')` is True; the setting must be a real TOML boolean."""
+    (tmp_path / 'config.toml').write_text(
+        '[telemetry]\nenabled = "false"\n', encoding='utf-8')
+    with pytest.raises(ValueError, match='expected true or false'):
         load_config(tmp_path)
 
 

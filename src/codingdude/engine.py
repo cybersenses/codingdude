@@ -884,7 +884,7 @@ class Engine:
         # OperatorHalt escapes unconverted and aborts the run.
         from .operator_files import operator_files_toolset
 
-        toolsets = [operator_files_toolset(t, workdir) for t in toolsets]
+        toolsets = [operator_files_toolset(toolsets, workdir)]
 
         from .memory import MemoryStore
         from .skills import SkillRegistry

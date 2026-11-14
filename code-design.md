@@ -1276,10 +1276,10 @@ Pre-push review (2026-11-13, two-axis delegates over `origin/main...2f35e94`, ru
 **Problem:** compaction ran only at run start (`HistoryManager.maybe_compact`, one caller: `engine._prepare_history`); the mid-run tool loop grew requests unbounded until providers 400'd (deepseek-flash "maximum context length… 1,213,083 tokens" incident). The estimator undercounted what the wire carries (`ToolCallPart.args` counted as 0; `BinaryContent` repr-stringified ~2000×; CJK ~2× under). Separately, no prompt caching was enabled — every request re-paid full price for the static prefix (base instructions + directives + skills index + tool catalog).
 
 **Upstream API (verified against installed pydantic-ai 2.66.0 source, not docs):**
-- `Agent.__init__` accepts `capabilities=[...]` (core, no harness package installed/needed).
+- `Agent.__init__` accepts `capabilities=[...]` (core; no harness package was installed at R91 time — R93-B added one for ToolOutputLimits/WarnOnCacheBusts only).
 - `pydantic_ai.capabilities.ProcessHistory(processor)` implements `before_model_request`; its output is written to the outbound request (`request_context.messages`) AND the persistent run history (`ctx.messages[:] = messages`, in-place) — edits persist mid-run. Processor contract: sync/async, `(messages) -> messages` or `(ctx, messages) -> messages` (modules `pydantic_ai._history_processor` and `pydantic_ai.capabilities.process_history`, read from `.venv`).
 - `pydantic_ai.capabilities.Caching(retention=True, messages=True)` contributes `ModelSettings(cache=True)` via `get_model_settings()`; provider profiles translate it (Anthropic explicit breakpoints; implicit-cache models no-op; provider-specific settings take precedence) (module `pydantic_ai.capabilities.caching`).
-- Harness compaction classes (TieredCompaction etc.) are NOT in the installed package — we compose `ProcessHistory` with our own mechanical pass.
+- Harness compaction classes (TieredCompaction etc.) were NOT in the installed package at R91 time — we compose `ProcessHistory` with our own mechanical pass. **Superseded by R93:** harness 0.68.0 is a dependency now and those classes exist; adopting them is a deliberate deferred decision, reasoned in `## R93` below.
 
 **Design:**
 - `context.py`:
@@ -1386,10 +1386,19 @@ Pre-push review (2026-11-13, two-axis delegates over `origin/main...2f35e94`, ru
 **Decisions not taken (stated, not implied).**
 
 - **No `CancellationToken` threading.** The guide recommends it for cancelling a tree, but this process has no in-process canceller: runs are torn down by asyncio task cancellation, which already propagates through the delegate's `await`, and `operator_files` is documented as poll-free with no watcher thread. Threading a token nothing can call `cancel()` on would be dead code; revisit when a real canceller exists.
-- **Harness compaction not adopted.** `ClearToolResults`, `ClampOversizedMessages` and `TieredCompaction` map 1:1 onto `context.mechanical_compact` (tool-return stubbing, `_replaced_part` head/tail truncation, the budget tier), so adopting them means deleting a tested guard and re-proving the per-request path. That is its own change with its own RED/GREEN, not a ride-along.
+- **Harness compaction not adopted.** `ClearToolResults`, `ClampOversizedMessages` and `TieredCompaction` were inspected by signature only: they occupy the same slot as `context.mechanical_compact` and map onto it (tool-return stubbing, `_replaced_part` head/tail truncation, the budget tier). The ticket's rule — adopt only if they cover tool-result clearing and a window-relative budget without losing the tool-call/result pairing — is a *necessary* condition, and reading signatures cannot establish the pairing half of it. Adopting means deleting a tested guard and re-proving the per-request path against a live history, which is its own change with its own RED/GREEN. Deliberately deferred, not rejected.
 - **`SubAgents` not adopted.** Our delegate carries worktree isolation and a composed brief that the capability does not; the semantics worth borrowing (shared usage) were borrowed directly.
 
 **Version note.** Harness 0.68.0 pins `pydantic-ai-slim==2.68.0`, so adoption forced 2.66 → 2.68. The full suite passed unchanged on 2.68 with no reconciliation — the 2.67/2.68 changes the research note flagged (`framing_announcement` default, `provider_settings` move) do not touch anything we use. Harness is 0.x and may break between minors; the pin is `>=0.68.0`.
 
 **Environment note.** Verification ran in `.venv-harness` (`UV_PROJECT_ENVIRONMENT`) so the live `.venv` could not be half-updated under a running server — the failure mode recorded in RESCUE.md. The next `uv sync` is what moves the real environment.
+
+**What the two-axis review of this change caught** (each was a real defect in the first version of the diff, not a hypothetical):
+
+- *Double billing.* Sharing the accumulator makes `result.usage` the session's **cumulative** total, so billing it charged the whole session to each delegation — and the parent billed the same spend again on its own result. `tools._usage_delta` now bills the difference against a snapshot taken before the run, and the `DELEGATION_COMPLETED` event and the `[delegation].max_cost_usd` comparison use that delta too. Pinned by `test_delegation_bills_the_delta_not_the_session_total`.
+- *A typo in the endpoint stopped the worker.* `validate_otlp_endpoint` raised out of `load_config`, which is the opposite of the contract ("never fail a run"). Load now logs and sets `enabled = False`. Related: `enabled = bool(value)` made `enabled = "false"` mean *true*; `config.coerce_bool` requires a real TOML boolean.
+- *A stale claim left in this file.* R91's "harness compaction classes are NOT in the installed package" became false the moment the harness was installed; corrected in place with a pointer here.
+- *`st_ctime_ns` is not creation time on POSIX.* The docstring said it was. It is creation time on Windows and inode-change time on POSIX; both are later for a later-created directory, which is what the ordering needs. The tie is **narrowed**, not eliminated: a same-nanosecond pair still falls back to the name, and that is stated in the code rather than claimed away. `list_checkpoints` now orders through the same key as `rewind_to`, so the list cannot display an order the undo would not honour.
+- *Duplicated operator boundary.* Both call sites wrote `[operator_files_toolset(t, workdir) for t in toolsets]` when the existing helper already accepts a list; both now pass the list.
+
 
