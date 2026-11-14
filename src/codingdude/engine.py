@@ -587,6 +587,13 @@ class Engine:
                 if on_event:
                     on_event(ec)
 
+            # R93-A: delegations share this run's usage accumulator, so their
+            # spend is inside `result.usage`. The ledger lets the run's own
+            # usage row be charged the remainder — one row per slice of spend,
+            # so `session_usage` (what the Budget Cap reads) does not double it.
+            from .delegation import DelegatedSpend
+
+            spend_ledger = DelegatedSpend()
             agent_spec = await self._assemble_agent(
                 session_id, workdir, prompt, prepared, boot_event,
                 image_path=image_path,
@@ -595,6 +602,7 @@ class Engine:
                 test_command=test_command,
                 on_edit=on_edit_dispatch, capture=capture_for_checkpoints,
                 traced=traced, lane=lane, phase=phase,
+                spend_ledger=spend_ledger,
             )
             try:
                 result = await self._run_agent(
@@ -643,7 +651,7 @@ class Engine:
             approvals=approvals, fix_loop=fix_loop, test_command=test_command,
             max_test_iterations=max_test_iterations, emit=emit, traced=traced,
             started=started, lane=lane, diff_before=diff_before,
-            run_touched=run_touched,
+            run_touched=run_touched, spend_ledger=spend_ledger,
         )
 
     def _detect_phase(
@@ -826,6 +834,7 @@ class Engine:
         traced: Callable[[dict], None],
         lane=None,
         phase: PhaseTransition | None = None,
+        spend_ledger=None,
     ) -> AgentSpec:
         """Toolsets + instructions + the Agent, and the prompt to feed it."""
         thinking = parse_thinking(self._config.models.thinking)
@@ -866,6 +875,7 @@ class Engine:
             emitter=traced,
             lane=lane,
             main_model=prepared.resolved,
+            spend_ledger=spend_ledger,
         )
         toolsets = await build_all(plugin_ctx)
         # Surface dead MCP servers to the agent: a mandated-but-unavailable
@@ -981,6 +991,7 @@ class Engine:
         lane=None,
         diff_before: str,
         run_touched: list | None = None,
+        spend_ledger=None,
     ) -> RunOutcome:
         """Persist, run the fix loop if asked, record usage, spawn the tail.
 
@@ -1010,8 +1021,16 @@ class Engine:
 
         from .telemetry import sum_usages
 
+        # R93-A: the run's usage contains every delegation's spend (they share
+        # the accumulator); the delegations already wrote their own usage rows.
+        # Charge this row the remainder so `session_usage` sums disjoint slices
+        # instead of double-counting delegated spend against the Budget Cap.
+        run_usage = sum_usages(usages)
+        if spend_ledger is not None:
+            run_usage = spend_ledger.net(run_usage)
+
         self._post.record_run_usage(
-            session_id, prepared.model_name, sum_usages(usages), started, traced
+            session_id, prepared.model_name, run_usage, started, traced
         )
         self._services.check_budget(session_id)
         # #310: the gate signals are evaluated here — AFTER the fix loop —

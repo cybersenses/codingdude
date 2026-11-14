@@ -90,6 +90,30 @@ async def test_delegation_folds_subagent_result_into_parent(engine, workdir):
     assert 'got-task' in outcome.output
 
 
+async def test_delegated_spend_is_billed_once_end_to_end(engine, workdir):
+    """R93-A shares the parent's accumulator, so the parent's own `result.usage`
+    already contains the delegated requests. The per-run ledger keeps the two
+    usage rows disjoint: without it `session_usage` — which the Budget Cap
+    reads — counts every delegated request twice and halts at half the real
+    spend."""
+    db = engine._db
+    session_id = db.create_session(workdir, title='delegating')
+
+    outcome = await engine.run(
+        prompt='delegate the lookup',
+        workdir=workdir,
+        session_id=session_id,
+        model=delegator('say ok'),
+        subagent_model=scripted(
+            lambda messages, info: ModelResponse(parts=[TextPart(content='ok')])
+        ),
+    )
+    assert 'ok' in outcome.output
+    totals = db.session_usage(session_id)
+    # main: 1 request to call the tool + 1 to answer; delegation: 1. Total 3.
+    assert totals['requests'] == 3
+
+
 async def test_subagent_toolset_is_read_only(engine, workdir):
     def subagent_lists_tools(messages, info):
         return ModelResponse(

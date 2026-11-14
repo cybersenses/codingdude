@@ -41,6 +41,12 @@ dependencies = [
     "bandit>=1.9.4",
     "tomli-w>=1.2.0",
     "pydantic-ai-harness>=0.68.0",
+    # R93-C: tracing.py imports both directly. They arrive transitively through
+    # pydantic-ai → logfire → logfire-sdk today, but a transitive dependency we
+    # import by name is not a contract — a core/harness bump could drop the
+    # OTLP extra and turn configure_tracing into a permanent no-op.
+    "logfire>=5.3.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.27.0",
 ]
 
 [project.scripts]

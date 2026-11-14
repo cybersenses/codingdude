@@ -15,8 +15,8 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """R93-C: local-OTLP tracing — off by default, local-only, never fatal."""
 
+import ast
 import sys
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -73,6 +73,7 @@ def fake_tracing(monkeypatch):
     monkeypatch.setitem(sys.modules, 'logfire', fake)
     monkeypatch.setattr(trace_exporter, 'OTLPSpanExporter', FakeExporter)
     monkeypatch.setattr(tracing, '_configured', False, raising=False)
+    monkeypatch.setattr(tracing, '_warned', False, raising=False)
     return fake
 
 
@@ -213,14 +214,72 @@ def test_a_malformed_endpoint_disables_tracing_instead_of_failing_boot(tmp_path)
 
 
 def test_a_quoted_false_does_not_enable_tracing(tmp_path):
-    """`bool('false')` is True; the setting must be a real TOML boolean."""
+    """`bool('false')` is True, so a quoted value must never switch tracing on.
+    It also must not stop the worker: every malformed [telemetry] value — the
+    boolean as much as the endpoint — degrades to off (#341 contract)."""
     (tmp_path / 'config.toml').write_text(
         '[telemetry]\nenabled = "false"\n', encoding='utf-8')
-    with pytest.raises(ValueError, match='expected true or false'):
-        load_config(tmp_path)
+    assert load_config(tmp_path).telemetry.enabled is False
+
+
+def test_a_quoted_true_is_not_trusted_either(tmp_path):
+    (tmp_path / 'config.toml').write_text(
+        '[telemetry]\nenabled = "true"\n', encoding='utf-8')
+    assert load_config(tmp_path).telemetry.enabled is False
+
+
+def test_an_empty_service_name_falls_back_to_the_default(tmp_path):
+    (tmp_path / 'config.toml').write_text(
+        '[telemetry]\nenabled = true\nservice_name = "  "\n', encoding='utf-8')
+    assert load_config(tmp_path).telemetry.service_name == TelemetryConfig().service_name
+
+
+def test_a_configuration_failure_is_reported_once(fake_tracing, caplog):
+    """`_configured` stays False on failure so a later fixed call can succeed —
+    which means every run would re-warn without the separate guard."""
+    import logging
+
+    fake_tracing.fail = True
+    with caplog.at_level(logging.WARNING, logger='codingdude.tracing'):
+        assert configure_tracing(_config(enabled=True)) is False
+        assert configure_tracing(_config(enabled=True)) is False
+    assert len([r for r in caplog.records if 'tracing disabled' in r.message]) == 1
 
 
 # --- adoption guard --------------------------------------------------------
+
+
+async def test_the_worker_enables_tracing_before_it_builds_the_engine(
+    home, monkeypatch,
+):
+    """Tracing is only worth configuring if the process that executes runs turns
+    it on. Nothing else pins the call site, so deleting it would leave the whole
+    suite green. Ordering is the contract: configure first, then run."""
+    from types import SimpleNamespace
+
+    import codingdude.engine as engine_module
+    import codingdude.tracing as tracing_module
+    import codingdude.worker as worker
+
+    calls: list[str] = []
+
+    def fake_configure(config):
+        calls.append('configure')
+        return True
+
+    class Stop(Exception):
+        pass
+
+    def fake_engine(**kwargs):
+        calls.append('engine')
+        raise Stop
+
+    monkeypatch.setattr(tracing_module, 'configure_tracing', fake_configure)
+    monkeypatch.setattr(engine_module, 'Engine', fake_engine)
+    args = SimpleNamespace(workdir=None, budget=None, model=None)
+    with pytest.raises(Stop):
+        await worker.run(args)
+    assert calls == ['configure', 'engine']
 
 
 def test_every_agent_construction_is_named():
@@ -229,20 +288,41 @@ def test_every_agent_construction_is_named():
     Same shape as the capabilities guard in test_agent_caps: scanning the
     source is the only check that stays true for agents nobody has written yet.
     """
-    import ast
+    from helpers import agent_calls_missing
 
-    missing = []
-    for path in sorted(Path('src/codingdude').rglob('*.py')):
-        tree = ast.parse(path.read_text(encoding='utf-8'))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            if getattr(node.func, 'id', None) != 'Agent':
-                continue
-            keywords = {k.arg for k in node.keywords if k.arg}
-            if 'name' not in keywords:
-                missing.append(f'{path.name}:{node.lineno}')
+    missing = agent_calls_missing('name')
     assert missing == [], (
         'Agent(...) without name= — spans would be unattributable: '
         + ', '.join(missing)
     )
+
+
+@pytest.mark.parametrize('source', [
+    'Agent(model=m)',                                  # bare
+    'pydantic_ai.Agent(model=m)',                      # attribute
+    'import pydantic_ai as pai\npai.Agent(model=m)',   # module alias
+    'from pydantic_ai import Agent as A\nA(model=m)',  # import alias
+])
+def test_the_agent_matcher_sees_every_construction_form(source):
+    """The guard is only worth its green tick if it matches the forms a real
+    call site can take — a bare `func.id == 'Agent'` test misses three of these
+    four, which is exactly the drift the guard exists to catch."""
+    from helpers import agent_call_nodes
+
+    tree = ast.parse(source)
+    [call] = agent_call_nodes(tree)
+    assert 'name' not in {k.arg for k in call.keywords}
+
+
+def test_the_agent_matcher_rejects_a_blank_name():
+    from helpers import agent_call_nodes
+
+    [call] = agent_call_nodes(ast.parse("Agent(name='', model=m)"))
+    assert {k.arg for k in call.keywords} == {'name', 'model'}  # matched at all
+
+
+def test_no_agent_is_constructed_with_a_blank_name(tmp_path):
+    from helpers import agent_calls_missing
+
+    (tmp_path / 'mod.py').write_text("Agent(name='', model=m)\n", encoding='utf-8')
+    assert agent_calls_missing('name', tmp_path) == [f'{tmp_path.as_posix()}/mod.py:1']

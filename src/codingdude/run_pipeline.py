@@ -341,15 +341,29 @@ def _bounded_output_capabilities() -> list:
     `ToolOutputLimits.before_run` refuses to run without a workspace or a store,
     and our agents deliberately have no workspace capability. No file is
     written unless a `Spill` band fires.
+
+    A missing harness returns `[]` rather than raising: these are *extra*
+    protections on top of the ProcessHistory guard, so a venv that predates the
+    harness (or a future harness that moves these modules) must degrade to the
+    previous behaviour, not kill every run at agent-build time.
     """
-    from pydantic_ai_harness.tool_output_limits import (
-        Band,
-        LocalFileStore,
-        ToolOutputLimits,
-        Truncate,
-        TruncationStrategy,
-    )
-    from pydantic_ai_harness.warn_on_cache_busts import WarnOnCacheBusts
+    import logging
+
+    try:
+        from pydantic_ai_harness.tool_output_limits import (
+            Band,
+            LocalFileStore,
+            ToolOutputLimits,
+            Truncate,
+            TruncationStrategy,
+        )
+        from pydantic_ai_harness.warn_on_cache_busts import WarnOnCacheBusts
+    except ImportError as exc:
+        logging.getLogger(__name__).warning(
+            'pydantic-ai-harness capabilities unavailable (%s) — '
+            'oversized tool output is bounded only by the history guard', exc,
+        )
+        return []
 
     return [
         ToolOutputLimits(

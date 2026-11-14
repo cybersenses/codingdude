@@ -15,6 +15,8 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """R93-B: upstream harness capabilities that bound tool output at the source."""
 
+from types import SimpleNamespace
+
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
@@ -75,18 +77,22 @@ def test_run_capabilities_carry_the_harness_guards():
 def test_one_shot_agents_keep_prefix_caching_only():
     """One-shot agents send a fresh conversation; output bounding there is not
     part of this ticket's scope and would change their cost profile."""
-    services = _FakeServices()
-    assert 'ToolOutputLimits' not in _names(one_shot_capabilities(services))
+    services = _FakeServices(prompt_cache='1h')  # caching ON, so the list is real
+    names = _names(one_shot_capabilities(services))
+    assert 'Caching' in names          # the positive half of the claim
+    assert 'ToolOutputLimits' not in names
+    assert 'WarnOnCacheBusts' not in names
 
 
 class _FakeServices:
     """Just enough of RunServices for one_shot_capabilities' cache profile."""
 
-    class config:  # noqa: N801 - mirrors the attribute shape it stands in for
-        class models:  # noqa: N801
-            prompt_cache = False
-            prompt_cache_messages = False
-            prompt_cache_settings: dict = {}
+    def __init__(self, prompt_cache=False, prompt_cache_messages=False):
+        self.config = SimpleNamespace(models=SimpleNamespace(
+            prompt_cache=prompt_cache,
+            prompt_cache_messages=prompt_cache_messages,
+            prompt_cache_settings={},
+        ))
 
 
 # --- behaviour -------------------------------------------------------------
@@ -119,12 +125,38 @@ async def test_the_cap_sits_below_a_single_full_read():
 # --- dependency guard ------------------------------------------------------
 
 
+def test_a_missing_harness_degrades_instead_of_killing_the_run(monkeypatch):
+    """These capabilities sit on top of the ProcessHistory guard, so a venv
+    without the harness (or a harness that moves these modules) must fall back
+    to the previous behaviour — not raise inside every agent build."""
+    import sys
+
+    from codingdude.run_pipeline import _bounded_output_capabilities
+
+    monkeypatch.setitem(sys.modules, 'pydantic_ai_harness.tool_output_limits', None)
+    assert _bounded_output_capabilities() == []
+
+    monkeypatch.undo()
+    assert _names(_bounded_output_capabilities()) == [
+        'ToolOutputLimits', 'WarnOnCacheBusts',
+    ]
+
+
 def test_the_harness_and_the_core_version_it_pins_are_installed():
     """pydantic-ai-harness 0.68 pins pydantic-ai-slim==2.68 exactly; adopting
     the harness means adopting that core version."""
     import importlib.metadata as metadata
 
-    assert metadata.version('pydantic-ai-harness') >= '0.68.0'
+    def parts(version: str) -> tuple[int, ...]:
+        """Numeric version parts — `'0.100.0' >= '0.68.0'` is False as a string,
+        which would fail this guard on the first legitimate 0.100 release."""
+        out = []
+        for chunk in version.split('.'):
+            digits = ''.join(c for c in chunk if c.isdigit())
+            out.append(int(digits) if digits else 0)
+        return tuple(out)
+
+    assert parts(metadata.version('pydantic-ai-harness'))[:2] >= (0, 68)
     core = metadata.version('pydantic-ai')
-    assert tuple(int(p) for p in core.split('.')[:2]) >= (2, 68)
+    assert parts(core)[:2] >= (2, 68)
     assert metadata.version('pydantic-ai-slim') == core

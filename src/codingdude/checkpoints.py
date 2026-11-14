@@ -42,11 +42,16 @@ def _now() -> float:
 def _created_ns(cp_dir: Path) -> int:
     """Filesystem timestamp of a checkpoint directory, in nanoseconds.
 
-    Tiebreaker for `_ordered_ids`: `_now()` is a coarse-tick wall clock (~15ms
-    here, measured), so two checkpoints captured in the same tick share
-    `created_at` exactly (#343). This is `st_ctime_ns`, which is the directory's
-    *creation* time on Windows and its *inode-change* time on POSIX — in both
-    cases later for a directory created later, which is all the ordering needs.
+    Legacy tiebreaker for `_ordered_ids`, kept for checkpoints written before
+    `begin()` stamped a sequence number: `_now()` is a coarse-tick wall clock
+    (~15ms here, measured), so two checkpoints captured in the same tick share
+    `created_at` exactly (#343).
+
+    Not trustworthy as *creation* time on POSIX: `st_ctime` there is
+    inode-change time, and `capture_file` writes into the checkpoint directory,
+    so an older checkpoint that receives captures later can carry a newer
+    value. On Windows it is real creation time. `seq` supersedes it; this
+    remains as the deterministic fallback for pre-seq checkpoints on Windows.
     """
     try:
         return cp_dir.stat().st_ctime_ns
@@ -75,10 +80,29 @@ class CheckpointStore:
             'id': cp_id,
             'session_id': session_id,
             'created_at': _now(),
+            # Monotonic within the session, so two checkpoints that share a
+            # clock tick still order exactly. The filesystem timestamp this
+            # replaced is creation time only on Windows — on POSIX it is
+            # inode-change time, which `capture_file` bumps in an *older*
+            # checkpoint whenever it later snapshots a file into it (#343).
+            'seq': self._next_seq(self._session_dir(session_id)),
             'files': {},
         }
         (cp_dir / 'metadata.json').write_text(json.dumps(meta), encoding='utf-8')
         return cp_id
+
+    def _next_seq(self, session_dir: Path) -> int:
+        """One past the highest sequence stamped in this session."""
+        highest = 0
+        if session_dir.exists():
+            for cp_dir in session_dir.iterdir():
+                if not cp_dir.is_dir():
+                    continue
+                meta = self._read_meta(cp_dir / 'metadata.json')
+                if meta is None:
+                    continue
+                highest = max(highest, int(meta.get('seq', 0) or 0))
+        return highest + 1
 
 
     @staticmethod
@@ -105,12 +129,11 @@ class CheckpointStore:
         Nor is `created_at` alone sufficient: the wall clock advances in coarse
         ticks (~15ms here), so back-to-back checkpoints can carry the *same*
         stamp and the tie would again fall to a random uuid — which made
-        `rewind_to` compute the wrong "later" slice (#343). The directory's
-        filesystem timestamp breaks that tie at nanosecond resolution, which in
-        practice settles it; if two directories ever share that too, the final
-        fallback is the name (a random uuid) and the ambiguity is back. This
-        narrows the window from every same-tick pair to a same-nanosecond pair,
-        not to zero, and rewind is correct in every realistic case.
+        `rewind_to` compute the wrong "later" slice (#343).
+
+        The tiebreaker is the per-session `seq` stamped by `begin()`, which is
+        exact and platform-free. Checkpoints written before `seq` existed fall
+        back to the directory's filesystem timestamp, then to the name.
         """
         if not session_dir.exists():
             return []
@@ -120,9 +143,10 @@ class CheckpointStore:
                 continue
             meta = self._read_meta(cp_dir / 'metadata.json')
             created = meta.get('created_at', 0) if meta else 0
-            entries.append((created, _created_ns(cp_dir), cp_dir.name))
+            seq = int(meta.get('seq', 0) or 0) if meta else 0
+            entries.append((created, seq, _created_ns(cp_dir), cp_dir.name))
         entries.sort()
-        return [name for _created, _ns, name in entries]
+        return [name for _created, _seq, _ns, name in entries]
 
     def capture_file(self, session_id: str, cp_id: str, workdir: Path, abs_path: Path) -> None:
         """Snapshot one file into the checkpoint (first touch per file)."""

@@ -19,8 +19,7 @@
   `send_to_logfire=False`, no token, nothing off the machine — and every agent
   carries a name, so a failed run names the agent and request instead of
   requiring inference. Off by default; a missing collector never fails a run.
-- **Pre-push review gate (R92)**: `git_push` refuses unless a recorded two-axis
-  review covers the exact diff being published. The record is content-addressed
+- **Pre-push review gate (R92)**: `git_push` refuses unless a recorded two-axis  review covers the exact diff being published. The record is content-addressed
   (`sha256` of the committed range plus the working tree), so amending or
   rebasing without changing the diff keeps it valid and fixing a finding voids
   it. `git push` through the shell is refused for the same reason, and the file
@@ -70,6 +69,17 @@
 
 ### Fixed
 
+- Delegated spend was counted twice: a delegation's requests and tokens sat in
+  both its own usage row and the run's row (the shared accumulator made both
+  true at once), so the session total — and the Budget Cap that reads it —
+  double-counted every delegation and would halt at roughly half the real
+  spend. The two rows now partition the spend, and checkpoints order by a
+  per-session sequence rather than a filesystem timestamp (`st_ctime` is
+  inode-change time on POSIX, and capturing into an older checkpoint bumps it).
+- A malformed `[telemetry] enabled` value (quoted `"false"`) no longer stops a
+  worker at boot; like a malformed endpoint it logs once and leaves tracing off.
+  A missing `pydantic-ai-harness` degrades to the history guard instead of
+  failing every agent build.
 - Provider context-length 400 that killed runs mid-session (the per-request
   guard above); the claims retry was the last path that could still overshoot.
 - Artifacts panel crash on SSE deltas after a card was replaced (R87).

@@ -1177,10 +1177,18 @@ def load_config(home: Path | None = None) -> Config:
         logging.getLogger(__name__).warning(
             'config.toml [telemetry]: unsupported shape; ignored')
         telemetry_raw = {}
-    enabled = coerce_bool(
-        telemetry_raw.get('enabled', defaults.telemetry.enabled),
-        where='config.toml [telemetry] enabled',
-    )
+    # Tracing is optional telemetry: every malformed [telemetry] value degrades
+    # to "off" with one warning, never to a dead worker (#341 contract). The
+    # boolean is validated the same way as the endpoint — a quoted "false" is a
+    # typo, not a reason to stop the session that could still run untraced.
+    enabled = False
+    try:
+        enabled = coerce_bool(
+            telemetry_raw.get('enabled', defaults.telemetry.enabled),
+            where='config.toml [telemetry] enabled',
+        )
+    except ValueError as exc:
+        logging.getLogger(__name__).warning('%s - tracing disabled', exc)
     otlp_endpoint = defaults.telemetry.otlp_endpoint
     try:
         otlp_endpoint = validate_otlp_endpoint(
@@ -1188,15 +1196,22 @@ def load_config(home: Path | None = None) -> Config:
             where='config.toml [telemetry] otlp_endpoint',
         )
     except ValueError as exc:
-        # Tracing is optional telemetry: a typo must degrade to "off", never
-        # stop the worker that runs the session (#341 contract).
+        # A typo must degrade to "off", never stop the worker that runs the
+        # session (#341 contract).
         logging.getLogger(__name__).warning('%s - tracing disabled', exc)
         enabled = False
+    service_name = str(telemetry_raw.get(
+        'service_name', defaults.telemetry.service_name)).strip()
+    if not service_name:
+        logging.getLogger(__name__).warning(
+            'config.toml [telemetry] service_name: empty — using %r',
+            defaults.telemetry.service_name,
+        )
+        service_name = defaults.telemetry.service_name
     telemetry = TelemetryConfig(
         enabled=enabled,
         otlp_endpoint=otlp_endpoint,
-        service_name=str(telemetry_raw.get(
-            'service_name', defaults.telemetry.service_name)),
+        service_name=service_name,
     )
     config = Config(
         models=ModelLineup(

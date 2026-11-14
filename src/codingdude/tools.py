@@ -1129,6 +1129,7 @@ def build_delegation_toolset(
     approvals=None,
     config=None,
     model_resolver=None,
+    spend_ledger=None,
 ) -> FunctionToolset:
     """The `delegate` tool: spawn a read-only Subagent on the cheap model.
 
@@ -1155,6 +1156,10 @@ def build_delegation_toolset(
     accumulator, so delegated requests and tokens count against the run that
     caused them, and its request budget is the delegation slice
     `used + [delegation].max_requests` rather than a fresh allowance.
+
+    `spend_ledger` (a `delegation.DelegatedSpend`) records each delegation's
+    slice so the run's own usage row can be charged the remainder; without it
+    the same spend lands in two rows and `session_usage` double-counts it.
     """
     from .config import DelegationConfig
 
@@ -1166,6 +1171,10 @@ def build_delegation_toolset(
 
     def _bill(usage, function_name: str | None = None) -> None:
         # Delegations are real spend: attribute to the parent Session (H6).
+        # The ledger takes the slice regardless of whether a row can be
+        # written, so the parent's own row is always charged the remainder.
+        if spend_ledger is not None:
+            spend_ledger.add(usage)
         if db is None or not session_id:
             return
         try:
@@ -1180,7 +1189,12 @@ def build_delegation_toolset(
                 function_name=function_name,
             )
         except Exception:  # noqa: BLE001 - accounting must never fail a run
-            pass
+            import logging
+
+            logging.getLogger(__name__).warning(
+                'delegation usage recording failed for session %s',
+                session_id, exc_info=True,
+            )
 
     def _resolve_profile_model(name: str):
         if model_resolver is not None:
@@ -1201,7 +1215,12 @@ def build_delegation_toolset(
         )
         from pydantic_ai.settings import ModelSettings
 
-        from .delegation import brief_prompt, build_brief, child_usage_limits
+        from .delegation import (
+            brief_prompt,
+            build_brief,
+            child_usage_limits,
+            delegation_slice,
+        )
         from .prompts import load_prompt
         from .sandbox import _make_venv, exec_in_sandbox_dir
         from .worktrees import (
@@ -1321,24 +1340,26 @@ def build_delegation_toolset(
             capabilities=delegation_caps,
         )
         sandbox_diff: str | None = None
+        limits = child_usage_limits(
+            used_requests,
+            getattr(ctx, 'usage_limits', None),
+            cfg.max_requests,
+        )
+        result = None
+        aborted = False
         try:
             try:
                 result = await sub_agent.run(
                     brief_prompt(brief),
                     usage=ctx.usage,
-                    usage_limits=child_usage_limits(
-                        used_requests,
-                        getattr(ctx, 'usage_limits', None),
-                        cfg.max_requests,
-                    ),
+                    usage_limits=limits,
                 )
             except UsageLimitExceeded:
-                return (
-                    'delegation aborted: exceeded the delegation budget of '
-                    f'{cfg.max_requests} model requests. Narrow the task and '
-                    'delegate again with a tighter question.'
-                )
-            if write and isolated:
+                # The spend of an aborted delegation is still real: fall
+                # through to the shared billing/trace path below instead of
+                # returning early (it used to vanish from both).
+                aborted = True
+            if not aborted and write and isolated:
                 # intent-to-add so newly created files appear in the diff
                 await run_captured(['git', 'add', '-N', '-A'],
                                    cwd=agent_workdir, timeout=60)
@@ -1348,7 +1369,9 @@ def build_delegation_toolset(
         finally:
             if isolated:
                 remove_worktree(workdir, sandbox_name)
-        spent = _usage_delta(usage_before, result.usage)
+        # The accumulator holds the spend either way; `result.usage` is the
+        # same object, so reading it from `ctx` covers the aborted path.
+        spent = _usage_delta(usage_before, ctx.usage if result is None else result.usage)
         _bill(spent, function_name=function)
         _emit({
             'type': 'DELEGATION_COMPLETED',
@@ -1356,11 +1379,32 @@ def build_delegation_toolset(
             'delegation_id': delegation_id,
             'write': write,
             'function': function,
+            'aborted': aborted,
             'requests': spent.requests,
             'input_tokens': spent.input_tokens,
             'output_tokens': spent.output_tokens,
             'cost_usd': spent.cost,
         })
+        if result is None:
+            # Only the UsageLimitExceeded path leaves no result — and it is the
+            # path where spend is guaranteed, so it bills and traces above like
+            # any other delegation before reporting why it stopped.
+            session_cap = limits.request_limit
+            slice_cap = delegation_slice(used_requests, cfg.max_requests)
+            if session_cap is not None and session_cap < slice_cap:
+                # The session's own limit bound the delegation, not its slice
+                # (child_usage_limits takes the min) — say which one fired.
+                return (
+                    'delegation aborted: the session request limit of '
+                    f'{session_cap} was reached before the delegation slice of '
+                    f'{cfg.max_requests} could be spent. Raise '
+                    '[models].request_limit or split the task.'
+                )
+            return (
+                'delegation aborted: exceeded the delegation budget of '
+                f'{cfg.max_requests} model requests. Narrow the task and '
+                'delegate again with a tighter question.'
+            )
         output = str(result.output)
         if write and isolated:
             diff = sandbox_diff or ''

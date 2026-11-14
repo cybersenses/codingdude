@@ -243,20 +243,9 @@ def test_every_agent_construction_passes_capabilities():
     the source is the only check that stays true for agents nobody has
     written yet.
     """
-    import ast
-    from pathlib import Path
+    from helpers import agent_calls_missing
 
-    missing = []
-    for path in sorted(Path('src/codingdude').rglob('*.py')):
-        tree = ast.parse(path.read_text(encoding='utf-8'))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            if getattr(node.func, 'id', None) != 'Agent':
-                continue
-            keywords = {k.arg for k in node.keywords if k.arg}
-            if 'capabilities' not in keywords:
-                missing.append(f'{path.name}:{node.lineno}')
+    missing = agent_calls_missing('capabilities')
     assert missing == [], (
         'Agent(...) without capabilities — use agent_caps.cache_capabilities: '
         + ', '.join(missing)

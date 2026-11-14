@@ -46,6 +46,10 @@ logger = logging.getLogger(__name__)
 #: Set once `logfire.configure` has run. Guards against double configuration
 #: (logfire warns and the second call would add a duplicate span processor).
 _configured = False
+#: Set once a configuration failure has been reported, so a worker that calls
+#: this per run does not spam the same warning (`_configured` stays False on
+#: failure, which is what lets a later, fixed call still succeed).
+_warned = False
 
 
 def traces_url(endpoint: str) -> str:
@@ -65,7 +69,7 @@ def configure_tracing(config: Config) -> bool:
     Never raises: a missing exporter, a malformed endpoint or an import failure
     is logged once and tracing stays off.
     """
-    global _configured
+    global _configured, _warned
 
     settings = getattr(config, 'telemetry', None)
     if settings is None or not settings.enabled:
@@ -89,9 +93,12 @@ def configure_tracing(config: Config) -> bool:
         )
         logfire.instrument_pydantic_ai()
     except Exception as exc:  # noqa: BLE001 - tracing must never fail a run
-        logger.warning('tracing disabled: %s', exc)
+        if not _warned:
+            _warned = True
+            logger.warning('tracing disabled: %s', exc)
         return False
     _configured = True
+    _warned = False
     logger.info(
         'TRACING_ENABLED endpoint=%s service=%s',
         traces_url(settings.otlp_endpoint), settings.service_name,

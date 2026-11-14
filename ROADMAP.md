@@ -1370,6 +1370,7 @@ Enforcement: a recorded review keyed by the exact diff content is required befor
 
 ## R93 — R93: Delegation budget integrity, pydantic-ai-harness adoption, OTel tracing
 **Status:** in_progress
+Audience: agent — makes the agent cheaper and harder to run away with: delegated spend now counts against the run that caused it, oversized tool output is bounded at the source, and a failed run names its agent and request instead of arriving as a provider error string. The human payoff is a Budget Cap that actually holds and a run you can diagnose without guesswork.
 
 ## Why
 
