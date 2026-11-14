@@ -147,11 +147,12 @@ async def test_fix_loop_retry_agent_carries_capabilities(
     real_agent = PromptAssembler.agent
 
     def spy(self, resolved, instructions, toolsets, settings=None,
-            retries=5, capabilities=None):
+            retries=5, capabilities=None, name='agent'):
         constructions.append(
             {'retries': retries, 'capabilities': capabilities})
         return real_agent(self, resolved, instructions, toolsets, settings,
-                          retries=retries, capabilities=capabilities)
+                          retries=retries, capabilities=capabilities,
+                          name=name)
 
     monkeypatch.setattr(PromptAssembler, 'agent', spy)
 

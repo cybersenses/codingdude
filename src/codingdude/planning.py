@@ -248,6 +248,7 @@ async def _review_impl(db, session_id: str, review_model, checklist: str, plan, 
     # worth caching.
     reviewer_caps = cache_capabilities(models, ONE_SHOT)
     reviewer = Agent(
+        name='planning-reviewer',
         model=review_model,
         instructions=load_prompt('review'),
         toolsets=toolsets,

@@ -125,7 +125,8 @@ def build_vision_toolset(
             )
         from pydantic_ai.messages import BinaryContent
 
-        agent: Agent = Agent(model=vision_model, instructions=INSPECT_INSTRUCTIONS,
+        agent: Agent = Agent(name='vision-inspector',
+                             model=vision_model, instructions=INSPECT_INSTRUCTIONS,
                              capabilities=vision_caps)
         result = await agent.run([
             question.strip() or DEFAULT_QUESTION,

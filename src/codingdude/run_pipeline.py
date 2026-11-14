@@ -256,7 +256,8 @@ class PromptAssembler:
         return model_settings
 
     def agent(self, resolved: Model, instructions: str, toolsets, settings=None,
-              retries: int = 5, capabilities: list | None = None) -> Agent:
+              retries: int = 5, capabilities: list | None = None,
+              name: str = 'agent') -> Agent:
         """The run's Agent: model + instructions + toolsets + settings.
 
         R25: tool retries — errors are fed back to the model (see
@@ -269,6 +270,7 @@ class PromptAssembler:
         prompt caching (see context_capabilities); empty = upstream defaults.
         """
         return Agent(
+            name=name,
             model=resolved, instructions=instructions, toolsets=toolsets,
             model_settings=settings, retries=retries,
             capabilities=list(capabilities or []),
@@ -306,6 +308,73 @@ def one_shot_capabilities(services: RunServices) -> list:
     exactly equivalent to passing `capabilities=None`.
     """
     return cache_capabilities(services.config.models, ONE_SHOT)
+
+
+#: A single tool return above this many characters is truncated before it can
+#: enter the history (R93-B). Chosen against the two existing limits: our own
+#: tools self-cap far below it (shell 8k, exec 6k), while `read_file` caps at
+#: 256 KB (tools.MAX_READ_BYTES) — which is ~64k tokens for one call, half a
+#: 128k window. 80k chars (~20k tokens) leaves every ordinary source file fully
+#: readable and stops the pathological returns: MCP dumps (github, codegraph,
+#: chrome-devtools send whatever the server sends, with no cap of ours at all).
+_TOOL_OUTPUT_CHARS = 80_000
+_TOOL_OUTPUT_KEEP_CHARS = 40_000
+
+
+def _bounded_output_capabilities() -> list:
+    """Upstream capabilities for source-level tool-output bounding (R93-B).
+
+    - `ToolOutputLimits`: truncates one oversized tool return *where it is
+      produced*. Different layer from the ProcessHistory guard in
+      `context_capabilities`, which reclaims *history* at request time: that
+      guard cannot help with a return so large it is already over the window
+      the moment it arrives.
+    - `WarnOnCacheBusts`: reports a collapsed prompt-cache prefix from the
+      provider's own numbers, so a silent cache miss (full price on every
+      request) shows up as a log line instead of a surprise bill.
+
+    Imported lazily: `pydantic_ai_harness` costs ~1.4s to import and the worker
+    pays its boot cost on every run (R76/R78). `sys.modules` makes it a
+    once-per-process cost, first agent build.
+
+    A store is passed although the band truncates rather than spills:
+    `ToolOutputLimits.before_run` refuses to run without a workspace or a store,
+    and our agents deliberately have no workspace capability. No file is
+    written unless a `Spill` band fires.
+
+    A missing harness returns `[]` rather than raising: these are *extra*
+    protections on top of the ProcessHistory guard, so a venv that predates the
+    harness (or a future harness that moves these modules) must degrade to the
+    previous behaviour, not kill every run at agent-build time.
+    """
+    import logging
+
+    try:
+        from pydantic_ai_harness.tool_output_limits import (
+            Band,
+            LocalFileStore,
+            ToolOutputLimits,
+            Truncate,
+            TruncationStrategy,
+        )
+        from pydantic_ai_harness.warn_on_cache_busts import WarnOnCacheBusts
+    except ImportError as exc:
+        logging.getLogger(__name__).warning(
+            'pydantic-ai-harness capabilities unavailable (%s) — '
+            'oversized tool output is bounded only by the history guard', exc,
+        )
+        return []
+
+    return [
+        ToolOutputLimits(
+            bands=[Band(over=_TOOL_OUTPUT_CHARS, action=Truncate(
+                strategy=TruncationStrategy.head_tail,
+                max_chars=_TOOL_OUTPUT_KEEP_CHARS,
+            ))],
+            store=LocalFileStore(),
+        ),
+        WarnOnCacheBusts(),
+    ]
 
 
 def context_capabilities(
@@ -361,6 +430,7 @@ def context_capabilities(
 
         caps.append(ProcessHistory(_guard))
     caps.extend(cache_capabilities(models))
+    caps.extend(_bounded_output_capabilities())
     return caps
 
 
@@ -446,6 +516,7 @@ class HistoryManager:
             if hasattr(p, 'content') and p.content
         )
         summarizer: Agent = Agent(
+            name='compaction',
             model=resolved, capabilities=one_shot_capabilities(self._services))
         summary_result = await summarizer.run(
             'Summarize the key facts and decisions of this conversation '
@@ -560,6 +631,7 @@ class PostRunPipeline:
         # and 6k chars of transcript covers the run's tail, where the facts are.
         transcript = '\n'.join(self._services.db.load_messages(session_id))[:6000]
         agent: Agent = Agent(
+            name='memory-extraction',
             model=extraction_model, capabilities=one_shot_capabilities(self._services))
         try:
             result = await asyncio.wait_for(agent.run(
@@ -625,6 +697,7 @@ class PostRunPipeline:
                     tool_results.append(f'{name}: {tail}')
 
         auditor = Agent(
+            name='claims-auditor',
             model=extraction_model, capabilities=one_shot_capabilities(self._services))
         audit_prompt = (
             load_prompt('claim_check')
@@ -693,6 +766,7 @@ class PostRunPipeline:
             models=self._services.config.models,
         )
         retry_agent: Agent = Agent(
+            name='claims-retry',
             model=resolved, instructions=instructions or load_prompt('base_instructions'),
             toolsets=[error_feedback_toolset(build_verifier_toolsets(
                 workdir, approvals, shell_bin, registry=registry,

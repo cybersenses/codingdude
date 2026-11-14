@@ -4,8 +4,22 @@
 
 ### Added
 
-- **Pre-push review gate (R92)**: `git_push` refuses unless a recorded two-axis
-  review covers the exact diff being published. The record is content-addressed
+- **Delegation spends the session's budget (R93-A)**: a delegated run is handed
+  the parent's usage accumulator, so its requests and tokens count against the
+  run that caused them instead of vanishing. Its cap is the delegation slice
+  (`used + [delegation].max_requests`, bounded by the session limit) rather than
+  a fresh allowance per delegation. The operator kill switch is now observed at
+  every tool boundary *inside* a delegation, not only between the parent's calls.
+- **Tool output bounded at the source (R93-B)**: an oversized tool return is
+  truncated where it is produced (80k chars → 40k head/tail) instead of arriving
+  whole. Our own tools already self-cap; this bounds what MCP servers send.
+  Cache-bust reporting from the provider's own numbers comes with it.
+- **Local-OTLP tracing (R93-C)**: new `[telemetry]` table (`enabled`,
+  `otlp_endpoint`, `service_name`). Traces go to a local collector only —
+  `send_to_logfire=False`, no token, nothing off the machine — and every agent
+  carries a name, so a failed run names the agent and request instead of
+  requiring inference. Off by default; a missing collector never fails a run.
+- **Pre-push review gate (R92)**: `git_push` refuses unless a recorded two-axis  review covers the exact diff being published. The record is content-addressed
   (`sha256` of the committed range plus the working tree), so amending or
   rebasing without changing the diff keeps it valid and fixing a finding voids
   it. `git push` through the shell is refused for the same reason, and the file
@@ -41,6 +55,9 @@
 
 ### Changed
 
+- pydantic-ai 2.66 → 2.68 and `pydantic-ai-harness` 0.68 added (R93-B). The
+  harness pins the core version exactly, so this is one move. Note for anyone
+  with a live server: the venv moves on the next `uv sync`.
 - `main` is protected and changes land through PRs with CI (R73/R74); issue and
   PR templates plus a Contributor Covenant code of conduct are in the repo.
 - `github-mcp-server.exe` is no longer vendored; `setup-codingdude.bat` fetches
@@ -52,6 +69,17 @@
 
 ### Fixed
 
+- Delegated spend was counted twice: a delegation's requests and tokens sat in
+  both its own usage row and the run's row (the shared accumulator made both
+  true at once), so the session total — and the Budget Cap that reads it —
+  double-counted every delegation and would halt at roughly half the real
+  spend. The two rows now partition the spend, and checkpoints order by a
+  per-session sequence rather than a filesystem timestamp (`st_ctime` is
+  inode-change time on POSIX, and capturing into an older checkpoint bumps it).
+- A malformed `[telemetry] enabled` value (quoted `"false"`) no longer stops a
+  worker at boot; like a malformed endpoint it logs once and leaves tracing off.
+  A missing `pydantic-ai-harness` degrades to the history guard instead of
+  failing every agent build.
 - Provider context-length 400 that killed runs mid-session (the per-request
   guard above); the claims retry was the last path that could still overshoot.
 - Artifacts panel crash on SSE deltas after a card was replaced (R87).

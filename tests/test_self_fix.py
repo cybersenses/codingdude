@@ -175,6 +175,87 @@ def test_l5_rewind_drops_later_checkpoints(home, tmp_path):
     assert f.read_text() == '1\n'
 
 
+def test_l5_rewind_survives_identical_created_at(home, tmp_path, monkeypatch):
+    """#343: a created_at tie must not be settled by the random uuid.
+
+    The wall clock advances in coarse ticks (~15ms here), so two back-to-back
+    checkpoints genuinely share `created_at`; sorting on `(created_at, name)`
+    then ordered them by a random hex suffix. Pinning the clock *and* reversing
+    the uuid order makes the bad outcome deterministic instead of a race: a
+    name tiebreak puts cp2 first, so `rewind_to(cp1)` would find nothing later
+    and leave cp2 in place.
+    """
+    import codingdude.checkpoints as checkpoints
+
+    monkeypatch.setattr(checkpoints, '_now', lambda: 1_000_000.0)
+    # cp1, cp2, then the safety checkpoint rewind_to creates internally.
+    suffixes = ['bbbbbbbb', 'aaaaaaaa', 'cccccccc', 'dddddddd']
+
+    class _Hex:
+        def __init__(self, value: str) -> None:
+            self.hex = value
+
+    monkeypatch.setattr(
+        checkpoints.uuid, 'uuid4', lambda: _Hex(suffixes.pop(0)))
+
+    store = checkpoints.CheckpointStore(home)
+    f = tmp_path / 'doc.txt'
+    cp1 = store.begin('s1')
+    f.write_text('1\n')
+    store.capture_file('s1', cp1, tmp_path, f)
+    cp2 = store.begin('s1')
+    f.write_text('2\n')
+    store.capture_file('s1', cp2, tmp_path, f)
+    assert cp2 < cp1  # name order is the opposite of creation order
+
+    store.rewind_to('s1', cp1, tmp_path)
+    ids = [c['id'] for c in store.list_checkpoints('s1')]
+    assert cp2 not in ids
+    assert cp1 in ids
+    assert f.read_text() == '1\n'
+
+
+def test_begin_stamps_an_increasing_sequence(home, monkeypatch):
+    """The tiebreak is a per-session counter, not a filesystem timestamp: on
+    POSIX `st_ctime` is inode-change time, and `capture_file` writes into the
+    checkpoint directory — so an older checkpoint that receives a capture later
+    would sort *after* a newer one."""
+    import codingdude.checkpoints as checkpoints
+
+    monkeypatch.setattr(checkpoints, '_now', lambda: 1_000_000.0)  # same tick
+    store = checkpoints.CheckpointStore(home)
+    first = store.begin('s1')
+    second = store.begin('s1')
+    seqs = [
+        store._read_meta(store._session_dir('s1') / cp / 'metadata.json')['seq']
+        for cp in (first, second)
+    ]
+    assert seqs == [1, 2]
+    assert store._ordered_ids(store._session_dir('s1')) == [first, second]
+
+
+def test_ordering_follows_seq_not_the_name_or_the_clock(home):
+    """Deterministic proof of the mechanism: two checkpoints with identical
+    created_at and a name order that is the reverse of creation order."""
+    import json
+
+    import codingdude.checkpoints as checkpoints
+
+    store = checkpoints.CheckpointStore(home)
+    session_dir = store._session_dir('s1')
+    for name, seq in (('zzzz', 1), ('aaaa', 2)):
+        cp_dir = session_dir / name
+        cp_dir.mkdir(parents=True)
+        (cp_dir / 'metadata.json').write_text(
+            json.dumps({
+                'id': name, 'session_id': 's1', 'created_at': 1.0,
+                'seq': seq, 'files': {},
+            }),
+            encoding='utf-8',
+        )
+    assert store._ordered_ids(session_dir) == ['zzzz', 'aaaa']
+
+
 def test_l8_yaml_frontmatter_skill(home):
     """`---` frontmatter (key: value + [list]) is parsed (L8)."""
     from codingdude.skills import SkillRegistry

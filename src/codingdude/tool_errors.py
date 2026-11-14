@@ -38,9 +38,14 @@ from pydantic_ai.toolsets import CombinedToolset, WrapperToolset
 from pydantic_ai.toolsets.abstract import ToolsetTool
 
 from .errors import GateRequired
+from .operator_files import OperatorHalt
 
 # Control-flow, not failure: these mean something other than "the tool blew
-# up" and must reach their own handlers untouched.
+# up" and must reach their own handlers untouched. `OperatorHalt` matters here
+# because a tool body can now observe the operator kill-switch itself: a
+# delegation wraps its inner toolsets in the operator files toolset, so the
+# halt surfaces from inside the `delegate` call and must reach the engine's
+# halted-outcome handler instead of being retried as a tool failure.
 _PASSTHROUGH: tuple[type[BaseException], ...] = (
     ModelRetry,
     GateRequired,
@@ -49,6 +54,7 @@ _PASSTHROUGH: tuple[type[BaseException], ...] = (
     SkipToolExecution,
     ToolFailed,
     RunCancelled,
+    OperatorHalt,
 )
 
 

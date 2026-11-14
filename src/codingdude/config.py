@@ -68,6 +68,13 @@ def _default_config_toml(lineup: ModelLineup) -> str:
         '\n[planning]\n'
         '# Mirror tickets/roadmap items to GitHub issues via gh (best-effort)\n'
         'github_mirror = true\n'
+        '\n[telemetry]\n'
+        '# Export agent traces (one span per model and tool call) to a LOCAL OTLP\n'
+        '# collector. Nothing is sent to Logfire, so no token is needed and run\n'
+        '# prompts stay on this machine. Off by default.\n'
+        '# enabled = false\n'
+        '# otlp_endpoint = "http://127.0.0.1:4318"\n'
+        '# service_name = "codingdude"\n'
     )
 
 
@@ -1041,6 +1048,49 @@ class TraceConfig:
 
 
 @dataclass(frozen=True)
+class TelemetryConfig:
+    """OpenTelemetry export for agent runs (R93-C).
+
+    Traces go to a *local* OTLP collector; nothing is sent to Logfire
+    (`send_to_logfire=False`), so no token is involved and prompts stay on the
+    machine. Off by default: an absent collector must not be what breaks a run.
+    """
+
+    enabled: bool = False
+    otlp_endpoint: str = 'http://127.0.0.1:4318'
+    service_name: str = 'codingdude'
+
+
+def validate_otlp_endpoint(value, where: str) -> str:
+    """An http(s) URL for the local OTLP collector.
+
+    Rejects a malformed endpoint loudly at this seam; `load_config` catches it
+    and degrades to "tracing off" rather than stopping the worker (see the
+    `[telemetry]` block there) — silently exporting nowhere is the failure this
+    setting exists to prevent, and refusing to start is the opposite failure.
+    """
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f'{where}: must be a non-empty http(s) URL')
+    endpoint = value.strip()
+    if not endpoint.startswith(('http://', 'https://')):
+        raise ValueError(
+            f'{where}: {value!r} must start with http:// or https://'
+        )
+    return endpoint
+
+
+def coerce_bool(value, where: str) -> bool:
+    """A real TOML boolean, not `bool()` of whatever arrived.
+
+    `bool('false')` is True, so one pair of stray quotes in config.toml would
+    silently enable the feature it was meant to disable.
+    """
+    if isinstance(value, bool):
+        return value
+    raise ValueError(f'{where}: expected true or false, got {value!r}')
+
+
+@dataclass(frozen=True)
 class Config:
     """Top-level CodingDude configuration assembled from config home + environment."""
     models: ModelLineup
@@ -1049,6 +1099,7 @@ class Config:
     delegation: DelegationConfig = field(default_factory=DelegationConfig)
     planning: PlanningConfig = field(default_factory=PlanningConfig)
     trace: TraceConfig = field(default_factory=TraceConfig)
+    telemetry: TelemetryConfig = field(default_factory=TelemetryConfig)
 
     @classmethod
     def defaults(cls) -> Config:
@@ -1121,6 +1172,47 @@ def load_config(home: Path | None = None) -> Config:
         raise ValueError(
             f'config.toml [trace] deltas: {deltas!r} — must be "compact" or "full"'
         )
+    telemetry_raw = raw.get('telemetry', {})
+    if not isinstance(telemetry_raw, dict):
+        logging.getLogger(__name__).warning(
+            'config.toml [telemetry]: unsupported shape; ignored')
+        telemetry_raw = {}
+    # Tracing is optional telemetry: every malformed [telemetry] value degrades
+    # to "off" with one warning, never to a dead worker (#341 contract). The
+    # boolean is validated the same way as the endpoint — a quoted "false" is a
+    # typo, not a reason to stop the session that could still run untraced.
+    enabled = False
+    try:
+        enabled = coerce_bool(
+            telemetry_raw.get('enabled', defaults.telemetry.enabled),
+            where='config.toml [telemetry] enabled',
+        )
+    except ValueError as exc:
+        logging.getLogger(__name__).warning('%s - tracing disabled', exc)
+    otlp_endpoint = defaults.telemetry.otlp_endpoint
+    try:
+        otlp_endpoint = validate_otlp_endpoint(
+            telemetry_raw.get('otlp_endpoint', otlp_endpoint),
+            where='config.toml [telemetry] otlp_endpoint',
+        )
+    except ValueError as exc:
+        # A typo must degrade to "off", never stop the worker that runs the
+        # session (#341 contract).
+        logging.getLogger(__name__).warning('%s - tracing disabled', exc)
+        enabled = False
+    service_name = str(telemetry_raw.get(
+        'service_name', defaults.telemetry.service_name)).strip()
+    if not service_name:
+        logging.getLogger(__name__).warning(
+            'config.toml [telemetry] service_name: empty — using %r',
+            defaults.telemetry.service_name,
+        )
+        service_name = defaults.telemetry.service_name
+    telemetry = TelemetryConfig(
+        enabled=enabled,
+        otlp_endpoint=otlp_endpoint,
+        service_name=service_name,
+    )
     config = Config(
         models=ModelLineup(
             main=models.get('main', defaults.models.main),
@@ -1155,6 +1247,7 @@ def load_config(home: Path | None = None) -> Config:
                 'flush_bytes', defaults.trace.flush_bytes)),
             flush_ms=float(trace_raw.get('flush_ms', defaults.trace.flush_ms)),
         ),
+        telemetry=telemetry,
     )
     apply_provider_keys(config)
     return config

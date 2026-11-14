@@ -221,8 +221,10 @@ def test_context_capabilities_adds_the_guard_and_the_run_cache():
     caps = context_capabilities(
         ContextManager(model_limit=100_000), None, models=_models(prompt_cache='1h')
     )
-    assert [type(c).__name__ for c in caps] == ['ProcessHistory', 'Caching']
-    assert caps[-1].messages is True
+    assert [type(c).__name__ for c in caps] == [
+        'ProcessHistory', 'Caching', 'ToolOutputLimits', 'WarnOnCacheBusts',
+    ]
+    assert caps[1].messages is True
 
 
 def test_one_shot_capabilities_gives_the_prefix_profile():
@@ -241,20 +243,9 @@ def test_every_agent_construction_passes_capabilities():
     the source is the only check that stays true for agents nobody has
     written yet.
     """
-    import ast
-    from pathlib import Path
+    from helpers import agent_calls_missing
 
-    missing = []
-    for path in sorted(Path('src/codingdude').rglob('*.py')):
-        tree = ast.parse(path.read_text(encoding='utf-8'))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            if getattr(node.func, 'id', None) != 'Agent':
-                continue
-            keywords = {k.arg for k in node.keywords if k.arg}
-            if 'capabilities' not in keywords:
-                missing.append(f'{path.name}:{node.lineno}')
+    missing = agent_calls_missing('capabilities')
     assert missing == [], (
         'Agent(...) without capabilities — use agent_caps.cache_capabilities: '
         + ', '.join(missing)
