@@ -1349,3 +1349,21 @@ Levers (ranked):
 6. Optional: logfire 5.6.0 local OTLP observability ($0 via send_to_logfire=False + local backend); pydantic 2.14.3 / core 2.50.4 patch bump (check 2.14.2 extra='forbid' JSON change); pydantic-settings 2.16.3. Monty parked (no third-party packages → can't run our tool code).
 
 Status notes: levers 1+2 adopted locally pre-deploy (user decision 2026-11-13); lever 2 made general in #338 — every agent carries a cache profile (run vs one-shot), retention/messages/provider-passthrough configurable. 3 partially — estimator exists but provider-reported cost unused.
+
+## R92 — Enforce pre-push code review as a hard gate
+**Status:** open
+
+Audience: agent
+
+Human payoff: nothing reaches a human reviewer (or a user) unreviewed — pushes carry reviewed content by construction, and the "reviewer could not verify these claims" class of post-push embarrassment stops existing.
+
+Problem: pre-push two-axis review is mandated (project notes #22, #25) but has no enforcement point. Verified in source today:
+- `.git/hooks` empty, `core.hooksPath` unset — no git-level hook
+- `gates.bat` runs ruff/mypy/pytest only
+- `git_push` (tools.py) has one precondition: user consent (`_gate('git push', always=True)`) — no review check
+- the only "review" automation is a prose string appended to push output (tools.py:1377-1385), i.e. it fires *after* the irreversible act
+- there is no review tool callable by the agent, so review is a multi-step manual ritual
+
+Second, independent defect found: `_review_impl` (planning.py) reviews `git diff HEAD` — the unstaged working tree. After a commit that is empty, so a "review" of committed-but-unpushed work reviews nothing and returns CLEAN. It also swallows every exception as `''` = CLEAN. So the existing review seam structurally cannot review a branch, and its failure mode is a green verdict.
+
+Enforcement: a recorded review keyed by the exact diff content is required before `git_push` will run; the record is written only by a tool that demands per-axis evidence (the #293 `update_execution_step` pattern). Post-push review remains a failsafe, scoped as note #22 says.

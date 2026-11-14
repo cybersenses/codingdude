@@ -1346,3 +1346,21 @@ Pre-push review (2026-11-13, two-axis delegates over `origin/main...2f35e94`, ru
 - Our own compaction still rewrites the prefix wholesale when it fires (1.25x write on that request); graded/batched clearing is D.
 
 **Gates:** `uv run pytest -q` 1252 passed / 1 skipped; `uv run ruff check src tests` clean; `uv run mypy` clean (80 source files).
+
+## R92 #339 — pre-push review as a gate, not a convention
+
+**Problem (verified in source, not inferred):** the mandated pre-push two-axis review (project notes #22/#25) had no enforcement point anywhere. `.git/hooks` is empty and `core.hooksPath` unset; `gates.bat` runs ruff/mypy/pytest only; `git_push` had exactly one precondition — user consent via `_gate`; and the only automated nudge was a string appended to the push *output*, so it fired after the irreversible act. The review seam itself was also broken: `_review_impl` ran `git diff HEAD`, which is empty immediately after a commit — exactly when a pre-push review runs — so a "review" of committed work reviewed nothing and returned CLEAN, and every exception was swallowed into an empty string, also CLEAN.
+
+**Design — state, not prose:**
+- **`codingdude.review_gate`** (new, stdlib-only): `collect_review_diff(workdir, base)` = `git diff BASE...HEAD` + `git diff HEAD`; `review_diff_key` = sha256 of it — content-addressed, so an amend or rebase that leaves the diff identical keeps a review valid, and one changed byte voids it; `record_review(...)` writes `<git-dir>/codingdude/review.json` and refuses when either axis's evidence is blank; `require_review(...)` raises `ReviewGateError` when no record matches the current key (unreadable record included — fails closed).
+- **`tools.build_git_toolset`:** new `record_review` tool (ModelRetry on a blank axis — the evidence shape proven by #293); `git_push` calls `require_review` **before** `_gate`, so an unreviewed push never reaches the consent prompt.
+- **`planning._review_impl`** reviews the branch through the same `collect_review_diff` (one definition of "the diff" for both reviewer and gate) and returns an explicit `REVIEW FAILED — … UNREVIEWED` string instead of an empty string on exception; the 8000-char cap now prints how much it withheld.
+
+**Bypasses closed after the first review pass** (each one was a hole, none was hypothetical):
+- *Caller-chosen range.* `record_review(base='HEAD')` made the committed range empty, so a record over `sha256('')` matched any commit. `resolve_base` now decides the range itself — merge-base with the default branch, or the empty tree for a branch with no remote ref yet — and the tool no longer takes a base.
+- *The shell.* `shell("git push …")` reached the remote through the approval tier and knew nothing about the record. `_is_direct_git_push` refuses it and points at `git_push`.
+- *The file tools.* `<git-dir>/codingdude/review.json` was writable through `write_file`, so a record could be fabricated. `build_toolset.resolve` now refuses any path inside `.git` — git state reads through the git tools.
+
+**Confirmed impact (read, not assumed):** `_review_impl` is the single review body behind all three entry points — `engine.review_diff` (UI "Run review"), `worker --review`, and the plan-completion pass `_run_review` — so all three now review committed work, not just the work tree. `engine.review` surfaces the failure string rather than "CLEAN — no findings", closing the #266 false-clean path. `record_path` resolves `--absolute-git-dir`, so linked worktrees keep separate records. The post-push directive text stays (its tests pin the range wording) but is now labelled a failsafe.
+
+**Known limits (stated, not implied):** the gate cannot verify the evidence — an agent can record a review it did not perform, the same accepted boundary as `update_execution_step`; the record is per-clone and last-write-wins; the longrun `pre`-authorized draft-PR path is exempt because its review cycle is a separate design; the shell guard is a regex over the command text, so a script invoked by name that pushes internally is not caught (closing that needs the sandbox/lane layer); and `gh pr create` plus the GitHub MCP file tools are not gated.

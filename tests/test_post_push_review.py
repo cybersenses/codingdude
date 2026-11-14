@@ -39,6 +39,11 @@ def _tool(toolset, name):
     return toolset.tools[name].function
 
 
+def _record(toolset) -> None:
+    """R92 #339: a push needs a recorded pre-push review to reach the remote."""
+    asyncio.run(_tool(toolset, 'record_review')(standards='no findings', spec='no findings'))
+
+
 def git(workdir: Path, *args: str) -> str:
     return subprocess.run(
         ['git', *args], cwd=workdir, check=True, capture_output=True, text=True,
@@ -65,13 +70,16 @@ def repo(tmp_path: Path) -> Path:
 
 
 def test_push_returns_review_directive_with_range(repo: Path) -> None:
-    fn = _tool(build_git_toolset(repo, ApprovalPolicy(yolo=True)), 'git_push')
+    ts = build_git_toolset(repo, ApprovalPolicy(yolo=True))
+    fn = _tool(ts, 'git_push')
+    _record(ts)
     assert 'exit 0' in asyncio.run(fn())  # initial push
     git(repo, 'fetch', 'origin')
     old_head = git(repo, 'rev-parse', 'origin/main')
     (repo / 'a.py').write_text('def a(x):\n    return x\n')
     git(repo, 'add', '.')
     git(repo, 'commit', '-m', 'change a')
+    _record(ts)
     out = asyncio.run(fn())
     assert 'exit 0' in out
     assert 'review' in out.lower()
@@ -85,8 +93,9 @@ def test_first_push_directive_without_range(repo: Path) -> None:
         for f in ref.rglob('*'):
             if f.is_file():
                 f.unlink()
-    fn = _tool(build_git_toolset(repo, ApprovalPolicy(yolo=True)), 'git_push')
-    out = asyncio.run(fn())
+    ts = build_git_toolset(repo, ApprovalPolicy(yolo=True))
+    _record(ts)
+    out = asyncio.run(_tool(ts, 'git_push')())
     assert 'exit 0' in out
     assert 'review' in out.lower()
     assert 'first push' in out
@@ -95,7 +104,8 @@ def test_first_push_directive_without_range(repo: Path) -> None:
 def test_failed_push_has_no_directive(repo: Path) -> None:
     # Break the remote so push fails.
     (repo / '.git' / 'hooks' / 'pre-push').write_text('#!/bin/sh\nexit 1\n')
-    fn = _tool(build_git_toolset(repo, ApprovalPolicy(yolo=True)), 'git_push')
-    out = asyncio.run(fn())
+    ts = build_git_toolset(repo, ApprovalPolicy(yolo=True))
+    _record(ts)
+    out = asyncio.run(_tool(ts, 'git_push')())
     assert 'exit 0' not in out
     assert 'review' not in out.lower()
