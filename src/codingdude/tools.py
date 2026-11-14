@@ -26,9 +26,9 @@ import time
 import uuid
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
-from pydantic_ai import ModelRetry
+from pydantic_ai import ModelRetry, RunContext
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 
 from codingdude.editmatch import find_similar_lines, replace_most_similar_chunk
@@ -1108,6 +1108,14 @@ def build_delegation_toolset(
     models.functions); `model_resolver` turns a profile model name into a
     pydantic-ai Model — None uses the engine's `_model_from_name` seam
     (lazy import, the worker #212 precedent; tests inject a stub).
+
+    R93-A: `ctx` is pydantic-ai's run context, so it is the first parameter
+    and is absent from the model-visible schema. The subagent keeps its own
+    message history — it never sees the parent conversation, which is the
+    documented shape for delegation — but it shares the parent's `usage`
+    accumulator, so delegated requests and tokens count against the run that
+    caused them, and its request budget is the delegation slice
+    `used + [delegation].max_requests` rather than a fresh allowance.
     """
     from .config import DelegationConfig
 
@@ -1143,7 +1151,7 @@ def build_delegation_toolset(
         return _model_from_name(
             name, config.models.fallback_base_url, config.providers)
 
-    async def delegate(task: str, write: bool = False,
+    async def delegate(ctx: RunContext[Any], task: str, write: bool = False,
                        function: str | None = None) -> str:
         import uuid as _uuid
 
@@ -1153,9 +1161,8 @@ def build_delegation_toolset(
             UsageLimitExceeded,
         )
         from pydantic_ai.settings import ModelSettings
-        from pydantic_ai.usage import UsageLimits
 
-        from .delegation import brief_prompt, build_brief
+        from .delegation import brief_prompt, build_brief, child_usage_limits
         from .prompts import load_prompt
         from .sandbox import _make_venv, exec_in_sandbox_dir
         from .worktrees import (
@@ -1217,6 +1224,10 @@ def build_delegation_toolset(
         except WorktreeError:
             isolated = False  # no git history / name clash: unisolated, said so
         brief = build_brief(task, agent_workdir, cfg.max_requests)
+        # R93-A: the delegated run is handed the parent's `ctx.usage`, so its
+        # request budget is measured from what the session has already spent
+        # (see delegation.child_usage_limits for why a bare limit is wrong).
+        used_requests = getattr(ctx.usage, 'requests', 0) or 0
         _emit({'type': 'DELEGATION_STARTED', 'task': task[:200],
                'isolated': isolated, 'delegation_id': delegation_id,
                'write': write, 'function': function,
@@ -1243,6 +1254,14 @@ def build_delegation_toolset(
         from codingdude.tool_errors import error_feedback_toolset
 
         toolsets = [error_feedback_toolset(toolsets)]
+        # R93-A: the operator kill-switch must be observed inside a delegation
+        # too — otherwise AGENT_STOP goes unseen for the whole delegated run.
+        # Applied OUTSIDE error feedback so `OperatorHalt` escapes unconverted
+        # to the engine's halted-outcome handler, matching the main agent's
+        # ordering in engine._assemble_agent.
+        from .operator_files import operator_files_toolset
+
+        toolsets = [operator_files_toolset(t, workdir) for t in toolsets]
         instructions = load_prompt('delegation')
         if overlay:
             instructions += '\n\n' + overlay
@@ -1253,6 +1272,7 @@ def build_delegation_toolset(
             getattr(config, 'models', None), ONE_SHOT
         )
         sub_agent: Agent = Agent(
+            name='delegate',
             model=session_model,
             instructions=instructions,
             toolsets=toolsets,
@@ -1264,7 +1284,12 @@ def build_delegation_toolset(
             try:
                 result = await sub_agent.run(
                     brief_prompt(brief),
-                    usage_limits=UsageLimits(request_limit=cfg.max_requests),
+                    usage=ctx.usage,
+                    usage_limits=child_usage_limits(
+                        used_requests,
+                        getattr(ctx, 'usage_limits', None),
+                        cfg.max_requests,
+                    ),
                 )
             except UsageLimitExceeded:
                 return (

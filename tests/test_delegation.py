@@ -29,6 +29,23 @@ from codingdude.config import DelegationConfig
 from codingdude.tools import build_delegation_toolset
 
 
+def _ctx(requests: int = 0):
+    """A synthetic run context for direct calls of the delegate tool body.
+
+    The engine always calls `delegate` through pydantic-ai, which supplies the
+    real `RunContext`; a direct call has to supply one. The tool body reads
+    exactly two fields — the shared usage accumulator and the parent's limits
+    (R93-A) — so a namespace carrying those two is the whole contract.
+    """
+    from types import SimpleNamespace
+
+    from pydantic_ai.usage import RunUsage, UsageLimits
+
+    return SimpleNamespace(
+        usage=RunUsage(requests=requests), usage_limits=UsageLimits()
+    )
+
+
 def delegator(task: str):
     """Main model: delegate once, then answer with what the subagent reported."""
 
@@ -147,7 +164,7 @@ async def test_delegation_emits_started_and_completed(workdir):
         emitter=events.append, session_id='s1',
     )
     [delegate] = [t for t in toolset.tools.values()]
-    out = await delegate.function(task='look around')
+    out = await delegate.function(_ctx(), task='look around')
     assert out == 'done'
     kinds = [e['type'] for e in events]
     assert kinds[0] == 'DELEGATION_STARTED'
@@ -176,7 +193,7 @@ async def test_delegation_runs_in_worktree_and_cleans_up(workdir):
         workdir, scripted(spy), emitter=events.append, session_id='s1',
     )
     [delegate] = [t for t in toolset.tools.values()]
-    await delegate.function(task='x')
+    await delegate.function(_ctx(), task='x')
     assert events[0]['isolated'] is True
     assert events[-1]['isolated'] is True
     # no stray worktrees or branches left behind
@@ -195,7 +212,7 @@ async def test_delegation_falls_back_without_git(workdir):
         emitter=events.append, session_id='s1',
     )
     [delegate] = [t for t in toolset.tools.values()]
-    await delegate.function(task='x')
+    await delegate.function(_ctx(), task='x')
     assert events[0]['isolated'] is False  # tmp dir: no git history to branch from
 
 
@@ -212,7 +229,7 @@ async def test_delegation_request_budget_is_readable(workdir):
         delegation_config=DelegationConfig(max_requests=3),
     )
     [delegate] = [t for t in toolset.tools.values()]
-    out = await delegate.function(task='loop forever')
+    out = await delegate.function(_ctx(), task='loop forever')
     assert 'delegation aborted' in out
     assert '3' in out  # the budget number is in the message
 
@@ -227,7 +244,7 @@ async def test_delegation_cost_attributed_to_parent(workdir, tmp_path):
         db=db, session_id=session_id,
     )
     [delegate] = [t for t in toolset.tools.values()]
-    await delegate.function(task='x')
+    await delegate.function(_ctx(), task='x')
     rows = db.session_usage(session_id)
     assert (rows.get('requests') or 0) >= 1
 
@@ -252,7 +269,7 @@ async def test_subagent_receives_brief_and_events_share_delegation_id(workdir):
         workdir, scripted(spy), emitter=events.append, session_id='s1',
     )
     [delegate] = [t for t in toolset.tools.values()]
-    await delegate.function(task='inspect loginUser')
+    await delegate.function(_ctx(), task='inspect loginUser')
     started, completed = events[0], events[-1]
     assert started['delegation_id'] == completed['delegation_id']
     assert started['brief_symbols'] == 1
@@ -295,7 +312,7 @@ async def test_delegate_function_uses_profile_model(workdir):
         session_id='s1',
     )
     [delegate] = [t for t in toolset.tools.values()]
-    out = await delegate.function(task='grade this', function='evaluator')
+    out = await delegate.function(_ctx(), task='grade this', function='evaluator')
     assert out == 'profiled'
     assert resolved_names == ['stub:evaluator-model']
 
@@ -309,7 +326,7 @@ async def test_delegate_unknown_function_is_model_retry(workdir):
     )
     [delegate] = [t for t in toolset.tools.values()]
     with pytest.raises(ModelRetry, match='minister'):
-        await delegate.function(task='x', function='minister')
+        await delegate.function(_ctx(), task='x', function='minister')
 
 
 async def test_delegate_function_overlay_reaches_subagent(workdir):
@@ -328,7 +345,7 @@ async def test_delegate_function_overlay_reaches_subagent(workdir):
         session_id='s1',
     )
     [delegate] = [t for t in toolset.tools.values()]
-    await delegate.function(task='x', function='evaluator')
+    await delegate.function(_ctx(), task='x', function='evaluator')
     assert any('grading work against its ticket contract' in s for s in seen)
 
 
@@ -345,7 +362,7 @@ async def test_delegate_researcher_gets_web_tools(workdir):
         session_id='s1',
     )
     [delegate] = [t for t in toolset.tools.values()]
-    out = await delegate.function(task='look it up', function='researcher')
+    out = await delegate.function(_ctx(), task='look it up', function='researcher')
     assert 'web_search' in out or 'duckduckgo_search' in out
 
 
@@ -360,7 +377,7 @@ async def test_delegate_function_bills_with_function_tag(workdir, tmp_path):
         model_resolver=lambda name: _stub_model('profiled'),
     )
     [delegate] = [t for t in toolset.tools.values()]
-    await delegate.function(task='x', function='evaluator')
+    await delegate.function(_ctx(), task='x', function='evaluator')
     by_function = {
         r['function_name']: r for r in db.session_usage(session_id)['by_function']
     }
@@ -375,7 +392,7 @@ async def test_delegate_function_events_carry_function(workdir):
         model_resolver=lambda name: _stub_model('profiled'),
     )
     [delegate] = [t for t in toolset.tools.values()]
-    await delegate.function(task='x', function='debugger')
+    await delegate.function(_ctx(), task='x', function='debugger')
     assert events[0]['function'] == 'debugger'
     assert events[-1]['function'] == 'debugger'
 
@@ -386,7 +403,7 @@ async def test_delegate_without_function_is_unchanged(workdir):
         workdir, _stub_model('done'), emitter=events.append, session_id='s1',
     )
     [delegate] = [t for t in toolset.tools.values()]
-    out = await delegate.function(task='x')
+    out = await delegate.function(_ctx(), task='x')
     assert out == 'done'
     assert events[0]['function'] is None
     assert events[-1]['function'] is None

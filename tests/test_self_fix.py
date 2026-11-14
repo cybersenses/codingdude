@@ -175,6 +175,46 @@ def test_l5_rewind_drops_later_checkpoints(home, tmp_path):
     assert f.read_text() == '1\n'
 
 
+def test_l5_rewind_survives_identical_created_at(home, tmp_path, monkeypatch):
+    """#343: a created_at tie must not be settled by the random uuid.
+
+    The wall clock advances in coarse ticks (~15ms here), so two back-to-back
+    checkpoints genuinely share `created_at`; sorting on `(created_at, name)`
+    then ordered them by a random hex suffix. Pinning the clock *and* reversing
+    the uuid order makes the bad outcome deterministic instead of a race: a
+    name tiebreak puts cp2 first, so `rewind_to(cp1)` would find nothing later
+    and leave cp2 in place.
+    """
+    import codingdude.checkpoints as checkpoints
+
+    monkeypatch.setattr(checkpoints, '_now', lambda: 1_000_000.0)
+    # cp1, cp2, then the safety checkpoint rewind_to creates internally.
+    suffixes = ['bbbbbbbb', 'aaaaaaaa', 'cccccccc', 'dddddddd']
+
+    class _Hex:
+        def __init__(self, value: str) -> None:
+            self.hex = value
+
+    monkeypatch.setattr(
+        checkpoints.uuid, 'uuid4', lambda: _Hex(suffixes.pop(0)))
+
+    store = checkpoints.CheckpointStore(home)
+    f = tmp_path / 'doc.txt'
+    cp1 = store.begin('s1')
+    f.write_text('1\n')
+    store.capture_file('s1', cp1, tmp_path, f)
+    cp2 = store.begin('s1')
+    f.write_text('2\n')
+    store.capture_file('s1', cp2, tmp_path, f)
+    assert cp2 < cp1  # name order is the opposite of creation order
+
+    store.rewind_to('s1', cp1, tmp_path)
+    ids = [c['id'] for c in store.list_checkpoints('s1')]
+    assert cp2 not in ids
+    assert cp1 in ids
+    assert f.read_text() == '1\n'
+
+
 def test_l8_yaml_frontmatter_skill(home):
     """`---` frontmatter (key: value + [list]) is parsed (L8)."""
     from codingdude.skills import SkillRegistry

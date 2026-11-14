@@ -199,6 +199,41 @@ The JSONL trace per session is what the Trace panel replays and what an
 evidence check reads back. `compact` is the default: a long run otherwise
 writes one line per token delta.
 
+### `[telemetry]`
+
+OpenTelemetry spans for agent runs, exported to a **local** collector.
+
+```toml
+[telemetry]
+enabled = false                            # off by default
+otlp_endpoint = "http://127.0.0.1:4318"    # any local OTLP/HTTP collector
+service_name = "codingdude"
+```
+
+This is the other kind of trace, and it answers a different question. The
+`[trace]` JSONL above records what happened in a session for replay and
+evidence; `[telemetry]` emits one span per model request and per tool call, so
+a slow or failing run can be read as a timeline: which agent, which request,
+how many tokens, how long.
+
+- **Local only.** `send_to_logfire=False`: no token, no account, nothing leaves
+  the machine. Run prompts contain your code, so this is a constraint, not a
+  default to relax.
+- **Off by default, and never fatal.** If nothing is listening on the endpoint,
+  tracing simply produces no traces. The endpoint must be an `http://` or
+  `https://` URL — anything else fails at load rather than silently exporting
+  nowhere.
+- Any OTLP/HTTP collector works: Grafana Agent, Jaeger (`:4318`), an
+  OpenTelemetry Collector, or `logfire` served locally. Point
+  `otlp_endpoint` at it and set `enabled = true`.
+- Everything is named: `main`, `fix-loop`, `claims-retry`, `claims-auditor`,
+  `compaction`, `memory-extraction`, `evaluator`, `planning-reviewer`,
+  `delegate`, `vision-inspector`. Filter spans by agent name to see where the
+  time or the tokens actually went.
+
+Configuration is read once per worker process, so a change takes effect on the
+next run.
+
 ### `[models.functions.<name>]`
 
 Staffing by **cognitive function** (DE-7a): delegate sessions can name one

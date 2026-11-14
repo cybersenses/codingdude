@@ -464,7 +464,7 @@ class Engine:
                 break
             retry_agent = self._prompts.agent(
                 resolved, instructions, toolsets, retries=1,
-                capabilities=capabilities,
+                capabilities=capabilities, name='fix-loop',
             )
             history = history + list(result.new_messages()) if result else history
             failure_text = (
@@ -920,7 +920,7 @@ class Engine:
         agent = self._prompts.agent(
             prepared.resolved, instructions, toolsets,
             self._prompts.model_settings(self._services, prepared.resolved, thinking),
-            capabilities=caps,
+            capabilities=caps, name='main',
         )
 
         # R71 #263: a session's first turn rides the executed kickoff —

@@ -138,3 +138,34 @@ def brief_prompt(brief: DelegationBrief) -> str:
     if extras:
         parts.append('Delegation brief:\n' + '\n'.join(extras))
     return '\n\n'.join(parts)
+
+
+def child_usage_limits(used_requests: int, parent_limits, max_requests: int):
+    """`UsageLimits` for a delegated run that shares the parent's accumulator.
+
+    A delegated run is handed the parent's `ctx.usage` so its spend is visible
+    to the run that caused it (R93-A). That accumulator already holds whatever
+    the session spent, so the child cannot be given a bare
+    `UsageLimits(request_limit=max_requests)`: on any session that had already
+    made `max_requests` requests, the delegation's *first* request would trip
+    the limit. Instead the child's cap is the session total it is allowed to
+    reach — `used + max_requests` — which preserves "this delegation may spend
+    at most `max_requests` more requests".
+
+    The parent's other limits (cost, tokens) are carried over unchanged: a
+    delegation that pushes the session over a cost cap must abort exactly as
+    the parent would. The parent's own `request_limit`, when tighter than the
+    delegation slice, still wins — a delegation may never outrun the session.
+    """
+    from dataclasses import replace
+
+    from pydantic_ai.usage import UsageLimits
+
+    cap = max(1, int(max_requests))
+    budget = max(0, int(used_requests or 0)) + cap
+    if parent_limits is None:
+        return UsageLimits(request_limit=budget)
+    parent_cap = getattr(parent_limits, 'request_limit', None)
+    if isinstance(parent_cap, int) and parent_cap > 0:
+        budget = min(budget, parent_cap)
+    return replace(parent_limits, request_limit=budget)

@@ -586,6 +586,11 @@ async def run(args) -> int:
     # #210: per-project [models] overrides from the workdir's .codingdude.toml.
     if args.workdir:
         config = apply_project_models(config, Path(args.workdir).resolve())
+    # R93-C: local-OTLP tracing for agent spans, off unless [telemetry] enabled.
+    # Never raises: an absent collector degrades to no traces, not a dead run.
+    from codingdude.tracing import configure_tracing
+
+    configure_tracing(config)
     engine = Engine(
         config=config,
         db=Database.connect(config_home()),

@@ -39,6 +39,18 @@ def _now() -> float:
     return time.time()
 
 
+def _created_ns(cp_dir: Path) -> int:
+    """Filesystem creation time of a checkpoint directory, in nanoseconds.
+
+    Tiebreaker for `_ordered_ids`: `_now()` is a coarse-tick wall clock, so two
+    checkpoints captured in the same tick share `created_at` exactly (#343).
+    """
+    try:
+        return cp_dir.stat().st_ctime_ns
+    except OSError:
+        return 0
+
+
 class CheckpointStore:
     """File-backed snapshot store enabling rollback of workdir state."""
     def __init__(self, home: Path, max_per_session: int = DEFAULT_MAX_PER_SESSION,
@@ -86,6 +98,12 @@ class CheckpointStore:
 
         Name order is not reliably chronological: two checkpoints created in the
         same second share the timestamp *prefix* and then sort on a random uuid.
+
+        Nor is `created_at` alone sufficient: the wall clock advances in coarse
+        ticks (~15ms here), so back-to-back checkpoints can carry the *same*
+        stamp and the tie would again fall to a random uuid — which made
+        `rewind_to` compute the wrong "later" slice (#343). The directory's
+        creation time breaks the tie at filesystem resolution.
         """
         if not session_dir.exists():
             return []
@@ -94,9 +112,10 @@ class CheckpointStore:
             if not cp_dir.is_dir():
                 continue
             meta = self._read_meta(cp_dir / 'metadata.json')
-            entries.append((meta.get('created_at', 0) if meta else 0, cp_dir.name))
+            created = meta.get('created_at', 0) if meta else 0
+            entries.append((created, _created_ns(cp_dir), cp_dir.name))
         entries.sort()
-        return [name for _created, name in entries]
+        return [name for _created, _ns, name in entries]
 
     def capture_file(self, session_id: str, cp_id: str, workdir: Path, abs_path: Path) -> None:
         """Snapshot one file into the checkpoint (first touch per file)."""

@@ -221,8 +221,10 @@ def test_context_capabilities_adds_the_guard_and_the_run_cache():
     caps = context_capabilities(
         ContextManager(model_limit=100_000), None, models=_models(prompt_cache='1h')
     )
-    assert [type(c).__name__ for c in caps] == ['ProcessHistory', 'Caching']
-    assert caps[-1].messages is True
+    assert [type(c).__name__ for c in caps] == [
+        'ProcessHistory', 'Caching', 'ToolOutputLimits', 'WarnOnCacheBusts',
+    ]
+    assert caps[1].messages is True
 
 
 def test_one_shot_capabilities_gives_the_prefix_profile():

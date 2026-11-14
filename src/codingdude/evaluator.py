@@ -240,6 +240,7 @@ class WorkEvaluator:
             FunctionToolset([submit_verdict]),
         ])]
         agent = Agent(
+            name='evaluator',
             model=self.model,
             instructions=load_prompt('evaluator'),
             toolsets=toolsets,
