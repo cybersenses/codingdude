@@ -76,12 +76,19 @@ def build_vision_toolset(
     vision_model: Model,
     workdir: Path,
     emitter: Callable[[dict], None] | None = None,
+    models=None,
 ) -> FunctionToolset:
     """The `inspect_image` tool, bound to the Workdir via closure.
 
     `emitter` (the run's trace emitter) records IMAGE_INSPECTED events so the
     UI/trace shows the pixel gate was actually judged, not assumed.
+    `models` is the resolved `[models]` config, used for the one-shot cache
+    profile (R91 #338): every call re-sends INSPECT_INSTRUCTIONS with a
+    different image.
     """
+    from .agent_caps import ONE_SHOT, cache_capabilities
+
+    vision_caps = cache_capabilities(models, ONE_SHOT)
 
     def resolve(path: str) -> Path:
         target = (workdir / path).resolve()
@@ -118,7 +125,8 @@ def build_vision_toolset(
             )
         from pydantic_ai.messages import BinaryContent
 
-        agent: Agent = Agent(model=vision_model, instructions=INSPECT_INSTRUCTIONS)
+        agent: Agent = Agent(model=vision_model, instructions=INSPECT_INSTRUCTIONS,
+                             capabilities=vision_caps)
         result = await agent.run([
             question.strip() or DEFAULT_QUESTION,
             BinaryContent(data=target.read_bytes(), media_type=media),

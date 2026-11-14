@@ -1309,3 +1309,58 @@ Pre-push review (2026-11-13, two-axis delegates over `origin/main...2f35e94`, ru
 - **Known tradeoff (accepted, docs-sourced):** a compaction rewrites the history prefix, so that one request's cached prefix is invalidated (upstream lists history-rewriting processors as cache busters). Compaction is rare (0.80 threshold); caching pays on every other request — net positive. `max_part_chars` truncation applying at ANY age is deliberate: without it a single oversized fresh tool return inside the keep window still 400s — the exact incident shape.
 
 **Gates (this review round):** `uv run pytest -q` 1216 passed / 1 skipped (the new fix-loop capabilities test included), `uv run ruff check src tests` clean, `uv run mypy` clean (79 source files; `PreparedRun.cm` honestly typed `ContextManager` in the process).
+
+## #338/R91 — prompt caching for general LLM use (capability adoption + config surface)
+
+**Problem:** #337 shipped caching for the main run agent only, as one hardcoded boolean — correct for our GLM/DeepSeek lineup (both cache implicitly, the setting is a no-op) but not for an open-source project that must be right on Anthropic, Bedrock, OpenRouter and OpenAI. Three defects, all in our source:
+1. **Adoption:** eight `Agent(...)` constructions carried no capabilities — summarizer, memory extractor, claims auditor, **claims retry**, evaluator, reviewer, delegate, vision. The retry was live risk, not merely missing value: it replays `(history or []) + result.new_messages()` — the entire grown run history — so it re-shipped the exact over-limit payload #337's guard exists to stop, with no guard and no cache.
+2. **Surface:** `Caching` exposes `retention: bool | '5m'|'30m'|'1h'|'12h'` and `messages: bool`; we set neither. Our own `ask_user` timeout is 1800 s — six times Anthropic's 5-minute tier — so a provider-default cache expires at every ask and the next request re-writes the whole prefix at 1.25x. And every one-shot agent was caching a conversation no later request reads: a 1.25x write for nothing.
+3. **Provider knobs:** `bedrock_cache_*`, `anthropic_cache*`, `openrouter_cache_*`, `openai_prompt_cache_options` / `openai_prompt_cache_retention` were inexpressible, and per the `ModelSettings` cache docs (pydantic-ai 2.66.0) any of them **supersedes** the unified `cache` field for its provider.
+
+**Upstream facts (verified against installed 2.66.0 source, not docs):**
+- `Caching.get_model_settings()` short-circuits: `messages=True` (or `retention is False`) → `ModelSettings(cache=<retention>)`; otherwise → `CacheConfig(retention=..., messages=False)`. So a tier with `messages=True` is a bare `cache='1h'` string, and the one-shot form is an explicit config dict (module `pydantic_ai.capabilities.caching`).
+- `snap_cache_retention` degrades an unsupported tier to the nearest *shorter* supported one; a provider with no tiers keeps its own default. This is why a single global tier is safe per provider — no per-model override map needed.
+- Capabilities contribute per-request model settings: the combined capability (`pydantic_ai.capabilities.combined`) merges `get_model_settings()` on top of the agent's own, last-wins. That is what lets provider passthrough reach every agent without a settings merge at each call site.
+- `Agent(capabilities=[])` is byte-identical to omitting the kwarg (verified: `_cap_model_settings is None`, run succeeds) — so every site passes `capabilities=` unconditionally and needs no conditional-kwargs dance.
+
+**Design:**
+- **New `codingdude.agent_caps`** — the single resolution point (deep module, no config import; takes any object exposing the three fields):
+  - `parse_cache_retention` / `validate_cache_settings`: fail-fast validation, used by BOTH config paths (raw `config.toml` load and the `PUT /config/models` boundary), so a bad tier or typo'd provider key cannot reach the request path where pydantic-ai would raise or silently ignore.
+  - `PROVIDER_CACHE_SETTINGS`: the fourteen documented provider keys, mirrored so a typo is a load error instead of a no-op that looks configured.
+  - `ProviderCacheSettings(AbstractCapability)` with `get_model_settings()` returning the passthrough dict — one capability, every agent, no per-site settings plumbing. Fixed `id` so `combine` keeps one per agent, like `Caching`.
+  - `cache_capabilities(models, profile)`: `RUN` (conversation cached; honours `prompt_cache_messages`) vs `ONE_SHOT` (`messages=False`). `prompt_cache=false` disables library-managed caching but still honours an explicit provider map — separate intents, not one flag.
+- **`config.py`:** `prompt_cache: CacheSpec = '1h'` (was `bool = True`), `prompt_cache_messages: bool = True`, `prompt_cache_settings: dict[str, object] = {}`; widened at all four parse/serialize sites (dataclass, `ModelLineupIn` + validators, `models_payload`, `apply_project_models`, raw toml parse) and documented in the generated template.
+- **`run_pipeline.py`:** `context_capabilities(cm, traced, *, per_request, models)` now takes the resolved `[models]` config instead of two booleans and delegates caching to `cache_capabilities`; `one_shot_capabilities(services)` is the shared one-shot profile; `context_manager_for(services, model_name)` extracted from `HistoryManager.context_manager` so the claims retry gets the same limit the run used.
+- **Claims retry** now carries `context_capabilities(...)` — guard *and* `RUN` cache (it re-reads the audit prompt over the whole history).
+
+**Confirmed impact (read, not assumed):**
+- Threading: the four plugin-built sites (vision, planning reviewer, evaluator, delegation) receive `models` from `PluginContext.config.models` at construction; `evaluate()`/`_review_impl`/`delegate`/`inspect_image` build the capability list where the Agent is constructed. `build_planning_toolset` → `_run_review` → `_review_impl` and `review_diff_findings` gained an optional `models=None`, so every existing caller/test keeps working (engine passes the real config).
+- `PromptAssembler.agent` lost its `kwargs` dict and passes `capabilities=list(capabilities or [])` explicitly — one construction seam, no conditional keyword.
+- No frontend change: `prompt_cache` was never rendered in the config UI, so the widen is backend-only.
+
+**Invariant + tests:** `tests/test_agent_caps.py` pins resolution (tiers forwarded, both profiles, `messages` semantics), validation (bad tier, unknown provider key, and that every documented key is accepted), the passthrough reaching a real Agent (`_cap_model_settings` carries both `cache` and the provider key), the config surface end to end (toml parse, load-time rejection, boundary rejection, defaults), and an **AST adoption guard**: every `Agent(...)` in `src/codingdude/**` must pass `capabilities=` — the structural regression is agents added later, and only a source scan stays true for code nobody has written yet. `tests/test_context_capabilities.py`'s flag-gating test now uses stub `models` objects (the guard and caching are independent gates).
+
+**Known limits (deliberately out of scope, next tickets):**
+- No cache telemetry: `cache_read_tokens` / `cache_write_tokens` / `cache_hit_ratio` on the usage record are still unwritten, so "caching enabled" cannot yet be distinguished from "caching working" on a given provider — that is C.
+- Translation is unverified locally: `pydantic_ai.models.anthropic` is not in this wheel, so Anthropic-native goes through Bedrock/OpenRouter here; tests prove we *emit* the right settings, not that a provider honours them.
+- Our own compaction still rewrites the prefix wholesale when it fires (1.25x write on that request); graded/batched clearing is D.
+
+**Gates:** `uv run pytest -q` 1252 passed / 1 skipped; `uv run ruff check src tests` clean; `uv run mypy` clean (80 source files).
+
+## R92 #339 — pre-push review as a gate, not a convention
+
+**Problem (verified in source, not inferred):** the mandated pre-push two-axis review (project notes #22/#25) had no enforcement point anywhere. `.git/hooks` is empty and `core.hooksPath` unset; `gates.bat` runs ruff/mypy/pytest only; `git_push` had exactly one precondition — user consent via `_gate`; and the only automated nudge was a string appended to the push *output*, so it fired after the irreversible act. The review seam itself was also broken: `_review_impl` ran `git diff HEAD`, which is empty immediately after a commit — exactly when a pre-push review runs — so a "review" of committed work reviewed nothing and returned CLEAN, and every exception was swallowed into an empty string, also CLEAN.
+
+**Design — state, not prose:**
+- **`codingdude.review_gate`** (new, stdlib-only): `collect_review_diff(workdir, base)` = `git diff BASE...HEAD` + `git diff HEAD`; `review_diff_key` = sha256 of it — content-addressed, so an amend or rebase that leaves the diff identical keeps a review valid, and one changed byte voids it; `record_review(...)` writes `<git-dir>/codingdude/review.json` and refuses when either axis's evidence is blank; `require_review(...)` raises `ReviewGateError` when no record matches the current key (unreadable record included — fails closed).
+- **`tools.build_git_toolset`:** new `record_review` tool (ModelRetry on a blank axis — the evidence shape proven by #293); `git_push` calls `require_review` **before** `_gate`, so an unreviewed push never reaches the consent prompt.
+- **`planning._review_impl`** reviews the branch through the same `collect_review_diff` (one definition of "the diff" for both reviewer and gate) and returns an explicit `REVIEW FAILED — … UNREVIEWED` string instead of an empty string on exception; the 8000-char cap now prints how much it withheld.
+
+**Bypasses closed after the first review pass** (each one was a hole, none was hypothetical):
+- *Caller-chosen range.* `record_review(base='HEAD')` made the committed range empty, so a record over `sha256('')` matched any commit. `resolve_base` now decides the range itself — merge-base with the default branch, or the empty tree for a branch with no remote ref yet — and the tool no longer takes a base.
+- *The shell.* `shell("git push …")` reached the remote through the approval tier and knew nothing about the record. `_is_direct_git_push` refuses it and points at `git_push`.
+- *The file tools.* `<git-dir>/codingdude/review.json` was writable through `write_file`, so a record could be fabricated. `build_toolset.resolve` now refuses any path inside `.git` — git state reads through the git tools.
+
+**Confirmed impact (read, not assumed):** `_review_impl` is the single review body behind all three entry points — `engine.review_diff` (UI "Run review"), `worker --review`, and the plan-completion pass `_run_review` — so all three now review committed work, not just the work tree. `engine.review` surfaces the failure string rather than "CLEAN — no findings", closing the #266 false-clean path. `record_path` resolves `--absolute-git-dir`, so linked worktrees keep separate records. The post-push directive text stays (its tests pin the range wording) but is now labelled a failsafe.
+
+**Known limits (stated, not implied):** the gate cannot verify the evidence — an agent can record a review it did not perform, the same accepted boundary as `update_execution_step`; the record is per-clone and last-write-wins; the longrun `pre`-authorized draft-PR path is exempt because its review cycle is a separate design; the shell guard is a regex over the command text, so a script invoked by name that pushes internally is not caught (closing that needs the sandbox/lane layer); and `gh pr create` plus the GitHub MCP file tools are not gated.

@@ -188,6 +188,7 @@ async def build_all(ctx: PluginContext) -> list[AbstractToolset]:
     if ctx.vision_model is not None:
         toolsets.append(build_vision_toolset(
             ctx.vision_model, ctx.workdir, emitter=ctx.emitter,
+            models=ctx.config.models,
         ))
     toolsets.append(build_ast_toolset(ctx.workdir))
     from codingdude.cfg import build_cfg_toolset
@@ -244,6 +245,7 @@ async def build_all(ctx: PluginContext) -> list[AbstractToolset]:
     toolsets.append(build_planning_toolset(
         ctx.db, ctx.session_id, ctx.approvals, ctx.emitter,
         review_model=ctx.review_model, thinking=thinking_setting,
+        models=ctx.config.models,
     ))
 
     registry = SkillRegistry(ctx.home)
@@ -285,6 +287,7 @@ async def build_all(ctx: PluginContext) -> list[AbstractToolset]:
             thinking=evaluator_thinking,
             delegation_config=ctx.config.delegation,
             db_session=ctx.session_id,
+            models=ctx.config.models,
         )
         if evaluator_model is not None else None
     )

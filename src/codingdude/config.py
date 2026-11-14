@@ -27,6 +27,12 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
+from .agent_caps import (
+    DEFAULT_CACHE_RETENTION,
+    CacheSpec,
+    parse_cache_retention,
+    validate_cache_settings,
+)
 from .functions import FUNCTIONS
 
 
@@ -46,7 +52,16 @@ def _default_config_toml(lineup: ModelLineup) -> str:
         '# Per-request context compaction + prompt caching (R91): stub oversized\n'
         '# old tool returns before every model request; cache the prompt prefix.\n'
         '# compact_per_request = true\n'
-        '# prompt_cache = true\n'
+        '# false | true | retention tier ("5m" | "30m" | "1h" | "12h").\n'
+        '# "1h" outlives the 1800s ask timeout; unsupported tiers snap down to\n'
+        '# the nearest tier the provider has (implicit-cache models ignore it).\n'
+        '# prompt_cache = "1h"\n'
+        '# Cache the growing conversation too, not just the static prefix.\n'
+        '# prompt_cache_messages = true\n'
+        '# Provider-specific cache settings, taking precedence over prompt_cache\n'
+        '# for their provider (e.g. { bedrock_cache_messages = "1h" }); one of\n'
+        '# anthropic_cache* / bedrock_cache* / openrouter_cache* / openai_cache*.\n'
+        '# prompt_cache_settings = {}\n'
         '\n[shell]\n'
         '# "bash" (Git Bash) or "powershell"\n'
         'default = "bash"\n'
@@ -99,10 +114,23 @@ class ModelLineup:
     # returns are stubbed (LLM-free; parts never dropped). Set false to
     # restore run-start-only compaction.
     compact_per_request: bool = True
-    # Prompt caching (R91 #337): unified `cache` ModelSettings via
+    # Prompt caching (R91 #337/#338): unified `cache` ModelSettings via
     # pydantic-ai's Caching capability — cached prefixes read at ~0.1x cost
     # from the second request on (no-op on implicit-cache models).
-    prompt_cache: bool = True
+    # False disables it; a retention tier ("5m"|"30m"|"1h"|"12h") snaps to
+    # the nearest tier the provider supports (agent_caps.cache_capabilities).
+    prompt_cache: CacheSpec = DEFAULT_CACHE_RETENTION
+    # Also cache the growing conversation, not only the static prefix. The
+    # one-shot agents (reviewer, grader, summariser, extractor, auditor,
+    # vision, delegate) always use the prefix-only profile: their
+    # conversations are never re-read, so a conversation breakpoint would be
+    # a 1.25x write for nothing (agent_caps.ONE_SHOT).
+    prompt_cache_messages: bool = True
+    # Provider-specific cache settings, e.g. { bedrock_cache_messages = "1h" }.
+    # Any of them take precedence over `prompt_cache` for their provider
+    # (pydantic-ai precedence rule); keys are validated at load so a typo
+    # fails loudly instead of being ignored by the translation layer.
+    prompt_cache_settings: dict[str, object] = field(default_factory=dict)
     # Cost rates per model (R10): name-or-substring -> USD per 1M tokens.
     # e.g. pricing = { deepseek-v4-pro = { input = 0.27, output = 1.1 } }
     # Models without an entry are 'unpriced' (tokens-only accounting).
@@ -294,9 +322,35 @@ class ModelLineupIn(BaseModel):
     context_limit: int | None = Field(default=None, ge=1)
     request_limit: int = Field(default=500, ge=1)
     compact_per_request: bool = True
-    prompt_cache: bool = True
+    prompt_cache: CacheSpec = DEFAULT_CACHE_RETENTION
+    prompt_cache_messages: bool = True
+    prompt_cache_settings: dict[str, object] = Field(default_factory=dict)
     pricing: dict[str, dict[str, float]] | None = None
     functions: dict[str, FunctionModelIn] | None = None
+
+    @field_validator('prompt_cache', mode='before')
+    @classmethod
+    def _check_prompt_cache(cls, v: object) -> object:
+        """Reject a bad retention tier with our own message (R91 #338).
+
+        pydantic-ai's own `snap_cache_retention` raises on an unknown tier at
+        the first model request; validating here means a bad save is refused
+        at the boundary instead of bricking the next run.
+        """
+        if v is None:
+            return DEFAULT_CACHE_RETENTION
+        try:
+            return parse_cache_retention(v)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+
+    @field_validator('prompt_cache_settings')
+    @classmethod
+    def _check_prompt_cache_settings(cls, v: dict[str, object]) -> dict[str, object]:
+        try:
+            return validate_cache_settings(v)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
 
     @field_validator('functions')
     @classmethod
@@ -382,6 +436,8 @@ def models_payload(config: Config) -> dict:
             'request_limit': config.models.request_limit,
             'compact_per_request': config.models.compact_per_request,
             'prompt_cache': config.models.prompt_cache,
+            'prompt_cache_messages': config.models.prompt_cache_messages,
+            'prompt_cache_settings': config.models.prompt_cache_settings,
             'pricing': config.models.pricing,
         },
         # DE-7a (#298): per-function operator config + the registry specs
@@ -1078,7 +1134,14 @@ def load_config(home: Path | None = None) -> Config:
             request_limit=models.get('request_limit', defaults.models.request_limit),
             compact_per_request=models.get(
                 'compact_per_request', defaults.models.compact_per_request),
-            prompt_cache=models.get('prompt_cache', defaults.models.prompt_cache),
+            prompt_cache=parse_cache_retention(
+                models.get('prompt_cache', defaults.models.prompt_cache),
+                where='config.toml [models] prompt_cache',
+            ),
+            prompt_cache_messages=bool(models.get(
+                'prompt_cache_messages', defaults.models.prompt_cache_messages)),
+            prompt_cache_settings=validate_cache_settings(
+                models.get('prompt_cache_settings')),
             pricing=models.get('pricing', defaults.models.pricing),
             functions=_parse_functions(models.get('functions')),
         ),
@@ -1199,6 +1262,8 @@ def apply_project_models(config: Config, workdir: Path) -> Config:
         'request_limit': config.models.request_limit,
         'compact_per_request': config.models.compact_per_request,
         'prompt_cache': config.models.prompt_cache,
+        'prompt_cache_messages': config.models.prompt_cache_messages,
+        'prompt_cache_settings': config.models.prompt_cache_settings,
         'pricing': config.models.pricing,
         # plain dicts: FunctionModelIn validates dict entries; a project
         # override that doesn't touch functions keeps the global ones
@@ -1226,6 +1291,8 @@ def apply_project_models(config: Config, workdir: Path) -> Config:
         request_limit=validated.request_limit,
         compact_per_request=validated.compact_per_request,
         prompt_cache=validated.prompt_cache,
+        prompt_cache_messages=validated.prompt_cache_messages,
+        prompt_cache_settings=validated.prompt_cache_settings,
         pricing=validated.pricing,
         functions={
             name: FunctionModelConfig(

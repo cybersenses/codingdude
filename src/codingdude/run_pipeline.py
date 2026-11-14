@@ -34,9 +34,10 @@ from collections.abc import Callable
 from pathlib import Path
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import Caching, ProcessHistory
+from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.models import Model
 
+from .agent_caps import ONE_SHOT, cache_capabilities
 from .context import ContextManager, mechanical_compact
 
 logger = logging.getLogger(__name__)
@@ -267,23 +268,51 @@ class PromptAssembler:
         R91 #337: `capabilities` carries the per-request context guard and
         prompt caching (see context_capabilities); empty = upstream defaults.
         """
-        kwargs: dict = {}
-        if capabilities:
-            kwargs['capabilities'] = list(capabilities)
         return Agent(
             model=resolved, instructions=instructions, toolsets=toolsets,
-            model_settings=settings, retries=retries, **kwargs,
+            model_settings=settings, retries=retries,
+            capabilities=list(capabilities or []),
         )
 
 
 _THINKING_PROVIDERS = ('glm', 'deepseek')
 
 
+def operator_model_name(resolved) -> str:
+    """The name a resolved Model is configured under (for per-model limits)."""
+    return str(getattr(resolved, 'model_name', resolved))
+
+
+def context_manager_for(services: RunServices, model_name: str) -> ContextManager:
+    """The ContextManager for a resolved model: per-model context limit
+    (config override wins; see context.model_limit_for).
+
+    One resolution for both the history pass (HistoryManager) and the
+    post-run guard — the claims retry replays the full grown history and
+    needs the same limit the run used (R91 #338).
+    """
+    from .context import model_limit_for
+
+    return ContextManager(model_limit=model_limit_for(
+        model_name, services.config.models.context_limit))
+
+
+def one_shot_capabilities(services: RunServices) -> list:
+    """Capabilities for a one-shot agent (caching only).
+
+    Grader, reviewer, summariser, extractor, auditor, delegate and vision
+    each send a fresh conversation over the same long instructions, so they
+    take `agent_caps.ONE_SHOT` (prefix-only caching). An empty list is
+    exactly equivalent to passing `capabilities=None`.
+    """
+    return cache_capabilities(services.config.models, ONE_SHOT)
+
+
 def context_capabilities(
     cm: ContextManager, traced: Callable[[dict], None] | None = None, *,
-    per_request: bool = True, prompt_cache: bool = True,
+    per_request: bool = True, models=None,
 ) -> list:
-    """pydantic-ai capabilities for one run (R91 #337).
+    """pydantic-ai capabilities for one run (R91 #337/#338).
 
     - ProcessHistory: mechanical per-request compaction (LLM-free) when the
       estimate crosses compact_at — the run-start-only maybe_compact could
@@ -294,9 +323,10 @@ def context_capabilities(
       `cleared` counts stubbed/truncated messages, and a firing that
       reclaimed nothing still reports — silence would hide a history
       drifting toward the provider 400 this guard exists to stop.
-    - Caching: unified `cache` ModelSettings — cache reads at ~0.1x cost
-      from the second request on (Anthropic explicit breakpoints; implicit-
-      cache models ignore it).
+    - Caching: the `RUN` profile from `agent_caps` — unified `cache`
+      ModelSettings (cache reads at ~0.1x cost from the second request on)
+      plus any provider-specific passthrough. `models` is the resolved
+      `[models]` config; None contributes no cache capabilities.
     """
     caps: list = []
     if per_request:
@@ -330,8 +360,7 @@ def context_capabilities(
                 return messages
 
         caps.append(ProcessHistory(_guard))
-    if prompt_cache:
-        caps.append(Caching())
+    caps.extend(cache_capabilities(models))
     return caps
 
 
@@ -374,13 +403,7 @@ class HistoryManager:
     def context_manager(self, model_name: str):
         """The ContextManager for the resolved model: per-model context limit
         (config override wins; see context.model_limit_for)."""
-        from .context import ContextManager, model_limit_for
-
-        return ContextManager(
-            model_limit=model_limit_for(
-                model_name, self._services.config.models.context_limit
-            )
-        )
+        return context_manager_for(self._services, model_name)
 
     async def maybe_compact(self, history, resolved: Model, on_event,
                             session_id: str, cm=None):
@@ -422,7 +445,8 @@ class HistoryManager:
             for p in m.parts
             if hasattr(p, 'content') and p.content
         )
-        summarizer: Agent = Agent(model=resolved)
+        summarizer: Agent = Agent(
+            model=resolved, capabilities=one_shot_capabilities(self._services))
         summary_result = await summarizer.run(
             'Summarize the key facts and decisions of this conversation '
             f'for continuity, in at most 200 words:\n\n{digest[:8000]}'
@@ -535,7 +559,8 @@ class PostRunPipeline:
         # Input is trimmed (R30): the single extraction call is latency-bound,
         # and 6k chars of transcript covers the run's tail, where the facts are.
         transcript = '\n'.join(self._services.db.load_messages(session_id))[:6000]
-        agent: Agent = Agent(model=extraction_model)
+        agent: Agent = Agent(
+            model=extraction_model, capabilities=one_shot_capabilities(self._services))
         try:
             result = await asyncio.wait_for(agent.run(
                 'From this conversation transcript, extract durable facts worth '
@@ -599,7 +624,8 @@ class PostRunPipeline:
                         -_AUDIT_ENTRY_CHARS:]
                     tool_results.append(f'{name}: {tail}')
 
-        auditor = Agent(model=extraction_model)
+        auditor = Agent(
+            model=extraction_model, capabilities=one_shot_capabilities(self._services))
         audit_prompt = (
             load_prompt('claim_check')
             + '\n\nSUMMARY:\n'
@@ -653,11 +679,25 @@ class PostRunPipeline:
         registry = ProcessRegistry(
             on_event=emit, db=self._services.db, session_id=session_id,
         )
+        # R91 #338: this agent replays the run's ENTIRE grown history
+        # (message_history below), so it needs the per-request compaction
+        # guard — without it the retry was the last place a 1.2M-token
+        # request could still reach the provider 400 this guard exists to
+        # stop. The RUN cache profile comes with it (the conversation is
+        # re-read: the audit prompt plus the whole history).
+        model_name = operator_model_name(resolved)
+        retry_caps = context_capabilities(
+            context_manager_for(self._services, model_name),
+            emit,
+            per_request=self._services.config.models.compact_per_request,
+            models=self._services.config.models,
+        )
         retry_agent: Agent = Agent(
             model=resolved, instructions=instructions or load_prompt('base_instructions'),
             toolsets=[error_feedback_toolset(build_verifier_toolsets(
                 workdir, approvals, shell_bin, registry=registry,
             ))],
+            capabilities=retry_caps,
         )
         try:
             retry = await asyncio.wait_for(

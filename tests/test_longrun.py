@@ -28,6 +28,7 @@ from codingdude.approvals import APPROVED, DENIED, NEEDS_GATE, ApprovalPolicy
 from codingdude.config import Config
 from codingdude.db import Database
 from codingdude.execution import ExecutionStore, build_execution_toolset
+from codingdude.review_gate import record_review
 from codingdude.roadmap import RoadmapStore
 from codingdude.tools import Captured, GateRequired
 
@@ -340,6 +341,9 @@ async def test_preauthorized_push_skips_the_card(workdir, monkeypatch):
 async def test_main_push_never_preauthorized(workdir, monkeypatch):
     calls: list = []
     policy = ApprovalPolicy(mode='assisted', publish_authorized=True)
+    # R92 #339: a recorded review is what lets an unreviewed-push refusal not
+    # mask the authorization rule this test is about.
+    record_review(workdir, standards_evidence='test', spec_evidence='test')
     toolset = _git_toolset(monkeypatch, workdir, policy, calls)
     [git_push] = [
         t for t in toolset.tools.values() if t.name == 'git_push']

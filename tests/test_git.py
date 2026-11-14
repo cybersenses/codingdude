@@ -27,6 +27,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 
+from codingdude import review_gate
 from codingdude.approvals import ApprovalPolicy
 
 
@@ -126,6 +127,11 @@ async def test_commit_is_gated_and_approval_lets_it_through(engine, workdir):
 
 async def test_push_and_pr_always_gated(engine, workdir):
     git_repo(workdir)
+    # R92 #339: the review gate runs BEFORE consent, so a recorded review is
+    # what lets this test reach the always-gated tier it is about.
+    review_gate.record_review(
+        workdir, standards_evidence='test', spec_evidence='test',
+    )
     policy = ApprovalPolicy()
     # Even a matching pattern never unlocks the always-gated tier.
     policy.approve_pattern('git push')

@@ -100,6 +100,7 @@ class WorkEvaluator:
     def __init__(
         self, db: Database, workdir: Path, model,
         thinking=None, delegation_config=None, db_session: str = '',
+        models=None,
     ) -> None:
         self.db = db
         self.workdir = Path(workdir)
@@ -107,6 +108,11 @@ class WorkEvaluator:
         self.thinking = thinking
         self.max_requests = getattr(delegation_config, 'max_requests', 12)
         self.db_session = db_session
+        # R91 #338: one-shot cache profile — every grading pass re-sends the
+        # same long instructions over a different ticket/diff.
+        from .agent_caps import ONE_SHOT, cache_capabilities
+
+        self._cache_capabilities = cache_capabilities(models, ONE_SHOT)
 
     def _attempt_summary(self, store: ExecutionStore, attempt_id: int) -> str:
         attempt = store._by_id(attempt_id)
@@ -238,6 +244,7 @@ class WorkEvaluator:
             instructions=load_prompt('evaluator'),
             toolsets=toolsets,
             model_settings=settings,
+            capabilities=self._cache_capabilities,
         )
         eval_id = 'eval-' + _uuid.uuid4().hex[:8]
         try:

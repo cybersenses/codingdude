@@ -36,6 +36,7 @@ from codingdude.langs import LanguageSpec, spec_for
 from codingdude.processes import ProcessRegistry
 from codingdude.pyparse import parse_python
 
+from .agent_caps import ONE_SHOT, cache_capabilities
 from .approvals import DENIED, NEEDS_GATE
 from .astdiff import describe_ast_change
 from .config import ThinkingSetting
@@ -442,13 +443,24 @@ def build_toolset(
 
     def resolve(path: str) -> Path:
         target = (workdir / path).resolve()
+        root = workdir.resolve()
         try:
-            target.relative_to(workdir.resolve())
+            relative = target.relative_to(root)
         except ValueError:
             raise ModelRetry(
                 f'Path {path!r} is outside the Workdir. '
                 'Only paths inside the Workdir are accessible.'
             ) from None
+        if '.git' in relative.parts:
+            # R92 #339: git metadata is not reachable through the file tools.
+            # The pre-push review record lives there and a write could fabricate
+            # one — the gate must not be bypassable with write_file. Read git
+            # state through the git tools instead.
+            raise ModelRetry(
+                f'Path {path!r} is inside the git directory. Git metadata is not '
+                'accessible through the file tools — use the git tools for repo '
+                'state.'
+            )
         return target
 
     # R12 staleness registry: last-observed (mtime_ns, size) per relative path.
@@ -884,6 +896,21 @@ async def _resolve_gate(policy, command: str, always: bool = False) -> None:
             policy.on_pattern(pattern)
 
 
+_GIT_PUSH_RE = re.compile(r'\bgit\b[^;&|\n]*\bpush\b')
+
+
+def _is_direct_git_push(command: str) -> bool:
+    """True when a shell command spells out a git push (R92 #339).
+
+    Deliberately broad: any command segment mentioning `git ... push` is
+    refused, false positives included (`git log --grep push`) — the gate
+    outranks the odd refused read-only command, and the refusal says what to
+    run instead. Ceiling: a script invoked by name that pushes internally is
+    not detected; closing that needs the sandbox/lane layer, not a regex.
+    """
+    return bool(_GIT_PUSH_RE.search(command))
+
+
 def build_shell_toolset(
     workdir: Path, policy, shell_bin: str = 'bash',
     on_render: Callable[[str], None] | None = None,
@@ -925,6 +952,15 @@ def build_shell_toolset(
         return masked
 
     async def shell(command: str, timeout: int = 120) -> str:
+        if _is_direct_git_push(command):
+            # R92 #339: the shell is a second route to the remote and knows
+            # nothing about the review record. Pushing goes through git_push,
+            # which refuses without a recorded review.
+            raise ModelRetry(
+                '`git push` through the shell bypasses the pre-push review gate '
+                '(R92 #339). Use the git_push tool — it refuses unless a recorded '
+                'review covers the diff — or call record_review first.'
+            )
         if lane is not None and lane.sandbox_ready:
             # DE-3: the lane owns gating + execution (exec_in_sandbox_dir
             # core); the per-call timeout arg is the core's EXEC_TIMEOUT.
@@ -1210,11 +1246,18 @@ def build_delegation_toolset(
         instructions = load_prompt('delegation')
         if overlay:
             instructions += '\n\n' + overlay
+        # R91 #338: one-shot cache profile — every delegation re-sends the
+        # same long brief/instructions with a different task, so only the
+        # prefix is worth caching.
+        delegation_caps = cache_capabilities(
+            getattr(config, 'models', None), ONE_SHOT
+        )
         sub_agent: Agent = Agent(
             model=session_model,
             instructions=instructions,
             toolsets=toolsets,
             model_settings=settings,
+            capabilities=delegation_caps,
         )
         sandbox_diff: str | None = None
         try:
@@ -1340,11 +1383,45 @@ def build_git_toolset(workdir: Path, policy) -> FunctionToolset:
         await _gate('git branch')
         return await _run(['git', 'checkout', '-b', name])
 
+    async def record_review(
+        standards: str, spec: str, findings: int = 0, verdict: str = '',
+    ) -> str:
+        """Record the pre-push two-axis review of the current diff (R92 #339).
+
+        Required before `git_push`. `standards` and `spec` are what each axis
+        found — a fixed finding, or an explicit "no findings". The review range
+        is resolved by the gate itself (merge-base with the default branch, or
+        the empty tree for a branch with no remote ref yet), never chosen by the
+        caller, so no range can be picked to review nothing. The record is
+        content-addressed: editing the diff afterwards voids it.
+        """
+        from . import review_gate
+
+        try:
+            record = review_gate.record_review(
+                workdir, standards_evidence=standards, spec_evidence=spec,
+                findings=findings, verdict=verdict,
+            )
+        except (review_gate.ReviewGateError, TypeError, ValueError) as exc:
+            raise ModelRetry(f'record_review: {exc}') from None
+        return (
+            f'review recorded: diff {record["diff_key"][:12]} on '
+            f'{record["head"][:7]} (base {record["base"][:7]}, '
+            f'{record["findings"]} finding(s) fixed)'
+        )
+
     async def git_push(remote: str = 'origin', branch: str = 'main') -> str:
+        from . import review_gate
         from .longrun import push_preauthorized
 
         pre = push_preauthorized(policy, branch)
         if not pre:
+            # R92 #339: pre-push review is the gate; consent comes after it, so
+            # an unreviewed push never even reaches the user for approval.
+            try:
+                review_gate.require_review(workdir, branch)
+            except review_gate.ReviewGateError as exc:
+                raise ModelRetry(str(exc)) from None
             await _gate('git push', always=True)  # always-gated: only explicit consent
         old = await _run(['git', 'rev-parse', f'{remote}/{branch}'])
         out = await _run(['git', 'push', remote, branch])
@@ -1358,8 +1435,9 @@ def build_git_toolset(workdir: Path, policy) -> FunctionToolset:
                 ' a codingdude/longrun-* branch — open the PR as a DRAFT;'
                 ' merge stays gated)'
             )
-        # R33 #67: post-push auto review directive. The pushed range feeds
-        # the review loop; the loop never auto-pushes again.
+        # R33 #67, R92 #339: post-push review is the FAILSAFE, not the review —
+        # the push already carried a recorded pre-push review. The pushed range
+        # feeds a second, narrower pass; fixes need a fresh record to re-push.
         base = old.split('\n')[-1].strip() if 'exit 0' in old else ''
         range_note = (
             f'pushed range {base}..HEAD'
@@ -1367,13 +1445,15 @@ def build_git_toolset(workdir: Path, policy) -> FunctionToolset:
             f'first push of {branch} — review the full branch diff'
         )
         return (
-            f'{out}\n\nPOST-PUSH REVIEW REQUIRED ({range_note}).\n'
-            'Before any further work: run the code-review flow over the pushed '
-            'range — delegate review sub-agents on the Standards and Spec axes, '
-            'include codegraph impact analysis on touched symbols, verify each '
-            'finding against the code, then apply only verified fixes '
-            '(surgical-patch / edit_symbol), re-run the project gates, and '
-            'commit. Do NOT push the fixes without fresh explicit user consent.'
+            f'{out}\n\nPOST-PUSH REVIEW (failsafe — {range_note}).\n'
+            'A pre-push review gated this push. Run the code-review flow over the '
+            'pushed range for what it could not see: integration issues, CI-only '
+            'signals, cross-branch regressions. Delegate the Standards and Spec '
+            'axes, verify each finding against the code, apply only verified '
+            'fixes (surgical-patch / edit_symbol), re-run the project gates, then '
+            'call record_review again — fixing a finding changes the diff, which '
+            'voids the old record. Any further push still needs fresh explicit '
+            'user consent.'
         )
 
     async def gh_pr_create(title: str, body: str) -> str:
@@ -1450,7 +1530,8 @@ def build_git_toolset(workdir: Path, policy) -> FunctionToolset:
 
     return FunctionToolset(
         [
-            git_status, git_log, git_diff, git_commit, git_branch, git_push,
+            git_status, git_log, git_diff, git_commit, git_branch, record_review,
+            git_push,
             gh_pr_create, gh_pr_view, publish_findings, pr_summary,
         ]
     )

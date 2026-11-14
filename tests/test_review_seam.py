@@ -89,6 +89,22 @@ def test_review_clean_reply_defaults_to_clean_verdict(db, workdir):
     assert asyncio.run(engine.review(session_id)) == 'CLEAN — no findings'
 
 
+def test_reviewer_failure_is_not_reported_as_clean(db, workdir):
+    """A reviewer that never ran must not read as CLEAN (R92 #339).
+
+    The old seam returned '' for any exception — indistinguishable from "found
+    nothing" — and the push gate treats a clean review as publishable.
+    """
+    def boom(messages, info):
+        raise RuntimeError('provider exploded')
+
+    session_id = db.create_session(workdir, title='t')
+    engine = Engine(config=load_config(), db=db, extraction_model=FunctionModel(boom))
+    verdict = asyncio.run(engine.review(session_id))
+    assert verdict.startswith('REVIEW FAILED')
+    assert 'UNREVIEWED' in verdict
+
+
 def test_extraction_model_setter_is_public(db, workdir):
     """The worker sets the extraction model through the public seam."""
     engine = Engine(config=load_config(), db=db)

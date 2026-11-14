@@ -105,14 +105,23 @@ def test_capabilities_fail_open_when_accounting_raises():
 
 
 def test_capabilities_gated_by_flags():
+    """The guard and caching are independent gates (#338): `per_request`
+    controls compaction, `models.prompt_cache` controls caching."""
+    from types import SimpleNamespace
+
     cm = ContextManager(model_limit=6_000)
     traced: list = []
-    assert context_capabilities(cm, traced, per_request=False,
-                                prompt_cache=False) == []
-    caps = context_capabilities(cm, traced, per_request=True, prompt_cache=False)
+    off = SimpleNamespace(prompt_cache=False, prompt_cache_messages=True,
+                          prompt_cache_settings={})
+    on = SimpleNamespace(prompt_cache=True, prompt_cache_messages=True,
+                         prompt_cache_settings={})
+    assert context_capabilities(cm, traced, per_request=False, models=off) == []
+    caps = context_capabilities(cm, traced, per_request=True, models=off)
     assert len(caps) == 1 and isinstance(caps[0], ProcessHistory)
-    caps = context_capabilities(cm, traced, per_request=False, prompt_cache=True)
+    caps = context_capabilities(cm, traced, per_request=False, models=on)
     assert len(caps) == 1 and isinstance(caps[0], Caching)
+    caps = context_capabilities(cm, traced, per_request=False, models=None)
+    assert caps == []
 
 
 def test_caching_capability_emits_unified_cache_setting():

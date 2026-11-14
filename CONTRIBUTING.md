@@ -43,6 +43,20 @@ Frontend (`frontend/`): `npm run lint`, `npm test` (vitest), and
    `~/.codingdude/config.toml` or environment variables.
 6. **Copyright headers** (`Copyright (C) 2025 Cyberflex`) are added by
    maintainers when new files land.
+7. **Review before you push.** Every change gets a two-axis code review
+   *before* it is pushed — Standards (does it follow this repo's rules) and
+   Spec (does it do what the ticket asked). Fix or explicitly waive what the
+   review finds, then record it with `record_review(standards=..., spec=...)`.
+   The record is content-addressed: editing the diff afterwards voids it, so
+   the review always describes what is actually published. `git push` refuses
+   to run without a matching record (`src/codingdude/review_gate.py`).
+   Post-push review still happens, but as a **failsafe** for what a local
+   review cannot see — integration issues, CI-only signals, cross-branch
+   regressions — never as the review itself.
+
+   What the gate does and does not prove: it proves a review was recorded with
+   both axes named, and that the pushed diff is the one reviewed. It cannot
+   prove the review was any good — that stays a human judgement.
 
 ## Pull requests
 

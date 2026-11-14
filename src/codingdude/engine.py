@@ -316,6 +316,7 @@ class Engine:
             self._db, session_id, self._config_home(),
             self._extraction_model or self._build_subagent_model(),
             thinking=parse_thinking(self._config.models.thinking),
+            models=self._config.models,
         )
 
     def approve_pattern(self, session_id: str, command: str) -> str:
@@ -914,7 +915,7 @@ class Engine:
         caps = context_capabilities(
             prepared.cm, traced,
             per_request=self._config.models.compact_per_request,
-            prompt_cache=self._config.models.prompt_cache,
+            models=self._config.models,
         )
         agent = self._prompts.agent(
             prepared.resolved, instructions, toolsets,

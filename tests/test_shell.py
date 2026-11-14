@@ -153,15 +153,20 @@ async def test_gate_approval_via_pattern_completes(engine, workdir):
 
 
 async def test_always_gated_aborts_headless_run(engine, workdir):
-    """DENIED commands abort with a report like gates do — not a silent retry."""
+    """DENIED commands abort with a report like gates do — not a silent retry.
+
+    The probe is `gh pr view`: `git push` used to serve here, but since R92 #339
+    the shell refuses a direct push outright (it would bypass the pre-push
+    review gate), which is a harder stop than the approval abort this test pins.
+    """
     outcome = await engine.run(
         prompt='ship it',
         workdir=workdir,
-        model=shell_then_answer('git push origin main', lambda r: 'nope'),
+        model=shell_then_answer('gh pr view 1', lambda r: 'nope'),
         approvals=ApprovalPolicy(),
     )
     assert outcome.status == 'gate_aborted'
-    assert 'git push' in outcome.gate.command
+    assert 'gh pr view' in outcome.gate.command
 
 
 async def test_default_run_has_no_shell_tool(engine, workdir):

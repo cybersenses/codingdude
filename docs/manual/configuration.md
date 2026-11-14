@@ -118,8 +118,47 @@ endpoints must be `https://`.
 | `thinking` | *(unset)* | reasoning depth for models that support it: `minimal`–`xhigh`, or `off` |
 | `max_tokens` | provider default | max response tokens — raise if responses get truncated |
 | `context_limit` | inferred from model name | context-window override; drives compaction timing and the sidebar meter |
+| `compact_per_request` | `true` | mechanical, model-free compaction before every request while a run is live; `false` restores run-start-only compaction |
+| `prompt_cache` | `"1h"` | prompt caching for every agent: `true`, `false`, or a retention tier — see [Prompt caching](#prompt-caching) |
+| `prompt_cache_messages` | `true` | also cache the growing conversation (main loop only; one-shot agents never do) |
+| `prompt_cache_settings` | `{}` | provider-specific cache settings; takes precedence over `prompt_cache` for that provider |
 | `request_limit` | `500` | max model requests per run (the library default of 50 is too low for agentic sessions) |
 | `pricing` | *(unset)* | cost rates — see [pricing](#pricing) |
+
+### Prompt caching
+
+Caching is resolved in one place for **every** agent, not just the main loop,
+and the two families are treated differently on purpose:
+
+- **The main loop** (and its fix-loop and claims retries) reads one long,
+  growing conversation on every turn — so the conversation is worth caching as
+  well as the instruction prefix.
+- **One-shot agents** (evaluator, reviewer, summariser, memory extractor,
+  claims auditor, delegate, vision) each send a *different* conversation with
+  the *same* long instruction block. Caching the conversation there writes a
+  breakpoint no request ever reads, so only the prefix is cached.
+
+`prompt_cache` accepts `true`, `false`, or `"5m"`, `"30m"`, `"1h"`, `"12h"`.
+The default is `"1h"` rather than a provider's five-minute tier because a
+session can sit on an `ask_user` card for up to 1800 s — longer than the short
+tier survives, which would make the next turn re-write the whole prefix.
+Tiers a provider does not offer degrade to the nearest shorter one it has, and
+providers with no tiers at all (implicit-cache models such as DeepSeek and GLM)
+ignore the setting: a correct no-op, not a misconfiguration.
+
+`prompt_cache = false` turns off library-managed caching but still honours an
+explicit `prompt_cache_settings` map — that map is a deliberate opt-in to a
+provider's own knobs. Its keys are validated at load (`anthropic_cache_*`,
+`bedrock_cache_*`, `openrouter_cache_*`, `openai_prompt_cache_options`,
+`openai_cache_instructions`, `openai_prompt_cache_retention`), so a typo fails
+at boot instead of becoming a silent no-op:
+
+```toml
+[models]
+prompt_cache = "1h"
+prompt_cache_messages = true
+prompt_cache_settings = { anthropic_cache_instructions = true }
+```
 
 ### `[providers.<name>]`
 
@@ -146,6 +185,19 @@ max_requests = 40
 github_mirror = true    # mirror tickets/roadmap items to GitHub issues via gh
                         # (best-effort; needs a github.com origin + gh auth)
 ```
+
+### `[trace]`
+
+```toml
+[trace]
+deltas = "compact"      # or "full" — compact coalesces streaming text deltas
+                        # into one line per flush window, which keeps long
+                        # traces small; "full" keeps every delta separately
+```
+
+The JSONL trace per session is what the Trace panel replays and what an
+evidence check reads back. `compact` is the default: a long run otherwise
+writes one line per token delta.
 
 ### `[models.functions.<name>]`
 
