@@ -1369,7 +1369,7 @@ Second, independent defect found: `_review_impl` (planning.py) reviews `git diff
 Enforcement: a recorded review keyed by the exact diff content is required before `git_push` will run; the record is written only by a tool that demands per-axis evidence (the #293 `update_execution_step` pattern). Post-push review remains a failsafe, scoped as note #22 says.
 
 ## R93 — R93: Delegation budget integrity, pydantic-ai-harness adoption, OTel tracing
-**Status:** open
+**Status:** in_progress
 
 ## Why
 
