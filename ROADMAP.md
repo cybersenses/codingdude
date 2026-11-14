@@ -1336,7 +1336,7 @@ Two proven defects from the remote reviewer investigation, both fixed on this br
 Two proven defects from the remote reviewer investigation: (1) the review seam constructs a tool-less reviewer whose prompt demands reads/evidence (remote symptom: "I don't have the repository in this session"); (2) malformed ask_user payloads (options as {multi:false} objects) crash the UI with React #31 and dead-park runs (no ASK_USER_RESOLVED).
 
 ## R91 — pydantic-ai adoption: per-request compaction, prompt caching, cost accounting (deploy-time levers)
-**Status:** open
+**Status:** in_progress
 
 From research 2026-11-13 (reference/research/pydantic-ecosystem.md, primary-source). Goal: make CodingDude runs faster and cheaper via upstream pydantic-ai levers instead of hand-rolled code.
 
@@ -1348,4 +1348,4 @@ Levers (ranked):
 5. BatchModelRequests (~50%) for bench.py / evals offline work.
 6. Optional: logfire 5.6.0 local OTLP observability ($0 via send_to_logfire=False + local backend); pydantic 2.14.3 / core 2.50.4 patch bump (check 2.14.2 extra='forbid' JSON change); pydantic-settings 2.16.3. Monty parked (no third-party packages → can't run our tool code).
 
-Status notes: levers 1+2 adopted locally pre-deploy (user decision 2026-11-13). 3 partially — estimator exists but provider-reported cost unused.
+Status notes: levers 1+2 adopted locally pre-deploy (user decision 2026-11-13); lever 2 made general in #338 — every agent carries a cache profile (run vs one-shot), retention/messages/provider-passthrough configurable. 3 partially — estimator exists but provider-reported cost unused.

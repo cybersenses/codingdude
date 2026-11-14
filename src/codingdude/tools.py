@@ -36,6 +36,7 @@ from codingdude.langs import LanguageSpec, spec_for
 from codingdude.processes import ProcessRegistry
 from codingdude.pyparse import parse_python
 
+from .agent_caps import ONE_SHOT, cache_capabilities
 from .approvals import DENIED, NEEDS_GATE
 from .astdiff import describe_ast_change
 from .config import ThinkingSetting
@@ -1210,11 +1211,18 @@ def build_delegation_toolset(
         instructions = load_prompt('delegation')
         if overlay:
             instructions += '\n\n' + overlay
+        # R91 #338: one-shot cache profile — every delegation re-sends the
+        # same long brief/instructions with a different task, so only the
+        # prefix is worth caching.
+        delegation_caps = cache_capabilities(
+            getattr(config, 'models', None), ONE_SHOT
+        )
         sub_agent: Agent = Agent(
             model=session_model,
             instructions=instructions,
             toolsets=toolsets,
             model_settings=settings,
+            capabilities=delegation_caps,
         )
         sandbox_diff: str | None = None
         try:

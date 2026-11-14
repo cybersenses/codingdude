@@ -94,9 +94,14 @@ class PlanStore:
 
 
 def build_planning_toolset(
-    db, session_id: str, policy, emit, review_model=None, thinking=None
+    db, session_id: str, policy, emit, review_model=None, thinking=None,
+    models=None,
 ) -> FunctionToolset:
-    """Agent tools for plan CRUD (propose_plan/update_step)."""
+    """Agent tools for plan CRUD (propose_plan/update_step).
+
+    `models` is the resolved `[models]` config, threaded to the reviewer so
+    it carries the cache capability (R91 #338).
+    """
     store = PlanStore(db)
     emit = emit or (lambda event: None)
 
@@ -155,7 +160,10 @@ def build_planning_toolset(
             'text': updated['steps'][index]['text'],
         })
         if updated['status'] == 'done' and review_model is not None:
-            findings = await _run_review(db, session_id, review_model, plan, thinking=thinking)
+            findings = await _run_review(
+                db, session_id, review_model, plan, thinking=thinking,
+                models=models,
+            )
             if findings:
                 emit({'type': 'REVIEW_FINDINGS', 'findings': findings})
                 return (
@@ -167,32 +175,39 @@ def build_planning_toolset(
     return FunctionToolset([propose_plan, update_step])
 
 
-async def review_diff_findings(db, session_id: str, config_home, review_model, thinking: ThinkingSetting | None = None) -> str:
+async def review_diff_findings(db, session_id: str, config_home, review_model, thinking: ThinkingSetting | None = None, models=None) -> str:
     """On-demand review of the Session's working-tree diff (UI 'Run review')."""
     from .config import config_home as _ch
     from .directives import build_directive_layers
 
     workdir = db.session_workdir(session_id)
     checklist = build_directive_layers(_ch(), Path(workdir)) if workdir else ''
-    return await _review_impl(db, session_id, review_model, checklist, plan=None, thinking=thinking)
+    return await _review_impl(
+        db, session_id, review_model, checklist, plan=None, thinking=thinking,
+        models=models,
+    )
 
 
-async def _run_review(db, session_id: str, review_model, plan: dict, thinking: ThinkingSetting | None = None) -> str:
+async def _run_review(db, session_id: str, review_model, plan: dict, thinking: ThinkingSetting | None = None, models=None) -> str:
     """Review pass: diff + plan + directives checklist → findings (or '')."""
     from .config import config_home
     from .directives import build_directive_layers
 
     workdir = db.session_workdir(session_id)
     checklist = build_directive_layers(config_home(), Path(workdir)) if workdir else ''
-    return await _review_impl(db, session_id, review_model, checklist, plan=plan, thinking=thinking)
+    return await _review_impl(
+        db, session_id, review_model, checklist, plan=plan, thinking=thinking,
+        models=models,
+    )
 
 
-async def _review_impl(db, session_id: str, review_model, checklist: str, plan, thinking: ThinkingSetting | None = None) -> str:
+async def _review_impl(db, session_id: str, review_model, checklist: str, plan, thinking: ThinkingSetting | None = None, models=None) -> str:
     import subprocess
 
     from pydantic_ai import Agent
     from pydantic_ai.usage import UsageLimits
 
+    from .agent_caps import ONE_SHOT, cache_capabilities
     from .prompts import load_prompt
     from .tools import build_toolset
 
@@ -219,11 +234,16 @@ async def _review_impl(db, session_id: str, review_model, checklist: str, plan, 
     # Without it the Agent raised "No tools available" for any read attempt
     # and the directives were unfulfillable by construction.
     toolsets = [build_toolset(Path(workdir), read_only=True)] if workdir else []
+    # R91 #338: one-shot cache profile — the reviewer re-sends its long
+    # instructions with a different diff every call, so only the prefix is
+    # worth caching.
+    reviewer_caps = cache_capabilities(models, ONE_SHOT)
     reviewer = Agent(
         model=review_model,
         instructions=load_prompt('review'),
         toolsets=toolsets,
         model_settings=settings,
+        capabilities=reviewer_caps,
     )
     plan_section = ''
     if plan:
