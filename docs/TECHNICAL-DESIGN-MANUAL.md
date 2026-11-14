@@ -49,6 +49,8 @@ Three process roles:
 | `worker.py` | Per-run subprocess; dials the server WS, applies project `[models]` overrides, runs the pipeline, streams events |
 | `engine.py` | Agent construction: model resolution, toolsets, approvals, budget, failover |
 | `run_pipeline.py` | Full-run orchestration (onboarding, context assembly, planning loop, gates, post-run tail) |
+| `context.py` | Context accounting: token estimate, usage/`needs_compaction`, `plan_compaction`, and the model-free `mechanical_compact` the per-request guard runs |
+| `agent_caps.py` | Cache capability profiles (`RUN` / `ONE_SHOT`) and `[models]` cache-config validation — the single seam every agent gets its caching from |
 | `cli.py` | `run` (headless), `serve`, `restart`, `eval` subcommands |
 | `config.py` | `config.toml` load/save (`load_config`, `save_models`, `save_provider_keys`), `apply_project_models` overlay, key resolution + verification |
 | `db.py` | SQLite schema + `Database` (WAL, per-home) |
@@ -56,6 +58,7 @@ Three process roles:
 | `ast_tools.py`, `callgraph.py`, `cfg.py`, `structure.py`, `impact.py`, `deadcode.py`, `mutation.py`, `fuzzing.py`, `bench.py` | Analysis tools (AST rename/references, call graphs, control-flow, structure, impact, dead code, mutation, API fuzzing, benchmarks) |
 | `roadmap.py` | Planning store: roadmap items, tickets, decisions, PRDs, tech designs (+ agent tools, ROADMAP.md parser/upserter) |
 | `planning.py` | Plan store + step tracking for the planning loop |
+| `review_gate.py` | Pre-push review gate: content-addressed diff key, `record_review`, `require_review` |
 | `approvals.py` | Tiered approval engine (interactive cards, pattern approvals, always-gated set) |
 | `memory.py` | MemoryStore: keyword + semantic retrieval, embeddings, referential solutions |
 | `skills.py` | SkillRegistry: SKILL.md discovery, progressive disclosure, save/delete |
@@ -188,6 +191,30 @@ post-run memory-extraction tail before exiting.
 - **Subprocess hygiene**: `scrubbed_env` strips KEY/TOKEN/SECRET/PASSWORD/
   CREDENTIAL variables; shell runs via `shell_argv` (Git Bash resolution on
   Windows); `_kill_tree_sync` for tree-wide termination.
+- **Capabilities seam** (`agent_caps.py`): one resolution point turns the
+  `[models]` cache config into pydantic-ai capabilities for every agent —
+  `RUN` (conversation + retention) for the main loop and its fix-loop and
+  claims retries, `ONE_SHOT` (prefix retention only) for the graders,
+  reviewers, summariser, extractor and delegates. The same mechanism carries
+  the **per-request compaction guard** (`ProcessHistory` at
+  `run_pipeline.py`): history is measured and mechanically compacted before
+  each model request, so a run cannot grow past the window between run-start
+  compactions and die on a provider context-length 400. The guard is
+  fail-open by design — a guard error degrades to sending the request.
+  Because a missing capability is invisible at runtime (caching silently off),
+  a test walks the AST for `Agent(...)` calls without `capabilities=` and
+  fails.
+- **Pre-push review gate** (`review_gate.py`): `git_push` calls
+  `require_review` before its approval gate, so a push is refused unless a
+  recorded review covers the exact diff being published — `sha256` over
+  `git diff <merge-base>...HEAD` plus the working tree. The record names the
+  branch it covers; changing one byte of the diff voids it. The shell refuses a
+  command that spells out `git push` and the file tools refuse any path inside
+  `.git`, so the record cannot simply be written or the push sidestepped by
+  habit — with the same honest ceiling (`_is_direct_git_push` is a pattern
+  match: a script invoked by name that pushes internally is not caught, which
+  belongs to the sandbox layer). Documented ceiling: the gate proves a review
+  was recorded, not that it was competent.
 
 ## 5. Data model (db.py)
 
@@ -259,13 +286,22 @@ Summary of ADR-0004 posture, as implemented:
 ## 9. Verification & testing
 
 - Engine tested at seams with scripted `FunctionModel` runs against temp
-  workdirs (`tests/`, 767+ tests).
+  workdirs (`tests/`, 1200+ tests).
 - Gates: `gates.bat` = `uv run pytest -q`, `uv run ruff check src tests`,
   `uv run mypy`; frontend: `npm run build` + vitest.
+- CI (`.github/workflows/ci.yml`) runs on `windows-latest` in three jobs:
+  lint/type-check/pytest, the frontend (lint, vitest, build), and the scripted
+  benchmark.
+- **Living documents are tested, not proofread**: `tools/claim_check.py` is
+  run by the suite over the strict doc set, so a stale path, a line reference
+  past the end of a file, an unknown commit hash or a wrong line count fails
+  pytest instead of waiting for a reviewer (`tests/test_claim_check.py`).
 - Scenario evals: `codingdude eval` records/replays real sessions with
   attached checks.
-- Standing quality loop: post-push review (Standards + Spec sub-agents;
-  findings verified against code before fixing).
+- **Quality loop**: the pre-push review gate (Standards + Spec axes recorded
+  against the exact diff) is enforced by state, so it cannot be skipped; the
+  post-push review pass stays as a failsafe that catches what a pre-push look
+  missed.
 
 ## 10. Operational notes
 

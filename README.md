@@ -20,8 +20,11 @@ before claiming anything is done.
 Highlights:
 
 - **Agentic engine** — pydantic-ai with model failover (any OpenAI-compatible
-  provider via `[providers.*]` config), per-run workers, session compaction,
-  and a budget cap.
+  provider via `[providers.*]` config), per-run workers, and a budget cap.
+  Context is guarded per request as well as at run start, so a long session
+  compacts instead of dying on a provider context-limit error, and prompt
+  caching is resolved once for **every** agent (main loop, retries, and the
+  one-shot graders) rather than a single call site.
 - **Tiered approvals** — safe actions run automatically; risky ones (pushes,
   installs, main-tree mutations) gate behind interactive cards in the UI.
   A `--yolo` headless mode bypasses gates for scripting.
@@ -29,7 +32,11 @@ Highlights:
   semantic navigation, project-wide impact analysis, arch lint, mutation
   testing, profiling, benchmarks, coverage.
 - **Planning** — PRDs, tech designs, roadmap items, and tracer-bullet tickets
-  with tracked plan steps, per-step evidence, and automatic post-push review.
+  with tracked plan steps and per-step evidence.
+- **Review is a gate, not a habit** — pushing requires a recorded two-axis
+  review (Standards + Spec) of the exact diff being published: the record is
+  content-addressed, so fixing a finding after the review voids it and forces a
+  re-review. A post-push review pass catches what the gate cannot.
 - **Memory & continuity** — durable facts, solved-problem bank, project notes,
   ADR-style design decisions, and handover notes across sessions.
 - **Delegation & sandboxes** — parallel sub-agents for reviews and research,
@@ -52,6 +59,10 @@ See `docs/USER-MANUAL.md` for the full manual and
 uv run codingdude run "task"            # headless (exit 0 ok / 2 gate / 3 budget)
 uv run codingdude serve                 # web UI on http://127.0.0.1:8765
 ```
+
+Gates, before you believe anything: `gates.bat` runs pytest + ruff + mypy, and
+CI (`.github/workflows/ci.yml`) runs the same on `windows-latest` plus a
+frontend job (lint, vitest, build) and the scripted benchmark.
 
 ## Setup
 

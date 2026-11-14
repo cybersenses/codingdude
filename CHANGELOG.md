@@ -1,5 +1,83 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Pre-push review gate (R92)**: `git_push` refuses unless a recorded two-axis
+  review covers the exact diff being published. The record is content-addressed
+  (`sha256` of the committed range plus the working tree), so amending or
+  rebasing without changing the diff keeps it valid and fixing a finding voids
+  it. `git push` through the shell is refused for the same reason, and the file
+  tools refuse to touch the git directory, so a record cannot be fabricated by
+  writing it. Post-push review stays as a failsafe.
+- **Per-request context compaction (R91)**: a mechanical, LLM-free guard runs
+  before every model request and compacts when the token estimate crosses the
+  window threshold, instead of only at run start. A run can no longer grow until
+  the provider rejects it with a context-length 400; the guard is fail-open, so
+  a guard error degrades to sending the request rather than killing the run.
+- **Prompt caching for every agent (R91)**: one resolution point turns config
+  into pydantic-ai capabilities for the main loop, the fix-loop retry and the
+  claims retry (conversation + retention) and for the one-shot agents
+  (retention only). New `[models]` keys `prompt_cache`,
+  `prompt_cache_messages`, `prompt_cache_settings`; unknown passthrough keys
+  fail at load instead of being silently dropped.
+- **Long runs (R80)**: `--long-run assisted|unattended` adds the sandbox lane,
+  durable resume, structured evidence gate, evaluator loop, operator files, and
+  a publish cycle that only ever pushes `codingdude/longrun-*` branches with
+  draft PRs. Timeout auto-resume and lane bootstrap included.
+- **Planning depth**: PRDs, technical designs, roadmap items and tickets with
+  per-step evidence; function-tagged plan steps that phase-switch the session
+  (`[models.functions.<name>]`); `delegate` sessions staffed by cognitive
+  function with a registry-locked tool policy.
+- **Wireframes (R85)**: screen-design packs, a flow map, inline DSL editing and
+  implement handoff, rendered by the wireloom grammar.
+- **Model tooling (R81/R86)**: per-run model picker in the composer, live model
+  list fetch for OpenAI-compatible providers, custom `[providers.*]` tables.
+- **Editor reveal (R69)**: `reveal_code` opens a file in the editor at the cited
+  lines; chat citations are clickable.
+- **Kickoff prompts (R71)**: every session's first turn rides an executed
+  orientation block, overridable per project with `[kickoff]`.
+
+### Changed
+
+- `main` is protected and changes land through PRs with CI (R73/R74); issue and
+  PR templates plus a Contributor Covenant code of conduct are in the repo.
+- `github-mcp-server.exe` is no longer vendored; `setup-codingdude.bat` fetches
+  the upstream release (R74).
+- The user manual is split into pages under `docs/manual/` (R70).
+- Trace deltas are coalesced by default with a full-detail toggle (R79).
+- Usage is tagged by cognitive function, so the Cost panel breaks spend down by
+  function as well as by model.
+
+### Fixed
+
+- Provider context-length 400 that killed runs mid-session (the per-request
+  guard above); the claims retry was the last path that could still overshoot.
+- Artifacts panel crash on SSE deltas after a card was replaced (R87).
+- `ask_user` payloads are validated at the tool boundary and the UI card can no
+  longer take down the workspace; a malformed payload gets a readable
+  `ModelRetry` instead of a React error (R90).
+- Reviewer sub-agent now runs with repository tools and a prompt it can act on;
+  it used to answer without file access (R90).
+- `show:` panel deep-links no longer bury the editor in a merged dock group
+  (R89).
+- Run-failure visibility: worker stderr is captured and surfaced, MCP pre-flight
+  blocks a run that cannot reach its servers, and `repo_map`/`arch_lint` were
+  moved off the critical path (R76/R77).
+- Navigation no longer grows the page (it scrolls internally), floating groups
+  are clamped on screen, and the dock no longer produces a phantom scrollbar
+  (R67/R88).
+
+### Security
+
+- Dependency advisories cleared across Python and npm trees; doMPurify pinned
+  (R66).
+- Constant-time token comparisons on the auth seams; mermaid renders with
+  `securityLevel: 'strict'`; `gh` calls resolve through `shutil.which` with an
+  argv list, no shell (R66).
+- Security gate (Bandit + Semgrep + secret regexes) fails closed on a finding.
+
 ## 0.4.0 — 2026-09-21
 
 Analysis hardening (R47) + codebase hygiene sweep.
@@ -18,7 +96,7 @@ Analysis hardening (R47) + codebase hygiene sweep.
 - Dead `next_target`/`body_tail` parameters removed from the CFG builder
 
 ### Fixed
-- UI version badge showed 0.3.0 after the bump: the frontend bakes `__APP_VERSION__ = package.json version` into the bundle at build time (vite `define`). Release rule: after bumping the version, run `npm run build` and ship the rebuilt `dist/` — a stale bundle keeps reporting the old version. Backend `__version__` is now derived from installed package metadata, pinned by `tests/test_version.py` (single source: pyproject.toml)
+- UI version badge showed 0.3.0 after the bump: the frontend bakes `__APP_VERSION__ = package.json version` into the bundle at build time (vite `define`). Release rule: after bumping the version, run `npm run build` and ship the rebuilt `frontend/dist/` — a stale bundle keeps reporting the old version. Backend `__version__` is now derived from installed package metadata, pinned by `tests/test_version.py` (single source: pyproject.toml)
 
 ## 0.3.0 — 2026-09-09
 
@@ -40,7 +118,8 @@ Modernization completion (WS-C/E/F/G/H remainder).
 
 ### Fixed
 - review refactor shared between plan-completion and on-demand flows
- — 2026-09-08
+
+## 0.2.0 — 2026-09-08
 
 Uber-agent layer (tickets 18–22) + modernization pass (WS-A–H).
 

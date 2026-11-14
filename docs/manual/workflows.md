@@ -15,6 +15,10 @@ Up: [User Manual](../USER-MANUAL.md) · Next: [Configuration](configuration.md)
    binds the agent, and you can hold it to yours.
 5. **Review changes →** opens the Diff panel: read the diff and the
    symbol-level summary, then commit (a gated action — the agent asks).
+6. Before the agent pushes, it runs the **two-axis review** and records it
+   (see [The review before a push](#the-review-before-a-push)). Pushing without
+   that record is refused, so the review is part of the workflow rather than a
+   step that can be skipped.
 
 Work worth tracking lands in the **Planning** panel as tickets under a
 roadmap item; the agent keeps statuses current and you can too.
@@ -31,6 +35,35 @@ roadmap item; the agent keeps statuses current and you can too.
 - **Checklists** (composer picker) — run a distilled review checklist
   against the project as a dedicated run.
 
+### The review before a push
+
+Publishing is gated on a **recorded review of the exact diff being pushed**
+(R92). The order is fixed:
+
+1. Run the two-axis review over the branch: **Standards** (does the code follow
+   this repository's documented standards?) and **Spec** (does it do what the
+   ticket or spec asked for?). Both axes are required — a blank one is
+   rejected, because a single-axis review is how a finding gets missed.
+2. Verify each finding against the code before acting on it, then fix the real
+   ones. Fixing changes the diff.
+3. Call `record_review(standards=..., spec=...)` describing what each axis
+   found — a finding that was fixed, or an explicit "no findings".
+4. Push.
+
+The record is keyed to the content of the diff, so amending a message or
+rebasing without changing content keeps it valid, and changing a single byte of
+the diff voids it — which is exactly what forces step 2 to happen before step 3
+and not after. A `git push` spelled out in a shell command is refused outright,
+so the obvious second route is closed. The ceiling is honest: that refusal is a
+pattern match, so a *script* invoked by name that pushes internally is not
+caught — closing that needs the sandbox layer, not a regex.
+
+There is an honest ceiling to state plainly: the gate proves a review was
+recorded, not that it was competent — an agent can record one it did not
+perform. What it guarantees is that publishing requires a deliberate,
+axis-labelled act instead of merely being remembered. That is why the post-push
+review still exists as a failsafe.
+
 ## Keeping cost and context sane
 
 - **Cost panel** — per-model and per-request usage. Add a `[models.pricing]`
@@ -40,10 +73,24 @@ roadmap item; the agent keeps statuses current and you can too.
   `subagent` model slot instead of `main`.
 - **`thinking`** (config) — on models that support it (GLM profiles), a
   lower thinking level is a real cost lever; `off` disables it.
+- **`prompt_cache`** (config, default `"1h"`) — caches the long prefix that
+  every turn re-reads, so context is billed as cache reads instead of fresh
+  input where the provider supports it. Models with implicit caching (DeepSeek,
+  GLM) ignore the setting, which is a correct no-op rather than a
+  misconfiguration. Set `false` to disable, or name a retention tier; see
+  [Configuration › prompt caching](configuration.md#prompt-caching).
 - **`request_limit`** (config, default 500) — caps model requests per run so
   a long session isn't cut off by the library default.
 - **Context meter** (sidebar) — above 80 % the next compaction is near;
   compaction summarises history so long sessions keep working.
+- **Two compaction paths** — at run start, old turns are summarised (that
+  summary is also banked as memory); *during* a run, a mechanical per-request
+  guard compacts whenever the estimate crosses the threshold, without calling
+  the model. The guard is what stops a long session from growing until the
+  provider rejects it with a context-length error; when it fires, the trace
+  carries a `CONTEXT_COMPACTED` event. Turn it off with
+  `compact_per_request = false` under `[models]` only if you want the old
+  behaviour.
 - **Budget caps** — headless runs: `--budget USD` (hard stop). Delegated
   sub-agents: `[delegation]` ceilings in config. See
   [Configuration](configuration.md#shell-delegation-planning).

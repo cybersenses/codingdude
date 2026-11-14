@@ -8,6 +8,11 @@ conventions, and asks before doing anything risky. It is driven from a **web
 UI** or a **headless CLI**, against any LLM provider you configure. Nothing
 leaves your machine except the LLM API calls you configured.
 
+It reviews its own diff on two axes (does it meet your standards, does it do
+what the ticket asked) and records that review before it pushes — a push
+without one is refused, so "I reviewed it" is a fact about the repository
+rather than a sentence in the transcript.
+
 It is **not**: multi-user, a hosted service, an IDE replacement, or a model
 provider.
 
@@ -24,8 +29,8 @@ Read in order for a guided start, or jump straight to what you need:
 | [Tour of the screen](manual/tour.md) | What is on screen: sidebar, chat, composer, dock panels, footer, command palette, layout presets. |
 | [Panels reference](manual/panels.md) | Every panel in detail — what it shows, what it is for, when to use it. |
 | [Wireframes](manual/wireframes.md) | Screen-design packs: the flow map, inline DSL editing, implement handoff. |
-| [Daily workflows](manual/workflows.md) | Feature work with plans and gates, reviewing and undoing, cost control, code exploration, delegation, memory, headless/CI. |
-| [Configuration](manual/configuration.md) | The cookbook: worked `config.toml` examples (DeepSeek, Z.AI coding plan, OpenRouter, local Ollama), full key reference, per-project overrides, pricing. |
+| [Daily workflows](manual/workflows.md) | Feature work with plans and gates, reviewing and undoing, the pre-push review gate, cost and context control, code exploration, delegation, memory, headless/CI. |
+| [Configuration](manual/configuration.md) | The cookbook: worked `config.toml` examples (DeepSeek, Z.AI coding plan, OpenRouter, local Ollama), full key reference including prompt caching, per-project overrides, pricing. |
 | [Extending](manual/extending.md) | MCP servers, skills, directives, checklists. |
 | [Reference](manual/reference.md) | Security and login, CLI commands and exit codes, troubleshooting, where things live. |
 
