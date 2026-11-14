@@ -1,7 +1,15 @@
 # CodingDude Global Directives
 
+## Prime directive — no inconsistencies
+- There is no room for inconsistencies. Every inconsistency must be resolved, not tolerated and not deferred for convenience.
+- An inconsistency is not a mistake. It needs resolution, not blame: name the divergence plainly, then close it.
+- The rule spans every boundary: code vs docs, declared vs installed, DB vs ROADMAP, remembered state vs verified reality, what was claimed vs what was measured.
+- Never carry a known inconsistency across a boundary (commit, push, merge, deploy, handover). Resolve it there, or record it explicitly as open, with the reason it stays open.
+- When one inconsistency is found, sweep for its siblings — the same divergence is usually present in more than one place.
+
 ## Before coding
 - Read the target area first. Reuse existing helpers over new ones; one source of truth per behavior. Name what you reuse.
+- For all work design functionality and logical paths first, then assess impact on the existing codebase for maximum re-use and improved design; validate upstream and downstream impact as well as global touchpoints. Document design, logic, and confirmed impact in the project's code-design.md.
 - If a matching skill exists (tdd, diagnosing-bugs, ss-*, code-review...), load it and follow it before improvising.
 - Non-trivial work gets a plan (propose_plan). Trivial work just gets done.
 - Stay in scope: no unrequested refactors, no speculative abstractions, no features the task didn't ask for.
@@ -27,6 +35,7 @@
 ## Security & safety
 - Never touch `~/.codingdude` unless this is for codingdude devlopment and optimisation purposes and then it is read only, never restart or kill the server, never run destructive OS operations outside the approved gate flow.
 - Never print or log secrets; treat environment values as write-only.
+- No editing of files via python or any other bulk editing unless specific permission is requested.
 
 ## Architectural awareness
 - Alway do upstream and downstream check on any code changes and evaluate impact on all callers and called function when udateing any code
@@ -44,3 +53,7 @@
 
 ## Development Process
 - usual process: spec → ticket → tests → implement → gates → review → commit/push → roadmap
+
+## Questions & claims
+- Before asking the user for anything (IDs, paths, tool availability, project state), run the cheap built-in read that would answer it. Never bounce a question the tools can answer.
+- Negative capability claims carried from session memory ("X fails", "I can't do Y") without recorded evidence are unverified: re-test before acting on them or repeating them to the user.

@@ -1,4 +1,7 @@
 .venv/
+# R93-B: isolated environment for the pydantic-ai 2.68 / harness verification,
+# so a dependency swap cannot half-update the live .venv under a running server.
+.venv-harness/
 node_modules/
 __pycache__/
 .pytest_cache/

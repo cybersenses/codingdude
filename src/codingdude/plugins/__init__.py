@@ -107,6 +107,9 @@ class PluginContext:
     emitter: Callable | None = None
     # #297 DE-3: the long-run sandbox lane (None for interactive runs).
     lane: object | None = None
+    # R93-A: per-run delegated-spend ledger, so the run's own usage row is
+    # charged the remainder (see delegation.DelegatedSpend). None = unwired.
+    spend_ledger: object | None = None
     # #296 DE-2: the resolved main run model — the evaluator's fallback slot
     # (chain: subagent → main; the registry re-points in #299).
     main_model: Model | None = None
@@ -182,6 +185,7 @@ async def build_all(ctx: PluginContext) -> list[AbstractToolset]:
             approvals=ctx.approvals,
             # DE-7a (#298): function profiles staff delegate sessions
             config=ctx.config,
+            spend_ledger=ctx.spend_ledger,
         ))
 
     toolsets.append(build_web_toolset())

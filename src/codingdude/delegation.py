@@ -13,19 +13,26 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-"""Delegation task briefs (R16): ship verified context with a delegated task
-so the subagent doesn't burn its request budget rediscovering what the parent
-already knows.
+"""Delegation seam: what a delegated task carries, and what it may spend.
 
-Mining is deliberately local: identifier-like tokens from the task text,
-existence-verified by a bounded scan of the workdir, plus the governing
-`## Contract` section from docs/specs/*.md when one references a verified
-symbol. No codegraph dependency — it's an MCP server, not a library.
+Two halves, both about the parent-to-subagent boundary:
+
+- **Briefs (R16)**: ship verified context with a delegated task so the
+  subagent doesn't burn its request budget rediscovering what the parent
+  already knows. Mining is deliberately local: identifier-like tokens from the
+  task text, existence-verified by a bounded scan of the workdir, plus the
+  governing `## Contract` section from docs/specs/*.md when one references a
+  verified symbol. No codegraph dependency — it's an MCP server, not a library.
+- **Budget (R93-A)**: the delegated run shares the parent's usage accumulator,
+  so its request allowance is a *slice* of the session total rather than a
+  fresh grant (`child_usage_limits`).
 """
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
+
+from pydantic_ai.usage import UsageLimits
 
 from .ast_tools import SKIP_DIRS
 
@@ -138,3 +145,97 @@ def brief_prompt(brief: DelegationBrief) -> str:
     if extras:
         parts.append('Delegation brief:\n' + '\n'.join(extras))
     return '\n\n'.join(parts)
+
+
+def child_usage_limits(
+    used_requests: int, parent_limits: UsageLimits | None, max_requests: int,
+) -> UsageLimits:
+    """`UsageLimits` for a delegated run that shares the parent's accumulator.
+
+    A delegated run is handed the parent's `ctx.usage` so its spend is visible
+    to the run that caused it (R93-A). That accumulator already holds whatever
+    the session spent, so the child cannot be given a bare
+    `UsageLimits(request_limit=max_requests)`: on any session that had already
+    made `max_requests` requests, the delegation's *first* request would trip
+    the limit. Instead the child's cap is the session total it is allowed to
+    reach — `used + max_requests` — which preserves "this delegation may spend
+    at most `max_requests` more requests".
+
+    The parent's other limits (cost, tokens) are carried over unchanged: a
+    delegation that pushes the session over a cost cap must abort exactly as
+    the parent would. The parent's own `request_limit`, when tighter than the
+    delegation slice, still wins — a delegation may never outrun the session.
+    """
+    cap = max(1, int(max_requests))
+    budget = max(0, int(used_requests or 0)) + cap
+    if parent_limits is None:
+        return UsageLimits(request_limit=budget)
+    parent_cap = parent_limits.request_limit
+    if parent_cap is not None and parent_cap > 0:
+        budget = min(budget, parent_cap)
+    return replace(parent_limits, request_limit=budget)
+
+
+def delegation_slice(used_requests: int, max_requests: int) -> int:
+    """The request total a delegation may reach on its own: `used + slice`."""
+    return max(0, int(used_requests or 0)) + max(1, int(max_requests))
+
+
+@dataclass(frozen=True)
+class NetUsage:
+    """A run's own spend after its delegations are charged separately."""
+
+    requests: int
+    input_tokens: int
+    output_tokens: int
+    cost: float | None
+
+
+class DelegatedSpend:
+    """What this run's delegations spent, so usage rows stay disjoint.
+
+    R93-A hands every delegated run the parent's `ctx.usage`, so the parent's
+    own `result.usage` already contains the delegated requests and tokens. The
+    delegation still writes its own usage row (that's the `by_function`
+    attribution from #298) — and two rows describing the same spend double-count
+    in `db.session_usage`, which sums the table and is what the Budget Cap
+    reads. The cap would then trip at roughly half the real spend.
+
+    So the rows partition the spend: the delegation row carries its slice, and
+    the parent's run row is charged the remainder (`net`). One ledger per run —
+    `Engine.run` creates it, hands it to the delegation toolset, and subtracts
+    it when billing the run.
+    """
+
+    requests: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cost: float = 0.0
+
+    def add(self, spent) -> None:
+        """Record one delegation's slice (any object with the four fields)."""
+        self.requests += int(getattr(spent, 'requests', 0) or 0)
+        self.input_tokens += int(getattr(spent, 'input_tokens', 0) or 0)
+        self.output_tokens += int(getattr(spent, 'output_tokens', 0) or 0)
+        cost = getattr(spent, 'cost', None)
+        if cost is not None:
+            self.cost += float(cost)
+
+    def net(self, usage) -> NetUsage:
+        """`usage` minus what the delegations already billed to their own rows.
+
+        Clamped at zero: a delegation that ran without the parent's accumulator
+        (a test double, or a path that bills a delegation the run's usage does
+        not contain) must never make the run's own row negative.
+        """
+        cost = getattr(usage, 'cost', None)
+        return NetUsage(
+            requests=max(0, int(getattr(usage, 'requests', 0) or 0) - self.requests),
+            input_tokens=max(
+                0, int(getattr(usage, 'input_tokens', 0) or 0) - self.input_tokens
+            ),
+            output_tokens=max(
+                0, int(getattr(usage, 'output_tokens', 0) or 0) - self.output_tokens
+            ),
+            cost=None if cost is None else max(0.0, float(cost) - self.cost),
+        )

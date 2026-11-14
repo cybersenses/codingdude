@@ -30,8 +30,14 @@ survive. Truncation is always marked, never silent.
 from pathlib import Path
 
 DIRECTIVES_FILENAME = 'DIRECTIVES.md'
-DIRECTIVES_BUDGET = 4000
-_GLOBAL_BUDGET = 3000
+# Sized to the directives people actually write. The real file reached 4.6k
+# chars, and a 3000-char global slice silently amputated seven whole sections
+# (Security, Architectural awareness, Efficiency, Resolution, Documentation,
+# Development Process, Questions & claims) from every run's prompt.
+DIRECTIVES_BUDGET = 8000
+_GLOBAL_BUDGET = 6000
+_TRUNCATION_MARKER = '[directives truncated]'
+_GLOBAL_TRUNCATION_MARKER = '[global directives truncated]'
 
 _BUILTIN_PROCESS = """\
 - Before non-trivial work, open (or confirm) the tracked item for it in the
@@ -45,28 +51,36 @@ def _read(path: Path) -> str:
 
 
 def build_directive_layers(home: Path, workdir: Path) -> str:
-    """Compose the directive text for a run (empty string when none exist)."""
-    parts: list[str] = []
+    """Compose the directive text for a run (never empty: built-ins always ship)."""
+    project_text = _read(workdir / 'AGENT.md')
+    project = f'## Project directives\n\n{project_text}' if project_text else ''
+    builtin = f'## Built-in process rules\n\n{_BUILTIN_PROCESS}'
+    header = '## Global directives (user-level rules)\n\n'
 
+    # The global layer truncates first, so its slice must leave room for the
+    # built-in and project layers. "Project rules always survive" is an
+    # accounting problem, not a slice at a constant that ignores them.
+    reserved = len(header) + len(builtin) + len(_GLOBAL_TRUNCATION_MARKER) + 16
+    if project:
+        reserved += len(project) + 2
+    allowance = min(_GLOBAL_BUDGET, max(0, DIRECTIVES_BUDGET - reserved))
+
+    parts: list[str] = []
     global_text = _read(home / DIRECTIVES_FILENAME)
     if global_text:
-        if len(global_text) > _GLOBAL_BUDGET:
-            global_text = global_text[:_GLOBAL_BUDGET]
-        parts.append(f'## Global directives (user-level rules)\n\n{global_text}')
+        if len(global_text) > allowance:
+            global_text = global_text[:allowance] + '\n' + _GLOBAL_TRUNCATION_MARKER
+        parts.append(f'{header}{global_text}')
 
     # Built-in sits between global and project: later layers win on conflict,
     # so user-level and project rules always outrank engine defaults.
-    parts.append(f'## Built-in process rules\n\n{_BUILTIN_PROCESS}')
+    parts.append(builtin)
+    if project:
+        parts.append(project)
 
-    project_text = _read(workdir / 'AGENT.md')
-    if project_text:
-        parts.append(f'## Project directives\n\n{project_text}')
-
-    if not parts:
-        return ''
     text = '\n\n'.join(parts)
     if len(text) > DIRECTIVES_BUDGET:
-        text = text[:DIRECTIVES_BUDGET] + '\n[directives truncated]'
+        text = text[:DIRECTIVES_BUDGET] + '\n' + _TRUNCATION_MARKER
     return text
 
 

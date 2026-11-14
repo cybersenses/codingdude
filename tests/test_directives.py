@@ -21,7 +21,12 @@ from pydantic_ai.messages import ModelResponse, TextPart
 
 from codingdude.config import load_config
 from codingdude.db import Database
-from codingdude.directives import DIRECTIVES_BUDGET, DIRECTIVES_FILENAME, build_directive_layers
+from codingdude.directives import (
+    _GLOBAL_BUDGET,
+    DIRECTIVES_BUDGET,
+    DIRECTIVES_FILENAME,
+    build_directive_layers,
+)
 from codingdude.engine import Engine
 
 
@@ -50,6 +55,40 @@ def test_directive_budget_truncates_global_first(home, workdir):
     assert len(layers) <= DIRECTIVES_BUDGET + 200  # header + project, global truncated
     assert 'precious' in layers  # project layer survives the global overflow
     assert layers.endswith('[directives truncated]') or 'precious' in layers[-200:]
+
+
+def test_realistic_directives_file_survives_whole(home, workdir):
+    """Regression: a 3000-char global slice silently amputated whole sections."""
+    home.mkdir(parents=True, exist_ok=True)
+    headings = [
+        '## Before coding',
+        '## Code',
+        '## Testing',
+        '## Verification',
+        '## Security & safety',
+        '## Architectural awareness',
+        '## Efficiancy',
+        '## Questions & claims',
+    ]
+    body = '\n\n'.join(f'{h}\n- rule {i} ' + 'x' * 540 for i, h in enumerate(headings))
+    assert 4000 < len(body) < _GLOBAL_BUDGET  # the size range that used to break
+    (home / DIRECTIVES_FILENAME).write_text(body)
+
+    layers = build_directive_layers(home, workdir)
+
+    for heading in headings:
+        assert heading in layers, f'{heading} was truncated away'
+    assert '[global directives truncated]' not in layers
+
+
+def test_global_truncation_is_marked(home, workdir):
+    """Truncation is never silent: the global slice carries its own marker."""
+    home.mkdir(parents=True, exist_ok=True)
+    (home / DIRECTIVES_FILENAME).write_text('G' * (_GLOBAL_BUDGET + 500))
+
+    layers = build_directive_layers(home, workdir)
+
+    assert '[global directives truncated]' in layers
 
 
 async def test_directives_reach_the_model(home, workdir):

@@ -83,6 +83,26 @@ async def test_gate_required_passes_through_unchanged():
 
 
 @pytest.mark.asyncio
+async def test_operator_halt_passes_through_unchanged():
+    """R93-A: a tool body can observe the operator kill-switch itself.
+
+    A delegation wraps its inner toolsets in the operator files toolset, so
+    `OperatorHalt` surfaces from *inside* the `delegate` call and crosses the
+    parent agent's error-feedback wrapper on the way to the engine. Treating it
+    as a tool failure would feed "fix the cause and call the tool again" back
+    to the model and swallow the halt.
+    """
+    from codingdude.operator_files import OperatorHalt
+
+    async def halted() -> str:
+        raise OperatorHalt('AGENT_STOP')
+
+    agent = _agent(error_feedback_toolset(FunctionToolset([halted])))
+    with pytest.raises(OperatorHalt):
+        await agent.run('go')
+
+
+@pytest.mark.asyncio
 async def test_model_retry_counts_against_budget():
     """Explicit ModelRetry still consumes the retry budget (unchanged)."""
 

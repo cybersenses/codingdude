@@ -15,7 +15,7 @@ dependencies = [
     "fastapi>=0.141.1",
     "fastmcp[server]>=4.1.2",
     "markdownify>=1.2.3",
-    "pydantic-ai>=2.66.0,<3",  # #253: unpin — R25 tool-retry seam adapted to ≥2.54 semantics (RetryPromptPart→ToolReturnPart(outcome='retried') / RetryFeedbackPart); stored retry-prompt history still loads
+    "pydantic-ai>=2.68.0,<3",  # #253: unpin — R25 tool-retry seam adapted to ≥2.54 semantics (RetryPromptPart→ToolReturnPart(outcome='retried') / RetryFeedbackPart); stored retry-prompt history still loads
     "tree-sitter>=0.26.0",
     "tree-sitter-javascript>=0.25.0",
     "tree-sitter-python>=0.25.0",
@@ -40,6 +40,13 @@ dependencies = [
     "tree-sitter-language-pack>=1.0.0",
     "bandit>=1.9.4",
     "tomli-w>=1.2.0",
+    "pydantic-ai-harness>=0.68.0",
+    # R93-C: tracing.py imports both directly. They arrive transitively through
+    # pydantic-ai → logfire → logfire-sdk today, but a transitive dependency we
+    # import by name is not a contract — a core/harness bump could drop the
+    # OTLP extra and turn configure_tracing into a permanent no-op.
+    "logfire>=5.3.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.27.0",
 ]
 
 [project.scripts]

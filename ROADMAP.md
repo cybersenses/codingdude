@@ -1367,3 +1367,43 @@ Problem: pre-push two-axis review is mandated (project notes #22, #25) but has n
 Second, independent defect found: `_review_impl` (planning.py) reviews `git diff HEAD` — the unstaged working tree. After a commit that is empty, so a "review" of committed-but-unpushed work reviews nothing and returns CLEAN. It also swallows every exception as `''` = CLEAN. So the existing review seam structurally cannot review a branch, and its failure mode is a green verdict.
 
 Enforcement: a recorded review keyed by the exact diff content is required before `git_push` will run; the record is written only by a tool that demands per-axis evidence (the #293 `update_execution_step` pattern). Post-push review remains a failsafe, scoped as note #22 says.
+
+## R93 — R93: Delegation budget integrity, pydantic-ai-harness adoption, OTel tracing
+**Status:** in_progress
+Audience: agent — makes the agent cheaper and harder to run away with: delegated spend now counts against the run that caused it, oversized tool output is bounded at the source, and a failed run names its agent and request instead of arriving as a provider error string. The human payoff is a Budget Cap that actually holds and a run you can diagnose without guesswork.
+
+## Why
+
+Three gaps found while checking our run path against pydantic-ai's
+[multi-agent applications guide](https://pydantic.dev/docs/ai/guides/multi-agent-applications/)
+and its Deep-Agents section (the Harness).
+
+**1. Delegation budget is invisible to the parent run.**
+`delegate` (`src/codingdude/tools.py`) is a plain function tool with no
+`RunContext` parameter at all, and calls `sub_agent.run(...)` without
+`usage=`. The guide is explicit that a delegated run is its own run with its
+own history *but should thread `ctx.usage` so its spend counts toward the
+parent*; ours bills separately (`_bill`) yet the parent's `UsageLimits` never
+sees it. A parent cannot be bounded over a tree it cannot see.
+Separately, `operator_files_toolset` wraps only the main agent's toolsets
+(`engine.py:887`), so `AGENT_STOP` is not observed while a delegation runs.
+
+**2. `pydantic-ai-harness` ships capabilities we hand-built and are weaker at.**
+`ToolOutputLimits` bounds oversized tool returns *at the source* — upstream of
+our estimator, which is where the 1.2M-token request class originates.
+`WarnOnCacheBusts` is the prompt-cache telemetry R91 deferred. Harness 0.68.0
+pins `pydantic-ai-slim==2.68.0`; we are on 2.66.0.
+
+**3. Zero observability.** `logfire` 5.3.0 is installed and nothing calls
+`logfire.configure()`/`instrument_pydantic_ai()`; no agent carries `name=`.
+A failed run arrives as a provider error string and we infer composition from
+it. The guide's "Observing Multi-Agent Systems" section is unimplemented.
+
+## Outcome
+- One budget that spans the delegation tree; operator halt reaches inside a
+  delegation; delegated spend appears in the parent's `result.usage`.
+- Oversized tool returns bounded before they reach the window; cache-bust
+  events observable.
+- Local-OTLP traces with a span per agent, so failures name the agent and
+  request instead of requiring inference.
+

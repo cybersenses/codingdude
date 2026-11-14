@@ -177,7 +177,7 @@ and is preserved by the UI when you edit other fields.
 [shell]
 default = "bash"        # or "powershell"
 
-[delegation]            # per-`delegate`-call ceilings for sub-agents
+[delegation]            # how much MORE one `delegate` call may spend
 max_requests = 40
 # max_cost_usd = 1.00   # unset = no cost ceiling
 
@@ -185,6 +185,12 @@ max_requests = 40
 github_mirror = true    # mirror tickets/roadmap items to GitHub issues via gh
                         # (best-effort; needs a github.com origin + gh auth)
 ```
+
+`max_requests` is a **slice, not a budget of its own**: a delegation may spend
+`max_requests` requests *beyond* what the session already spent, and never more
+than `[models] request_limit` allows overall. Delegated requests and tokens
+count against the run that caused them — they appear in the run's usage and its
+limits — and `max_cost_usd` is compared against that one delegation's own cost.
 
 ### `[trace]`
 
@@ -198,6 +204,44 @@ deltas = "compact"      # or "full" — compact coalesces streaming text deltas
 The JSONL trace per session is what the Trace panel replays and what an
 evidence check reads back. `compact` is the default: a long run otherwise
 writes one line per token delta.
+
+### `[telemetry]`
+
+OpenTelemetry spans for agent runs, exported to a **local** collector.
+
+```toml
+[telemetry]
+enabled = false                            # off by default
+otlp_endpoint = "http://127.0.0.1:4318"    # any local OTLP/HTTP collector
+service_name = "codingdude"
+```
+
+This is the other kind of trace, and it answers a different question. The
+`[trace]` JSONL above records what happened in a session for replay and
+evidence; `[telemetry]` emits one span per model request and per tool call, so
+a slow or failing run can be read as a timeline: which agent, which request,
+how many tokens, how long.
+
+- **Local only.** `send_to_logfire=False`: no token, no account, nothing leaves
+  the machine. Run prompts contain your code, so this is a constraint, not a
+  default to relax.
+- **Off by default, and never fatal.** Every malformed value — the boolean as
+  much as the endpoint — is logged once and turns tracing off. Tracing never
+  stops a run or a worker: `enabled = "false"` (quoted, so not a TOML boolean)
+  leaves it off; `otlp_endpoint = "4318"` (no scheme) falls back to the default
+  listener; an unreachable collector just produces no traces.
+- Any OTLP/HTTP collector works: Grafana Agent, Jaeger (`:4318`), an
+  OpenTelemetry Collector, or `logfire` served locally. Point
+  `otlp_endpoint` at it and set `enabled = true`.
+- Everything is named: `main`, `fix-loop`, `claims-retry`, `claims-auditor`,
+  `compaction`, `memory-extraction`, `evaluator`, `planning-reviewer`,
+  `delegate`, `vision-inspector`. Filter spans by agent name to see where the
+  time or the tokens actually went.
+- `[telemetry]` is **global only** — it lives in `~/.codingdude/config.toml`,
+  not in a project `.codingdude.toml`, so one collector serves every project.
+
+Configuration is read once per worker process, so a change takes effect on the
+next run.
 
 ### `[models.functions.<name>]`
 

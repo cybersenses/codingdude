@@ -39,6 +39,26 @@ def _now() -> float:
     return time.time()
 
 
+def _created_ns(cp_dir: Path) -> int:
+    """Filesystem timestamp of a checkpoint directory, in nanoseconds.
+
+    Legacy tiebreaker for `_ordered_ids`, kept for checkpoints written before
+    `begin()` stamped a sequence number: `_now()` is a coarse-tick wall clock
+    (~15ms here, measured), so two checkpoints captured in the same tick share
+    `created_at` exactly (#343).
+
+    Not trustworthy as *creation* time on POSIX: `st_ctime` there is
+    inode-change time, and `capture_file` writes into the checkpoint directory,
+    so an older checkpoint that receives captures later can carry a newer
+    value. On Windows it is real creation time. `seq` supersedes it; this
+    remains as the deterministic fallback for pre-seq checkpoints on Windows.
+    """
+    try:
+        return cp_dir.stat().st_ctime_ns
+    except OSError:
+        return 0
+
+
 class CheckpointStore:
     """File-backed snapshot store enabling rollback of workdir state."""
     def __init__(self, home: Path, max_per_session: int = DEFAULT_MAX_PER_SESSION,
@@ -60,10 +80,29 @@ class CheckpointStore:
             'id': cp_id,
             'session_id': session_id,
             'created_at': _now(),
+            # Monotonic within the session, so two checkpoints that share a
+            # clock tick still order exactly. The filesystem timestamp this
+            # replaced is creation time only on Windows — on POSIX it is
+            # inode-change time, which `capture_file` bumps in an *older*
+            # checkpoint whenever it later snapshots a file into it (#343).
+            'seq': self._next_seq(self._session_dir(session_id)),
             'files': {},
         }
         (cp_dir / 'metadata.json').write_text(json.dumps(meta), encoding='utf-8')
         return cp_id
+
+    def _next_seq(self, session_dir: Path) -> int:
+        """One past the highest sequence stamped in this session."""
+        highest = 0
+        if session_dir.exists():
+            for cp_dir in session_dir.iterdir():
+                if not cp_dir.is_dir():
+                    continue
+                meta = self._read_meta(cp_dir / 'metadata.json')
+                if meta is None:
+                    continue
+                highest = max(highest, int(meta.get('seq', 0) or 0))
+        return highest + 1
 
 
     @staticmethod
@@ -86,6 +125,15 @@ class CheckpointStore:
 
         Name order is not reliably chronological: two checkpoints created in the
         same second share the timestamp *prefix* and then sort on a random uuid.
+
+        Nor is `created_at` alone sufficient: the wall clock advances in coarse
+        ticks (~15ms here), so back-to-back checkpoints can carry the *same*
+        stamp and the tie would again fall to a random uuid — which made
+        `rewind_to` compute the wrong "later" slice (#343).
+
+        The tiebreaker is the per-session `seq` stamped by `begin()`, which is
+        exact and platform-free. Checkpoints written before `seq` existed fall
+        back to the directory's filesystem timestamp, then to the name.
         """
         if not session_dir.exists():
             return []
@@ -94,9 +142,11 @@ class CheckpointStore:
             if not cp_dir.is_dir():
                 continue
             meta = self._read_meta(cp_dir / 'metadata.json')
-            entries.append((meta.get('created_at', 0) if meta else 0, cp_dir.name))
+            created = meta.get('created_at', 0) if meta else 0
+            seq = int(meta.get('seq', 0) or 0) if meta else 0
+            entries.append((created, seq, _created_ns(cp_dir), cp_dir.name))
         entries.sort()
-        return [name for _created, name in entries]
+        return [name for _created, _seq, _ns, name in entries]
 
     def capture_file(self, session_id: str, cp_id: str, workdir: Path, abs_path: Path) -> None:
         """Snapshot one file into the checkpoint (first touch per file)."""
@@ -120,12 +170,17 @@ class CheckpointStore:
         (cp_dir / 'metadata.json').write_text(json.dumps(meta), encoding='utf-8')
 
     def list_checkpoints(self, session_id: str) -> list[dict]:
+        """Newest first, ordered the same way `rewind_to` decides "later".
+
+        Sorting by name would disagree with rewind inside a clock tick (#343):
+        the list would claim an order the undo does not honour.
+        """
         session_dir = self._session_dir(session_id)
         if not session_dir.exists():
             return []
         out = []
-        for cp_dir in sorted(session_dir.iterdir(), key=lambda p: p.name, reverse=True):
-            meta = self._read_meta(cp_dir / 'metadata.json')
+        for cp_id in reversed(self._ordered_ids(session_dir)):
+            meta = self._read_meta(session_dir / cp_id / 'metadata.json')
             if meta is None:
                 continue
             out.append({

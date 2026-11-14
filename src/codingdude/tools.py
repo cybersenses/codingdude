@@ -26,9 +26,9 @@ import time
 import uuid
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
-from pydantic_ai import ModelRetry
+from pydantic_ai import ModelRetry, RunContext
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 
 from codingdude.editmatch import find_similar_lines, replace_most_similar_chunk
@@ -1078,6 +1078,45 @@ def _register_new_renders(workdir: Path, started: float, on_render: Callable[[st
         logger.warning('render capture scan failed: %s', exc)
 
 
+class _UsageTotals(NamedTuple):
+    """Token/request counts, either as a snapshot or as a delta between two."""
+
+    requests: int
+    input_tokens: int
+    output_tokens: int
+    cost: float | None = None
+
+
+def _usage_totals(usage) -> _UsageTotals:
+    """Snapshot the numeric fields we bill and report."""
+    return _UsageTotals(
+        requests=getattr(usage, 'requests', 0) or 0,
+        input_tokens=getattr(usage, 'input_tokens', 0) or 0,
+        output_tokens=getattr(usage, 'output_tokens', 0) or 0,
+        cost=None if getattr(usage, 'cost', None) is None
+        else float(usage.cost),
+    )
+
+
+def _usage_delta(before: _UsageTotals, after) -> _UsageTotals:
+    """What *this delegation* spent, not what the session has spent so far.
+
+    R93-A hands the delegated run the parent's `RunUsage` so its spend is
+    visible to the run that caused it. That makes `result.usage` the session's
+    cumulative total, so billing it directly would charge the whole session to
+    every delegation — and the parent bills the same spend again on its own
+    result. The difference against the snapshot taken before the run is the
+    delegation's own share.
+    """
+    now = _usage_totals(after)
+    return _UsageTotals(
+        requests=now.requests - before.requests,
+        input_tokens=now.input_tokens - before.input_tokens,
+        output_tokens=now.output_tokens - before.output_tokens,
+        cost=None if now.cost is None else now.cost - (before.cost or 0.0),
+    )
+
+
 def build_delegation_toolset(
     workdir: Path,
     subagent_model,
@@ -1090,6 +1129,7 @@ def build_delegation_toolset(
     approvals=None,
     config=None,
     model_resolver=None,
+    spend_ledger=None,
 ) -> FunctionToolset:
     """The `delegate` tool: spawn a read-only Subagent on the cheap model.
 
@@ -1108,6 +1148,18 @@ def build_delegation_toolset(
     models.functions); `model_resolver` turns a profile model name into a
     pydantic-ai Model — None uses the engine's `_model_from_name` seam
     (lazy import, the worker #212 precedent; tests inject a stub).
+
+    R93-A: `ctx` is pydantic-ai's run context, so it is the first parameter
+    and is absent from the model-visible schema. The subagent keeps its own
+    message history — it never sees the parent conversation, which is the
+    documented shape for delegation — but it shares the parent's `usage`
+    accumulator, so delegated requests and tokens count against the run that
+    caused them, and its request budget is the delegation slice
+    `used + [delegation].max_requests` rather than a fresh allowance.
+
+    `spend_ledger` (a `delegation.DelegatedSpend`) records each delegation's
+    slice so the run's own usage row can be charged the remainder; without it
+    the same spend lands in two rows and `session_usage` double-counts it.
     """
     from .config import DelegationConfig
 
@@ -1119,6 +1171,10 @@ def build_delegation_toolset(
 
     def _bill(usage, function_name: str | None = None) -> None:
         # Delegations are real spend: attribute to the parent Session (H6).
+        # The ledger takes the slice regardless of whether a row can be
+        # written, so the parent's own row is always charged the remainder.
+        if spend_ledger is not None:
+            spend_ledger.add(usage)
         if db is None or not session_id:
             return
         try:
@@ -1133,7 +1189,12 @@ def build_delegation_toolset(
                 function_name=function_name,
             )
         except Exception:  # noqa: BLE001 - accounting must never fail a run
-            pass
+            import logging
+
+            logging.getLogger(__name__).warning(
+                'delegation usage recording failed for session %s',
+                session_id, exc_info=True,
+            )
 
     def _resolve_profile_model(name: str):
         if model_resolver is not None:
@@ -1143,7 +1204,7 @@ def build_delegation_toolset(
         return _model_from_name(
             name, config.models.fallback_base_url, config.providers)
 
-    async def delegate(task: str, write: bool = False,
+    async def delegate(ctx: RunContext[Any], task: str, write: bool = False,
                        function: str | None = None) -> str:
         import uuid as _uuid
 
@@ -1153,9 +1214,13 @@ def build_delegation_toolset(
             UsageLimitExceeded,
         )
         from pydantic_ai.settings import ModelSettings
-        from pydantic_ai.usage import UsageLimits
 
-        from .delegation import brief_prompt, build_brief
+        from .delegation import (
+            brief_prompt,
+            build_brief,
+            child_usage_limits,
+            delegation_slice,
+        )
         from .prompts import load_prompt
         from .sandbox import _make_venv, exec_in_sandbox_dir
         from .worktrees import (
@@ -1217,6 +1282,12 @@ def build_delegation_toolset(
         except WorktreeError:
             isolated = False  # no git history / name clash: unisolated, said so
         brief = build_brief(task, agent_workdir, cfg.max_requests)
+        # R93-A: the delegated run is handed the parent's `ctx.usage`, so its
+        # request budget is measured from what the session has already spent
+        # (see delegation.child_usage_limits for why a bare limit is wrong),
+        # and its bill is the difference against this snapshot.
+        usage_before = _usage_totals(ctx.usage)
+        used_requests = usage_before.requests
         _emit({'type': 'DELEGATION_STARTED', 'task': task[:200],
                'isolated': isolated, 'delegation_id': delegation_id,
                'write': write, 'function': function,
@@ -1243,6 +1314,14 @@ def build_delegation_toolset(
         from codingdude.tool_errors import error_feedback_toolset
 
         toolsets = [error_feedback_toolset(toolsets)]
+        # R93-A: the operator kill-switch must be observed inside a delegation
+        # too — otherwise AGENT_STOP goes unseen for the whole delegated run.
+        # Applied OUTSIDE error feedback so `OperatorHalt` escapes unconverted
+        # to the engine's halted-outcome handler, matching the main agent's
+        # ordering in engine._assemble_agent.
+        from .operator_files import operator_files_toolset
+
+        toolsets = [operator_files_toolset(toolsets, workdir)]
         instructions = load_prompt('delegation')
         if overlay:
             instructions += '\n\n' + overlay
@@ -1253,6 +1332,7 @@ def build_delegation_toolset(
             getattr(config, 'models', None), ONE_SHOT
         )
         sub_agent: Agent = Agent(
+            name='delegate',
             model=session_model,
             instructions=instructions,
             toolsets=toolsets,
@@ -1260,19 +1340,26 @@ def build_delegation_toolset(
             capabilities=delegation_caps,
         )
         sandbox_diff: str | None = None
+        limits = child_usage_limits(
+            used_requests,
+            getattr(ctx, 'usage_limits', None),
+            cfg.max_requests,
+        )
+        result = None
+        aborted = False
         try:
             try:
                 result = await sub_agent.run(
                     brief_prompt(brief),
-                    usage_limits=UsageLimits(request_limit=cfg.max_requests),
+                    usage=ctx.usage,
+                    usage_limits=limits,
                 )
             except UsageLimitExceeded:
-                return (
-                    'delegation aborted: exceeded the delegation budget of '
-                    f'{cfg.max_requests} model requests. Narrow the task and '
-                    'delegate again with a tighter question.'
-                )
-            if write and isolated:
+                # The spend of an aborted delegation is still real: fall
+                # through to the shared billing/trace path below instead of
+                # returning early (it used to vanish from both).
+                aborted = True
+            if not aborted and write and isolated:
                 # intent-to-add so newly created files appear in the diff
                 await run_captured(['git', 'add', '-N', '-A'],
                                    cwd=agent_workdir, timeout=60)
@@ -1282,20 +1369,42 @@ def build_delegation_toolset(
         finally:
             if isolated:
                 remove_worktree(workdir, sandbox_name)
-        usage = result.usage
-        _bill(usage, function_name=function)
-        cost = getattr(usage, 'cost', None)
+        # The accumulator holds the spend either way; `result.usage` is the
+        # same object, so reading it from `ctx` covers the aborted path.
+        spent = _usage_delta(usage_before, ctx.usage if result is None else result.usage)
+        _bill(spent, function_name=function)
         _emit({
             'type': 'DELEGATION_COMPLETED',
             'isolated': isolated,
             'delegation_id': delegation_id,
             'write': write,
             'function': function,
-            'requests': usage.requests or 0,
-            'input_tokens': usage.input_tokens or 0,
-            'output_tokens': usage.output_tokens or 0,
-            'cost_usd': float(cost) if cost is not None else None,
+            'aborted': aborted,
+            'requests': spent.requests,
+            'input_tokens': spent.input_tokens,
+            'output_tokens': spent.output_tokens,
+            'cost_usd': spent.cost,
         })
+        if result is None:
+            # Only the UsageLimitExceeded path leaves no result — and it is the
+            # path where spend is guaranteed, so it bills and traces above like
+            # any other delegation before reporting why it stopped.
+            session_cap = limits.request_limit
+            slice_cap = delegation_slice(used_requests, cfg.max_requests)
+            if session_cap is not None and session_cap < slice_cap:
+                # The session's own limit bound the delegation, not its slice
+                # (child_usage_limits takes the min) — say which one fired.
+                return (
+                    'delegation aborted: the session request limit of '
+                    f'{session_cap} was reached before the delegation slice of '
+                    f'{cfg.max_requests} could be spent. Raise '
+                    '[models].request_limit or split the task.'
+                )
+            return (
+                'delegation aborted: exceeded the delegation budget of '
+                f'{cfg.max_requests} model requests. Narrow the task and '
+                'delegate again with a tighter question.'
+            )
         output = str(result.output)
         if write and isolated:
             diff = sandbox_diff or ''
@@ -1303,10 +1412,10 @@ def build_delegation_toolset(
                 '\n\nSandbox diff (proposed, not applied):\n' + diff
                 if diff else
                 '\n\n(sandbox tree clean - no changes to integrate)')
-        if cfg.max_cost_usd is not None and cost is not None \
-                and float(cost) > cfg.max_cost_usd:
+        if cfg.max_cost_usd is not None and spent.cost is not None \
+                and spent.cost > cfg.max_cost_usd:
             output += (
-                '\n(note: delegation cost ' + format(float(cost), '.4f')
+                '\n(note: delegation cost ' + format(spent.cost, '.4f')
                 + ' USD exceeded the configured cap of '
                 + str(cfg.max_cost_usd) + ' USD - consider raising '
                 '[delegation].max_cost_usd or splitting the task)'
