@@ -15,6 +15,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """ROADMAP.md is the canonical roadmap source; the Planning tab must serve it live."""
 
+import re
 from pathlib import Path
 
 import pytest
@@ -161,3 +162,56 @@ def test_roadmap_create_appends_to_file(client_with_roadmap, tmp_path) -> None:
     items = parse_roadmap_md(Path(md))
     assert items[-1]['title'] == 'Next thing'
     assert items[-1]['status'] == 'open'
+
+
+# ---- the shipped ROADMAP.md itself (R86 #348) -------------------------
+#
+# These guard the file the planning tools actually read, not a synthetic one.
+# A heading the parser cannot see is worse than a duplicated one: it vanishes
+# from list_planning, create_ticket and update_roadmap_item while still looking
+# present in the file.
+
+SHIPPED_ROADMAP = Path(__file__).resolve().parent.parent / 'ROADMAP.md'
+#: A heading that claims to be a roadmap item.
+_ITEM_HEADING = re.compile(r'^## R\d+')
+#: The #348 defect, own id repeated: `## R83 — R83: Composer`, `## R31 — R31 Run-end`.
+_OWN_ID_REPEATED = re.compile(r'^## (R\d+) \u2014 \1[: \u2014]')
+#: The same defect with a *mismatched* id — a stale prefix copied from a
+#: neighbouring heading: `## R24 — R22 — File-tools`. A same-id pattern misses
+#: this, and the heading delimiter (`—` / `:`) is what distinguishes it from a
+#: legitimate cross-reference such as `## R89 — R86 review findings …`, where the
+#: second id is followed by prose and carries meaning.
+_STALE_ID_PREFIX = re.compile(r'^## R\d+ \u2014 R\d+ ?[\u2014:]')
+
+
+def _shipped_lines() -> list[str]:
+    return SHIPPED_ROADMAP.read_text(encoding='utf-8').splitlines()
+
+
+def test_every_item_heading_in_the_shipped_roadmap_parses() -> None:
+    headings = [line for line in _shipped_lines() if _ITEM_HEADING.match(line)]
+    assert len(parse_roadmap_md(SHIPPED_ROADMAP)) == len(headings)
+
+
+def test_no_shipped_heading_repeats_an_id_prefix() -> None:
+    doubled = [
+        line for line in _shipped_lines()
+        if _OWN_ID_REPEATED.match(line) or _STALE_ID_PREFIX.match(line)
+    ]
+    assert doubled == [], f'heading carries a second id prefix: {doubled}'
+
+
+def test_a_cross_referencing_heading_is_not_mistaken_for_a_duplicate() -> None:
+    """`R89 — R86 review findings …` keeps its reference: a bare space after a
+    different id is prose, not a heading prefix."""
+    assert _OWN_ID_REPEATED.match('## R89 \u2014 R86 review findings out of scope') is None
+    assert _STALE_ID_PREFIX.match('## R89 \u2014 R86 review findings out of scope') is None
+    # …while both real defect shapes are caught:
+    assert _OWN_ID_REPEATED.match('## R83 \u2014 R83: Composer')
+    assert _STALE_ID_PREFIX.match('## R24 \u2014 R22 \u2014 File-tools hardening')
+
+
+def test_shipped_roadmap_ids_are_unique() -> None:
+    ids = [item['id'] for item in parse_roadmap_md(SHIPPED_ROADMAP)]
+    assert len(ids) == len(set(ids))
+

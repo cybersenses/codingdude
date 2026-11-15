@@ -147,29 +147,17 @@ class RunServices:
 
         `request_limit` keeps long agentic sessions alive — pydantic-ai's
         library default of 50 kills them with 'would exceed the request_limit
-        of 50'.
+        of 50'. `cost_limit` / `total_tokens_limit` are the hard stop: checked
+        before the next request, so money is refused rather than narrated
+        afterwards. Both are None by default — the previous behaviour exactly.
 
-        `cost_limit` / `total_tokens_limit` are the *hard* stop: pydantic-ai
-        checks them before the next request and raises, so money is refused
-        rather than narrated afterwards. Both are None by default, which is
-        exactly the previous behaviour.
-
-        Honest ceiling: `cost_limit` can only be enforced when pydantic-ai can
-        price the model. On an unpriced provider it warns
-        (`CostNotFoundWarning`) and enforces nothing, so `max_total_tokens` is
-        the ceiling that actually holds there.
+        Built by `spend_limits`, which the evaluator and planning reviewer share
+        so every seam carries the same ceilings.
         """
-        from decimal import Decimal
-
-        from pydantic_ai.usage import UsageLimits
+        from .delegation import spend_limits
 
         models = self._config.models
-        cost = getattr(models, 'max_cost_usd', None)
-        return UsageLimits(
-            request_limit=models.request_limit,
-            cost_limit=Decimal(str(cost)) if cost is not None else None,
-            total_tokens_limit=getattr(models, 'max_total_tokens', None),
-        )
+        return spend_limits(models, models.request_limit)
 
 
 class PromptAssembler:

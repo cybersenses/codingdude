@@ -624,7 +624,7 @@ Assessment: viable, low-medium effort per item, reuses existing parsers.
 
 14 test failures in CI (run 34984478320) that pass locally on the dev machine: test_sandbox (6), test_interactive_approvals (2), test_mcp, test_render_persistence, test_server, test_shell (2), test_tools. Likely Windows-runner environment differences (temp paths, spawn behavior, git config). Goal: CI green so GitHub notifications only fire on real regressions.
 
-## R24 — R22 — File-tools hardening: unique atomic-write temp names
+## R24 — File-tools hardening: unique atomic-write temp names
 **Status:** done
 
 `_atomic_write` (tools.py) uses a deterministic `<name>.codingdude-tmp` path; two concurrent writers to the same target collide and the second open() fails with WinError 32. Repro: .scratch/repro_tmp_collision.py (399/400 collisions). Fix: unique tmp name + retry on PermissionError for os.replace.

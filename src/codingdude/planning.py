@@ -219,9 +219,9 @@ def _capped_diff(diff: str, limit: int = 8000) -> str:
 
 async def _review_impl(db, session_id: str, review_model, checklist: str, plan, thinking: ThinkingSetting | None = None, models=None) -> str:
     from pydantic_ai import Agent
-    from pydantic_ai.usage import UsageLimits
 
     from .agent_caps import ONE_SHOT, cache_capabilities
+    from .delegation import spend_limits
     from .prompts import load_prompt
     from .tools import build_toolset
 
@@ -269,7 +269,9 @@ async def _review_impl(db, session_id: str, review_model, checklist: str, plan, 
     try:
         # request_limit bounds the read loop so a tool-happy reviewer cannot
         # spin inside the 300s timeout (same pattern as the evaluator pass).
-        result = await reviewer.run(prompt, usage_limits=UsageLimits(request_limit=8))
+        result = await reviewer.run(
+            prompt, usage_limits=spend_limits(models, 8)
+        )
     except Exception as exc:  # noqa: BLE001 — a review failure must not fail the run
         # Returning '' here read as CLEAN: a reviewer that never ran was
         # indistinguishable from one that found nothing (the #266 class). The

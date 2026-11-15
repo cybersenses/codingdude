@@ -256,6 +256,34 @@ def delegation_abort_message(
     )
 
 
+def spend_limits(models, request_limit: int) -> UsageLimits:
+    """`UsageLimits` carrying the configured run ceilings for one model call.
+
+    One definition for every seam that builds limits (R94-B #346). Without it a
+    run could carry a cost ceiling while an auxiliary agent it triggers spent
+    without one — the cap would be a claim rather than a limit. The evaluator
+    pass and the planning reviewer each constructed a bare
+    `UsageLimits(request_limit=...)`; the R94 problem statement names both.
+
+    Scope, stated: these are per-`agent.run()` ceilings. pydantic-ai checks them
+    against that call's own usage, and the one-shot agents bill their spend to
+    the session ledger separately (`record_model_usage`). The *total* across a
+    run remains the session Budget Cap over `db.session_usage`; this bounds any
+    single call.
+
+    `cost_limit` is enforceable only where pydantic-ai can price the model: the
+    boundary check cannot fire without a cost, and `UsageLimits.check_cost`
+    emits `CostNotFoundWarning` to say so. `max_total_tokens` needs no pricing,
+    so it is the ceiling that always holds.
+    """
+    cost = getattr(models, 'max_cost_usd', None)
+    return UsageLimits(
+        request_limit=request_limit,
+        cost_limit=Decimal(str(cost)) if cost is not None else None,
+        total_tokens_limit=getattr(models, 'max_total_tokens', None),
+    )
+
+
 def delegate_span_name(function: str | None) -> str:
     """The trace span name for a delegation (R94-A #345).
 

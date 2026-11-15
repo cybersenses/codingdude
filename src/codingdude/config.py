@@ -343,6 +343,8 @@ class ModelLineupIn(BaseModel):
     max_tokens: int | None = Field(default=None, ge=1)
     context_limit: int | None = Field(default=None, ge=1)
     request_limit: int = Field(default=500, ge=1)
+    max_cost_usd: float | None = Field(default=None, gt=0)
+    max_total_tokens: int | None = Field(default=None, gt=0)
     compact_per_request: bool = True
     prompt_cache: CacheSpec = DEFAULT_CACHE_RETENTION
     prompt_cache_messages: bool = True
@@ -1412,6 +1414,11 @@ def apply_project_models(config: Config, workdir: Path) -> Config:
         'max_tokens': config.models.max_tokens,
         'context_limit': config.models.context_limit,
         'request_limit': config.models.request_limit,
+        # R94-B #346: carried like every other field. Dropping these here reset
+        # both ceilings to None on any project with a `[models]` override — a
+        # configured cap that silently vanished.
+        'max_cost_usd': config.models.max_cost_usd,
+        'max_total_tokens': config.models.max_total_tokens,
         'compact_per_request': config.models.compact_per_request,
         'prompt_cache': config.models.prompt_cache,
         'prompt_cache_messages': config.models.prompt_cache_messages,
@@ -1441,6 +1448,8 @@ def apply_project_models(config: Config, workdir: Path) -> Config:
         max_tokens=validated.max_tokens,
         context_limit=validated.context_limit,
         request_limit=validated.request_limit,
+        max_cost_usd=validated.max_cost_usd,
+        max_total_tokens=validated.max_total_tokens,
         compact_per_request=validated.compact_per_request,
         prompt_cache=validated.prompt_cache,
         prompt_cache_messages=validated.prompt_cache_messages,

@@ -1348,7 +1348,10 @@ def build_delegation_toolset(
         sandbox_diff: str | None = None
         limits = child_usage_limits(
             used_requests,
-            getattr(ctx, 'usage_limits', None),
+            # A real `RunContext` field (pydantic-ai 2.68). Accessed directly,
+            # not via getattr: a silent None here would drop the run's own
+            # cost/token ceiling on every delegation (R94-B #346).
+            ctx.usage_limits,
             cfg.max_requests,
             used_cost=usage_before.cost,
             max_cost_usd=cfg.max_cost_usd,

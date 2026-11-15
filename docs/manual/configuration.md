@@ -136,8 +136,9 @@ request and raises, so the call is refused rather than narrated afterwards. Both
 are unset by default, so an unconfigured install behaves exactly as before.
 
 **Honest ceiling:** `max_cost_usd` can only be enforced when pydantic-ai can
-price the model in use. On an unpriced provider it warns
-(`CostNotFoundWarning`) and enforces *nothing* — it will not protect you there.
+price the model in use. On an unpriced provider the boundary check silently
+cannot fire, and pydantic-ai's `UsageLimits.check_cost` emits
+`CostNotFoundWarning` to say so — it will not protect you there.
 `max_total_tokens` needs no pricing, so it is the ceiling that always holds. Set
 both on a priced model; always set the token one.
 
@@ -279,14 +280,40 @@ how many tokens, how long.
 Traces have no UI of their own — this exports spans to a collector, and you
 need one running. [OpenLIT](https://github.com/openlit/openlit) is the
 self-hosted option that fits the local-only constraint (Apache-2.0, no fee, no
-account):
+account).
+
+**Enabling tracing needs your consent, every time.** It is off by default for a
+reason: spans describe what your agent read and did, and the collector is
+another process on your machine. Nothing is exported until you set
+`enabled = true` yourself — no tool, agent or update will flip it for you. Leave
+it off unless you intend to run a collector and read the traces.
+
+The compose step — save this compose file next to your `~/.codingdude` directory,
+then bring it up:
+
+```yaml
+services:
+  openlit:
+    image: ghcr.io/openlit/openlit:latest
+    container_name: openlit
+    ports:
+      - "3000:3000"   # UI
+      - "4318:4318"   # OTLP/HTTP receiver — CodingDude's default endpoint
+    environment:
+      - INIT_DB_HOST=127.0.0.1
+    volumes:
+      - openlit-data:/app/data
+
+volumes:
+  openlit-data:
+```
 
 ```bash
-# OpenLIT's default OTLP receiver is :4318 — the same port CodingDude already
-# defaults to, so the endpoint needs no change.
-docker run -d --name openlit -p 3000:3000 -p 4318:4318 \
-  -v openlit-data:/app/data ghcr.io/openlit/openlit:latest
+docker compose up -d
 ```
+
+Then flip the switch — the endpoint already points at that receiver, so no value
+needs changing:
 
 ```toml
 [telemetry]
@@ -294,7 +321,9 @@ enabled = true
 otlp_endpoint = "http://127.0.0.1:4318"
 ```
 
-Then read traces at `http://127.0.0.1:3000`.
+Read the traces at `http://127.0.0.1:3000`. A port already in use is the usual
+first problem (`4318` is shared with Jaeger and the OpenTelemetry Collector);
+change `otlp_endpoint` to match whatever you mapped instead.
 
 **We deliberately do not use the OpenLIT Python SDK.** `openlit.init()`
 instruments pydantic-ai through the same hooks `logfire.instrument_pydantic_ai()`

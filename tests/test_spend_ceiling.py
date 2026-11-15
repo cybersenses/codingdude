@@ -110,11 +110,48 @@ def test_the_token_ceiling_fires_without_any_pricing_data():
 def test_a_cost_ceiling_cannot_fire_without_pricing():
     """Documented ceiling, pinned so nobody claims a cap that does nothing.
 
-    pydantic-ai warns (CostNotFoundWarning) and skips enforcement. This test
-    exists so that behaviour is a recorded fact rather than a surprise.
+    `check_before_request` simply cannot fire when `usage.cost` is None; the
+    loop's `check_cost` is what surfaces it, and it emits the
+    `CostNotFoundWarning` the docs name. Two different seams, so both are
+    pinned here rather than one standing in for the other.
     """
+    from pydantic_ai.exceptions import CostNotFoundWarning
+
     limits = _services(max_cost_usd=0.01).usage_limits()
-    limits.check_before_request(RunUsage(requests=1))  # cost is None: no raise
+
+    # The boundary check cannot raise: there is no cost to compare.
+    limits.check_before_request(RunUsage(requests=1))
+
+    # The loop's cost check says so out loud instead of passing silently.
+    with pytest.warns(CostNotFoundWarning):
+        limits.check_cost(RunUsage(requests=1))
+
+
+def test_the_warning_names_the_reason_it_cannot_enforce():
+    from pydantic_ai.exceptions import CostNotFoundWarning
+
+    limits = _services(max_cost_usd=0.01).usage_limits()
+    with pytest.warns(CostNotFoundWarning, match='cannot be enforced'):
+        limits.check_cost(RunUsage(requests=1))
+
+
+# ---- every agent seam carries the ceilings ---------------------------
+
+
+@pytest.mark.parametrize('module', ['evaluator.py', 'planning.py', 'run_pipeline.py'])
+def test_no_agent_seam_builds_ceiling_less_limits(module):
+    """`UsageLimits(request_limit=...)` with nothing else was the R94 defect.
+
+    The evaluator pass and the planning reviewer each built one, so a run could
+    carry a cost ceiling while the agents it triggered spent without one. They
+    must go through `spend_limits`, the single definition.
+    """
+    source = (Path(__file__).resolve().parent.parent / 'src' / 'codingdude' / module)
+    text = source.read_text(encoding='utf-8')
+    assert 'UsageLimits(request_limit=' not in text, (
+        f'{module} builds UsageLimits without the configured ceilings; '
+        'use delegation.spend_limits'
+    )
 
 
 # ---- a delegation gets a slice of the same money ----------------------
@@ -216,6 +253,41 @@ def test_the_config_template_documents_the_ceilings(home):
     template = (home / 'config.toml').read_text(encoding='utf-8')
     assert 'max_cost_usd' in template
     assert 'max_total_tokens' in template
+
+
+def test_a_project_override_does_not_silently_drop_the_ceilings(home, tmp_path):
+    """The blocker the two-axis review caught.
+
+    `apply_project_models` rebuilds the lineup field by field. When it forgot the
+    two new keys, any project with a `.codingdude.toml [models]` override reset
+    both ceilings to None — a configured cap that vanished without a word, on
+    exactly the projects that thought they had one.
+    """
+    from codingdude.config import apply_project_models, load_config
+
+    home.mkdir(parents=True)
+    (home / 'config.toml').write_text(
+        '[models]\nmax_cost_usd = 2.5\nmax_total_tokens = 500000\n',
+        encoding='utf-8',
+    )
+    (tmp_path / '.codingdude.toml').write_text(
+        '[models]\nmain = "deepseek:deepseek-v4-flash"\n', encoding='utf-8'
+    )
+    merged = apply_project_models(load_config(home), tmp_path).models
+    assert merged.main == 'deepseek:deepseek-v4-flash'   # the override applied
+    assert merged.max_cost_usd == 2.5                    # …and the cap survived
+    assert merged.max_total_tokens == 500000
+
+
+def test_a_project_override_may_set_its_own_ceiling(home, tmp_path):
+    from codingdude.config import apply_project_models, load_config
+
+    home.mkdir(parents=True)
+    (tmp_path / '.codingdude.toml').write_text(
+        '[models]\nmax_total_tokens = 250000\n', encoding='utf-8'
+    )
+    merged = apply_project_models(load_config(home), tmp_path).models
+    assert merged.max_total_tokens == 250000
 
 
 # ---- one meaning for max_cost_usd -------------------------------------
