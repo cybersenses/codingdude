@@ -45,9 +45,40 @@ box — questions are answered by the agent with file+line citations.
 ## Planning
 
 Roadmap items, tickets, design decisions, PRDs and tech designs for the
-project, with status changes. `ROADMAP.md` in the repo is canonical when
-present. This is the same store the agent's planning tools write — you can
-add items and move statuses yourself.
+project. This is the same store the agent's planning tools write — you can
+add items and move statuses yourself with the select beside each one.
+
+**Where they live.** Roadmap items are stored in the repo's `ROADMAP.md`,
+which is canonical whenever it exists (the database is the fallback, and both
+adding an item and changing its status write back to the file). Tickets, PRDs,
+tech designs and decisions live in the project database.
+
+Each kind carries its own lifecycle. The states are not decoration — they are
+what keeps *we agreed to build this* distinct from *we built it*:
+
+| Kind | Ladder |
+|---|---|
+| Roadmap item | `open` → `in_progress` → `done` |
+| Ticket | `todo` → `in_progress` → `done` |
+| PRD | `draft` → `active` → `delivered` → `sunset` |
+| Tech design | `draft` → `approved` → `delivered` → `superseded` |
+| Design decision | no status — a decision is a record, not a task |
+
+Read the document states precisely:
+
+- **PRD** — `active` is in flight, `delivered` is shipped and still in force,
+  `sunset` is shipped-but-retired. A delivered PRD is not sunset: sunset says
+  the product direction ended.
+- **Tech design** — `approved` means agreed but not built; `delivered` means
+  built; `superseded` means replaced by a later design. Closing out a design
+  that landed as `approved` claims it was never built, and as `superseded`
+  claims something replaced it — neither is true of a document that simply
+  shipped.
+
+The allowed values of every ladder are defined in one place, `roadmap.py` —
+`ROADMAP_STATUSES`, `TICKET_STATUSES`, `PRD_STATUSES`, `DESIGN_STATUSES`. An
+unknown stored value still renders and keeps its own entry in the select
+rather than blanking the control.
 
 ## Artifacts
 

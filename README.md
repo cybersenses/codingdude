@@ -20,7 +20,7 @@ before claiming anything is done.
 Highlights:
 
 - **Agentic engine** — pydantic-ai with model failover (any OpenAI-compatible
-  provider via `[providers.*]` config), per-run workers, and a budget cap.
+  provider via `[providers.*]` config) and per-run workers.
   Context is guarded per request as well as at run start, so a long session
   compacts instead of dying on a provider context-limit error, and prompt
   caching is resolved once for **every** agent (main loop, retries, and the
@@ -32,7 +32,13 @@ Highlights:
   semantic navigation, project-wide impact analysis, arch lint, mutation
   testing, profiling, benchmarks, coverage.
 - **Planning** — PRDs, tech designs, roadmap items, and tracer-bullet tickets
-  with tracked plan steps and per-step evidence.
+  with tracked plan steps and per-step evidence. Every kind carries its own
+  lifecycle, so a shipped PRD reads `delivered` instead of being mislabelled
+  retired (`sunset`) or still in flight (`active`).
+- **Observability & spend governance** — per-delegate trace spans, OTLP export
+  to a collector you run yourself (OpenLIT is the documented one), and hard
+  `max_cost_usd` / `max_total_tokens` ceilings checked *before* each model
+  request — a ceiling that stops the work, not a note about it afterwards.
 - **Review is a gate, not a habit** — pushing requires a recorded two-axis
   review (Standards + Spec) of the exact diff being published: the record is
   content-addressed, so fixing a finding after the review voids it and forces a
