@@ -71,14 +71,43 @@ def spend_limits(models, request_limit: int | None = None) -> UsageLimits | None
 #: number of files the diff touches. A fixed budget is a cap that refuses before
 #: the work: R94-B's own pre-push review stopped at the old fixed 8 on a
 #: seventeen-file branch and produced no verdict at all [probe: `_review_impl`
-#: returned "REVIEW FAILED ... request_limit of 8"]. The ceiling keeps a
-#: tool-happy reviewer from spinning.
+#: returned "REVIEW FAILED ... request_limit of 8"].
+#:
+#: The ceiling is a SPIN guard, not a cost guard — `spend_limits` carries the
+#: cost and token ceilings — so it only has to stop a tool-happy reviewer
+#: looping inside the 300s timeout. It must therefore sit above any real branch
+#: rather than at the first round number: at 40 the budget stopped growing at
+#: sixteen files while the file count did not, so a wide branch's unavoidable
+#: per-file reads exhausted it and the reviewer failed with no verdict again —
+#: the same outage as the fixed 8, further out [probe: `review_request_limit(33)
+#: == 40` before this change, while the 33-file branch needed 74]. 120 is the
+#: floor plus two per file up to 56 files, past the widest branch this repo has
+#: produced (33 files, R93).
 _REVIEW_REQUEST_FLOOR = 8
 _REVIEW_REQUESTS_PER_FILE = 2
-_REVIEW_REQUEST_CEILING = 40
+_REVIEW_REQUEST_CEILING = 120
 
 
 def review_request_limit(changed_files: int) -> int:
-    """Requests for one review pass: the floor plus two per changed file."""
+    """Requests for one review pass: the floor plus two per changed file.
+
+    Two properties are load-bearing and pinned by test: up to the ceiling's
+    crossover (56 files) the budget is at least one request per file plus the
+    floor, so the reads a review *must* make can never exhaust it; and it is
+    monotone in the file count.
+
+    Past the crossover a very wide diff may leave the reviewer
+    under-provisioned. That residual is accepted because it is visible: the pass
+    fails loudly (`REVIEW FAILED — …`), never silently clean, so the push gate
+    treats the diff as UNREVIEWED instead of publishing it.
+
+    Zero changed files yields the floor, which is correct here rather than a
+    clamp down to it — an empty diff has no file the reviewer could read. One
+    degraded path is indistinguishable at this seam: an unanswerable `git` makes
+    `review_gate.collect_review_diff` return '' (it returns '' on failure), which
+    also counts 0. That is not a hole in the gate — `require_review` keys off
+    `resolve_base`, never this count — and a reviewer handed an empty diff
+    answers CLEAN in about one request.
+    """
     per_file = _REVIEW_REQUESTS_PER_FILE * max(0, int(changed_files))
     return min(_REVIEW_REQUEST_CEILING, _REVIEW_REQUEST_FLOOR + per_file)

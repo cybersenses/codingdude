@@ -281,8 +281,12 @@ class Engine:
         """Public review entry point: findings, or the CLEAN verdict.
 
         Runs on the extraction model when set (worker), else the
-        configured subagent model. Never raises for model trouble:
-        review_diff_findings swallows failures and returns "".
+        configured subagent model. Never raises for model trouble — and never
+        reports it as clean either: `review_diff_findings` returns a loud
+        `REVIEW FAILED — …` string on a failure, which passes through the
+        fallback below untouched because it is truthy. Only a genuinely empty
+        finding set becomes the CLEAN verdict (the #266 class: a reviewer that
+        never ran must not be indistinguishable from one that found nothing).
         """
         findings = await self.review_diff(session_id)
         return findings or 'CLEAN — no findings'
