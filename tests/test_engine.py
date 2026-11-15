@@ -116,15 +116,15 @@ async def test_boot_overlaps_the_previous_turn_drain(engine, workdir, monkeypatc
     )
 
 
-def test_boot_failure_degrades_instead_of_killing_the_run(engine, workdir, monkeypatch):
+async def test_boot_failure_degrades_instead_of_killing_the_run(engine, workdir, monkeypatch):
     """#301: boot is awaited on the run's critical path, so a raise inside it
     would kill the run before its first request.
 
     `boot_codegraph` converts CLI failures into a status, but the filesystem
     probes around it (`_has_healthy_index`, `index_is_stale`) can raise
     `OSError`/`PermissionError` on an unreadable `.codegraph` — a review found
-    that unguarded path, and this pins the guard in `_boot_project` rather than
-    relying on the subprocess seam's own guard.
+    that unguarded path, so this pins the guard in `_boot_project` at both
+    levels: the status it returns, and a whole run that survives it.
     """
     import codingdude.codegraph_boot as boot_mod
 
@@ -134,9 +134,51 @@ def test_boot_failure_degrades_instead_of_killing_the_run(engine, workdir, monke
     monkeypatch.setattr(boot_mod, '_has_healthy_index', unreadable)
 
     event = engine._boot_project(workdir)
-
     assert event['status'] == 'failed'
     assert 'PermissionError: unreadable .codegraph' in event['reason']
+
+    # The guard's own claim, end to end: the run still produces its answer and
+    # the failure reaches the trace instead of the traceback.
+    events: list = []
+    outcome = await engine.run(
+        prompt='hi', workdir=workdir, model=scripted(say('survived')),
+        emit=events.append,
+    )
+    assert outcome.output == 'survived'
+    boot_events = [e for e in events if e.get('type') == 'CODEGRAPH_BOOT']
+    assert boot_events and boot_events[0]['status'] == 'failed'
+
+
+async def test_a_failing_onboarding_read_does_not_kill_the_run(
+    engine, workdir, monkeypatch
+):
+    """#301: the onboarding decision runs on the pre-request path, ahead of the
+    husk cleanup, so a raise there kills the run and leaves an empty session row
+    for #305 to resume into.
+
+    The guarantee lives in `onboarding.onboarding_needed` (its module contract
+    is "it never blocks a run"), which is what both call sites — this one and the
+    pipeline's directive builder — go through. A store failure must skip the
+    nudge, not the run.
+    """
+    import sqlite3
+
+    from codingdude.memory import MemoryStore
+
+    def locked(self):
+        raise sqlite3.OperationalError('database is locked')
+
+    monkeypatch.setattr(MemoryStore, 'all_entries', locked)
+    monkeypatch.setattr(
+        engine, '_boot_project',
+        lambda path: {'type': 'CODEGRAPH_BOOT', 'status': 'ok'},
+    )
+
+    outcome = await engine.run(
+        prompt='hi', workdir=workdir, model=scripted(say('still ran'))
+    )
+
+    assert outcome.output == 'still ran'
 
 
 async def test_onboarding_check_runs_after_the_drain(engine, workdir, monkeypatch):

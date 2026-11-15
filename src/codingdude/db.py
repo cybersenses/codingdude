@@ -595,11 +595,14 @@ class Database:
         identifiers cannot be parameters, so each statement is built in a named
         local with the identifier check below standing in for binding — the
         same seam `delete_session` uses for its per-table DELETE.
-        The caller owns the COMMIT (`_migrate` is the only one). No rollback is
-        handled here on purpose: every statement below runs through
-        `_Connection.execute`, which rolls back and re-raises, and a second
-        `rollback()` in this frame could replace the original error with its
-        own — the masking `_rollback_quietly` exists to prevent.
+        The caller owns the COMMIT (`_migrate` is the only one). Rollback is
+        handled here only for a transaction this method opened, because this
+        frame can refuse the rebuild itself (a column the new shape would drop)
+        and that raise does not travel through `_Connection.execute`; for
+        statements that DO fail inside `execute`, no rollback is attempted here
+        on purpose, since a second `rollback()` in this frame could replace the
+        original error with its own — the masking `_rollback_quietly` exists to
+        prevent.
         """
         if not re.fullmatch(r'[a-z_]+', table):
             raise ValueError(f'refusing to rebuild a table named {table!r}')
@@ -614,43 +617,64 @@ class Database:
         # identifiers in this module. One statement per line: bandit anchors
         # B608 to the line the string is built on, so a wrapped concatenation
         # moves the statement off its own nosec.
-        drop_stale = f'DROP TABLE IF EXISTS {rebuilt}'  # nosec B608 - identifier validated at the top of this method
-        drop_old = f'DROP TABLE {table}'  # nosec B608 - identifier validated at the top of this method
-        rename_new = f'ALTER TABLE {rebuilt} RENAME TO {table}'  # nosec B608 - identifier validated at the top of this method
+        drop_stale = f'DROP TABLE IF EXISTS {rebuilt}'  # nosec B608 - table identifier validated at the top of this method
+        drop_old = f'DROP TABLE {table}'  # nosec B608 - table identifier validated at the top of this method
+        rename_new = f'ALTER TABLE {rebuilt} RENAME TO {table}'  # nosec B608 - table identifier validated at the top of this method
         if not self._conn.in_transaction:
             self._conn.execute('BEGIN IMMEDIATE')
-        # Belt-and-braces, not a fix for an observed state: SQLite rolls DDL
-        # back with the transaction, so an interrupted earlier attempt cannot
-        # leave a copy table behind. A stray name would otherwise fail the
-        # CREATE below with an error that says nothing about this migration.
-        self._conn.execute(drop_stale)
-        self._conn.execute(rebuild_ddl)
-        # The copy is built AFTER the rebuilt table exists: its own column list
-        # is what both sides of the copy use, and asking for it earlier returns
-        # an empty list, which makes the INSERT a syntax error rather than a
-        # silently lossy copy (that is how this was caught). parameterized
-        # pragma_table_info(?) — PRAGMA itself takes no parameters.
-        new_columns = [
-            r['name'] for r in self._conn.execute(
-                'SELECT name FROM pragma_table_info(?)', (rebuilt,)
-            )
-        ]
-        old_columns = [
-            r['name'] for r in self._conn.execute(
-                'SELECT name FROM pragma_table_info(?)', (table,)
-            )
-        ]
-        dropped = [c for c in old_columns if c not in new_columns]
-        if dropped:
-            raise ValueError(
-                f'refusing to rebuild {table}: the new shape has no '
-                f'{", ".join(dropped)} and the copy would discard it'
-            )
-        columns = ', '.join(new_columns)
-        copy_rows = f'INSERT INTO {rebuilt} ({columns}) SELECT {columns} FROM {table}'  # nosec B608 - identifier validated at the top of this method
-        self._conn.execute(copy_rows)
-        self._conn.execute(drop_old)
-        self._conn.execute(rename_new)
+            owns_txn = True
+        else:
+            owns_txn = False
+        try:
+            # Belt-and-braces, not a fix for an observed state: SQLite rolls DDL
+            # back with the transaction, so an interrupted earlier attempt
+            # cannot leave a copy table behind. A stray name would otherwise
+            # fail the CREATE below with an error that says nothing about this
+            # migration.
+            self._conn.execute(drop_stale)
+            self._conn.execute(rebuild_ddl)
+            # The copy is built AFTER the rebuilt table exists: its own column
+            # list is what both sides of the copy use, and asking for it
+            # earlier returns an empty list, which makes the INSERT a syntax
+            # error rather than a silently lossy copy (that is how this was
+            # caught). parameterized pragma_table_info(?) — PRAGMA itself takes
+            # no parameters.
+            new_columns = [
+                r['name'] for r in self._conn.execute(
+                    'SELECT name FROM pragma_table_info(?)', (rebuilt,)
+                )
+            ]
+            old_columns = [
+                r['name'] for r in self._conn.execute(
+                    'SELECT name FROM pragma_table_info(?)', (table,)
+                )
+            ]
+            dropped = [c for c in old_columns if c not in new_columns]
+            if dropped:
+                raise ValueError(
+                    f'refusing to rebuild {table}: the new shape has no '
+                    f'{", ".join(dropped)} and the copy would discard it'
+                )
+            # Only shared columns are copied, in the new table's order: a column
+            # the new shape ADDS then takes its own declared default instead of
+            # being forced to NULL against the new schema's intent.
+            columns = ', '.join(c for c in new_columns if c in old_columns)
+            copy_rows = f'INSERT INTO {rebuilt} ({columns}) SELECT {columns} FROM {table}'  # nosec B608 - table and column identifiers come from the two `pragma_table_info` reads above, never from input
+            self._conn.execute(copy_rows)
+            self._conn.execute(drop_old)
+            self._conn.execute(rename_new)
+        except BaseException:
+            # This frame can refuse the rebuild itself (a column the new shape
+            # would drop), and that raise does not travel through
+            # `_Connection.execute`, so nothing else would roll back. The
+            # caller's COMMIT is never reached on this path, which would hold a
+            # BEGIN IMMEDIATE lock for the life of the process — the exact R57
+            # mode `_Connection` exists to prevent — and leave a
+            # `<table>_rebuilt` for any later commit on this connection to pick
+            # up. Only rolls back a transaction this method opened.
+            if owns_txn:
+                self._conn.rollback()
+            raise
 
     def _commit(self) -> None:
         """Commit this thread's connection.

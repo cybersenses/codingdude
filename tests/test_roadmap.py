@@ -124,6 +124,45 @@ def test_rebuild_refuses_a_table_name_it_did_not_validate(store):
         )
 
 
+def test_a_refused_rebuild_leaves_no_transaction_or_copy_table(store):
+    """The column check refuses with a plain Python raise, so it never travels
+    through `_Connection.execute`'s rollback shim ? and `_migrate`'"'"'s COMMIT is
+    not reached on that path.
+
+    Left open, the `BEGIN IMMEDIATE` would hold a write lock for the life of the
+    process (the R57 mode the wrapper exists to prevent) and the half-built
+    `<table>_rebuilt` would be committed by any later write on this connection.
+    """
+    from codingdude.db import _DESIGN_REBUILD_DDL, _DESIGN_STATUS_CHECK
+
+    store.db._conn.executescript(_LEGACY_DESIGN_DDL)
+    # A column the rebuild DDL does not declare: the copy would discard it.
+    store.db._conn.execute('ALTER TABLE tech_designs ADD COLUMN reviewer TEXT')
+    store.db._conn.execute(
+        "INSERT INTO tech_designs (workdir, title, status, body, prd_id,"
+        " created_at, updated_at, reviewer) VALUES ('w', 'kept', 'approved',"
+        " 'body kept', NULL, 'x', 'x', 'priya')"
+    )
+    store.db._conn.commit()
+
+    with pytest.raises(ValueError, match='would discard it'):
+        store.db._widen_status_check(
+            'tech_designs', _DESIGN_STATUS_CHECK, _DESIGN_REBUILD_DDL
+        )
+
+    assert store.db._conn.in_transaction is False
+    leftover = store.db._conn.execute(
+        "SELECT count(*) FROM sqlite_master WHERE name = 'tech_designs_rebuilt'"
+    ).fetchone()[0]
+    assert leftover == 0
+    # The refusal left the data exactly as it was, junk column included.
+    rows = store.list_designs('w')
+    assert [(r['title'], r['body']) for r in rows] == [('kept', 'body kept')]
+    assert store.db._conn.execute(
+        'SELECT reviewer FROM tech_designs'
+    ).fetchone()[0] == 'priya'
+
+
 def test_decision_crud(store, tmp_path):
     wd = str(tmp_path / 'd')
     did = store.create_decision(wd, 'ADR-1: SQLite for planning', 'survives bounces')

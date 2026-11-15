@@ -529,41 +529,39 @@ class Engine:
         session_id, created_session = self._ensure_session(session_id, workdir, prompt)
 
         # #301: boot (project scaffold + codegraph index sync — subprocess calls,
-        # so the loop stalled for their whole duration) and the claims
-        # fingerprint (`git diff HEAD`, also a subprocess) used to run inline
-        # *after* the drain, serially: their time was added to the post-run
-        # tail's wall clock and the loop was blocked while they ran. Both now
-        # run on worker threads, concurrently with each other and with the
-        # drain. Folding the fingerprint into this overlap is safe because it
-        # hashes `git diff HEAD` — tracked modifications only — and the
-        # scaffold creates new files without ever touching an existing one
-        # (scaffold.py's own contract), so the two cannot interfere.
-        # Neither can raise into this frame: `boot_codegraph` converts a dead or
-        # wedged CLI into a status dict and `_boot_project` guards the rest
-        # (probed: an exploding runner yields {'status': 'failed', 'reason':
-        # 'OSError: ...'}; making `codegraph_boot._has_healthy_index` raise the
-        # `PermissionError` an unreadable `.codegraph` would raise — the
-        # unguarded probe a review found — yields the same shape from the
-        # `_boot_project` guard, pinned by a test), while `_diff_fingerprint`
-        # already returns `_DIFF_UNAVAILABLE` instead of raising.
+        # so the loop stalled for their whole duration) used to run inline
+        # *after* the drain, serially: the boot time was added to the post-run
+        # tail's wall clock and the loop was blocked while it ran. It now runs
+        # on a worker thread, concurrently with the drain. Boot and the tail
+        # touch different state — the tail extracts memory and audits claims,
+        # boot creates scaffold files (never modifying an existing one, per
+        # scaffold.py's contract) and syncs `.codegraph`, which the tail does
+        # not refresh — so neither can observe the other.
+        # Boot cannot raise into this frame either: `boot_codegraph` converts a
+        # dead or wedged CLI into a status dict and `_boot_project` guards the
+        # rest (probed: an exploding runner yields {'status': 'failed',
+        # 'reason': 'OSError: ...'}; making `codegraph_boot._has_healthy_index`
+        # raise the `PermissionError` an unreadable `.codegraph` would raise —
+        # the unguarded probe a review found — yields the same shape from the
+        # `_boot_project` guard, pinned by a test).
         boot_task = asyncio.create_task(
             asyncio.to_thread(self._boot_project, workdir)
-        )
-        diff_task = asyncio.create_task(
-            asyncio.to_thread(self._diff_fingerprint, workdir)
         )
         try:
             # Wait out the previous turn's background post-run passes so memory
             # extraction lands before this prompt is assembled.
             await self._drain_pending_post_run()
             boot_event = await boot_task
-            diff_before = await diff_task
         except BaseException:
-            # A cancel here must not leave unretrieved tasks behind: the threads
-            # themselves cannot be interrupted, but detaching the tasks means
-            # their results (or failures) are dropped instead of never awaited.
+            # A cancel here must not leave unretrieved tasks behind: the thread
+            # cannot be interrupted, but the gather closes the window where a
+            # worker raising something `except Exception` does not cover would
+            # surface as an unretrieved exception long after this frame is gone.
             boot_task.cancel()
-            diff_task.cancel()
+            try:
+                await asyncio.gather(boot_task, return_exceptions=True)
+            except BaseException:  # noqa: BLE001 - already propagating
+                pass
             raise
 
         boot_event = self._attach_onboarding(boot_event, workdir)
@@ -572,9 +570,14 @@ class Engine:
         # edit-tool events this run produced, and any movement of the
         # tracked-file diff between now and run end (shell-mediated work).
         # A standing dirty file alone (ROADMAP-by-convention repos) arms
-        # nothing — a turn that changed nothing gets no audit. The
-        # fingerprint ran off-loop above (a wedged git must stall a worker
-        # thread, not the event loop — review finding on b3817ad).
+        # nothing — a turn that changed nothing gets no audit.
+        # #301: this is deliberately NOT folded into the boot overlap above.
+        # The fingerprint must be taken after the drain, not beside it: the tail
+        # it waits out can itself shell out (the claims-retry agent gets a shell
+        # tool), so a concurrent hash could capture the tree mid-tail and either
+        # arm the gate for a turn that changed nothing or miss the tail's
+        # revert. Off-loop is the win that matters here; overlap is not.
+        diff_before = await asyncio.to_thread(self._diff_fingerprint, workdir)
         run_touched: list[str] = []
 
         # #297 DE-3: the long-run lane — one container-tier sandbox when
@@ -810,6 +813,15 @@ class Engine:
         could answer against a store that is about to receive the answer. The
         overlap is meant to leave semantics alone, so the check stays ordered
         the way it was when boot was serial.
+
+        Best-effort, like the boot it decorates: the store read behind
+        `onboarding_needed` is a SQLite query, and this call sits ahead of the
+        husk-cleanup `try` in `run`, so an escape here would kill a run before
+        its first request AND leave an empty session row for #305 to resume
+        into. The never-raises guarantee lives in the seam itself
+        (`onboarding.onboarding_needed` catches the store error, warns, and
+        answers False), so both call sites — this one and the pipeline's
+        directive builder — are covered by one guard rather than two.
         """
         from .memory import MemoryStore
         from .onboarding import onboarding_needed

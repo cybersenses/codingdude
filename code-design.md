@@ -1671,7 +1671,13 @@ column-dropping copy could not survive. A review added the third detail: the
 copy's column list comes from the *new* shape, so a column present in the old
 table and missing from the rebuild DDL would have been dropped silently — the
 rebuild's whole failure mode. The two column sets are now compared and the
-mismatch raises before the copy, instead of trusting the subset property.
+mismatch raises before the copy, instead of trusting the subset property; only
+the shared columns are copied, so a column the new shape adds takes its own
+declared default. And because that refusal is a plain Python raise it does not
+travel through `_Connection.execute`'s rollback shim, so the seam rolls back the
+transaction it opened itself — otherwise a failed rebuild would hold a
+`BEGIN IMMEDIATE` lock for the life of the process (the R57 mode `_Connection`
+exists to prevent) and leave a `<table>_rebuilt` for the next commit to pick up.
 
 **Frontend, same reasoning as #351.** The inline
 `approved ? success : draft ? warning : muted` ternary rendered any new status as
@@ -1715,26 +1721,39 @@ both halves: the drain observes boot already in flight (a serial boot cannot pas
 that assertion), boot runs off the loop thread, the awaited result is what the
 trace reports, and no onboarding check may run before the drain closes.
 
-**B, finished in the same breath.** The claims fingerprint (`git diff HEAD`,
-also a subprocess, also previously a second inline `await`) is now its own task
-alongside the boot, so both overlap each other and the drain instead of running
-back-to-back. Safe because the fingerprint hashes *tracked* modifications only
-and the scaffold never modifies an existing file (`scaffold.py`'s stated
-contract), so the two cannot observe each other's work. The token that made this
-worth doing rather than deferring: nothing pinned the fingerprint's off-loop
-move, and the overlap test now does.
+**B, attempted, then refused ? the reason is the interesting part.** The claims
+fingerprint (`git diff HEAD`, also a subprocess, also previously an inline
+`await`) was first made a second task alongside the boot, so that both overlapped
+each other and the drain. A review killed it, correctly: the fingerprint must be
+taken *after* the drain, not beside it. The tail the drain waits out is itself a
+writer — the claims-retry agent is handed a shell tool, so `npm run build`-shaped
+commands can touch tracked files — and a hash taken mid-tail either arms the
+#310 gate for a turn that changed nothing (real retry spend) or, if the tail
+reverts a file, misses the change entirely. My justification for the overlap only
+covered the scaffold, which does create-if-absent only; it never considered the
+other writer in the frame. So the fingerprint stays where it was after the drain,
+still on a worker thread (loop-stall removal, which was the b3817ad fix), and its
+off-loop move now has a test it never had. Overlap for its own sake would have
+traded a correctness property for milliseconds.
 
-**What the review changed here.** Two findings, both real. (1) "boot cannot
+**What the reviews changed here.** Four findings, all real. (1) "boot cannot
 raise" was too strong: `boot_codegraph` guards its subprocess seam, but
 `_has_healthy_index` / `index_is_stale` probe the filesystem unguarded and an
 unreadable `.codegraph` raises `PermissionError` — and this boot is awaited on the
 run's critical path, so that would kill a run before its first request.
-`_boot_project` now converts any exception into a failed status, pinned by
-`test_boot_failure_degrades_instead_of_killing_the_run` (probe: patching
-`_has_healthy_index` to raise yields `{'status': 'failed', 'reason':
-'PermissionError: unreadable .codegraph'}`). (2) The onboarding-ordering test
-passed against the serial code too; it now asserts `boot-end` precedes the
-onboarding read, which the pre-change shape cannot satisfy.
+`_boot_project` now converts any exception into a failed status, pinned at both
+levels by `test_boot_failure_degrades_instead_of_killing_the_run` (probe:
+patching `_has_healthy_index` to raise yields `{'status': 'failed', 'reason':
+'PermissionError: unreadable .codegraph'}`), which also runs a whole turn and
+asserts the answer still arrives. (2) The onboarding-ordering test passed against
+the serial code too; it now asserts `boot-end` precedes the onboarding read,
+which the pre-change shape cannot satisfy. (3) The onboarding *read* was the next
+unprotected statement: a store error there kills a run and leaves an empty
+session row for #305 to resume into, and the pipeline's directive builder makes
+the same call. The guard belongs in the seam rather than at either call site, so
+`onboarding.onboarding_needed` now answers False and warns when the store read
+fails — that is its module contract ("it never blocks a run") written as code, and
+one guard covers both callers. (4) The B attempt above, reverted.
 
 **Not changed, deliberately:** the drain's 300s bound. Bounding it tighter is a
 semantics change (which tails get dropped) that the ticket text defers to
