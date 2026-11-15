@@ -1219,7 +1219,8 @@ def build_delegation_toolset(
             brief_prompt,
             build_brief,
             child_usage_limits,
-            delegation_slice,
+            delegate_span_name,
+            delegation_abort_message,
         )
         from .prompts import load_prompt
         from .sandbox import _make_venv, exec_in_sandbox_dir
@@ -1331,8 +1332,13 @@ def build_delegation_toolset(
         delegation_caps = cache_capabilities(
             getattr(config, 'models', None), ONE_SHOT
         )
+        # R94-A (#345): the span names the function that ran it, so a slow or
+        # expensive delegation is identified rather than guessed at. One helper
+        # feeds both the Agent name and the DELEGATION_COMPLETED event, so the
+        # trace and the event cannot drift into two vocabularies.
+        span_name = delegate_span_name(function)
         sub_agent: Agent = Agent(
-            name='delegate',
+            name=span_name,
             model=session_model,
             instructions=instructions,
             toolsets=toolsets,
@@ -1342,11 +1348,17 @@ def build_delegation_toolset(
         sandbox_diff: str | None = None
         limits = child_usage_limits(
             used_requests,
-            getattr(ctx, 'usage_limits', None),
+            # A real `RunContext` field (pydantic-ai 2.68). Accessed directly,
+            # not via getattr: a silent None here would drop the run's own
+            # cost/token ceiling on every delegation (R94-B #346).
+            ctx.usage_limits,
             cfg.max_requests,
+            used_cost=usage_before.cost,
+            max_cost_usd=cfg.max_cost_usd,
         )
         result = None
         aborted = False
+        abort_reason: str | None = None
         try:
             try:
                 result = await sub_agent.run(
@@ -1354,11 +1366,15 @@ def build_delegation_toolset(
                     usage=ctx.usage,
                     usage_limits=limits,
                 )
-            except UsageLimitExceeded:
+            except UsageLimitExceeded as exc:
                 # The spend of an aborted delegation is still real: fall
                 # through to the shared billing/trace path below instead of
-                # returning early (it used to vanish from both).
+                # returning early (it used to vanish from both). Keep the
+                # library's message: it names the limit that actually fired
+                # ("...would exceed the `cost_limit` of 0.75"), which is
+                # exactly what the operator needs (R94-B #346).
                 aborted = True
+                abort_reason = str(exc)
             if not aborted and write and isolated:
                 # intent-to-add so newly created files appear in the diff
                 await run_captured(['git', 'add', '-N', '-A'],
@@ -1379,6 +1395,7 @@ def build_delegation_toolset(
             'delegation_id': delegation_id,
             'write': write,
             'function': function,
+            'span': span_name,
             'aborted': aborted,
             'requests': spent.requests,
             'input_tokens': spent.input_tokens,
@@ -1389,21 +1406,8 @@ def build_delegation_toolset(
             # Only the UsageLimitExceeded path leaves no result — and it is the
             # path where spend is guaranteed, so it bills and traces above like
             # any other delegation before reporting why it stopped.
-            session_cap = limits.request_limit
-            slice_cap = delegation_slice(used_requests, cfg.max_requests)
-            if session_cap is not None and session_cap < slice_cap:
-                # The session's own limit bound the delegation, not its slice
-                # (child_usage_limits takes the min) — say which one fired.
-                return (
-                    'delegation aborted: the session request limit of '
-                    f'{session_cap} was reached before the delegation slice of '
-                    f'{cfg.max_requests} could be spent. Raise '
-                    '[models].request_limit or split the task.'
-                )
-            return (
-                'delegation aborted: exceeded the delegation budget of '
-                f'{cfg.max_requests} model requests. Narrow the task and '
-                'delegate again with a tighter question.'
+            return delegation_abort_message(
+                abort_reason, limits, used_requests, cfg.max_requests
             )
         output = str(result.output)
         if write and isolated:
@@ -1412,14 +1416,6 @@ def build_delegation_toolset(
                 '\n\nSandbox diff (proposed, not applied):\n' + diff
                 if diff else
                 '\n\n(sandbox tree clean - no changes to integrate)')
-        if cfg.max_cost_usd is not None and spent.cost is not None \
-                and spent.cost > cfg.max_cost_usd:
-            output += (
-                '\n(note: delegation cost ' + format(spent.cost, '.4f')
-                + ' USD exceeded the configured cap of '
-                + str(cfg.max_cost_usd) + ' USD - consider raising '
-                '[delegation].max_cost_usd or splitting the task)'
-            )
         return output
 
     return FunctionToolset([delegate])

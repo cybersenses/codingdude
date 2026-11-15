@@ -4,6 +4,32 @@
 
 ### Added
 
+- **Hard spend ceilings on every agent call (R94-B)**: `[models] max_cost_usd` and
+  `max_total_tokens`. Both are checked by pydantic-ai *before* the next request,
+  so the request is refused instead of the spend being narrated afterwards. They
+  reach every `agent.run()` inside the run — the main loop, the fix loop, the
+  claims retry, the evaluator, the planning reviewer, the summariser, memory
+  extraction, the claims auditor and the vision inspector — via one definition
+  (`src/codingdude/limits.py`), with a guard test that fails if any of those
+  seams stops passing its limits. Read them as a per-call ceiling: each
+  `agent.run()` gets its own allowance, and the cumulative session figure remains
+  the usage ledger behind `--budget`. Unset by default, so nothing changes until
+  you configure one.
+  `max_cost_usd` can only be enforced on a model pydantic-ai can price (it warns
+  and enforces nothing otherwise); `max_total_tokens` always holds. A malformed
+  value fails at load rather than silently becoming no cap.
+- **Per-function delegation spans (R94-A)**: every delegation used to be
+  `name='delegate'`, so a designer run and a coder run on different models were
+  indistinguishable in any trace. Spans are now `delegate.<function>`
+  (`delegate.designer`, `delegate.coder`, …; plain `delegate` when no function was
+  requested), and `DELEGATION_COMPLETED` reports the same value so trace and event
+  cannot drift apart.
+- **OpenLIT documented as the trace viewer (R94-C)**: OpenLIT runs as a
+  self-hosted OTLP receiver — no SDK, no new dependency, one config value, because
+  `openlit.init()` competes with `logfire.instrument_pydantic_ai()` for the same
+  hooks and the single global tracer provider. Its cost dashboard is documented as
+  subordinate to the usage ledger. The export path gained its first end-to-end
+  test: a span is asserted to reach a real collector at `/v1/traces`.
 - **Delegation spends the session's budget (R93-A)**: a delegated run is handed
   the parent's usage accumulator, so its requests and tokens count against the
   run that caused them instead of vanishing. Its cap is the delegation slice
@@ -55,6 +81,11 @@
 
 ### Changed
 
+- **`[delegation] max_cost_usd` is a ceiling, not a receipt (R94-B)**: it used to
+  append "(note: delegation cost … exceeded the configured cap)" *after* the money
+  was spent. It now translates into a real `cost_limit` slice (`already spent +
+  allowance`, min'd with the run's limit), and the abort message names the limit
+  that fired.
 - pydantic-ai 2.66 → 2.68 and `pydantic-ai-harness` 0.68 added (R93-B). The
   harness pins the core version exactly, so this is one move. Note for anyone
   with a live server: the venv moves on the next `uv sync`.
@@ -69,6 +100,12 @@
 
 ### Fixed
 
+- **The pre-push review could not finish a large diff (R92/R94-B)**: the reviewer
+  pass was capped at a fixed 8 model requests, so a multi-file branch exhausted
+  them before reaching a verdict and the gate reported the diff UNREVIEWED. The
+  budget now follows the work — `limits.review_request_limit`, floor 8 plus two
+  requests per changed file, ceiling 40 — so a large review finishes and a small
+  one stays cheap.
 - Delegated spend was counted twice: a delegation's requests and tokens sat in
   both its own usage row and the run's row (the shared accumulator made both
   true at once), so the session total — and the Budget Cap that reads it —

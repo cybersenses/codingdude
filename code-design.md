@@ -1365,6 +1365,16 @@ Pre-push review (2026-11-13, two-axis delegates over `origin/main...2f35e94`, ru
 
 **Known limits (stated, not implied):** the gate cannot verify the evidence — an agent can record a review it did not perform, the same accepted boundary as `update_execution_step`; the record is per-clone and last-write-wins; the longrun `pre`-authorized draft-PR path is exempt because its review cycle is a separate design; the shell guard is a regex over the command text, so a script invoked by name that pushes internally is not caught (closing that needs the sandbox/lane layer); and `gh pr create` plus the GitHub MCP file tools are not gated.
 
+**Review budget, corrected after this seam failed R94's own pre-push gate.** The
+reviewer pass carried a fixed 8-request cap, chosen so a tool-happy reviewer could
+not spin inside its 300 s timeout. On a seventeen-file branch that cap refused
+before the work: the reviewer ran out of requests without producing a verdict and
+the gate reported the diff UNREVIEWED — the loud failure doing its job, but with
+nothing behind it. The budget now follows what the pass must read
+(`limits.review_request_limit`: floor 8, two requests per changed file, ceiling
+40), and `review_gate.changed_file_count` derives the file count from the diff
+headers so the two definitions cannot drift.
+
 ## R93 — delegation budget integrity, harness capabilities, local-OTLP tracing (#340–#342)
 
 **Problem (read in source, not inferred).** Three independent holes, found by checking our run path against pydantic-ai's multi-agent guide:
@@ -1416,3 +1426,118 @@ Pre-push review (2026-11-13, two-axis delegates over `origin/main...2f35e94`, ru
 - **Two claims corrected rather than implemented.** #341 said the surfaces are "validated at both config paths like `[models]`"; `[telemetry]` is read only by the global `load_config` and a project `.codingdude.toml [telemetry]` is ignored — recorded here and in the manual as global-only, since one collector serving every project is the intended shape, not an oversight. And "logged once" was not true: `_configured` stays False after a failure (that is what lets a later fixed call succeed), so every run re-warned; a separate `_warned` flag now makes it once per process.
 
 
+
+## R94 — run observability & spend governance (#345–#348)
+
+Three follow-on gaps left by R93, plus a docs repair, shipped as one branch.
+
+**Design.** Ownership of a spending cap was the open question, and the answer is
+three scopes with three mechanisms, no overlap:
+
+| Where | Scope | Mechanism |
+|---|---|---|
+| `[models] max_cost_usd` / `max_total_tokens` | one run | `UsageLimits`, checked by pydantic-ai before each request |
+| `[delegation] max_cost_usd` / `max_requests` | one `delegate` call | a slice of the run's spend, same mechanism |
+| `--budget` (Budget Cap) | whole session | the usage ledger (`db.session_usage`), across runs |
+
+`src/codingdude/limits.py` is the single definition of the first. It is
+deliberately not in `delegation.py`: nothing in it is delegation-specific, and
+that module already owns brief mining, delegation budget arithmetic and span
+naming. Its `request_limit=None` default is what preserves "an unconfigured
+install behaves exactly as before" — a seam that never bounded requests does not
+start doing so, and it returns `None` (the library default) rather than an
+empty `UsageLimits` that might differ.
+
+Delegation span naming is one helper, `delegation.delegate_span_name`, feeding
+both `Agent(name=...)` and the `span` field of `DELEGATION_COMPLETED`, so the
+trace and the event cannot drift into two vocabularies. Derived from the fixed
+function registry, never task text: an unbounded value in a span name is
+unbounded trace cardinality.
+
+**Ceilings stated rather than glossed.** `cost_limit` is enforceable only where
+pydantic-ai can price the model. Verified in 2.68.0: `check_before_request`
+cannot fire when `usage.cost is None`, and `UsageLimits.check_cost` emits
+`CostNotFoundWarning` to say so. `total_tokens_limit` needs no pricing, so it is
+the ceiling that always holds. Both behaviours are pinned by tests, including
+the warning's message.
+
+**Defects found by the two-axis review, each verified in source before fixing:**
+
+- **A configured ceiling vanished on any project override.** `apply_project_models`
+  rebuilds `ModelLineup` field by field; the two new keys were missing from
+  `current`, from `ModelLineupIn` and from the constructor call, so a project
+  with a `.codingdude.toml [models]` override reset both ceilings to `None` —
+  precisely the projects that believed they had a cap. The sibling was found by
+  sweeping: `models_payload` (the Config panel's view) omitted them too, so a
+  GET → PUT round-trip cleared a configured cap. Both pinned.
+- **The fix loop carried no limits at all.** `engine.py` `retry_agent.run(...)`
+  is part of the same run and its usage is billed into it, but it passed no
+  `usage_limits`. Together with the evaluator, the planning reviewer, the
+  summariser, memory extraction, the claims auditor and the vision inspector,
+  that was seven seams where a run's ceiling did not apply. All now go through
+  `limits.spend_limits`, and an AST guard enumerates every `(module, receiver,
+  method)` seam a run makes — the main loop's `agent.iter`, then every
+  `*.run()` — and fails if any of the ten stops passing `usage_limits`. Proven to
+  bite by removing the argument from two of them: the evaluator's `agent.run` and
+  the main loop's `agent.iter` each failed the guard with their file and line,
+  then both were restored.
+- **`[delegation].max_cost_usd` had no validation.** `load_config` read it raw,
+  so `0` and `-1` silently meant "no cap" and `true` would have raised
+  `Decimal(str(True))` mid-delegation. Now validated at load like `[models]`,
+  and `cost_slice` no longer treats a non-positive allowance as unset — a value
+  that slipped through becomes a ceiling the delegation is already at, which
+  refuses, rather than silently meaning unlimited.
+- **A silent `getattr` on the delegation ceiling.** `getattr(ctx, 'usage_limits',
+  None)` would have dropped the run's own ceiling on every delegation, and no
+  test could see it because they all hand-build the context.
+  `RunContext.usage_limits` is a real 2.68 field, so it is accessed directly.
+- **The heading sweep missed a 32nd heading.** `## R24 — R22 — File-tools …`
+  carries a mismatched id, which the same-id pattern could not match. Guarding
+  it needed care: `## R89 — R86 review findings …` is a *legitimate*
+  cross-reference where a bare space after a different id is prose. The guards
+  now distinguish a stale prefix (id followed by a heading delimiter) from prose,
+  and run against the shipped `ROADMAP.md`: every id-heading parses, no heading
+  repeats its own id, ids are unique.
+
+**Second and third review rounds.** Four corrections, each a place where the
+prose and the code disagreed:
+
+- **The `child_usage_limits` coercion was justified by a failure mode that does
+  not exist.** The comment claimed `min()` between a float and a Decimal raises
+  `TypeError`. It does not, and a float ceiling is enforced as intended: [probe:
+  `python -c "min(0.6, Decimal('0.75'))"` -> 0.6 with no exception;
+  `UsageLimits(cost_limit=0.6).cost_limit` -> 0.6, the float kept rather than
+  coerced; `check_before_request` with that limit passes at
+  `cost=Decimal('0.10')` and raises `UsageLimitExceeded` at
+  `cost=Decimal('1.00')`]. The coercion stays — `UsageLimits` keeps whatever type
+  it is handed, so without it this seam could return a float while every other
+  ceiling is a Decimal — and the comment now gives that reason instead.
+- **"Per run" was wrong in four places.** `UsageLimits` is checked against *that
+  `agent.run()`'s* own usage, and the auxiliary agents do not share the main
+  loop's accumulator, so `max_cost_usd = 2` can be spent per call site rather
+  than once per run. `CHANGELOG.md`, `docs/manual/configuration.md`, `limits.py`
+  and `config.py` now say "each `agent.run()`" and point at `--budget` for the
+  session total.
+- **The guard covered four of ten seams.** The main loop (`agent.iter`), the
+  evaluator, the planning reviewer, memory extraction, the claims retry and the
+  delegation were unpinned while the CHANGELOG claimed a guard test fails if any
+  seam stops passing its limits. All ten are enumerated now, which is what makes
+  that sentence true rather than aspirational.
+- **The round wrote two files with CRLF.** A Python write that omitted
+  `newline=''` normalised `run_pipeline.py` (LF throughout its history) and
+  `code-design.md` (26 mixed-ending lines) to all-CRLF, so a commit changing a
+  handful of real lines carried a whole-file rewrite of both. They were rebuilt
+  from the two git blobs so unchanged lines keep their original terminators, and
+  the content was verified identical apart from the terminators; the commit's
+  stat went from +2,511/-2,289 to +279/-57. The lesson generalises: a
+  `git diff --stat` showing a whole file for a small change is a line-ending
+  problem, and `git diff --ignore-cr-at-eol` is the probe that separates the two.
+
+**Waived, with reasons.** A `RequestSlice` value object to replace the
+`(used_requests, max_requests)` pair, and a cost-ceiling type replacing the bare
+`float | None` in four places: real smells, but the config boundary now validates
+both, so they are shape improvements rather than correctness gaps, and neither
+has a second consumer yet. `child_usage_limits` and `delegation_abort_message`
+both derive "which limit bound"; they share `delegation_slice` and the abort path
+is pinned by tests on all three branches, so the drift risk is covered rather
+than removed.

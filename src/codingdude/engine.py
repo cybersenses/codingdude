@@ -483,6 +483,11 @@ class Engine:
                 failure_text
                 + 'Fix the failures. Do not declare success until the tests pass.',
                 message_history=history,
+                # R94-B #346: the fix loop is part of the same run and its
+                # usage is billed into it, so it must respect the run ceilings
+                # too. Ceilings only — its request cap stays the library
+                # default, so a run that configures nothing is unchanged.
+                usage_limits=self._services.ceiling_limits(),
             )
             usages.append(result.usage)
             self._history.persist(session_id, result.all_messages())

@@ -108,6 +108,9 @@ class WorkEvaluator:
         self.thinking = thinking
         self.max_requests = getattr(delegation_config, 'max_requests', 12)
         self.db_session = db_session
+        # R94-B #346: the configured ceilings, so a grading pass cannot spend
+        # unbounded inside a run that has one.
+        self.models = models
         # R91 #338: one-shot cache profile — every grading pass re-sends the
         # same long instructions over a different ticket/diff.
         from .agent_caps import ONE_SHOT, cache_capabilities
@@ -200,8 +203,8 @@ class WorkEvaluator:
         from pydantic_ai.exceptions import UsageLimitExceeded
         from pydantic_ai.settings import ModelSettings
         from pydantic_ai.toolsets import FunctionToolset
-        from pydantic_ai.usage import UsageLimits
 
+        from .limits import spend_limits
         from .prompts import load_prompt
         from .tool_errors import error_feedback_toolset
 
@@ -250,7 +253,7 @@ class WorkEvaluator:
         eval_id = 'eval-' + _uuid.uuid4().hex[:8]
         try:
             result = await agent.run(
-                prompt, usage_limits=UsageLimits(request_limit=self.max_requests),
+                prompt, usage_limits=spend_limits(self.models, self.max_requests),
             )
         except UsageLimitExceeded:
             captured['record'] = {

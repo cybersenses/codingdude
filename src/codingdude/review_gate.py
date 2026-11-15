@@ -100,6 +100,16 @@ def collect_review_diff(workdir: Path, base: str = '') -> str:
     return committed + working
 
 
+def changed_file_count(diff: str) -> int:
+    """How many files a unified diff touches, by its `diff --git` headers.
+
+    The review pass turns this into a request budget: its tools are per-file
+    reads, so what a review costs tracks the number of files rather than the
+    size of the diff text.
+    """
+    return sum(1 for line in diff.splitlines() if line.startswith('diff --git '))
+
+
 def review_diff_key(workdir: Path, base: str = '') -> str:
     """Content hash of the diff a review would cover."""
     return hashlib.sha256(
