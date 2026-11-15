@@ -500,3 +500,82 @@ def test_the_review_budget_can_never_be_exhausted_by_the_reads_it_requires():
     for files in range(crossover + 1):
         assert review_request_limit(files) >= files + _REVIEW_REQUEST_FLOOR, files
 
+
+# ---- #353: the plan review's work is its steps, not the diff ----------
+
+
+def _diff_touching(files: int) -> str:
+    """A unified diff naming `files` paths — all `changed_file_count` reads."""
+    return ''.join(
+        f'diff --git a/f{i}.py b/f{i}.py\n--- a/f{i}.py\n+++ b/f{i}.py\n'
+        for i in range(files)
+    )
+
+
+def test_a_plan_review_budget_scales_with_its_steps_not_the_diff():
+    """#353: `_review_impl` serves two callers whose work is not the same thing.
+
+    `review_diff_findings` reviews the branch, so its cost tracks the files the
+    diff touches. `_run_review` reviews a *plan*: it must read the repository to
+    check each step's claimed evidence, and on a clean tree the diff is empty
+    however much verification the plan needs.
+
+    Observed before this fix — a six-step plan, `changed_file_count('') == 0`,
+    so the floor: `REVIEW FAILED — the reviewer did not run
+    (UsageLimitExceeded: ... The next request would exceed the request_limit of
+    8 ...)`. A budget that refuses before the work, the #349 class returning at
+    the second call site.
+    """
+    from codingdude.limits import review_request_limit
+    from codingdude.planning import _review_request_budget
+
+    plan = {'goal': 'g', 'steps': [{'text': f'step {i}'} for i in range(6)]}
+    assert _review_request_budget('', plan) == 8 + 2 * 6
+    assert _review_request_budget('', plan) > review_request_limit(0), (
+        'a plan review fell back to the empty-diff floor — the observed failure'
+    )
+
+
+def test_the_review_budget_counts_both_kinds_of_work_item():
+    """One invariant for both callers: at least one request per work item, plus
+    the floor's synthesis turns. A plan review has two kinds — the files the
+    branch touched and the steps to verify — so neither may be dropped."""
+    from codingdude.limits import _REVIEW_REQUEST_FLOOR
+    from codingdude.planning import _review_request_budget
+
+    for files in (0, 3, 20):
+        for steps in (0, 1, 6, 25):
+            plan = {'goal': 'g', 'steps': [{'text': 's'}] * steps} if steps else None
+            budget = _review_request_budget(_diff_touching(files), plan)
+            assert budget >= files + steps + _REVIEW_REQUEST_FLOOR, (files, steps)
+
+
+def test_the_plan_review_budget_obeys_the_same_ceiling():
+    """The ceiling stays a spin guard, not a work estimate: a plan long enough
+    to cross it is capped like any wide branch."""
+    from codingdude.limits import _REVIEW_REQUEST_CEILING
+    from codingdude.planning import _review_request_budget
+
+    huge = {'goal': 'g', 'steps': [{'text': 's'}] * 10_000}
+    assert _review_request_budget('', huge) == _REVIEW_REQUEST_CEILING
+
+
+def test_the_branch_review_budget_is_untouched_by_the_plan_parameter():
+    """A plan-path fix must not re-tune the branch path: with no plan the
+    budget is exactly what #349 shipped."""
+    from codingdude.limits import review_request_limit
+    from codingdude.planning import _review_request_budget
+
+    assert _review_request_budget(_diff_touching(3), None) == review_request_limit(3) == 14
+    assert review_request_limit(3, 0) == 14
+
+
+def test_the_review_budget_is_monotone_in_plan_steps():
+    from codingdude.limits import review_request_limit
+
+    budgets = [review_request_limit(0, n) for n in range(60)]
+    assert budgets == sorted(budgets)
+    assert budgets[0] == 8 and budgets[6] == 20
+    assert review_request_limit(-2, -2) == 8  # neither term can go below the floor
+
+

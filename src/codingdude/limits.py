@@ -89,30 +89,57 @@ _REVIEW_REQUEST_FLOOR = 8
 _REVIEW_REQUESTS_PER_FILE = 2
 _REVIEW_REQUEST_CEILING = 120
 
+#: A plan/step review's work is its steps, not the diff (#353). `_run_review`
+#: reads the repository to check each plan step's claimed evidence, and it does
+#: that on a clean tree too — where the diff is empty and the file count is
+#: zero. So the branch caller's unit (a file) is joined by a plan caller's unit
+#: (a step), priced the same: one read plus one narrowing look.
+#:
+#: The failure this replaces: a six-step plan on a clean tree was read as "a
+#: branch that touched nothing", given the empty-diff floor of 8, and the pass
+#: died mid-verification without a verdict [probe: the step reviewer returned
+#: "REVIEW FAILED — the reviewer did not run (UsageLimitExceeded: ... The next
+#: request would exceed the request_limit of 8 ...)"].
+_REVIEW_REQUESTS_PER_PLAN_STEP = 2
 
-def review_request_limit(changed_files: int) -> int:
-    """Requests for one review pass: the floor plus two per changed file.
 
-    Two properties are load-bearing and pinned by test: up to the ceiling's
-    crossover (56 files) the budget is at least one request per file plus the
-    floor, so the reads a review *must* make can never exhaust it; and it is
-    monotone in the file count.
+def review_request_limit(changed_files: int, plan_steps: int = 0) -> int:
+    """Requests for one review pass: the floor plus two per work item.
 
-    Past the crossover a very wide diff may leave the reviewer
-    under-provisioned. That residual is accepted because it is visible: the pass
-    fails loudly (`REVIEW FAILED — …`) rather than returning '', and `''` is the
-    only CLEAN signal the push gate can read from a review. (The gate itself
-    never parses that string — `review_gate.require_review` demands a
-    `diff_key`-matched record — so the loud failure protects the *reader*, not
+    The two callers of `planning._review_impl` do not have the same work, so
+    neither can be priced from the diff alone:
+
+    * a BRANCH review (`review_diff_findings`, `plan_steps=0`) reads the files
+      the diff touches — its work items are those files;
+    * a PLAN review (`_run_review`, the step-evidence check) reads the
+      repository to verify each plan step, and does so however small the diff
+      is. `plan_steps` is how many steps it must verify.
+
+    Both are counted: a plan review on a wide branch has both kinds of work.
+
+    Load-bearing and pinned by test: up to the ceiling's crossover the budget is
+    at least one request per work item plus the floor, so the reads a review
+    *must* make can never exhaust it; and it is monotone in both arguments.
+
+    Past the crossover a very wide diff or a very long plan may leave the
+    reviewer under-provisioned. That residual is accepted because it is visible:
+    the pass fails loudly (`REVIEW FAILED — …`) rather than returning '', and
+    `''` is the only CLEAN signal the push gate can read from a review. (The
+    gate itself never parses that string — `review_gate.require_review` demands
+    a `diff_key`-matched record — so the loud failure protects the *reader*, not
     the gate.)
 
-    Zero changed files yields the floor, which is correct here rather than a
-    clamp down to it — an empty diff has no file the reviewer could read. One
-    degraded path is indistinguishable at this seam: an unanswerable `git` makes
-    `review_gate.collect_review_diff` return '' (it returns '' on failure), which
-    also counts 0. That is not a hole in the gate — `require_review` keys off
-    `resolve_base`, never this count — and a reviewer handed an empty diff
-    answers CLEAN in about one request.
+    Zero work items yields the floor, and that is correct only for the branch
+    review: an empty diff has no file the reviewer could read. It was NOT
+    correct for a plan review — that was the #353 outage, which is why the plan
+    caller now states how much work it has instead of being read as a branch
+    that touched nothing. One degraded path remains indistinguishable at this
+    seam: an unanswerable `git` makes `review_gate.collect_review_diff` return
+    '' (it returns '' on failure), which also counts 0. That is not a hole in
+    the gate — `require_review` keys off `resolve_base`, never this count — and
+    a reviewer handed an empty diff answers CLEAN in about one request.
     """
     per_file = _REVIEW_REQUESTS_PER_FILE * max(0, int(changed_files))
-    return min(_REVIEW_REQUEST_CEILING, _REVIEW_REQUEST_FLOOR + per_file)
+    per_step = _REVIEW_REQUESTS_PER_PLAN_STEP * max(0, int(plan_steps))
+    return min(_REVIEW_REQUEST_CEILING, _REVIEW_REQUEST_FLOOR + per_file + per_step)
+

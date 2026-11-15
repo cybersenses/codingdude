@@ -30,6 +30,7 @@ from pydantic_ai.toolsets import FunctionToolset
 
 from .config import ThinkingSetting
 from .db import utc_now_iso as _now
+from .limits import review_request_limit, spend_limits
 from .review_gate import changed_file_count, collect_review_diff
 
 logger = logging.getLogger(__name__)
@@ -230,13 +231,29 @@ def _capped_diff(diff: str, limit: int = 8000) -> str:
     return diff[:limit] + f'\n… [{len(diff) - limit} more characters not shown]'
 
 
+def _review_request_budget(diff: str, plan: dict | None) -> int:
+    """Requests for one review pass — the single place its budget is decided.
+
+    Two kinds of work item, because `_review_impl` has two callers: the files the
+    branch diff touches (a branch review), and the plan steps whose claimed
+    evidence the reviewer must read the repository to check (a plan review). A
+    plan review has both when the branch is wide.
+
+    Reading this as "one caller, priced by its diff" is what #353 fixed: a
+    six-step plan on a clean tree counted zero files, got the empty-diff floor,
+    and the pass died mid-verification with `request_limit of 8`.
+    """
+    steps = len(plan.get('steps') or ()) if plan else 0
+    return review_request_limit(changed_file_count(diff), steps)
+
+
 async def _review_impl(db, session_id: str, review_model, checklist: str, plan, thinking: ThinkingSetting | None = None, models=None) -> str:
     from pydantic_ai import Agent
 
     from .agent_caps import ONE_SHOT, cache_capabilities
-    from .limits import review_request_limit, spend_limits
     from .prompts import load_prompt
     from .tools import build_toolset
+
 
     workdir = db.session_workdir(session_id)
     # R92 #339: review the BRANCH, not just the work tree. The old `git diff
@@ -281,15 +298,13 @@ async def _review_impl(db, session_id: str, review_model, checklist: str, plan, 
     )
     try:
         # Bounds the read loop so a tool-happy reviewer cannot spin inside the
-        # 300s timeout (same pattern as the evaluator pass). Scaled by the
-        # diff's file count: the reviewer's tools are per-file reads, so a
-        # fixed cap refuses before the work on a multi-file branch -- the fixed
-        # 8 aborted this branch's own pre-push review with no verdict.
+        # 300s timeout (same pattern as the evaluator pass). The budget comes
+        # from `_review_request_budget`: per-file reads for a branch review, and
+        # per-step verification for a plan review, which #353 showed cannot be
+        # priced from the diff alone.
         result = await reviewer.run(
             prompt,
-            usage_limits=spend_limits(
-                models, review_request_limit(changed_file_count(diff))
-            ),
+            usage_limits=spend_limits(models, _review_request_budget(diff, plan)),
         )
     except Exception as exc:  # noqa: BLE001 — a review failure must not fail the run
         # Returning '' here read as CLEAN: a reviewer that never ran was

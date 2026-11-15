@@ -1374,8 +1374,18 @@ before the work: the reviewer ran out of requests without producing a verdict an
 the gate reported the diff UNREVIEWED — the loud failure doing its job, but with
 nothing behind it. The budget now follows what the pass must read
 (`limits.review_request_limit`: floor 8, two requests per changed file, ceiling
-40), and `review_gate.changed_file_count` derives the file count from the diff
+120), and `review_gate.changed_file_count` derives the file count from the diff
 headers so the two definitions cannot drift.
+
+Two corrections followed, each caught by its own failure. The ceiling of 40
+stopped the budget growing at sixteen files, so a wide branch was refused again
+(#349: ceiling 120, one request per file plus the floor up to 56 files). Then
+both review callers were priced from the diff alone, so the plan-completion pass
+on a clean tree - where the diff is empty however much verification the plan
+needs - got the empty-diff floor of 8 and died mid-verification (#353:
+`planning._review_request_budget` is the one place a pass's budget is computed,
+and it counts two requests per plan step, the same unit as a file, because a
+plan review's work items are its steps).
 
 ## R93 — delegation budget integrity, harness capabilities, local-OTLP tracing (#340–#342)
 
