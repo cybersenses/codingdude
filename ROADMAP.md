@@ -634,7 +634,7 @@ Assessment: viable, low-medium effort per item, reuses existing parsers.
 
 Unexpected exceptions inside tools (OSError/WinError 32, NameError, ...) used to propagate out of the toolset and kill the run immediately. codingdude/tool_errors.py adds a ToolErrorFeedback wrapper toolset: unexpected tool exceptions become ModelRetry messages the model can act on (tool name + cause + hint). Control-flow exceptions (gates, approvals, deferrals, cancellation, ToolFailed) pass through untouched. Retry budget raised from 2 to 3 (PromptAssembler.agent default), so the agent gets 3 tries to self-correct before the run aborts. Wired for the main agent (engine.run) and delegation sub-agents. Tests: tests/test_tool_errors.py.
 
-## R26 — R26 — Multi-language tooling support (parked assessment)
+## R26 — Multi-language tooling support (parked assessment)
 **Status:** done
 
 Minimum language support: C#, C++, C, JavaScript, TypeScript, HTML, CSS, Rust, Go, Kotlin.
@@ -663,7 +663,7 @@ Gaps to close only if broad language support becomes a requirement:
 
 Decision: do NOT build speculatively. Revisit when a non-Python project becomes real usage.
 
-## R27 — R27 — Edit-tool match hardening (aider-style SEARCH/REPLACE matching)
+## R27 — Edit-tool match hardening (aider-style SEARCH/REPLACE matching)
 **Status:** done
 
 Port aider's layered matching (exact, whitespace-flexible, blank-line tolerance, `...` elision — skip fuzzy) into edit_file via new editmatch.py, plus did-you-mean feedback on no-match. Keep all existing safety: uniqueness rule, _atomic_write, write-verify+rollback, staleness, CRLF byte-faithful handling, AST summary.
@@ -686,7 +686,7 @@ Port aider's layered matching (exact, whitespace-flexible, blank-line tolerance,
 
 **Problem (from myai usage):** frontend crashed mid-run; on reopen, chat did not reconnect or catch up to the run's progress. SSE mid-run reattach exists server-side (E2E-tested) but the frontend doesn't exercise it on boot. Scope: on load, check `/runs/{id}/alive` and reattach to the live stream; render missed events; surface reconnect state in UI.
 
-## R30 — R30 — Post-run tail: zero-wait run finish + faster memory extraction
+## R30 — Post-run tail: zero-wait run finish + faster memory extraction
 **Status:** done
 
 Zero-wait run finish + faster extraction. Verified live: RUN_FINISHED lands immediately; extraction ~12s; MEMORY_EXTRACTED before/after tail confirmed; UI settles instantly, stop-button flicker (worker-alive-during-tail listed as active) fixed via active_runs excluding terminal-delivered channels (752e080).
@@ -695,7 +695,7 @@ Shipped `76f57d7` (tickets #59/#60): RUN_FINISHED emits immediately after persis
 
 Observed live: run settles only ~94s after work completes because worker._finish_run drains the post-run tail (memory extraction) BEFORE emitting RUN_FINISHED. User-perceived wait budget: 15s. Two work items: (1) emit terminal event first, then drain tail bounded before worker exit; (2) shrink extraction input/prompt to cut actual extraction latency.
 
-## R31 — R31 Run-end determinism & process visibility
+## R31 — Run-end determinism & process visibility
 **Status:** done
 
 Worker still wedges after drain on some runs (trace ends at MEMORY_EXTRACTED, worker never exits; UI stuck until manual stop) — recurring Windows asyncio/Proactor teardown wedge. Two-pronged: (1) make worker teardown fail-safe so it can never hang the UI, (2) surface every spawned process in the UI until it exits, so hangs are diagnosable from the frontend instead of trace archaeology.
@@ -705,14 +705,14 @@ Worker still wedges after drain on some runs (trace ends at MEMORY_EXTRACTED, wo
 
 Per research (reference/research/language-support-priorities.md): add Tier 3 Java + PHP, Tier 2 JSON/YAML/TOML (HTML/CSS pattern), Bash. R26 batch pattern: `_<lang>_spec()` in langs.py, suffix branch in spec_for, pyproject deps, tests.
 
-## R33 — R33: Review automation (Bito-inspired)
+## R33 — Review automation (Bito-inspired)
 **Status:** done
 
 Mirror Bito's highest-value capabilities: automated PR summaries and automated code review with fix application. Research source: bito.ai (PR review agent, one-click fixes, model router). Model router deliberately deferred — lowest alignment with current trajectory.
 
 Shipped: #66 pr_summary tool (commit list + diff stat + AST semantic summaries, `0cc5c28`); #67 post-push review directive — git_push returns the pushed range and mandates the review→verify→fix→gates loop, never auto-pushes (`e445c05`); #68 review checklist mandates codegraph impact analysis + verified-only findings (`404ca97`).
 
-## R34 — R34: Human interface & cowork (Monaco editor)
+## R34 — Human interface & cowork (Monaco editor)
 **Status:** done
 
 Overhaul the human interface for cowork: humans can see, browse, and edit code alongside the agent. Monaco editor (microsoft.github.io/monaco-editor) as the editing surface, backed by a sandboxed server file API. All writes — human or agent — go through the same validation rails (workdir sandbox, atomic write, staleness registry).
@@ -727,17 +727,17 @@ Phases:
 2. Activity bar + bottom dock structure.
 3. Visual identity pass.
 
-## R36 — R36: Agent-core hardening (decomposition, token accounting, vision)
+## R36 — Agent-core hardening (decomposition, token accounting, vision)
 **Status:** done
 
 Informal backlog formalized: engine.run decomposition (maintainability of the highest-traffic method), H7 streaming-vs-usage token accounting (reconcile streamed deltas vs final usage), R1 vision half (engine-side image attachment/passing).
 
-## R37 — R37: Selection AI actions in editor
+## R37 — Selection AI actions in editor
 **Status:** done
 
 User highlights code in the editor and gets one-click agent actions (Explain, Fix, Optimise, Improve, …). Each action starts a scoped agent run on the selected snippet.
 
-## R38 — R38: Visual aids (waterfall, semantic diff summary, impact graph)
+## R38 — Visual aids (waterfall, semantic diff summary, impact graph)
 **Status:** done
 
 Big-picture visual aids for humans, per reference/research/agent-activity-visualization.md (all zero/minimal new deps).
@@ -750,27 +750,27 @@ Phase 3 — Dependency/impact mini-graph: AST/tree-sitter import edges for edite
 
 Adopt 4 ideas from the agency-agents repo review into our skill library: standard skill skeleton with success signals, post-mortem template + hypothesis timebox in diagnosing-bugs, triage markers + no-drip-feed in code-review.
 
-## R40 — R40 — Engineering persona distillation
+## R40 — Engineering persona distillation
 **Status:** done
 
 Adopt behavioral techniques (not personas) from agency-agents Engineering Division: (a) Minimal Change Engineer scope discipline into surgical-patch; (b) three-level explanation + inspection-coverage honesty into caveman-explore.
 
-## R41 — R41 — Persona checklist distillation + specialty-actions seam
+## R41 — Persona checklist distillation + specialty-actions seam
 **Status:** done
 
 Strip the idea-value from all agency-agents personas (~130, 23 divisions) into versioned reference checklists per specialty, indexed via search_references. Later: a specialty-actions seam so users can invoke these as actions on the systems CodingDude builds. Explicitly NOT adopting personas as identity.
 
-## R42 — R42 — Human code comprehension (user-facing views of generated code)
+## R42 — Human code comprehension (user-facing views of generated code)
 **Status:** done
 
 Second feature thrust: tools that help a HUMAN understand the code the agent generates — call graphs, structure views, dependency maps of the produced code itself (not run telemetry). Audience shift: agent introspection (R31/R35/R38) stays, but new work must derive from user value.
 
-## R43 — R43 — Human comprehension wave 2 (research-backed)
+## R43 — Human comprehension wave 2 (research-backed)
 **Status:** done
 
 From reference/research/human-code-comprehension.md (As-of 2026-09-20). Five user-facing features: repo Q&A with citations, module architecture map (C4-lite), trust-my-tests report, code tour of a run, auto design doc/ADR.
 
-## R44 — R44 — Friction fixes from SteroidsEngine usage
+## R44 — Friction fixes from SteroidsEngine usage
 **Status:** done
 
 Fixes surfacing from real SteroidsEngine usage.
@@ -780,12 +780,12 @@ Fixes surfacing from real SteroidsEngine usage.
 
 CFG of basic blocks per function, unreachable-code analysis, green/red Mermaid HTML render (user request).
 
-## R46 — R46 — CFG analysis for agent + HITL
+## R46 — CFG analysis for agent + HITL
 **Status:** done
 
 Control-flow graph analysis exposed both ways: agent tool (dead-code detection during work) and human UI panel (green/red basic-block view of generated code). Build on cfg.py::build_cfg seam from #152.
 
-## R47 — R47: Analysis hardening
+## R47 — Analysis hardening
 **Status:** done
 
 Security + verification gates from the local-agent tooling research. Adopt: T1 security gate on edits (Bandit + gitleaks), T2 mutation testing into trustreport (mutmut), T3 conditional Semgrep custom rules, T4 parked perf smoke (cProfile tool). Rejected: Zoekt/SCIP, Joern/CodeQL CPG, symbolic execution, Docker sandbox (per existing design decision), local LLM.
@@ -801,7 +801,7 @@ CODEGRAPH_BOOT event); the agent must discover tracker/gates/docs, confirm
 with the user, and bank a durable memory record. Standing built-in directive:
 open a tracked item before non-trivial work. Tests: tests/test_onboarding.py.
 
-## R49 — R49: Referential solutions memory
+## R49 — Referential solutions memory
 **Status:** done
 
 Referential memory: structured problem→solution records (kind='solution' in the memory table), a record_solution/lookup_solutions tool pair, and forced recall — solutions are always injected into session instructions (bounded), not left to RAG chance. Motivated by repeated identical mistakes across SkyborneRealms sessions.
@@ -811,7 +811,7 @@ Referential memory: structured problem→solution records (kind='solution' in th
 
 Expose model/provider configuration as a managed, validated resource: GET/PUT /config/models, GET /config/providers (key presence only, never values), validated atomic writes with pre-save model construction, plus a frontend Settings page.
 
-## R51 — R51 — Open-source release: AGPL-3.0 + dual licence + CLA + trademark
+## R51 — Open-source release: AGPL-3.0 + dual licence + CLA + trademark
 **Status:** done
 
 Open-source release under AGPL-3.0 with dual commercial licensing, trademark protection, CLA, and generated-code-ownership terms. Plan id 40.
@@ -1060,7 +1060,7 @@ The user reports the chat "window" as not resizable. Probe (2026-10-26, .scratch
 
 Fix: index.css — ±4px transparent hit-area skirt on fine pointers, immediate hover highlight (--dv-active-sash-transition-delay: 0s), resting line one step brighter than the border. Guard: ui_smoke.py gains a chat-resize step that drags the sash from 5px OFF centre (outside the bare 4px element, inside the expanded hit area), so the gate goes red if the CSS regression returns.
 
-## R66 — R66 — Security scan remediation (2025 scan findings)
+## R66 — Security scan remediation (2025 scan findings)
 **Status:** done
 
 Full security scan (bandit, semgrep auto, npm audit, pip-audit, manual auth/path/XSS review) tracks remediation here, highest risk first.
@@ -1134,7 +1134,7 @@ Impact: onboarding cost; the manual undersells a mature 18-panel UI and a flexib
 
 Behaviour: split into docs/manual/ pages with docs/USER-MANUAL.md as the index — quickstart walkthrough up front (new users), panel-by-panel screen tour, daily workflows, configuration cookbook with full worked config.toml examples (native provider, coding-plan endpoint, custom OpenAI-compatible), extending (MCP/skills/directives), reference (security, troubleshooting, file layout). Text-only, no screenshots (user decision). Every claim code-checked before it ships.
 
-## R71 — R71: Executed kickoff prompts — first-turn orientation (takeover + greenfield)
+## R71 — Executed kickoff prompts — first-turn orientation (takeover + greenfield)
 **Status:** done
 
 Problem: deployed agents skip the development pipeline (plan → ticket → gates → review) because those rules live in passive system-instruction text that models skim mid-task.
@@ -1147,19 +1147,19 @@ Design (decided with user):
 
 Reuse targets: onboarding.py (detect_conventions, onboarding_needed), load_prompt/build_run_prompt, load_project_config, trace events (mirror boot_event onboarding flag).
 
-## R72 — R72: Worker-death forensics + extraction endpoint parity
+## R72 — Worker-death forensics + extraction endpoint parity
 **Status:** done
 
 Two live incidents (15:14/15:16 worker pre-boot deaths; 400 on every run-end memory extraction) exposed two seams: (1) worker stderr was never captured server-side, so trampoline-stage deaths left zero evidence and the synthesized RUN_ERROR was generic; (2) worker.py resolved the extraction slot without config.models.fallback_base_url, so coding-plan-only keys hit the standard Z.ai endpoint and 400'd every run end. Tickets: #264 stderr capture + actionable RUN_ERROR; #265 extraction-slot endpoint parity.
 
-## R73 — R73: GitHub contribution strategy — branch model, CI, triage, releases
+## R73 — GitHub contribution strategy — branch model, CI, triage, releases
 **Status:** done
 
 Audience: human
 
 Design + document the GitHub strategy: branch model (protected main, PRs for everyone incl. agent), CI policy (required test+frontend, advisory bench), issues/triage, release runbook (semver, CHANGELOG per merge, tags), security intake, go-public gating. Decisions: private now/public later; PRs for everyone; formal releases.
 
-## R74 — R74: binary purge from git + README structured-AI-coding positioning
+## R74 — binary purge from git + README structured-AI-coding positioning
 **Status:** done
 
 Remove tools/github-mcp/github-mcp-server.exe (26MB) from HEAD and all history; setup-codingdude.bat switches to downloading from github/github-mcp-server releases. Reposition README around structured AI coding (Cyberflex stays legal entity, CodingDude stays product). History rewrite rewrites ~167 commit SHAs (53fb4f5..HEAD); documented fallout: stale closed-by markers, PR squash SHA drift, Z: mirror resync, server bounce.
@@ -1169,22 +1169,22 @@ Remove tools/github-mcp/github-mcp-server.exe (26MB) from HEAD and all history; 
 
 Symptom: every session start prints "Already initialized in <dir> — use codegraph index/sync". Root cause (probe .scratch/probe_codegraph_sync.py): `codegraph init` no-ops on an existing index (0.15s, banner, index mtimes unchanged), while `codegraph sync` incrementally updates (0.61s after edit) and `codegraph index` rebuilds. codegraph_boot.py's stale self-heal (#203) and mid-run refresh (R14) both run init on an existing index — a no-op reported as success, so the graph stays stale and the banner repeats every session. Fix: sync when an index exists; init only when none; on sync failure fall back to full `index` rebuild.
 
-## R76 — R76: Cut per-run startup tax (repo_map walk + MCP pre-flight)
+## R76 — Cut per-run startup tax (repo_map walk + MCP pre-flight)
 **Status:** done
 
 Two fixes: (1) repo_map walk prunes skip-dirs during descent with an early budget break (4.2-4.5s -> 0.9-1.2s measured on this repo, bench x3); (2) MCP pre-flight verifies all servers concurrently and keeps healthy sessions entered so agent-enter skips a second initialize handshake on the same child process (fastmcp keeps one child alive; the double-spawn claim was falsified by probe, see code-design #284) (~13.4s -> ~2s); npx servers version-pinned (z_ai@0.1.6, chrome-devtools@1.12.0). DFS order can shift which files fill the signature-budget tail; the review pass added .venv*-prefix and plain-venv skipping via tools.skip_dir (R75/#255 class).
 
-## R77 — R77: Run-failure visibility — unblock arch_lint, truthful terminal delivery, O(limit) trace endpoint, clean RUN_ERROR hints
+## R77 — Run-failure visibility — unblock arch_lint, truthful terminal delivery, O(limit) trace endpoint, clean RUN_ERROR hints
 **Status:** done
 
 External review of a DataReview session surfaced a synthesized error popup whose root cause is in the harness: arch_lint blocks the worker event loop (sync report() in an async tool, ~4x redundant scan) past uvicorn's 20s ws ping timeout; the dropped socket silently swallows the terminal event while the worker logs "delivered" and exits 0; the reaper then fabricates a RUN_ERROR padded with MCP startup noise from the stderr tail. Secondary: GET /sessions/{id}/trace reads the whole (hundreds-of-MB) trace file per call and the frontend calls it 3x per session load. Verified against this checkout: archlint.py:379-381/73-95/317-324, worker.py:286-309/404-484, server.py:182-249/1528-1539; measured report() 4.3s vs check() 0.8s on src/codingdude; 264MB live trace in this home; 3x WORKER_EXITED exit=0 terminal_seen=False in this home's server.log.
 
-## R78 — R78 run-path speed II: walker scope, trace append I/O, edit-event payload
+## R78 — run-path speed II: walker scope, trace append I/O, edit-event payload
 **Status:** done
 
 Second run-path speed pass, measured this session (probe: .scratch/probe_turn_costs.py). Three mechanical fixes, no semantics changes: (1) harness-owned .scratch/ enters the shared SKIP_DIRS walker rule — 1168 of 1519 walked files were scratch, costing 3.64s of tree-sitter parse per prompt and burning the repo_map char budget before src/; (2) append_trace_line reopens the trace fd per streamed event (316µs/event measured, ~4.4 min of loop-blocking across the biggest session) — reuse one O_APPEND fd per trace file; (3) EDIT_APPLIED carries full before/after file contents (~49KB avg, 160.5MB of a 269MB trace) — cap with head+tail marker. Killed by measurement: worker import (0.18s warm), history encode/decode (0.05s), walk itself (0.03s).
 
-## R79 — R79: trace delta coalescing (bounded-loss compact mode behind a toggle)
+## R79 — trace delta coalescing (bounded-loss compact mode behind a toggle)
 **Status:** done
 
 Post-R78 decision (user-answered): the ~211MB/run streamed-delta bulk is no longer a latency lever (R78 made per-line writes 17.8µs), but the disk + line-count cost is addressable without breaking the replay contract. Design agreed with the user: (1) the trace must keep the ability to reconstruct in-flight model text after a crash (before any tool turn persists) — so deltas are COALESCED, not removed; (2) live SSE stays per-token raw (the UI's delta path is untouched); (3) `[trace] deltas = compact|full` toggle in config.toml, default compact. Compact mode coalesces adjacent same-type delta events (TEXT_MESSAGE_CONTENT / TOOL_CALL_ARGS) into one line per flush window (flush when the next delta would cross flush_bytes or the buffer age reaches flush_ms, checked at append time — no timer task); concatenating deltas still reconstructs text exactly, at chunk-level (not token-level) timing granularity. Eval contract (USER_PROMPT first), R77 O(limit) tail, #79/#289 atomic single-write append, and R31 run_id provenance all preserved.
@@ -1232,7 +1232,7 @@ Scope: (1) composer model picker offers configured slots AND arbitrary provider:
 
 Findings from the 2026-11-09 trace forensics (run mY5V_HxeMdk): post-RUN_FINISHED activity is the claims-verification phase working as designed, but four defects/gaps around it: (1) the drain bound cuts the claims-retry mid-flight and silently discards its verdict + gathered evidence (no CLAIMS_ADDRESSED/CLAIMS_UNVERIFIED ever lands); (2) post-run events are indistinguishable from live run activity in the trace (same run_id, no phase marker); (3) the audit's `git diff HEAD` gating fires every turn in repos that keep a deliberately dirty file; (4) the retry verifier runs with the run's full write-capable toolsets after the run is already terminal.
 
-## R83 — R83: Composer model picker regression — persisted pick locks the dropdown
+## R83 — Composer model picker regression — persisted pick locks the dropdown
 **Status:** done
 
 **Audience:** human
@@ -1249,7 +1249,7 @@ Findings from the 2026-11-09 trace forensics (run mY5V_HxeMdk): post-RUN_FINISHE
 
 **Direction:** replace with a real dropdown that always shows all slots + a visible "default (main)" reset; free-text `provider:model` stays as an explicit secondary mode. `resolveModelSend` (modelpick.ts) remains the single send contract.
 
-## R84 — R84: LLM configuration UX — guided config screen + provider catalog
+## R84 — LLM configuration UX — guided config screen + provider catalog
 **Status:** done
 
 **Audience:** human
@@ -1266,7 +1266,7 @@ Findings from the 2026-11-09 trace forensics (run mY5V_HxeMdk): post-RUN_FINISHE
 1. Provider catalog: pick from a curated list → only the API key is asked (base_url/env_var prefilled or not needed); "Custom OpenAI-compatible" remains the escape hatch.
 2. Config screen restructured into guided sections: Providers → Lineup assignment (pick per slot from reachable models) → Function staffing → Advanced (limits/pricing). Copy explains what each section does; per-provider Test keys inline.
 
-## R85 — R85: Wireframes — elegant way to design screens and workflows
+## R85 — Wireframes — elegant way to design screens and workflows
 **Status:** done
 
 **Audience:** human
@@ -1280,7 +1280,7 @@ Findings from the 2026-11-09 trace forensics (run mY5V_HxeMdk): post-RUN_FINISHE
 
 Small tracked issues in codingdude's own tooling/docs that don't belong to feature umbrellas.
 
-## R87 — R87: Wireframes v2 — renderer quality + artifact surfacing in chat
+## R87 — Wireframes v2 — renderer quality + artifact surfacing in chat
 **Status:** done
 
 **Audience:** human
@@ -1368,8 +1368,8 @@ Second, independent defect found: `_review_impl` (planning.py) reviews `git diff
 
 Enforcement: a recorded review keyed by the exact diff content is required before `git_push` will run; the record is written only by a tool that demands per-axis evidence (the #293 `update_execution_step` pattern). Post-push review remains a failsafe, scoped as note #22 says.
 
-## R93 — R93: Delegation budget integrity, pydantic-ai-harness adoption, OTel tracing
-**Status:** in_progress
+## R93 — Delegation budget integrity, pydantic-ai-harness adoption, OTel tracing
+**Status:** done
 Audience: agent — makes the agent cheaper and harder to run away with: delegated spend now counts against the run that caused it, oversized tool output is bounded at the source, and a failed run names its agent and request instead of arriving as a provider error string. The human payoff is a Budget Cap that actually holds and a run you can diagnose without guesswork.
 
 ## Why
@@ -1407,3 +1407,29 @@ it. The guide's "Observing Multi-Agent Systems" section is unimplemented.
 - Local-OTLP traces with a span per agent, so failures name the agent and
   request instead of requiring inference.
 
+## R94 — Run observability & spend governance — span attribution, a real cost ceiling, and a trace UI
+**Status:** in_progress — R94-A/B/C implemented in PR `codingdude/r94-observability-spend` (#345, #346, #347); flips to done on merge.
+
+Audience: agent — the agent's own runs become diagnosable and its spend bounded. The human payoff is (a) a budget that refuses instead of narrating, and (b) finally being able to *see* which agent, model and tool burned the time and the tokens, instead of inferring it from a provider error string.
+
+## Why
+
+R93 shipped delegation budget integrity and local-OTLP tracing. Three follow-on gaps were confirmed in source while assessing pydantic-ai's multi-agent guide and OpenLIT:
+
+1. **Every delegation collapses to one span name.** `tools.py:1335` hardcodes `name='delegate'`. Designer, coder and researcher delegations — which may each run a different model — are indistinguishable in any trace backend. No consumer can attribute latency or cost per function profile.
+2. **There is no spend ceiling anywhere.** `UsageLimits` is constructed with `request_limit=` and nothing else at every seam (`delegation.py:172`, `evaluator.py:253`, `planning.py:272`, `run_pipeline.py:154`). `[delegation].max_cost_usd` exists but is **post-hoc** (`tools.py:1415-1421`): it appends "(note: delegation cost ... exceeded the configured cap)" *after* the money is already spent. Money has no per-run stop; `DelegatedSpend` is a receipt, not a gate.
+3. **Traces are exported to a collector with no UI.** `config.py:1060` defaults `otlp_endpoint` to `http://127.0.0.1:4318` and `enabled: bool = False` (`config.py:1059`); `worker.py:591-593` calls `configure_tracing`. Nothing consumes the export, and the path has never been proven end-to-end by a test — a carried limit from R93.
+
+## Scope
+
+- R94-A (#345): per-delegate span names (precondition for any per-function attribution).
+- R94-B (#346): a real spend/token ceiling at the usage seam.
+- R94-C (#347): OpenLIT as a self-hosted OTLP receiver — config only, deliberately **not** its SDK.
+
+## Explicitly out of scope
+
+OpenLIT's `openlit.init()` SDK (competes with `logfire.instrument_pydantic_ai()` for the same hooks and the single global `TracerProvider`), its Evals (our evaluator is ticket-contract-aware and stronger), Guardrails, Vault, Prompt Hub (would move prompts out of the repo and break the `ONE_SHOT` cacheable-prefix design), and GPU monitoring (we do not self-host models). Rationale recorded per item in R94-C (#347).
+
+## Inconsistency to close
+
+Two cost numbers must never disagree. `DelegatedSpend` → `db.session_usage` is the authoritative spend figure and is what the Budget Cap reads. Any dashboard cost view is an independent estimate; it must be reconciled with, or explicitly subordinate to, the ledger — never presented as a second truth.

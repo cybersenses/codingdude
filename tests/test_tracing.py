@@ -326,3 +326,71 @@ def test_no_agent_is_constructed_with_a_blank_name(tmp_path):
 
     (tmp_path / 'mod.py').write_text("Agent(name='', model=m)\n", encoding='utf-8')
     assert agent_calls_missing('name', tmp_path) == [f'{tmp_path.as_posix()}/mod.py:1']
+
+# ---- R94-C (#347): the export path, proven on the wire ----------------
+
+
+def test_a_span_reaches_a_real_otlp_collector():
+    """The first end-to-end test of the export path.
+
+    R93 shipped `traces_url` + `OTLPSpanExporter` with every test faking the
+    exporter, so nothing proved a span ever left the process. This runs a real
+    collector on a loopback port and asserts the span arrives at
+    `/v1/traces`.
+
+    Ceiling, stated: this proves *our* wiring (endpoint shape, exporter, span
+    processor). It does not prove that logfire instruments pydantic-ai — that
+    needs a live model call and is covered by the instrumentation guards above.
+    """
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+        OTLPSpanExporter,
+    )
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+    from codingdude.tracing import traces_url
+
+    paths: list[str] = []
+    bodies: list[bytes] = []
+
+    class Collector(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802 - http.server requires this name
+            length = int(self.headers.get('Content-Length') or 0)
+            paths.append(self.path)
+            bodies.append(self.rfile.read(length))
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/x-protobuf')
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+
+        def log_message(self, *args):  # keep pytest output clean
+            return
+
+    server = HTTPServer(('127.0.0.1', 0), Collector)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        provider = TracerProvider()
+        provider.add_span_processor(
+            BatchSpanProcessor(
+                OTLPSpanExporter(endpoint=traces_url(f'http://127.0.0.1:{port}'))
+            )
+        )
+        with provider.get_tracer('codingdude').start_as_current_span(
+            'delegate.coder'
+        ):
+            pass
+        provider.force_flush(timeout_millis=5000)
+        provider.shutdown()
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+    assert paths == ['/v1/traces'], f'wrong path: {paths}'
+    assert bodies, 'no span payload reached the collector'
+    # OTLP/HTTP carries protobuf; string fields appear verbatim in the bytes.
+    assert b'delegate.coder' in bodies[0]

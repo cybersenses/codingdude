@@ -30,6 +30,7 @@ Two halves, both about the parent-to-subagent boundary:
 
 import re
 from dataclasses import dataclass, field, replace
+from decimal import Decimal
 from pathlib import Path
 
 from pydantic_ai.usage import UsageLimits
@@ -40,6 +41,8 @@ _TOKEN_RE = re.compile(r'[A-Za-z_][A-Za-z0-9_]{3,}')
 _SUFFIXES = {'.py', '.md', '.ts', '.tsx', '.js', '.mjs'}
 _MAX_FILES = 2000
 _MAX_FILE_BYTES = 1_000_000
+#: Longest function fragment allowed in a span name (`delegate.<fragment>`).
+_MAX_SPAN_FUNCTION = 24
 
 
 @dataclass
@@ -149,6 +152,7 @@ def brief_prompt(brief: DelegationBrief) -> str:
 
 def child_usage_limits(
     used_requests: int, parent_limits: UsageLimits | None, max_requests: int,
+    *, used_cost: float | Decimal | None = None, max_cost_usd: float | None = None,
 ) -> UsageLimits:
     """`UsageLimits` for a delegated run that shares the parent's accumulator.
 
@@ -165,20 +169,113 @@ def child_usage_limits(
     delegation that pushes the session over a cost cap must abort exactly as
     the parent would. The parent's own `request_limit`, when tighter than the
     delegation slice, still wins — a delegation may never outrun the session.
+
+    R94-B (#346): `max_cost_usd` is now a *ceiling*, not a receipt. It is
+    translated into the same slice arithmetic — `already spent + allowance`,
+    min'd with the run's own cost limit — so the delegation is stopped before
+    the next request instead of being told afterwards that it overspent.
     """
     cap = max(1, int(max_requests))
     budget = max(0, int(used_requests or 0)) + cap
+    cost_ceiling = cost_slice(used_cost, max_cost_usd)
     if parent_limits is None:
-        return UsageLimits(request_limit=budget)
+        return UsageLimits(request_limit=budget, cost_limit=cost_ceiling)
     parent_cap = parent_limits.request_limit
     if parent_cap is not None and parent_cap > 0:
         budget = min(budget, parent_cap)
-    return replace(parent_limits, request_limit=budget)
+    limits = replace(parent_limits, request_limit=budget)
+    if cost_ceiling is None:
+        return limits
+    parent_cost = parent_limits.cost_limit
+    tighter = cost_ceiling if parent_cost is None else min(parent_cost, cost_ceiling)
+    return replace(limits, cost_limit=tighter)
 
 
 def delegation_slice(used_requests: int, max_requests: int) -> int:
     """The request total a delegation may reach on its own: `used + slice`."""
     return max(0, int(used_requests or 0)) + max(1, int(max_requests))
+
+
+def cost_slice(
+    used_cost: float | Decimal | None, max_cost_usd: float | None,
+) -> Decimal | None:
+    """The cost total a delegation may reach: `already spent + allowance`.
+
+    `None` when no allowance is configured, which is the default and therefore
+    the previous behaviour. Mirrors `delegation_slice`: the delegated run shares
+    the parent's accumulator, so a bare `cost_limit=max_cost_usd` would trip on
+    the parent's spend before the delegation made a single request.
+
+    A non-positive allowance yields `None` rather than a limit the delegation is
+    already over: `max_cost_usd = 0` reads as "unset", and configuration
+    validation rejects negatives at the seam that parses them.
+    """
+    if max_cost_usd is None:
+        return None
+    allowance = Decimal(str(max_cost_usd))
+    if allowance <= 0:
+        return None
+    already = Decimal(str(used_cost)) if used_cost is not None else Decimal('0')
+    return already + allowance
+
+
+def delegation_abort_message(
+    abort_reason: str | None, limits: UsageLimits,
+    used_requests: int, max_requests: int,
+) -> str:
+    """Why a delegation stopped, naming the limit that actually fired (R94-B).
+
+    A pure seam: the tool body used to branch inline on the request path alone,
+    so a cost or token ceiling stopped the delegation and then reported a
+    *request* budget. pydantic-ai's own message names the ceiling it tripped
+    ("...would exceed the `cost_limit` of 0.75"), so that is preferred whenever
+    the message is not about the request limit — the library cannot know about
+    the session-vs-slice distinction, which only `child_usage_limits` makes.
+    """
+    if abort_reason and 'request_limit' not in abort_reason:
+        return (
+            f'delegation aborted: {abort_reason}. Narrow the task, or raise '
+            'the limit that fired ([models].max_cost_usd / '
+            '[models].max_total_tokens / [delegation].max_cost_usd).'
+        )
+    session_cap = limits.request_limit
+    slice_cap = delegation_slice(used_requests, max_requests)
+    if session_cap is not None and session_cap < slice_cap:
+        # The session's own limit bound the delegation, not its slice
+        # (child_usage_limits takes the min) — say which one fired.
+        return (
+            'delegation aborted: the session request limit of '
+            f'{session_cap} was reached before the delegation slice of '
+            f'{max_requests} could be spent. Raise '
+            '[models].request_limit or split the task.'
+        )
+    return (
+        'delegation aborted: exceeded the delegation budget of '
+        f'{max_requests} model requests. Narrow the task and '
+        'delegate again with a tighter question.'
+    )
+
+
+def delegate_span_name(function: str | None) -> str:
+    """The trace span name for a delegation (R94-A #345).
+
+    Every delegation used to be constructed as ``name='delegate'``, so a
+    designer run and a coder run — possibly on different models — produced
+    indistinguishable spans and no consumer could attribute latency or cost per
+    function profile. The name is ``delegate`` when no function was requested
+    and ``delegate.<function>`` otherwise.
+
+    Derived from the fixed function registry only, never from task text: a span
+    name carrying model output would mint a new name per task and defeat the
+    aggregation the name exists for. The sanitiser below is defensive — an
+    unknown function already raises ``ModelRetry`` long before this runs — so a
+    caller that skips that check still cannot emit a wild cardinality value.
+    """
+    if not function:
+        return 'delegate'
+    cleaned = re.sub(r'[^a-z0-9]+', '_', str(function).strip().lower()).strip('_')
+    cleaned = cleaned[:_MAX_SPAN_FUNCTION].strip('_')
+    return f'delegate.{cleaned}' if cleaned else 'delegate'
 
 
 @dataclass(frozen=True)

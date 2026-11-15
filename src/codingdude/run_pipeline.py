@@ -143,15 +143,33 @@ class RunServices:
             )
 
     def usage_limits(self):
-        """Per-run request cap (config `models.request_limit`, default 500).
+        """Per-run ceilings: requests, cost and tokens (R94-B #346).
 
-        Without an explicit limit pydantic-ai applies its library default of
-        50 model requests per run, which kills long agentic sessions with
-        'would exceed the request_limit of 50'.
+        `request_limit` keeps long agentic sessions alive — pydantic-ai's
+        library default of 50 kills them with 'would exceed the request_limit
+        of 50'.
+
+        `cost_limit` / `total_tokens_limit` are the *hard* stop: pydantic-ai
+        checks them before the next request and raises, so money is refused
+        rather than narrated afterwards. Both are None by default, which is
+        exactly the previous behaviour.
+
+        Honest ceiling: `cost_limit` can only be enforced when pydantic-ai can
+        price the model. On an unpriced provider it warns
+        (`CostNotFoundWarning`) and enforces nothing, so `max_total_tokens` is
+        the ceiling that actually holds there.
         """
+        from decimal import Decimal
+
         from pydantic_ai.usage import UsageLimits
 
-        return UsageLimits(request_limit=self._config.models.request_limit)
+        models = self._config.models
+        cost = getattr(models, 'max_cost_usd', None)
+        return UsageLimits(
+            request_limit=models.request_limit,
+            cost_limit=Decimal(str(cost)) if cost is not None else None,
+            total_tokens_limit=getattr(models, 'max_total_tokens', None),
+        )
 
 
 class PromptAssembler:

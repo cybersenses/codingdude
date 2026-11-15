@@ -123,7 +123,36 @@ endpoints must be `https://`.
 | `prompt_cache_messages` | `true` | also cache the growing conversation (main loop only; one-shot agents never do) |
 | `prompt_cache_settings` | `{}` | provider-specific cache settings; takes precedence over `prompt_cache` for that provider |
 | `request_limit` | `500` | max model requests per run (the library default of 50 is too low for agentic sessions) |
+| `max_cost_usd` | *(unset)* | hard per-run USD ceiling, enforced **before** the next request — see [Run ceilings](#run-ceilings) |
+| `max_total_tokens` | *(unset)* | hard per-run token ceiling, enforced **before** the next request |
 | `pricing` | *(unset)* | cost rates — see [pricing](#pricing) |
+
+### Run ceilings
+
+`request_limit` was the only thing ever bounded. A single enormous request, or a
+long run of large ones, was unbounded in tokens and in money. `max_cost_usd` and
+`max_total_tokens` are hard stops: pydantic-ai checks them *before* the next
+request and raises, so the call is refused rather than narrated afterwards. Both
+are unset by default, so an unconfigured install behaves exactly as before.
+
+**Honest ceiling:** `max_cost_usd` can only be enforced when pydantic-ai can
+price the model in use. On an unpriced provider it warns
+(`CostNotFoundWarning`) and enforces *nothing* — it will not protect you there.
+`max_total_tokens` needs no pricing, so it is the ceiling that always holds. Set
+both on a priced model; always set the token one.
+
+Which ceiling owns what:
+
+| Where | Scope | Mechanism |
+|---|---|---|
+| `[models] max_cost_usd` / `max_total_tokens` | one run | `UsageLimits`, checked before each request |
+| `[delegation] max_cost_usd` / `max_requests` | one `delegate` call | a *slice* of the run's spend, same mechanism |
+| `--budget` (Budget Cap) | whole session | the usage ledger in the database, across runs |
+
+They do not disagree: the session cap is the ledger total, the run cap is where a
+call is actually refused, and a delegation gets the remainder it may reach. A
+malformed value in either `[models]` ceiling fails loudly at load rather than
+silently becoming no cap.
 
 ### Prompt caching
 
@@ -188,9 +217,12 @@ github_mirror = true    # mirror tickets/roadmap items to GitHub issues via gh
 
 `max_requests` is a **slice, not a budget of its own**: a delegation may spend
 `max_requests` requests *beyond* what the session already spent, and never more
-than `[models] request_limit` allows overall. Delegated requests and tokens
+than `[models] request_limit` allows overall. `max_cost_usd` works the same way:
+it is the delegation's own allowance *beyond* what the session already spent, so
+it is a ceiling, not a receipt — the call is refused before the money goes out,
+and the abort message names the limit that fired. Delegated requests and tokens
 count against the run that caused them — they appear in the run's usage and its
-limits — and `max_cost_usd` is compared against that one delegation's own cost.
+limits.
 
 ### `[trace]`
 
@@ -235,10 +267,59 @@ how many tokens, how long.
   `otlp_endpoint` at it and set `enabled = true`.
 - Everything is named: `main`, `fix-loop`, `claims-retry`, `claims-auditor`,
   `compaction`, `memory-extraction`, `evaluator`, `planning-reviewer`,
-  `delegate`, `vision-inspector`. Filter spans by agent name to see where the
-  time or the tokens actually went.
+  `vision-inspector`, and each delegation as `delegate.<function>`
+  (`delegate.designer`, `delegate.coder`, …; plain `delegate` when no function
+  was requested). Filter spans by agent name to see where the time or the
+  tokens actually went.
 - `[telemetry]` is **global only** — it lives in `~/.codingdude/config.toml`,
   not in a project `.codingdude.toml`, so one collector serves every project.
+
+#### Viewing traces: OpenLIT as the collector
+
+Traces have no UI of their own — this exports spans to a collector, and you
+need one running. [OpenLIT](https://github.com/openlit/openlit) is the
+self-hosted option that fits the local-only constraint (Apache-2.0, no fee, no
+account):
+
+```bash
+# OpenLIT's default OTLP receiver is :4318 — the same port CodingDude already
+# defaults to, so the endpoint needs no change.
+docker run -d --name openlit -p 3000:3000 -p 4318:4318 \
+  -v openlit-data:/app/data ghcr.io/openlit/openlit:latest
+```
+
+```toml
+[telemetry]
+enabled = true
+otlp_endpoint = "http://127.0.0.1:4318"
+```
+
+Then read traces at `http://127.0.0.1:3000`.
+
+**We deliberately do not use the OpenLIT Python SDK.** `openlit.init()`
+instruments pydantic-ai through the same hooks `logfire.instrument_pydantic_ai()`
+already uses, so running both produces duplicate spans; and only one global
+`TracerProvider` can exist, so the second `set_tracer_provider` is a silent
+no-op. OpenLIT is used strictly as an OTLP receiver: no new dependency, no
+second instrumentation, and logfire stays the single source of spans.
+
+Also not adopted, each for a reason: **Evals** (our evaluator grades against a
+ticket contract, which a generic eval cannot), **Guardrails** (tool policy is
+registry-locked in `functions.py`), **Vault** (a runtime availability
+dependency), **Prompt Hub** (would move prompts out of the repo and break the
+one-shot cacheable-prefix design), and **GPU monitoring** (we do not self-host
+models).
+
+**Cost views are subordinate to the ledger.** OpenLIT computes cost from its own
+pricing database plus `gen_ai.usage.*` span attributes. `DelegatedSpend` →
+`db.session_usage` remains the authoritative spend figure and is what the Budget
+Cap reads. Treat any dashboard cost number as an independent estimate; where it
+disagrees with the ledger, the ledger wins.
+
+Not yet verified: that OpenLIT's dashboard renders spans produced by logfire's
+pydantic-ai instrumentation. They are standard OTLP spans, so it should, but it
+has not been run against a live collector here — start the container and confirm
+before relying on it.
 
 Configuration is read once per worker process, so a change takes effect on the
 next run.

@@ -49,6 +49,12 @@ def _default_config_toml(lineup: ModelLineup) -> str:
         '# Max model requests per run (pydantic-ai default 50 is too low for\n'
         '# long agentic sessions)\n'
         '# request_limit = 500\n'
+        '# Hard per-run ceilings (R94-B). Enforced BEFORE the next request, so\n'
+        '# the call is refused instead of a note added after the spend. Both\n'
+        '# unset by default. max_cost_usd needs a priced model to be\n'
+        '# enforceable; max_total_tokens always is.\n'
+        '# max_cost_usd = 2.00\n'
+        '# max_total_tokens = 2000000\n'
         '# Per-request context compaction + prompt caching (R91): stub oversized\n'
         '# old tool returns before every model request; cache the prompt prefix.\n'
         '# compact_per_request = true\n'
@@ -116,6 +122,15 @@ class ModelLineup:
     # Max model requests per run. pydantic-ai defaults to 50, which a long
     # agentic session exhausts; raise it so long runs aren't cut off.
     request_limit: int = 500
+    # Hard per-run ceilings (R94-B #346). Unlike [delegation].max_cost_usd
+    # these are enforced *before* the next request — pydantic-ai raises, the
+    # call is refused, rather than a note appended after the money is spent.
+    # None = no ceiling, which is the default and the previous behaviour.
+    # `max_cost_usd` can only be enforced when pydantic-ai can price the
+    # model (it warns and enforces nothing otherwise); `max_total_tokens`
+    # needs no pricing, so it is the ceiling that always holds.
+    max_cost_usd: float | None = None
+    max_total_tokens: int | None = None
     # Per-request context compaction (R91 #337): before EVERY model request,
     # when the token estimate crosses `compact_at`, oversized/old tool
     # returns are stubbed (LLM-free; parts never dropped). Set false to
@@ -1061,6 +1076,42 @@ class TelemetryConfig:
     service_name: str = 'codingdude'
 
 
+def _reject_non_positive(value, where: str) -> None:
+    """Shared guard for an optional numeric ceiling (R94-B #346).
+
+    `bool` is rejected explicitly: `True` is an `int` in Python, so a `true`
+    typed into a numeric key would otherwise silently become a ceiling of 1.
+    Strings are rejected too — the same class of config typo (`"false"`,
+    `"500"`) that made `bool("false")` read as True elsewhere in this file.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(
+            f'{where}: must be a positive number or unset; got {value!r}'
+        )
+    if value <= 0:
+        raise ValueError(f'{where}: must be greater than zero; got {value!r}')
+
+
+def validate_optional_cost(value, where: str) -> float | None:
+    """An optional positive USD ceiling for one run (R94-B #346)."""
+    if value is None:
+        return None
+    _reject_non_positive(value, where)
+    return float(value)
+
+
+def validate_optional_tokens(value, where: str) -> int | None:
+    """An optional positive token ceiling for one run (R94-B #346)."""
+    if value is None:
+        return None
+    _reject_non_positive(value, where)
+    if int(value) != value:
+        raise ValueError(
+            f'{where}: must be a whole number of tokens; got {value!r}'
+        )
+    return int(value)
+
+
 def validate_otlp_endpoint(value, where: str) -> str:
     """An http(s) URL for the local OTLP collector.
 
@@ -1224,6 +1275,14 @@ def load_config(home: Path | None = None) -> Config:
             max_tokens=models.get('max_tokens', defaults.models.max_tokens),
             context_limit=models.get('context_limit', defaults.models.context_limit),
             request_limit=models.get('request_limit', defaults.models.request_limit),
+            max_cost_usd=validate_optional_cost(
+                models.get('max_cost_usd', defaults.models.max_cost_usd),
+                where='config.toml [models] max_cost_usd',
+            ),
+            max_total_tokens=validate_optional_tokens(
+                models.get('max_total_tokens', defaults.models.max_total_tokens),
+                where='config.toml [models] max_total_tokens',
+            ),
             compact_per_request=models.get(
                 'compact_per_request', defaults.models.compact_per_request),
             prompt_cache=parse_cache_retention(
