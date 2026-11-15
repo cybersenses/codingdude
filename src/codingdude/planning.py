@@ -180,7 +180,15 @@ def build_planning_toolset(
 
 
 async def review_diff_findings(db, session_id: str, config_home, review_model, thinking: ThinkingSetting | None = None, models=None) -> str:
-    """On-demand review of the Session's working-tree diff (UI 'Run review')."""
+    """On-demand review of the Session's BRANCH diff (UI 'Run review').
+
+    The range is the whole branch against the merge-base, not the working tree
+    alone (R92 #339) — a pre-push review runs exactly when the work is already
+    committed, so a working-tree diff reviewed nothing there. Returns '' for a
+    genuine CLEAN verdict and a loud `REVIEW FAILED — …` string when the pass
+    could not run (see `_review_impl`), so a caller can never read a failure as
+    clean.
+    """
     from .config import config_home as _ch
     from .directives import build_directive_layers
 
@@ -193,7 +201,12 @@ async def review_diff_findings(db, session_id: str, config_home, review_model, t
 
 
 async def _run_review(db, session_id: str, review_model, plan: dict, thinking: ThinkingSetting | None = None, models=None) -> str:
-    """Review pass: diff + plan + directives checklist → findings (or '')."""
+    """Review pass: branch diff + plan + directives checklist → findings.
+
+    '' means CLEAN and nothing else. A pass that could not run returns the loud
+    `REVIEW FAILED — …` string instead (see `_review_impl`), so the empty string
+    is never ambiguous.
+    """
     from .config import config_home
     from .directives import build_directive_layers
 

@@ -457,13 +457,46 @@ def test_a_review_pass_budget_scales_with_the_files_it_must_read():
     The reviewer's tools are per-file reads, so a fixed cap stops a multi-file
     review before it can return a verdict: the fixed 8 aborted this branch's own
     pre-push review (seventeen files) and the gate reported the diff UNREVIEWED.
+    Scaling per file alone was not enough — at a ceiling of 40 the budget stopped
+    growing at sixteen files while the file count did not, so the 33-file R93
+    branch needed 74 and was given 40, and the reviewer produced no verdict
+    again. The ceiling is a spin guard only; `spend_limits` bounds cost.
     """
     from codingdude.limits import review_request_limit
 
     assert review_request_limit(0) == 8
     assert review_request_limit(1) == 10
-    assert review_request_limit(17) == 40  # 8 + 2*17 = 42, capped
-    assert review_request_limit(10_000) == 40
+    assert review_request_limit(17) == 42  # 8 + 2*17 — no longer clipped
+    assert review_request_limit(33) == 74  # the widest branch we have produced
+    assert review_request_limit(56) == 120  # ceiling crossover: 8 + 2*56
+    assert review_request_limit(10_000) == 120
     assert review_request_limit(-3) == 8  # never below the floor
-    budgets = [review_request_limit(n) for n in range(30)]
+    budgets = [review_request_limit(n) for n in range(60)]
     assert budgets == sorted(budgets)  # monotone until the ceiling holds it
+
+
+def test_the_review_budget_can_never_be_exhausted_by_the_reads_it_requires():
+    """The invariant that makes this class of outage self-detecting.
+
+    A review needs about one request per file it reads. If the budget can be
+    smaller than the file count, the reviewer is refused before it can read —
+    the exact failure that the fixed floor and then the ceiling each
+    reintroduced. So the ceiling must sit above any branch size we actually
+    produce, and below its crossover the budget must always cover the reads plus
+    the floor's synthesis turns.
+    """
+    from codingdude.limits import (
+        _REVIEW_REQUEST_CEILING,
+        _REVIEW_REQUEST_FLOOR,
+        _REVIEW_REQUESTS_PER_FILE,
+        review_request_limit,
+    )
+
+    crossover = (_REVIEW_REQUEST_CEILING - _REVIEW_REQUEST_FLOOR) // _REVIEW_REQUESTS_PER_FILE
+    assert crossover >= 40, (
+        f'the review ceiling covers only {crossover}-file branches; this repo has '
+        'produced a 33-file branch, so the guard is back to refusing before the work'
+    )
+    for files in range(crossover + 1):
+        assert review_request_limit(files) >= files + _REVIEW_REQUEST_FLOOR, files
+

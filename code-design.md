@@ -44,7 +44,7 @@ requirements (WHAT/WHY) or technical-design (HOW) artifacts; agents jumped
 from conversation straight to tickets.
 
 **Design (user-chosen: DB-backed like tickets, surfaced in web UI):**
-- Schema (db.py, additive): `prds` (status draft|active|sunset) and
+- Schema (db.py, additive): `prds` (status draft|active|delivered|sunset) and
   `tech_designs` (status draft|approved|superseded, optional `prd_id` FK-ish
   link for requirements traceability). Both workdir-scoped.
 - RoadmapStore: list/create/update/delete for prds + designs; constants
@@ -64,9 +64,11 @@ from conversation straight to tickets.
   supersedes-not-rewrites, hard trade-offs still go to record_decision).
   Positioned explicitly against to-spec/grilling/grill-with-docs.
 
-**Impact:** additive schema (CREATE TABLE IF NOT EXISTS — no migration
-needed); /planning response gains two keys (frontend tolerates absence via
-optional chaining); no existing tool signatures changed.
+**Impact:** additive schema for `tech_designs` (CREATE TABLE IF NOT EXISTS — no
+migration needed). `prds` is no longer purely additive: #351 widened its status
+CHECK, which SQLite cannot ALTER, so `_migrate` rebuilds that one table in place
+(see the R95 section below). /planning response gains two keys (frontend
+tolerates absence via optional chaining); no existing tool signatures changed.
 
 ## GitHub issue auto-mirror (R53) — convention enforced in code
 
@@ -1541,3 +1543,90 @@ has a second consumer yet. `child_usage_limits` and `delegation_abort_message`
 both derive "which limit bound"; they share `delegation_slice` and the abort path
 is pinned by tests on all three branches, so the drift risk is covered rather
 than removed.
+
+## R95 — reviewer budget ceiling and the stale docs it left behind
+
+**Problem:** R94-B scaled the reviewer's request budget with the diff's file
+count but capped it at 40 — a number reached at sixteen files. The reviewer's
+tools are per-file reads, so beyond that the budget stopped growing while the
+file count did not: at ~38+ files the unavoidable reads alone exhaust it and
+`agent.run` aborts, returning the same "reviewer did not run" refusal R94-B
+existed to remove, now with 40 in the message. This repo's own branches sat at
+the cap twice (19 files, 33 files → both clamped to 40 while needing 46 and 74).
+R94-B's own comment condemns "a budget that refuses before the work"; the
+ceiling reintroduced exactly that class, size-blind.
+
+**Design:** treat the request cap as a SPIN guard and nothing else — cost is
+bounded separately by `spend_limits` (cost and token ceilings), so the request
+cap only has to stop a tool-happy reviewer looping inside the 300s timeout. That
+decides the shape: it must sit above any branch this repo actually produces,
+rather than at the first round number.
+
+- `_REVIEW_REQUEST_CEILING` 40 → **120** (the floor plus two per file up to 56
+  files; the widest branch produced here is 33 files, needing 74).
+- The invariant is now pinned by test rather than by comment: below the
+  crossover the budget is always at least one request per file plus the floor,
+  so the reads a review *must* make can never exhaust it — and the test derives
+  the crossover from the constants, so lowering the ceiling again fails with a
+  message naming the 33-file branch it would break. Two properties, not one: the
+  ceiling must exceed real branch sizes, and the budget must be monotone.
+- Residual, documented in the docstring rather than hidden: past 56 files a very
+  wide diff may leave the reviewer under-provisioned. Accepted because it stays
+  visible — the pass fails loudly (`REVIEW FAILED — …`), so the push gate reads
+  the diff as UNREVIEWED instead of publishing it.
+- The zero-file floor is correct rather than a clamp: an empty diff has no file
+  to read. The one degraded path is *indistinguishable at this seam* —
+  `collect_review_diff` returns '' when git cannot answer, which also counts 0 —
+  so the docstring says so explicitly and names why it is not a gate hole
+  (`require_review` keys off `resolve_base`, never this count).
+
+**Three docstrings documented the bugs that were fixed**, found by sweeping after
+the first: `engine.review` still promised "swallows failures and returns \"\""
+(false since #266 — `_review_impl` returns a loud string and `engine.review`
+passes it through, which is what stops a failed review reading as CLEAN);
+`planning.review_diff_findings` said "working-tree diff" (false since R92 #339 —
+it is the whole branch against the merge-base, non-empty exactly when a pre-push
+review runs); `planning._run_review` said "findings (or '')", which is only true
+for a genuine CLEAN. Each was a comment that would teach the next maintainer to
+restore the silent-CLEAN class.
+
+**Coverage check, corrected mid-flight:** the ticket first claimed
+`review_diff_findings` had no covering test. It has no *direct* caller in a test,
+but its contract is pinned transitively by
+`tests/test_review_seam.py::test_reviewer_failure_is_not_reported_as_clean`
+(a raising model through `engine.review` must yield `REVIEW FAILED … UNREVIEWED`).
+The ticket body was rewritten to say that rather than leave an overclaim in the
+tracker — the finding was documentation-only.
+
+**Doc closing-out in the same PR.** PRDs #1/#2 and tech designs #2/#3/#4 each
+carried an H1 in their body duplicating the heading the read path renders —
+including a copy of the status marker, so `[draft]` in the body would have gone
+stale the moment the column flipped. All six now start at their first real
+section, and each gained an as-built section recording: delivered ticket refs,
+which success metrics are test-pinned versus **unmeasured** (M2/M5/M6/M7 need a
+pilot; claiming them would be the overclaim PRD #1 exists to prevent), the
+deferred follow-ups, and every place where shipping overturned the design. The
+material one: tech design #3 said "chat inline cards untouched — packs live in
+the Artifacts tab only", and R87-D (#326) shipped a chat card for artifact packs
+including wireframes (`frontend/src/cards/chatCards.jsx`). #326 wins, recorded in both
+PRD #2 and TD #3.
+
+**Deliberately left open, then closed (#351):** the status column itself.
+`PRD_STATUSES` was (`draft`,`active`,`sunset`) — no state meant "shipped" — so
+flipping a delivered PRD to `sunset` (reads as retired) or `active` (reads as in
+flight) traded one inconsistency for another. #351 added `delivered` as the
+fourth state: the tuple, `list_prds`'s ordering CASE (draft → active →
+delivered → sunset), the `update_prd` docstring, the Planning panel's select and
+the `prds` table's CHECK constraint, which
+`Database._widen_prd_status_check` rebuilds in place because
+`CREATE TABLE IF NOT EXISTS` never widens an existing one. The bodies are closed
+out at that status.
+
+**Sibling left open on purpose (#352).** `DESIGN_STATUSES` has the same gap —
+`draft`/`approved`/`superseded`, no state meaning "shipped" — so tech designs #2,
+#3 and #4 still read `draft` although R80, R85 and R87 are all `done` (TD #4
+even carries "As-built amendments"). Recorded as #352, not fixed here: in that
+vocabulary `approved` (agreed) and "shipped" are independent states, and
+`superseded` is arguably a second axis, so it is a decision rather than a port
+of this change.
+

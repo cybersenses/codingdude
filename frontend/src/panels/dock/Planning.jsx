@@ -21,6 +21,18 @@ import { useSessionData } from '../../store/sessionData'
 // R59 P0: moved verbatim out of App.jsx's DockPanel tab body. Roadmap,
 // tickets, PRDs, tech designs and decisions for the selected project; became
 // the `planning` panel in P2.
+// #351: one entry per PRD status, in lifecycle order. Distinct colours are the
+// point: 'delivered' sharing text-success with 'active' would render a shipped
+// PRD and an in-flight one identically, which is the distinction the status
+// exists to make. Unknown values (a future server status, a hand-edited row)
+// degrade to muted rather than inheriting a neighbouring status's colour.
+const PRD_STATUS_TONE = {
+  draft: 'text-warning',
+  active: 'text-accent',
+  delivered: 'text-success',
+  sunset: 'text-ink-muted',
+}
+
 export function Planning({ workdir }) {
   // R68 (#256): planning data comes from the visibility-gated store, keyed by
   // the workdir — the panel refetches every tick while visible, so tickets
@@ -123,7 +135,7 @@ export function Planning({ workdir }) {
         {data.prds?.map((p) => (
           <div key={p.id} className="flex items-center gap-1 rounded bg-neutral-900 p-1">
             <span
-              className={`min-w-0 flex-1 truncate text-xs ${p.status === 'active' ? 'text-success' : p.status === 'draft' ? 'text-warning' : 'text-ink-muted'}`}
+              className={`min-w-0 flex-1 truncate text-xs ${PRD_STATUS_TONE[p.status] ?? 'text-ink-muted'}`}
               title={p.body}
             >
               #{p.id} {p.title}
@@ -136,6 +148,7 @@ export function Planning({ workdir }) {
             >
               <option value="draft">draft</option>
               <option value="active">active</option>
+              <option value="delivered">delivered</option>
               <option value="sunset">sunset</option>
             </select>
           </div>

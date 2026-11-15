@@ -21,7 +21,7 @@ A PRD answers **WHAT and WHY** — never HOW. It is the parent artifact: roadmap
 2. **Number every requirement** `REQ-<n>` — traceability depends on it. One requirement = one testable behavior.
 3. **Write with `create_prd`** using the skeleton below. Non-goals are mandatory: an unbounded PRD is a wish list.
 4. **Surface open questions** in their own section — never bury them in prose.
-5. Set status `active` (via `update_prd`) once the user confirms the goals/metrics; `sunset` when the product area retires.
+5. Set status `active` (via `update_prd`) once the user confirms the goals/metrics; `delivered` when the work it describes has shipped; `sunset` when the product area retires.
 6. **Feed downstream:** each roadmap item's body cites the REQ ids it delivers; `create_tech_design` takes the PRD's id.
 
 ## Skeleton

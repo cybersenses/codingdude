@@ -1433,3 +1433,14 @@ OpenLIT's `openlit.init()` SDK (competes with `logfire.instrument_pydantic_ai()`
 ## Inconsistency to close
 
 Two cost numbers must never disagree. `DelegatedSpend` → `db.session_usage` is the authoritative spend figure and is what the Budget Cap reads. Any dashboard cost view is an independent estimate; it must be reconciled with, or explicitly subordinate to, the ledger — never presented as a second truth.
+
+## R95 — Reviewer budget ceiling + stale review-path docs (R94 follow-ups)
+**Status:** done
+
+Follow-ups found by reading the code after R94-B #346 shipped the scaled reviewer budget.
+
+**Why:** `review_request_limit` scales with changed files but caps at 40 — reached at 16 files. Reviewer cost is ~1 request per file (per-file read tools), so at ~38+ files the reads alone exhaust the budget and the reviewer returns the *same* "did not run" refusal R94-B was meant to remove, just with a bigger number in it. Our own branches sat at the cap: 19 files -> 46 (clamped 40), 33 files -> 74 (clamped 40). R94-B's own comment condemns "a budget that refuses before the work"; the ceiling reintroduced that class size-blind.
+
+**Also:** three docstrings on the review path still describe pre-fix behaviour and would teach the next maintainer to restore it — `planning.review_diff_findings` ("working-tree diff"), `planning._run_review` ("or ''"), `engine.review` ("swallows failures and returns \"\""). The last one documents exactly the #266 bug class (a reviewer that never ran was indistinguishable from CLEAN).
+
+**Scope:** the ceiling + its invariant test, and the five docstring sites (the three found first, plus `engine.review_diff` and `worker --review` help, found by sweeping). No new seam test: `tests/test_review_seam.py::test_reviewer_failure_is_not_reported_as_clean` already pins "a failed pass is never CLEAN" transitively through `engine.review`, so the gap was documentation only.
