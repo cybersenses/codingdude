@@ -529,29 +529,41 @@ class Engine:
         session_id, created_session = self._ensure_session(session_id, workdir, prompt)
 
         # #301: boot (project scaffold + codegraph index sync — subprocess calls,
-        # so the loop stalled for their whole duration) used to run inline
-        # *after* the drain, serially: the boot time was added to the post-run
-        # tail's wall clock. It now runs in a worker thread concurrently with
-        # the drain. The two touch different state — the tail extracts memory
-        # and audits claims, boot scaffolds and syncs the index — and boot
-        # cannot raise into this frame: `boot_codegraph` converts a dead CLI
-        # into a status dict [probe: boot_codegraph(tmp, runner=raising OSError,
-        # cli_path='codegraph') -> {'status': 'failed', 'reason': 'OSError:
-        # codegraph cli wedged'}], which CODEGRAPH_BOOT reports and `boot_hint`
-        # turns into a prompt hint.
+        # so the loop stalled for their whole duration) and the claims
+        # fingerprint (`git diff HEAD`, also a subprocess) used to run inline
+        # *after* the drain, serially: their time was added to the post-run
+        # tail's wall clock and the loop was blocked while they ran. Both now
+        # run on worker threads, concurrently with each other and with the
+        # drain. Folding the fingerprint into this overlap is safe because it
+        # hashes `git diff HEAD` — tracked modifications only — and the
+        # scaffold creates new files without ever touching an existing one
+        # (scaffold.py's own contract), so the two cannot interfere.
+        # Neither can raise into this frame: `boot_codegraph` converts a dead or
+        # wedged CLI into a status dict and `_boot_project` guards the rest
+        # (probed: an exploding runner yields {'status': 'failed', 'reason':
+        # 'OSError: ...'}; making `codegraph_boot._has_healthy_index` raise the
+        # `PermissionError` an unreadable `.codegraph` would raise — the
+        # unguarded probe a review found — yields the same shape from the
+        # `_boot_project` guard, pinned by a test), while `_diff_fingerprint`
+        # already returns `_DIFF_UNAVAILABLE` instead of raising.
         boot_task = asyncio.create_task(
             asyncio.to_thread(self._boot_project, workdir)
+        )
+        diff_task = asyncio.create_task(
+            asyncio.to_thread(self._diff_fingerprint, workdir)
         )
         try:
             # Wait out the previous turn's background post-run passes so memory
             # extraction lands before this prompt is assembled.
             await self._drain_pending_post_run()
             boot_event = await boot_task
+            diff_before = await diff_task
         except BaseException:
-            # A cancel here must not leave an unretrieved task behind: the
-            # thread itself cannot be interrupted, but detaching the task means
-            # its result (or failure) is dropped instead of never awaited.
+            # A cancel here must not leave unretrieved tasks behind: the threads
+            # themselves cannot be interrupted, but detaching the tasks means
+            # their results (or failures) are dropped instead of never awaited.
             boot_task.cancel()
+            diff_task.cancel()
             raise
 
         boot_event = self._attach_onboarding(boot_event, workdir)
@@ -561,9 +573,8 @@ class Engine:
         # tracked-file diff between now and run end (shell-mediated work).
         # A standing dirty file alone (ROADMAP-by-convention repos) arms
         # nothing — a turn that changed nothing gets no audit. The
-        # fingerprint runs in a thread: a wedged git must stall a worker
-        # thread, not the event loop (review finding on b3817ad).
-        diff_before = await asyncio.to_thread(self._diff_fingerprint, workdir)
+        # fingerprint ran off-loop above (a wedged git must stall a worker
+        # thread, not the event loop — review finding on b3817ad).
         run_touched: list[str] = []
 
         # #297 DE-3: the long-run lane — one container-tier sandbox when
@@ -759,12 +770,28 @@ class Engine:
         turn's post-run tail, so it reads nothing that tail may be writing —
         the onboarding flag is attached afterwards, on the loop
         (`_attach_onboarding`), for exactly that reason.
+
+        Best-effort to the last statement: it is awaited on the run's critical
+        path, so an exception here would kill a run before its first request.
+        `boot_codegraph` already converts CLI failures into a status, but the
+        filesystem probes around it (`_has_healthy_index`, `index_is_stale`)
+        can still raise `OSError`/`PermissionError` on an unreadable
+        `.codegraph`, so the guard below is the belt to that braces — a review
+        found the unguarded path, and the status is what reports it.
         """
         from .codegraph_boot import boot_codegraph
         from .scaffold import ensure_project_scaffold
 
-        scaffold = ensure_project_scaffold(workdir)
-        boot_status = boot_codegraph(workdir)
+        try:
+            scaffold = ensure_project_scaffold(workdir)
+            boot_status = boot_codegraph(workdir)
+        except Exception as exc:  # noqa: BLE001 - boot must never kill a run
+            logger.warning('project boot failed: %s: %s', type(exc).__name__, exc)
+            return {
+                'type': 'CODEGRAPH_BOOT',
+                'status': 'failed',
+                'reason': f'{type(exc).__name__}: {exc}',
+            }
         boot_event: dict = {'type': 'CODEGRAPH_BOOT', 'status': boot_status['status']}
         if boot_status['reason']:
             boot_event['reason'] = boot_status['reason']

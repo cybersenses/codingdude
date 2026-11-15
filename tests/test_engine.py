@@ -87,6 +87,12 @@ async def test_boot_overlaps_the_previous_turn_drain(engine, workdir, monkeypatc
 
     monkeypatch.setattr(engine, '_boot_project', fake_boot)
 
+    def fake_fingerprint(path):
+        seen['fingerprint_thread'] = threading.current_thread()
+        return 'deadbeef'
+
+    monkeypatch.setattr(engine, '_diff_fingerprint', fake_fingerprint)
+
     async def pending_tail():
         seen['overlapped'] = await asyncio.to_thread(boot_started.wait, 5)
 
@@ -98,9 +104,10 @@ async def test_boot_overlaps_the_previous_turn_drain(engine, workdir, monkeypatc
     )
 
     assert seen['overlapped'] is True
-    # asyncio.to_thread parks the call on a worker thread, so a wedged
-    # codegraph CLI stalls that worker instead of the loop.
+    # asyncio.to_thread parks each call on a worker thread, so a wedged
+    # codegraph CLI or git stalls a thread instead of the loop.
     assert seen['thread'] is not threading.current_thread()
+    assert seen['fingerprint_thread'] is not threading.current_thread()
     # The awaited task's result is what the trace reports — proof the overlap
     # did not turn boot into fire-and-forget.
     assert any(
@@ -109,13 +116,37 @@ async def test_boot_overlaps_the_previous_turn_drain(engine, workdir, monkeypatc
     )
 
 
+def test_boot_failure_degrades_instead_of_killing_the_run(engine, workdir, monkeypatch):
+    """#301: boot is awaited on the run's critical path, so a raise inside it
+    would kill the run before its first request.
+
+    `boot_codegraph` converts CLI failures into a status, but the filesystem
+    probes around it (`_has_healthy_index`, `index_is_stale`) can raise
+    `OSError`/`PermissionError` on an unreadable `.codegraph` — a review found
+    that unguarded path, and this pins the guard in `_boot_project` rather than
+    relying on the subprocess seam's own guard.
+    """
+    import codingdude.codegraph_boot as boot_mod
+
+    def unreadable(workdir):
+        raise PermissionError('unreadable .codegraph')
+
+    monkeypatch.setattr(boot_mod, '_has_healthy_index', unreadable)
+
+    event = engine._boot_project(workdir)
+
+    assert event['status'] == 'failed'
+    assert 'PermissionError: unreadable .codegraph' in event['reason']
+
+
 async def test_onboarding_check_runs_after_the_drain(engine, workdir, monkeypatch):
     """#301: the overlap must not reorder what boot reads on the tail's side.
 
     The previous turn's extraction writes the memory store that the onboarding
     decision reads, so that decision is attached on the loop after the drain
-    instead of inside the boot thread. This pins the order, which is the whole
-    reason the check left `_boot_project`.
+    instead of inside the boot thread. The assertion is boot-end < check: an
+    onboarding read *inside* `_boot_project` would land before the boot's own
+    event is returned, which is the reordering this seam exists to prevent.
     """
     order: list[str] = []
 
@@ -123,11 +154,13 @@ async def test_onboarding_check_runs_after_the_drain(engine, workdir, monkeypatc
         order.append('onboarding-check')
         return False
 
+    def fake_boot(path):
+        order.append('boot-start')
+        order.append('boot-end')
+        return {'type': 'CODEGRAPH_BOOT', 'status': 'ok'}
+
     monkeypatch.setattr('codingdude.onboarding.onboarding_needed', fake_onboarding)
-    monkeypatch.setattr(
-        engine, '_boot_project',
-        lambda path: {'type': 'CODEGRAPH_BOOT', 'status': 'ok'},
-    )
+    monkeypatch.setattr(engine, '_boot_project', fake_boot)
 
     async def pending_tail():
         order.append('drain-start')
@@ -138,8 +171,9 @@ async def test_onboarding_check_runs_after_the_drain(engine, workdir, monkeypatc
     await engine.run(prompt='hi', workdir=workdir, model=scripted(say('done')))
 
     # The pipeline asks again when it builds the onboarding directive, so the
-    # assertion is about ordering, not count: no check may run before the drain
-    # closes, because a check inside the boot thread is exactly the reordering
-    # this seam exists to prevent.
-    assert order[:2] == ['drain-start', 'drain-end']
-    assert 'onboarding-check' in order[2:]
+    # assertion is about ordering, not count. Boot and the drain start in
+    # whichever order the scheduler picks (boot is on a thread), so only the
+    # *completions* are compared.
+    assert order.index('boot-end') < order.index('onboarding-check')
+    assert order.index('drain-end') < order.index('onboarding-check')
+    assert 'boot-start' in order and 'drain-start' in order

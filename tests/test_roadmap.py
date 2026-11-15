@@ -112,6 +112,18 @@ def test_ticket_filters_and_edges(store, tmp_path):
     assert store.list_tickets(wd)[0]['blocked_by'] == str(a)  # done sorts last
 
 
+def test_rebuild_refuses_a_table_name_it_did_not_validate(store):
+    """The rebuild interpolates table identifiers (SQL has no parameter for
+    them), so the [a-z_]+ check is the only thing between a caller mistake and
+    arbitrary SQL. Pinned because deleting it would otherwise leave the suite
+    green: the rebuild is only reached by an existing database, and every test
+    above passes a hard-coded name."""
+    with pytest.raises(ValueError, match='refusing to rebuild'):
+        store.db._widen_status_check(
+            'prds; DROP TABLE tickets', 'CHECK (1)', 'CREATE TABLE x (a)'
+        )
+
+
 def test_decision_crud(store, tmp_path):
     wd = str(tmp_path / 'd')
     did = store.create_decision(wd, 'ADR-1: SQLite for planning', 'survives bounces')
@@ -384,14 +396,35 @@ def test_migrated_table_matches_a_fresh_one(
 
     def shape(conn):
         # pragma_table_info(?) is parameterizable, unlike PRAGMA
-        return [
+        columns = [
             (r[1], r[2], r[3], r[4], r[5])
             for r in conn.execute(
                 'SELECT * FROM pragma_table_info(?)', (table,)
             )
         ]
+        # ...but it does not report constraints, and the CHECK is the whole
+        # point of the rebuild: a rebuild that installed the *narrow* CHECK
+        # would compare equal on columns alone. Normalised DDL covers both.
+        ddl = conn.execute(
+            'SELECT sql FROM sqlite_master WHERE type=\'table\' AND name=?',
+            (table,),
+        ).fetchone()[0]
+        # ALTER TABLE ... RENAME re-quotes the table name and drops the space
+        # before the closing paren, so normalise those two cosmetic
+        # differences rather than pinning SQLite's rendering of them.
+        normalised = ' '.join(ddl.replace('"', '').split()).replace(' )', ')')
+        return columns, normalised
 
     assert shape(rebuilt._conn) == shape(fresh._conn)
+    # The last word on it: the widened state the ticket exists for is accepted
+    # by the rebuilt table and the narrow one is not.
+    workdir = str(tmp_path / 'shape-check')
+    store = RoadmapStore(rebuilt)
+    if table == 'prds':
+        assert store.create_prd(workdir, 'p', 'REQ-1', status='delivered')
+    else:
+        assert store.create_design(workdir, 'd', 'how', status='delivered')
+    assert store.list_prds(workdir) + store.list_designs(workdir)
 
 
 

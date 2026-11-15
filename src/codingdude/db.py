@@ -583,8 +583,13 @@ class Database:
         make the rebuild skip itself.
 
         The copy's column list comes from the rebuilt table, so the old shape
-        must be a subset of it — `_migrate` runs its PRAGMA-guarded ALTERs
-        before this, which is what guarantees that for every existing table.
+        must be a subset of it. That is checked, not assumed: a column present
+        in the old table and absent from the new DDL would be copied away
+        silently — the rebuild's whole failure mode is losing document bodies —
+        so the mismatch raises before the copy instead. (`_migrate` runs its
+        own PRAGMA-guarded ALTERs before this, which is what keeps every
+        *existing* table's shape a subset; the check exists for the case where
+        someone later edits `_SCHEMA` and forgets a rebuild DDL.)
 
         `table` is always a module-level literal here, never user input. SQL
         identifiers cannot be parameters, so each statement is built in a named
@@ -625,11 +630,23 @@ class Database:
         # an empty list, which makes the INSERT a syntax error rather than a
         # silently lossy copy (that is how this was caught). parameterized
         # pragma_table_info(?) — PRAGMA itself takes no parameters.
-        columns = ', '.join(
+        new_columns = [
             r['name'] for r in self._conn.execute(
                 'SELECT name FROM pragma_table_info(?)', (rebuilt,)
             )
-        )
+        ]
+        old_columns = [
+            r['name'] for r in self._conn.execute(
+                'SELECT name FROM pragma_table_info(?)', (table,)
+            )
+        ]
+        dropped = [c for c in old_columns if c not in new_columns]
+        if dropped:
+            raise ValueError(
+                f'refusing to rebuild {table}: the new shape has no '
+                f'{", ".join(dropped)} and the copy would discard it'
+            )
+        columns = ', '.join(new_columns)
         copy_rows = f'INSERT INTO {rebuilt} ({columns}) SELECT {columns} FROM {table}'  # nosec B608 - identifier validated at the top of this method
         self._conn.execute(copy_rows)
         self._conn.execute(drop_old)

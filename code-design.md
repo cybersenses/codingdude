@@ -993,8 +993,12 @@ a writer that holds the write lock past `busy_timeout` (17 s in the probe) is by
 definition beyond what a 15 s wait covers, and an explicit `BEGIN` on one connection
 followed by another connection's commit then a write yields
 `SQLITE_BUSY_SNAPSHOT` — immediate, and not helped by a timeout. The second is
-latent rather than live: no code path issues an explicit `BEGIN`, verified by
-searching `src/` for it. The production symptom's disappearance cannot be proven
+latent rather than live: the only explicit `BEGIN` in `src/` is
+`Database._widen_status_check`'s `BEGIN IMMEDIATE` (`db.py`), which exists
+precisely to hold the write lock across the #351/#352 table rebuild — a
+single-connection, startup-time operation, not a second writer racing a commit.
+(That sentence used to read "no code path issues an explicit `BEGIN`, verified by
+searching `src/` for it"; #351 made it false, and this is the correction.) The production symptom's disappearance cannot be proven
 from here; what is proven is that the mechanism which wedged the store is gone and
 now has a regression test.
 
@@ -1629,7 +1633,8 @@ flight) traded one inconsistency for another. #351 added `delivered` as the
 fourth state: the tuple, `list_prds`'s ordering CASE (draft → active →
 delivered → sunset), the `update_prd` docstring, the Planning panel's select and
 the `prds` table's CHECK constraint, which
-`Database._widen_prd_status_check` rebuilds in place because
+`Database._widen_status_check` (then named `_widen_prd_status_check`) rebuilds it
+in place because
 `CREATE TABLE IF NOT EXISTS` never widens an existing one. The bodies are closed
 out at that status.
 
@@ -1662,7 +1667,11 @@ table's DDL is compared against a freshly created one for both tables, so
 hand-written DDL cannot silently drift from `_SCHEMA`. The copy also keeps ids,
 the AUTOINCREMENT sequence and `tech_designs.prd_id` — asserted with
 non-contiguous ids (1 and 7) and one NULL `prd_id`, which a renumbering or
-column-dropping copy could not survive.
+column-dropping copy could not survive. A review added the third detail: the
+copy's column list comes from the *new* shape, so a column present in the old
+table and missing from the rebuild DDL would have been dropped silently — the
+rebuild's whole failure mode. The two column sets are now compared and the
+mismatch raises before the copy, instead of trusting the subset property.
 
 **Frontend, same reasoning as #351.** The inline
 `approved ? success : draft ? warning : muted` ternary rendered any new status as
@@ -1705,6 +1714,27 @@ ordering the serial code had is preserved exactly. `tests/test_engine.py` pins
 both halves: the drain observes boot already in flight (a serial boot cannot pass
 that assertion), boot runs off the loop thread, the awaited result is what the
 trace reports, and no onboarding check may run before the drain closes.
+
+**B, finished in the same breath.** The claims fingerprint (`git diff HEAD`,
+also a subprocess, also previously a second inline `await`) is now its own task
+alongside the boot, so both overlap each other and the drain instead of running
+back-to-back. Safe because the fingerprint hashes *tracked* modifications only
+and the scaffold never modifies an existing file (`scaffold.py`'s stated
+contract), so the two cannot observe each other's work. The token that made this
+worth doing rather than deferring: nothing pinned the fingerprint's off-loop
+move, and the overlap test now does.
+
+**What the review changed here.** Two findings, both real. (1) "boot cannot
+raise" was too strong: `boot_codegraph` guards its subprocess seam, but
+`_has_healthy_index` / `index_is_stale` probe the filesystem unguarded and an
+unreadable `.codegraph` raises `PermissionError` — and this boot is awaited on the
+run's critical path, so that would kill a run before its first request.
+`_boot_project` now converts any exception into a failed status, pinned by
+`test_boot_failure_degrades_instead_of_killing_the_run` (probe: patching
+`_has_healthy_index` to raise yields `{'status': 'failed', 'reason':
+'PermissionError: unreadable .codegraph'}`). (2) The onboarding-ordering test
+passed against the serial code too; it now asserts `boot-end` precedes the
+onboarding read, which the pre-change shape cannot satisfy.
 
 **Not changed, deliberately:** the drain's 300s bound. Bounding it tighter is a
 semantics change (which tails get dropped) that the ticket text defers to

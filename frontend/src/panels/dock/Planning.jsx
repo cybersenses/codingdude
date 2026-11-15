@@ -156,6 +156,13 @@ export function Planning({ workdir }) {
               onChange={(e) => setStatus(api.setPrdStatus, p.id, e.target.value)}
               aria-label={`PRD status for ${p.title}`}
             >
+              {/* An unknown value (future server status, hand-edited row) has
+                  no matching option, so the select would render blank and the
+                  first pick would silently rewrite the row. Showing the raw
+                  value keeps the control honest about what is stored. */}
+              {!(p.status in PRD_STATUS_TONE) && (
+                <option value={p.status}>{p.status}</option>
+              )}
               <option value="draft">draft</option>
               <option value="active">active</option>
               <option value="delivered">delivered</option>
@@ -182,6 +189,11 @@ export function Planning({ workdir }) {
               onChange={(e) => setStatus(api.setDesignStatus, d.id, e.target.value)}
               aria-label={`Design status for ${d.title}`}
             >
+              {/* Same rule as the PRD select above: an unknown stored value
+                  gets its own option instead of a blank control. */}
+              {!(d.status in DESIGN_STATUS_TONE) && (
+                <option value={d.status}>{d.status}</option>
+              )}
               <option value="draft">draft</option>
               <option value="approved">approved</option>
               <option value="delivered">delivered</option>
