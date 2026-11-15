@@ -64,9 +64,11 @@ from conversation straight to tickets.
   supersedes-not-rewrites, hard trade-offs still go to record_decision).
   Positioned explicitly against to-spec/grilling/grill-with-docs.
 
-**Impact:** additive schema (CREATE TABLE IF NOT EXISTS — no migration
-needed); /planning response gains two keys (frontend tolerates absence via
-optional chaining); no existing tool signatures changed.
+**Impact:** additive schema for `tech_designs` (CREATE TABLE IF NOT EXISTS — no
+migration needed). `prds` is no longer purely additive: #351 widened its status
+CHECK, which SQLite cannot ALTER, so `_migrate` rebuilds that one table in place
+(see the R95 section below). /planning response gains two keys (frontend
+tolerates absence via optional chaining); no existing tool signatures changed.
 
 ## GitHub issue auto-mirror (R53) — convention enforced in code
 

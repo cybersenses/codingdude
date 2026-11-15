@@ -80,7 +80,9 @@ def spend_limits(models, request_limit: int | None = None) -> UsageLimits | None
 #: sixteen files while the file count did not, so a wide branch's unavoidable
 #: per-file reads exhausted it and the reviewer failed with no verdict again —
 #: the same outage as the fixed 8, further out [probe: `review_request_limit(33)
-#: == 40` before this change, while the 33-file branch needed 74]. 120 is the
+#: == 40` before this change, while that 33-file branch needed at least 41 (one
+#: read per file plus the floor) — the old ceiling was already short by the
+#: weakest possible reading, before counting any verdict requests]. 120 is the
 #: floor plus two per file up to 56 files, past the widest branch this repo has
 #: produced (33 files, R93).
 _REVIEW_REQUEST_FLOOR = 8
@@ -98,8 +100,11 @@ def review_request_limit(changed_files: int) -> int:
 
     Past the crossover a very wide diff may leave the reviewer
     under-provisioned. That residual is accepted because it is visible: the pass
-    fails loudly (`REVIEW FAILED — …`), never silently clean, so the push gate
-    treats the diff as UNREVIEWED instead of publishing it.
+    fails loudly (`REVIEW FAILED — …`) rather than returning '', and `''` is the
+    only CLEAN signal the push gate can read from a review. (The gate itself
+    never parses that string — `review_gate.require_review` demands a
+    `diff_key`-matched record — so the loud failure protects the *reader*, not
+    the gate.)
 
     Zero changed files yields the floor, which is correct here rather than a
     clamp down to it — an empty diff has no file the reviewer could read. One

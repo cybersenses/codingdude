@@ -302,7 +302,13 @@ def test_list_prds_orders_by_lifecycle_stage(store, tmp_path):
 def test_legacy_prds_table_accepts_delivered(home, store, tmp_path):
     """#351: CREATE TABLE IF NOT EXISTS pins an existing prds CHECK forever, so
     a database created before 'delivered' existed needs an in-place table
-    rebuild. Rows, ids and the AUTOINCREMENT sequence must survive it."""
+    rebuild. Rows, ids and the AUTOINCREMENT sequence must survive it.
+
+    The ids are non-contiguous (1 and 7) on purpose: a rebuild that dropped the
+    id column and let AUTOINCREMENT renumber the copy would produce 1 and 2 and
+    then hand out 3, so this shape can tell preservation from renumbering — the
+    earlier version of this test inserted a single row and could not.
+    """
     wd = str(tmp_path / 'p')
     # A pre-#351 prds table, built the way the old schema declared it.
     store.db._conn.executescript(
@@ -320,23 +326,59 @@ def test_legacy_prds_table_accepts_delivered(home, store, tmp_path):
         );
         """
     )
-    store.db._conn.execute(
-        "INSERT INTO prds (workdir, title, status, body, created_at, updated_at)"
-        " VALUES (?, 'Shipped PRD', 'active', 'REQ-1 kept', 'x', 'x')",
-        (wd,),
-    )
+    for row_id, title in ((1, 'Shipped PRD'), (7, 'Retired PRD')):
+        store.db._conn.execute(
+            "INSERT INTO prds (id, workdir, title, status, body, created_at,"
+            " updated_at) VALUES (?, ?, ?, 'active', 'REQ-1 kept', 'x', 'x')",
+            (row_id, wd, title),
+        )
     store.db._conn.commit()
 
     migrated = RoadmapStore(Database.connect(home))  # reopen: migration runs
 
-    row = migrated.list_prds(wd)[0]
-    assert (row['id'], row['title'], row['status'], row['body']) == (
-        1, 'Shipped PRD', 'active', 'REQ-1 kept',
-    )
+    rows = migrated.list_prds(wd)
+    assert [(r['id'], r['title'], r['body']) for r in rows] == [
+        (1, 'Shipped PRD', 'REQ-1 kept'),
+        (7, 'Retired PRD', 'REQ-1 kept'),
+    ]
     assert migrated.update_prd(wd, 1, status='delivered') is True
-    assert migrated.list_prds(wd)[0]['status'] == 'delivered'
-    # The sequence continued past the copied row instead of reusing id 1.
-    assert migrated.create_prd(wd, 'Next PRD') == 2
+    assert [r['status'] for r in migrated.list_prds(wd)] == ['active', 'delivered']
+    # The sequence continued past the highest copied id instead of reusing it.
+    assert migrated.create_prd(wd, 'Next PRD') == 8
+
+
+def test_migrated_prds_table_matches_a_fresh_one(home, store, tmp_path):
+    """The rebuild hand-writes the prds DDL, so a column added to `_SCHEMA`
+    later could silently be dropped for anyone upgrading from a pre-#351
+    database. This compares the rebuilt table against a fresh one, so that
+    drift fails here instead of in the field."""
+    store.db._conn.executescript(
+        """
+        DROP TABLE prds;
+        CREATE TABLE prds (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workdir TEXT NOT NULL,
+            title TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'draft'
+                CHECK (status IN ('draft', 'active', 'sunset')),
+            body TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        """
+    )
+    store.db._conn.commit()
+    rebuilt = RoadmapStore(Database.connect(home)).db
+
+    fresh = Database.connect(tmp_path / 'fresh-home')
+
+    def shape(conn):
+        return [
+            (r[1], r[2], r[3], r[4], r[5])
+            for r in conn.execute('PRAGMA table_info(prds)')
+        ]
+
+    assert shape(rebuilt._conn) == shape(fresh._conn)
 
 
 def test_design_store_crud_and_prd_link(store, tmp_path):

@@ -247,6 +247,25 @@ CREATE TABLE IF NOT EXISTS tech_designs (
 );
 """
 
+# #351: prds gained a 'delivered' status. `_SCHEMA` above declares the widened
+# CHECK for a fresh database; these two constants are the same constraint for a
+# database created before it existed — `_PRD_STATUS_CHECK` is what the guard
+# compares against, and `_PRD_REBUILD_DDL` installs it by rebuilding the table.
+_PRD_STATUS_CHECK = (
+    "CHECK (status IN ('draft', 'active', 'delivered', 'sunset'))"
+)
+_PRD_REBUILD_DDL = (
+    'CREATE TABLE prds_rebuilt ('
+    ' id INTEGER PRIMARY KEY AUTOINCREMENT,'
+    ' workdir TEXT NOT NULL,'
+    ' title TEXT NOT NULL,'
+    " status TEXT NOT NULL DEFAULT 'draft'"
+    " CHECK (status IN ('draft', 'active', 'delivered', 'sunset')),"
+    " body TEXT NOT NULL DEFAULT '',"
+    ' created_at TEXT NOT NULL,'
+    ' updated_at TEXT NOT NULL)'
+)
+
 
 def utc_now_iso() -> str:
     """Current UTC time as an ISO-8601 string; the canonical timestamp
@@ -434,10 +453,13 @@ class Database:
         self._local.conn = conn
 
     def _migrate(self) -> None:
-        """Add columns introduced after a database was created (R3).
+        """Bring an existing database up to the current schema (R3).
 
-        CREATE TABLE IF NOT EXISTS won't alter existing databases, so new
-        sessions-table columns are added here, guarded by a PRAGMA check.
+        `CREATE TABLE IF NOT EXISTS` won't alter existing databases, so new
+        columns are added here, guarded by a PRAGMA check. A constraint that
+        cannot be ALTERed (the `prds` status CHECK, #351) is handled by a table
+        rebuild in the same pass. This method owns the only COMMIT on this
+        path — the helpers it calls leave the transaction open on purpose.
         """
         existing = {
             r['name'] for r in self._conn.execute('PRAGMA table_info(sessions)')
@@ -525,43 +547,39 @@ class Database:
         an existing table and SQLite cannot ALTER a CHECK, so the only way to
         widen it is the documented table rebuild: create, copy, drop, rename.
         Rows, ids and the AUTOINCREMENT sequence carry over unchanged; the
-        prune of the old table is what would lose PRD bodies, so the whole
-        swap runs in one transaction.
+        prune of the old table is what would lose PRD bodies, so the swap opens
+        one transaction when the caller has none.
+
+        The guard compares the exact widened CHECK text rather than the word
+        'delivered', so an unrelated mention in this table's DDL (a future
+        `delivered_at` column) cannot make the rebuild skip itself.
+        The caller owns the COMMIT (`_migrate` is the only one). No rollback is
+        handled here on purpose: every statement below runs through
+        `_Connection.execute`, which rolls back and re-raises, and a second
+        `rollback()` in this frame could replace the original error with its
+        own — the masking `_rollback_quietly` exists to prevent.
         """
         row = self._conn.execute(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name='prds'"
         ).fetchone()
-        if row is None or 'delivered' in row[0]:
+        if row is None or _PRD_STATUS_CHECK in row[0]:
             return
         if not self._conn.in_transaction:
             self._conn.execute('BEGIN IMMEDIATE')
-        try:
-            # DROP first: an earlier interrupted run must not leave the copy
-            # table behind for CREATE to trip over.
-            self._conn.execute('DROP TABLE IF EXISTS prds_rebuilt')
-            self._conn.execute(
-                'CREATE TABLE prds_rebuilt ('
-                ' id INTEGER PRIMARY KEY AUTOINCREMENT,'
-                ' workdir TEXT NOT NULL,'
-                ' title TEXT NOT NULL,'
-                " status TEXT NOT NULL DEFAULT 'draft'"
-                " CHECK (status IN ('draft', 'active', 'delivered', 'sunset')),"
-                " body TEXT NOT NULL DEFAULT '',"
-                ' created_at TEXT NOT NULL,'
-                ' updated_at TEXT NOT NULL)'
-            )
-            self._conn.execute(
-                'INSERT INTO prds_rebuilt'
-                ' (id, workdir, title, status, body, created_at, updated_at)'
-                ' SELECT id, workdir, title, status, body, created_at, updated_at'
-                ' FROM prds'
-            )
-            self._conn.execute('DROP TABLE prds')
-            self._conn.execute('ALTER TABLE prds_rebuilt RENAME TO prds')
-        except BaseException:
-            if self._conn.in_transaction:
-                self._conn.rollback()
-            raise
+        # Belt-and-braces, not a fix for an observed state: SQLite rolls DDL
+        # back with the transaction, so an interrupted earlier attempt cannot
+        # leave a copy table behind. A stray name would otherwise fail the
+        # CREATE below with an error that says nothing about this migration.
+        self._conn.execute('DROP TABLE IF EXISTS prds_rebuilt')
+        self._conn.execute(_PRD_REBUILD_DDL)
+        self._conn.execute(
+            'INSERT INTO prds_rebuilt'
+            ' (id, workdir, title, status, body, created_at, updated_at)'
+            ' SELECT id, workdir, title, status, body, created_at, updated_at'
+            ' FROM prds'
+        )
+        self._conn.execute('DROP TABLE prds')
+        self._conn.execute('ALTER TABLE prds_rebuilt RENAME TO prds')
 
     def _commit(self) -> None:
         """Commit this thread's connection.
