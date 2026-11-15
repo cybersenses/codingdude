@@ -1435,7 +1435,7 @@ OpenLIT's `openlit.init()` SDK (competes with `logfire.instrument_pydantic_ai()`
 Two cost numbers must never disagree. `DelegatedSpend` → `db.session_usage` is the authoritative spend figure and is what the Budget Cap reads. Any dashboard cost view is an independent estimate; it must be reconciled with, or explicitly subordinate to, the ledger — never presented as a second truth.
 
 ## R95 — Reviewer budget ceiling + stale review-path docs (R94 follow-ups)
-**Status:** open
+**Status:** done
 
 Follow-ups found by reading the code after R94-B #346 shipped the scaled reviewer budget.
 
