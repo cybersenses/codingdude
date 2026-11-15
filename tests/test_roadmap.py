@@ -19,6 +19,7 @@ import subprocess
 
 import pytest
 
+from codingdude.db import Database
 from codingdude.roadmap import RoadmapStore, build_roadmap_toolset
 from codingdude.server import create_app
 
@@ -273,6 +274,71 @@ def test_prd_store_crud(store, tmp_path):
     assert store.list_prds(wd) == []
 
 
+def test_prd_delivered_status_roundtrip(store, tmp_path):
+    """#351: a shipped PRD gets a state that says so. Closing a delivered PRD
+    out as 'sunset' claims it retired, 'active' claims it is still in flight,
+    and 'draft' claims it was never written — all three misdescribe it."""
+    wd = str(tmp_path / 'p')
+    pid = store.create_prd(wd, 'Editor revamp', 'REQ-1', status='delivered')
+    assert store.list_prds(wd)[0]['status'] == 'delivered'
+    assert store.update_prd(wd, pid, status='active') is True
+    assert store.list_prds(wd)[0]['status'] == 'active'
+    assert store.update_prd(wd, pid, status='delivered') is True
+    assert store.list_prds(wd)[0]['status'] == 'delivered'
+
+
+def test_list_prds_orders_by_lifecycle_stage(store, tmp_path):
+    """The list reads as a to-do order: what needs writing, what is in flight,
+    what shipped, what was retired. The expected order comes from the PRD
+    lifecycle, not from the ordering SQL it exercises."""
+    wd = str(tmp_path / 'p')
+    for status in ('sunset', 'delivered', 'draft', 'active'):
+        store.create_prd(wd, f'PRD {status}', '', status=status)
+    assert [p['status'] for p in store.list_prds(wd)] == [
+        'draft', 'active', 'delivered', 'sunset',
+    ]
+
+
+def test_legacy_prds_table_accepts_delivered(home, store, tmp_path):
+    """#351: CREATE TABLE IF NOT EXISTS pins an existing prds CHECK forever, so
+    a database created before 'delivered' existed needs an in-place table
+    rebuild. Rows, ids and the AUTOINCREMENT sequence must survive it."""
+    wd = str(tmp_path / 'p')
+    # A pre-#351 prds table, built the way the old schema declared it.
+    store.db._conn.executescript(
+        """
+        DROP TABLE prds;
+        CREATE TABLE prds (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workdir TEXT NOT NULL,
+            title TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'draft'
+                CHECK (status IN ('draft', 'active', 'sunset')),
+            body TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        """
+    )
+    store.db._conn.execute(
+        "INSERT INTO prds (workdir, title, status, body, created_at, updated_at)"
+        " VALUES (?, 'Shipped PRD', 'active', 'REQ-1 kept', 'x', 'x')",
+        (wd,),
+    )
+    store.db._conn.commit()
+
+    migrated = RoadmapStore(Database.connect(home))  # reopen: migration runs
+
+    row = migrated.list_prds(wd)[0]
+    assert (row['id'], row['title'], row['status'], row['body']) == (
+        1, 'Shipped PRD', 'active', 'REQ-1 kept',
+    )
+    assert migrated.update_prd(wd, 1, status='delivered') is True
+    assert migrated.list_prds(wd)[0]['status'] == 'delivered'
+    # The sequence continued past the copied row instead of reusing id 1.
+    assert migrated.create_prd(wd, 'Next PRD') == 2
+
+
 def test_design_store_crud_and_prd_link(store, tmp_path):
     wd = str(tmp_path / 'd')
     pid = store.create_prd(wd, 'PRD', 'REQ-1')
@@ -319,6 +385,21 @@ async def test_prd_and_design_agent_tools(store, tmp_path):
     overview = await tools['list_planning'].function()
     assert '# PRDs' in overview and 'Editor revamp' in overview
     assert '# Tech designs' in overview and 'TDD: pipeline' in overview
+
+
+@pytest.mark.asyncio
+async def test_update_prd_tool_accepts_delivered(store, tmp_path):
+    """#351 at the agent seam: the tool an agent uses to close a PRD out must
+    offer the honest word, and its rejection message must name it."""
+    wd = str(tmp_path / 'tools')
+    tools = build_roadmap_toolset(store, wd).tools
+    await tools['create_prd'].function('Shipped', 'REQ-1')
+
+    assert await tools['update_prd'].function(1, status='delivered') == 'PRD #1 updated'
+    assert '[delivered]' in await tools['read_prd'].function(1)
+
+    with pytest.raises(ValueError, match='delivered'):
+        await tools['update_prd'].function(1, status='shipped')
 
 
 def test_prd_design_endpoints_flow(client, tmp_path):
@@ -374,3 +455,23 @@ def test_prd_design_endpoints_flow(client, tmp_path):
     assert c.delete(f'/planning/designs/{did2}', params={'workdir': wd},
                     headers=h).json()['deleted'] is True
     assert c.get('/planning', params={'workdir': wd}, headers=h).json()['prds'] == []
+
+
+def test_prd_delivered_status_endpoint(client, tmp_path):
+    """#351 at the HTTP seam: the UI's status select must be able to send
+    'delivered', and an unknown status must still be refused with a 422."""
+    c, token = client
+    h = {'Authorization': f'Bearer {token}'}
+    wd = tmp_path / 'prd-delivered'
+    wd.mkdir()
+    wd = str(wd)
+
+    pid = c.post('/planning/prds', params={'workdir': wd},
+                 json={'title': 'PRD', 'body': 'REQ-1'}, headers=h).json()['id']
+    assert c.put(f'/planning/prds/{pid}', params={'workdir': wd},
+                 json={'status': 'delivered'}, headers=h).status_code == 200
+    assert c.get('/planning', params={'workdir': wd},
+                 headers=h).json()['prds'][0]['status'] == 'delivered'
+    assert c.post('/planning/prds', params={'workdir': wd},
+                  json={'title': 'x', 'status': 'shipped'},
+                  headers=h).status_code == 422

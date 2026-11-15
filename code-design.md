@@ -44,7 +44,7 @@ requirements (WHAT/WHY) or technical-design (HOW) artifacts; agents jumped
 from conversation straight to tickets.
 
 **Design (user-chosen: DB-backed like tickets, surfaced in web UI):**
-- Schema (db.py, additive): `prds` (status draft|active|sunset) and
+- Schema (db.py, additive): `prds` (status draft|active|delivered|sunset) and
   `tech_designs` (status draft|approved|superseded, optional `prd_id` FK-ish
   link for requirements traceability). Both workdir-scoped.
 - RoadmapStore: list/create/update/delete for prds + designs; constants
@@ -1606,12 +1606,25 @@ pilot; claiming them would be the overclaim PRD #1 exists to prevent), the
 deferred follow-ups, and every place where shipping overturned the design. The
 material one: tech design #3 said "chat inline cards untouched — packs live in
 the Artifacts tab only", and R87-D (#326) shipped a chat card for artifact packs
-including wireframes (`frontend/src/chatCards.jsx`). #326 wins, recorded in both
+including wireframes (`frontend/src/cards/chatCards.jsx`). #326 wins, recorded in both
 PRD #2 and TD #3.
 
-**Deliberately left open:** the status column itself. `PRD_STATUSES` is
-(`draft`,`active`,`sunset`) — no state means "shipped" — so flipping a delivered
-PRD to `sunset` (reads as retired) or `active` (reads as in flight) would trade
-one inconsistency for another. Tracked as #351 with the options weighed; the
-bodies are closed out meanwhile.
+**Deliberately left open, then closed (#351):** the status column itself.
+`PRD_STATUSES` was (`draft`,`active`,`sunset`) — no state meant "shipped" — so
+flipping a delivered PRD to `sunset` (reads as retired) or `active` (reads as in
+flight) traded one inconsistency for another. #351 added `delivered` as the
+fourth state: the tuple, `list_prds`'s ordering CASE (draft → active →
+delivered → sunset), the `update_prd` docstring, the Planning panel's select and
+the `prds` table's CHECK constraint, which
+`Database._widen_prd_status_check` rebuilds in place because
+`CREATE TABLE IF NOT EXISTS` never widens an existing one. The bodies are closed
+out at that status.
+
+**Sibling left open on purpose (#352).** `DESIGN_STATUSES` has the same gap —
+`draft`/`approved`/`superseded`, no state meaning "shipped" — so tech designs #2,
+#3 and #4 still read `draft` although R80, R85 and R87 are all `done` (TD #4
+even carries "As-built amendments"). Recorded as #352, not fixed here: in that
+vocabulary `approved` (agreed) and "shipped" are independent states, and
+`superseded` is arguably a second axis, so it is a decision rather than a port
+of this change.
 

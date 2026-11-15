@@ -229,7 +229,7 @@ CREATE TABLE IF NOT EXISTS prds (
     workdir TEXT NOT NULL,
     title TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'draft'
-        CHECK (status IN ('draft', 'active', 'sunset')),
+        CHECK (status IN ('draft', 'active', 'delivered', 'sunset')),
     body TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -514,7 +514,54 @@ class Database:
             self._conn.execute(
                 'ALTER TABLE runs ADD COLUMN long_run TEXT'
             )
+        self._widen_prd_status_check()
         self._commit()
+
+    def _widen_prd_status_check(self) -> None:
+        """#351: add 'delivered' to the prds status CHECK.
+
+        A shipped PRD needs a state that says so — 'sunset' reads as retired
+        and 'active' as in flight. `CREATE TABLE IF NOT EXISTS` never rewrites
+        an existing table and SQLite cannot ALTER a CHECK, so the only way to
+        widen it is the documented table rebuild: create, copy, drop, rename.
+        Rows, ids and the AUTOINCREMENT sequence carry over unchanged; the
+        prune of the old table is what would lose PRD bodies, so the whole
+        swap runs in one transaction.
+        """
+        row = self._conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='prds'"
+        ).fetchone()
+        if row is None or 'delivered' in row[0]:
+            return
+        if not self._conn.in_transaction:
+            self._conn.execute('BEGIN IMMEDIATE')
+        try:
+            # DROP first: an earlier interrupted run must not leave the copy
+            # table behind for CREATE to trip over.
+            self._conn.execute('DROP TABLE IF EXISTS prds_rebuilt')
+            self._conn.execute(
+                'CREATE TABLE prds_rebuilt ('
+                ' id INTEGER PRIMARY KEY AUTOINCREMENT,'
+                ' workdir TEXT NOT NULL,'
+                ' title TEXT NOT NULL,'
+                " status TEXT NOT NULL DEFAULT 'draft'"
+                " CHECK (status IN ('draft', 'active', 'delivered', 'sunset')),"
+                " body TEXT NOT NULL DEFAULT '',"
+                ' created_at TEXT NOT NULL,'
+                ' updated_at TEXT NOT NULL)'
+            )
+            self._conn.execute(
+                'INSERT INTO prds_rebuilt'
+                ' (id, workdir, title, status, body, created_at, updated_at)'
+                ' SELECT id, workdir, title, status, body, created_at, updated_at'
+                ' FROM prds'
+            )
+            self._conn.execute('DROP TABLE prds')
+            self._conn.execute('ALTER TABLE prds_rebuilt RENAME TO prds')
+        except BaseException:
+            if self._conn.in_transaction:
+                self._conn.rollback()
+            raise
 
     def _commit(self) -> None:
         """Commit this thread's connection.

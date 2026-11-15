@@ -46,7 +46,9 @@ def _mirror() -> GitHubMirror:
 
 ROADMAP_STATUSES = ('open', 'in_progress', 'done')
 TICKET_STATUSES = ('todo', 'in_progress', 'done')
-PRD_STATUSES = ('draft', 'active', 'sunset')
+# #351: 'delivered' is the shipped state. Without it, closing out a shipped
+# PRD has to claim it was retired ('sunset') or in flight ('active').
+PRD_STATUSES = ('draft', 'active', 'delivered', 'sunset')
 DESIGN_STATUSES = ('draft', 'approved', 'superseded')
 
 
@@ -316,7 +318,7 @@ class RoadmapStore:
         rows = self.db._conn.execute(
             'SELECT * FROM prds WHERE workdir = ?'
             " ORDER BY CASE status WHEN 'draft' THEN 0 WHEN 'active' THEN 1"
-            " ELSE 2 END, id",
+            " WHEN 'delivered' THEN 2 WHEN 'sunset' THEN 3 ELSE 4 END, id",
             (workdir,),
         ).fetchall()
         return [dict(r) for r in rows]
@@ -529,7 +531,7 @@ def build_roadmap_toolset(
         return f'PRD #{pid} created: {title}'
 
     async def update_prd(prd_id: int, status: str | None = None, body: str | None = None) -> str:
-        """Update a PRD ('draft'|'active'|'sunset') and/or its full body. Read it first via list_planning + read_prd so you merge, not clobber, the body."""
+        """Update a PRD ('draft'|'active'|'delivered'|'sunset') and/or its full body. Read it first via list_planning + read_prd so you merge, not clobber, the body."""
         fields: dict = {}
         if status is not None:
             if status not in PRD_STATUSES:

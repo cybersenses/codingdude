@@ -123,7 +123,7 @@ export function Planning({ workdir }) {
         {data.prds?.map((p) => (
           <div key={p.id} className="flex items-center gap-1 rounded bg-neutral-900 p-1">
             <span
-              className={`min-w-0 flex-1 truncate text-xs ${p.status === 'active' ? 'text-success' : p.status === 'draft' ? 'text-warning' : 'text-ink-muted'}`}
+              className={`min-w-0 flex-1 truncate text-xs ${p.status === 'active' || p.status === 'delivered' ? 'text-success' : p.status === 'draft' ? 'text-warning' : 'text-ink-muted'}`}
               title={p.body}
             >
               #{p.id} {p.title}
@@ -136,6 +136,7 @@ export function Planning({ workdir }) {
             >
               <option value="draft">draft</option>
               <option value="active">active</option>
+              <option value="delivered">delivered</option>
               <option value="sunset">sunset</option>
             </select>
           </div>

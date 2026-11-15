@@ -96,7 +96,7 @@ export interface DesignDecision {
 export interface Prd {
   id: number
   title: string
-  status: 'draft' | 'active' | 'sunset'
+  status: 'draft' | 'active' | 'delivered' | 'sunset'
   body: string
   updated_at: string
 }
