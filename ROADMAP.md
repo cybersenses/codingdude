@@ -1443,4 +1443,4 @@ Follow-ups found by reading the code after R94-B #346 shipped the scaled reviewe
 
 **Also:** three docstrings on the review path still describe pre-fix behaviour and would teach the next maintainer to restore it — `planning.review_diff_findings` ("working-tree diff"), `planning._run_review` ("or ''"), `engine.review` ("swallows failures and returns \"\""). The last one documents exactly the #266 bug class (a reviewer that never ran was indistinguishable from CLEAN).
 
-**Scope:** the ceiling + its invariant test, the three docstrings, and the missing seam test that a failed review never renders as CLEAN.
+**Scope:** the ceiling + its invariant test, and the five docstring sites (the three found first, plus `engine.review_diff` and `worker --review` help, found by sweeping). No new seam test: `tests/test_review_seam.py::test_reviewer_failure_is_not_reported_as_clean` already pins "a failed pass is never CLEAN" transitively through `engine.review`, so the gap was documentation only.
