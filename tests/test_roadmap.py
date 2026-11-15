@@ -29,6 +29,36 @@ def store(db):
     return RoadmapStore(db)
 
 
+_LEGACY_DESIGN_DDL = """
+DROP TABLE tech_designs;
+CREATE TABLE tech_designs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workdir TEXT NOT NULL,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'draft'
+        CHECK (status IN ('draft', 'approved', 'superseded')),
+    body TEXT NOT NULL DEFAULT '',
+    prd_id INTEGER,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+"""
+
+_LEGACY_PRD_DDL = """
+DROP TABLE prds;
+CREATE TABLE prds (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workdir TEXT NOT NULL,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'draft'
+        CHECK (status IN ('draft', 'active', 'sunset')),
+    body TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+"""
+
+
 def _git_init(path):
     subprocess.run(['git', 'init', '-q'], cwd=path, check=True)
     subprocess.run(['git', 'config', 'user.email', 't@t'], cwd=path, check=True)
@@ -80,6 +110,57 @@ def test_ticket_filters_and_edges(store, tmp_path):
     assert [t['title'] for t in store.list_tickets(wd, status='todo')] == ['second']
     assert [t['title'] for t in store.list_tickets(wd, status='done')] == ['first']
     assert store.list_tickets(wd)[0]['blocked_by'] == str(a)  # done sorts last
+
+
+def test_rebuild_refuses_a_table_name_it_did_not_validate(store):
+    """The rebuild interpolates table identifiers (SQL has no parameter for
+    them), so the [a-z_]+ check is the only thing between a caller mistake and
+    arbitrary SQL. Pinned because deleting it would otherwise leave the suite
+    green: the rebuild is only reached by an existing database, and every test
+    above passes a hard-coded name."""
+    with pytest.raises(ValueError, match='refusing to rebuild'):
+        store.db._widen_status_check(
+            'prds; DROP TABLE tickets', 'CHECK (1)', 'CREATE TABLE x (a)'
+        )
+
+
+def test_a_refused_rebuild_leaves_no_transaction_or_copy_table(store):
+    """The column check refuses with a plain Python raise, so it never travels
+    through `_Connection.execute`'s rollback shim ? and `_migrate`'"'"'s COMMIT is
+    not reached on that path.
+
+    Left open, the `BEGIN IMMEDIATE` would hold a write lock for the life of the
+    process (the R57 mode the wrapper exists to prevent) and the half-built
+    `<table>_rebuilt` would be committed by any later write on this connection.
+    """
+    from codingdude.db import _DESIGN_REBUILD_DDL, _DESIGN_STATUS_CHECK
+
+    store.db._conn.executescript(_LEGACY_DESIGN_DDL)
+    # A column the rebuild DDL does not declare: the copy would discard it.
+    store.db._conn.execute('ALTER TABLE tech_designs ADD COLUMN reviewer TEXT')
+    store.db._conn.execute(
+        "INSERT INTO tech_designs (workdir, title, status, body, prd_id,"
+        " created_at, updated_at, reviewer) VALUES ('w', 'kept', 'approved',"
+        " 'body kept', NULL, 'x', 'x', 'priya')"
+    )
+    store.db._conn.commit()
+
+    with pytest.raises(ValueError, match='would discard it'):
+        store.db._widen_status_check(
+            'tech_designs', _DESIGN_STATUS_CHECK, _DESIGN_REBUILD_DDL
+        )
+
+    assert store.db._conn.in_transaction is False
+    leftover = store.db._conn.execute(
+        "SELECT count(*) FROM sqlite_master WHERE name = 'tech_designs_rebuilt'"
+    ).fetchone()[0]
+    assert leftover == 0
+    # The refusal left the data exactly as it was, junk column included.
+    rows = store.list_designs('w')
+    assert [(r['title'], r['body']) for r in rows] == [('kept', 'body kept')]
+    assert store.db._conn.execute(
+        'SELECT reviewer FROM tech_designs'
+    ).fetchone()[0] == 'priya'
 
 
 def test_decision_crud(store, tmp_path):
@@ -311,21 +392,7 @@ def test_legacy_prds_table_accepts_delivered(home, store, tmp_path):
     """
     wd = str(tmp_path / 'p')
     # A pre-#351 prds table, built the way the old schema declared it.
-    store.db._conn.executescript(
-        """
-        DROP TABLE prds;
-        CREATE TABLE prds (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            workdir TEXT NOT NULL,
-            title TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'draft'
-                CHECK (status IN ('draft', 'active', 'sunset')),
-            body TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        );
-        """
-    )
+    store.db._conn.executescript(_LEGACY_PRD_DDL)
     for row_id, title in ((1, 'Shipped PRD'), (7, 'Retired PRD')):
         store.db._conn.execute(
             "INSERT INTO prds (id, workdir, title, status, body, created_at,"
@@ -347,38 +414,58 @@ def test_legacy_prds_table_accepts_delivered(home, store, tmp_path):
     assert migrated.create_prd(wd, 'Next PRD') == 8
 
 
-def test_migrated_prds_table_matches_a_fresh_one(home, store, tmp_path):
-    """The rebuild hand-writes the prds DDL, so a column added to `_SCHEMA`
-    later could silently be dropped for anyone upgrading from a pre-#351
+@pytest.mark.parametrize(
+    ('table', 'legacy_ddl'),
+    [('prds', _LEGACY_PRD_DDL), ('tech_designs', _LEGACY_DESIGN_DDL)],
+)
+def test_migrated_table_matches_a_fresh_one(
+    home, store, tmp_path, table, legacy_ddl
+):
+    """The rebuild hand-writes each table's DDL, so a column added to `_SCHEMA`
+    later could silently be dropped for anyone upgrading from a pre-#351/#352
     database. This compares the rebuilt table against a fresh one, so that
-    drift fails here instead of in the field."""
-    store.db._conn.executescript(
-        """
-        DROP TABLE prds;
-        CREATE TABLE prds (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            workdir TEXT NOT NULL,
-            title TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'draft'
-                CHECK (status IN ('draft', 'active', 'sunset')),
-            body TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        );
-        """
-    )
+    drift fails here instead of in the field. Both tables are covered because
+    #352 moved the rebuild onto a shared seam — a table-agnostic copy is
+    exactly the kind of change that can fit one table and miss the other."""
+    store.db._conn.executescript(legacy_ddl)
     store.db._conn.commit()
     rebuilt = RoadmapStore(Database.connect(home)).db
 
     fresh = Database.connect(tmp_path / 'fresh-home')
 
     def shape(conn):
-        return [
+        # pragma_table_info(?) is parameterizable, unlike PRAGMA
+        columns = [
             (r[1], r[2], r[3], r[4], r[5])
-            for r in conn.execute('PRAGMA table_info(prds)')
+            for r in conn.execute(
+                'SELECT * FROM pragma_table_info(?)', (table,)
+            )
         ]
+        # ...but it does not report constraints, and the CHECK is the whole
+        # point of the rebuild: a rebuild that installed the *narrow* CHECK
+        # would compare equal on columns alone. Normalised DDL covers both.
+        ddl = conn.execute(
+            'SELECT sql FROM sqlite_master WHERE type=\'table\' AND name=?',
+            (table,),
+        ).fetchone()[0]
+        # ALTER TABLE ... RENAME re-quotes the table name and drops the space
+        # before the closing paren, so normalise those two cosmetic
+        # differences rather than pinning SQLite's rendering of them.
+        normalised = ' '.join(ddl.replace('"', '').split()).replace(' )', ')')
+        return columns, normalised
 
     assert shape(rebuilt._conn) == shape(fresh._conn)
+    # The last word on it: the widened state the ticket exists for is accepted
+    # by the rebuilt table and the narrow one is not.
+    workdir = str(tmp_path / 'shape-check')
+    store = RoadmapStore(rebuilt)
+    if table == 'prds':
+        assert store.create_prd(workdir, 'p', 'REQ-1', status='delivered')
+    else:
+        assert store.create_design(workdir, 'd', 'how', status='delivered')
+    assert store.list_prds(workdir) + store.list_designs(workdir)
+
+
 
 
 def test_design_store_crud_and_prd_link(store, tmp_path):
@@ -390,6 +477,67 @@ def test_design_store_crud_and_prd_link(store, tmp_path):
     assert store.update_design(wd, did, status='approved') is True
     assert store.list_designs(wd)[0]['status'] == 'approved'
     assert store.delete_design(wd, did) is True
+
+
+def test_design_delivered_status_roundtrip(store, tmp_path):
+    """#352: a design whose work shipped gets a state that says so.
+
+    'approved' would claim it is agreed and still unbuilt, 'superseded' that
+    something replaced it, 'draft' that it was never agreed — all three
+    misdescribe a design that was built and still describes the build."""
+    wd = str(tmp_path / 'd')
+    pid = store.create_prd(wd, 'PRD', 'REQ-1')
+    did = store.create_design(
+        wd, 'TDD: pipeline', 'how', prd_id=pid, status='delivered'
+    )
+    row = store.list_designs(wd)[0]
+    assert row['status'] == 'delivered' and row['prd_id'] == pid
+    assert store.update_design(wd, did, status='draft') is True
+    assert store.list_designs(wd)[0]['status'] == 'draft'
+
+
+def test_list_designs_orders_by_lifecycle_stage(store, tmp_path):
+    """Same reading order as PRDs: what needs writing, what is agreed, what
+    shipped, what was replaced. The expected order comes from the design
+    lifecycle, not from the ordering SQL it exercises."""
+    wd = str(tmp_path / 'd')
+    for status in ('superseded', 'delivered', 'draft', 'approved'):
+        store.create_design(wd, f'TDD {status}', '', status=status)
+    assert [d['status'] for d in store.list_designs(wd)] == [
+        'draft', 'approved', 'delivered', 'superseded',
+    ]
+
+
+def test_legacy_tech_designs_table_accepts_delivered(home, store, tmp_path):
+    """#352: the same in-place rebuild as #351, on the table that carries the
+    extra `prd_id` column — if the shared copy seam forgot it, the traceability
+    link would be silently cut for every design that already exists. Ids are
+    non-contiguous (1 and 7) and one prd_id is NULL, so renumbering and a
+    dropped column are both distinguishable from a faithful copy."""
+    wd = str(tmp_path / 'd')
+    store.db._conn.executescript(_LEGACY_DESIGN_DDL)
+    for row_id, title, prd in ((1, 'Shipped design', 4), (7, 'Replaced design', None)):
+        store.db._conn.execute(
+            "INSERT INTO tech_designs (id, workdir, title, status, body, prd_id,"
+            " created_at, updated_at)"
+            " VALUES (?, ?, ?, 'approved', 'as built', ?, 'x', 'x')",
+            (row_id, wd, title, prd),
+        )
+    store.db._conn.commit()
+
+    migrated = RoadmapStore(Database.connect(home))  # reopen: migration runs
+
+    rows = migrated.list_designs(wd)
+    assert [(r['id'], r['title'], r['prd_id'], r['body']) for r in rows] == [
+        (1, 'Shipped design', 4, 'as built'),
+        (7, 'Replaced design', None, 'as built'),
+    ]
+    assert migrated.update_design(wd, 1, status='delivered') is True
+    # approved (design 7) sorts ahead of delivered (design 1): the ladder puts
+    # "agreed, not built" before "shipped".
+    assert [r['status'] for r in migrated.list_designs(wd)] == ['approved', 'delivered']
+    # The sequence continued past the highest copied id instead of reusing it.
+    assert migrated.create_design(wd, 'Next design') == 8
 
 
 @pytest.mark.asyncio
@@ -442,6 +590,24 @@ async def test_update_prd_tool_accepts_delivered(store, tmp_path):
 
     with pytest.raises(ValueError, match='delivered'):
         await tools['update_prd'].function(1, status='shipped')
+
+
+@pytest.mark.asyncio
+async def test_update_tech_design_tool_accepts_delivered(store, tmp_path):
+    """#352 at the agent seam. The agent closes designs out through this tool,
+    so it must offer the honest word in its docstring and its rejection
+    message — a status the store accepts but the tool refuses would strand the
+    agent on the wrong vocabulary."""
+    wd = str(tmp_path / 'tools')
+    tools = build_roadmap_toolset(store, wd).tools
+    await tools['create_tech_design'].function('Shipped design', 'how')
+
+    assert await tools['update_tech_design'].function(1, status='delivered') == \
+        'tech design #1 updated'
+    assert '[delivered]' in await tools['read_tech_design'].function(1)
+
+    with pytest.raises(ValueError, match='delivered'):
+        await tools['update_tech_design'].function(1, status='shipped')
 
 
 def test_prd_design_endpoints_flow(client, tmp_path):
@@ -516,4 +682,25 @@ def test_prd_delivered_status_endpoint(client, tmp_path):
                  headers=h).json()['prds'][0]['status'] == 'delivered'
     assert c.post('/planning/prds', params={'workdir': wd},
                   json={'title': 'x', 'status': 'shipped'},
+                  headers=h).status_code == 422
+
+
+def test_design_delivered_status_endpoint(client, tmp_path):
+    """The endpoint validates against DESIGN_STATUSES, so the new value must be
+    accepted and a PRD-only value ('active') must still be refused — the two
+    vocabularies stay distinct even though both now carry 'delivered'."""
+    c, token = client
+    h = {'Authorization': f'Bearer {token}'}
+    wd = tmp_path / 'design-delivered'
+    wd.mkdir()
+    wd = str(wd)
+
+    did = c.post('/planning/designs', params={'workdir': wd},
+                 json={'title': 'TDD', 'body': 'how'}, headers=h).json()['id']
+    assert c.put(f'/planning/designs/{did}', params={'workdir': wd},
+                 json={'status': 'delivered'}, headers=h).status_code == 200
+    assert c.get('/planning', params={'workdir': wd},
+                 headers=h).json()['designs'][0]['status'] == 'delivered'
+    assert c.post('/planning/designs', params={'workdir': wd},
+                  json={'title': 'x', 'status': 'active'},
                   headers=h).status_code == 422

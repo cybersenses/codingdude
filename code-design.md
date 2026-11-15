@@ -45,8 +45,8 @@ from conversation straight to tickets.
 
 **Design (user-chosen: DB-backed like tickets, surfaced in web UI):**
 - Schema (db.py, additive): `prds` (status draft|active|delivered|sunset) and
-  `tech_designs` (status draft|approved|superseded, optional `prd_id` FK-ish
-  link for requirements traceability). Both workdir-scoped.
+  `tech_designs` (status draft|approved|delivered|superseded, optional `prd_id`
+  FK-ish link for requirements traceability). Both workdir-scoped.
 - RoadmapStore: list/create/update/delete for prds + designs; constants
   PRD_STATUSES / DESIGN_STATUSES.
 - Agent tools (build_roadmap_toolset): create_prd/read_prd/update_prd,
@@ -65,10 +65,11 @@ from conversation straight to tickets.
   Positioned explicitly against to-spec/grilling/grill-with-docs.
 
 **Impact:** additive schema for `tech_designs` (CREATE TABLE IF NOT EXISTS — no
-migration needed). `prds` is no longer purely additive: #351 widened its status
-CHECK, which SQLite cannot ALTER, so `_migrate` rebuilds that one table in place
-(see the R95 section below). /planning response gains two keys (frontend
-tolerates absence via optional chaining); no existing tool signatures changed.
+migration needed). The status CHECKs are no longer purely additive: #351 widened
+the `prds` one and #352 the `tech_designs` one, and SQLite cannot ALTER a CHECK,
+so `_migrate` rebuilds each table in place through one shared seam (see the R95
+section below). /planning response gains two keys (frontend tolerates absence via
+optional chaining); no existing tool signatures changed.
 
 ## GitHub issue auto-mirror (R53) — convention enforced in code
 
@@ -992,8 +993,12 @@ a writer that holds the write lock past `busy_timeout` (17 s in the probe) is by
 definition beyond what a 15 s wait covers, and an explicit `BEGIN` on one connection
 followed by another connection's commit then a write yields
 `SQLITE_BUSY_SNAPSHOT` — immediate, and not helped by a timeout. The second is
-latent rather than live: no code path issues an explicit `BEGIN`, verified by
-searching `src/` for it. The production symptom's disappearance cannot be proven
+latent rather than live: the only explicit `BEGIN` in `src/` is
+`Database._widen_status_check`'s `BEGIN IMMEDIATE` (`db.py`), which exists
+precisely to hold the write lock across the #351/#352 table rebuild — a
+single-connection, startup-time operation, not a second writer racing a commit.
+(That sentence used to read "no code path issues an explicit `BEGIN`, verified by
+searching `src/` for it"; #351 made it false, and this is the correction.) The production symptom's disappearance cannot be proven
 from here; what is proven is that the mechanism which wedged the store is gone and
 now has a regression test.
 
@@ -1374,8 +1379,18 @@ before the work: the reviewer ran out of requests without producing a verdict an
 the gate reported the diff UNREVIEWED — the loud failure doing its job, but with
 nothing behind it. The budget now follows what the pass must read
 (`limits.review_request_limit`: floor 8, two requests per changed file, ceiling
-40), and `review_gate.changed_file_count` derives the file count from the diff
+120), and `review_gate.changed_file_count` derives the file count from the diff
 headers so the two definitions cannot drift.
+
+Two corrections followed, each caught by its own failure. The ceiling of 40
+stopped the budget growing at sixteen files, so a wide branch was refused again
+(#349: ceiling 120, one request per file plus the floor up to 56 files). Then
+both review callers were priced from the diff alone, so the plan-completion pass
+on a clean tree - where the diff is empty however much verification the plan
+needs - got the empty-diff floor of 8 and died mid-verification (#353:
+`planning._review_request_budget` is the one place a pass's budget is computed,
+and it counts two requests per plan step, the same unit as a file, because a
+plan review's work items are its steps).
 
 ## R93 — delegation budget integrity, harness capabilities, local-OTLP tracing (#340–#342)
 
@@ -1618,15 +1633,128 @@ flight) traded one inconsistency for another. #351 added `delivered` as the
 fourth state: the tuple, `list_prds`'s ordering CASE (draft → active →
 delivered → sunset), the `update_prd` docstring, the Planning panel's select and
 the `prds` table's CHECK constraint, which
-`Database._widen_prd_status_check` rebuilds in place because
+`Database._widen_status_check` (then named `_widen_prd_status_check`) rebuilds it
+in place because
 `CREATE TABLE IF NOT EXISTS` never widens an existing one. The bodies are closed
 out at that status.
 
-**Sibling left open on purpose (#352).** `DESIGN_STATUSES` has the same gap —
+**Sibling, closed at the same time (#352).** `DESIGN_STATUSES` had the same gap —
 `draft`/`approved`/`superseded`, no state meaning "shipped" — so tech designs #2,
-#3 and #4 still read `draft` although R80, R85 and R87 are all `done` (TD #4
-even carries "As-built amendments"). Recorded as #352, not fixed here: in that
-vocabulary `approved` (agreed) and "shipped" are independent states, and
-`superseded` is arguably a second axis, so it is a decision rather than a port
-of this change.
+#3 and #4 read `draft` although R80, R85 and R87 are all `done` (TD #4 even
+carries "As-built amendments"). #352 closed it as a port of #351's ladder:
+draft → approved → delivered → superseded.
 
+The ticket flagged one objection worth answering rather than overriding:
+`approved` (agreed) and "shipped" are independent, and `superseded` is arguably a
+second axis, so a single column might be the wrong shape. It is the right shape
+because a status answers *where a document stands now*, not *what path it took*:
+a document whose work shipped is no longer "agreed but unbuilt", and the only
+thing the ladder stops expressing is whether a delivered design was ever formally
+approved — a question about process compliance, which the body records. The
+alternative (a second `delivered`-style column) would have put two controls on
+every row of a compact panel for one bit, and `superseded` stays terminal:
+whether it shipped is trivia once something replaced it.
+
+**One seam, two callers.** `_widen_prd_status_check` became
+`_widen_status_check(table, check, rebuild_ddl)`: the guard (does this table's
+DDL already carry the widened CHECK text?), the transaction, the copy, the
+two-step rename. The per-table part is two constants and one call, so a third
+document type does not become a third copy of the rebuild. Two details are
+load-bearing and were both found by tests rather than by reading: the copy's
+column list must come from the rebuilt table *after* it is created (asking
+earlier returns `[]` and the INSERT becomes a syntax error), and the rebuilt
+table's DDL is compared against a freshly created one for both tables, so
+hand-written DDL cannot silently drift from `_SCHEMA`. The copy also keeps ids,
+the AUTOINCREMENT sequence and `tech_designs.prd_id` — asserted with
+non-contiguous ids (1 and 7) and one NULL `prd_id`, which a renumbering or
+column-dropping copy could not survive. A review added the third detail: the
+copy's column list comes from the *new* shape, so a column present in the old
+table and missing from the rebuild DDL would have been dropped silently — the
+rebuild's whole failure mode. The two column sets are now compared and the
+mismatch raises before the copy, instead of trusting the subset property; only
+the shared columns are copied, so a column the new shape adds takes its own
+declared default. And because that refusal is a plain Python raise it does not
+travel through `_Connection.execute`'s rollback shim, so the seam rolls back the
+transaction it opened itself — otherwise a failed rebuild would hold a
+`BEGIN IMMEDIATE` lock for the life of the process (the R57 mode `_Connection`
+exists to prevent) and leave a `<table>_rebuilt` for the next commit to pick up.
+
+**Frontend, same reasoning as #351.** The inline
+`approved ? success : draft ? warning : muted` ternary rendered any new status as
+muted, i.e. `delivered` would have looked exactly like `superseded` — the
+collapse the state exists to prevent. It became a `DESIGN_STATUS_TONE` map
+mirroring `PRD_STATUS_TONE`, with `approved` moving success → accent so shipped
+and agreed are distinguishable.
+
+## #301 ? codegraph boot overlaps the post-run drain
+
+**Problem:** `Engine.run` ran `_boot_project` (project scaffold + codegraph
+`sync`/`init`, both subprocess calls) inline on the event loop, *after* awaiting
+`_drain_pending_post_run` ? the previous turn's memory-extraction and
+claims-audit tail, which can run for a minute or more. Two costs: the boot's
+subprocess time was added serially to the tail's wall clock, and the loop was
+blocked for its whole duration (no token streaming, no UI poll answers).
+
+**Design:** the boot is started first as `asyncio.create_task(asyncio.to_thread(
+self._boot_project, workdir))`, then the drain is awaited, then the boot task is
+awaited. The overlap costs nothing when no tail is pending, because a pending
+tail is the only thing that was slow. On cancellation between the two awaits the
+task is cancelled before re-raising, so a cancelled run cannot leave an awaited
+task behind (the thread itself is not interruptible; its result is dropped
+instead of never retrieved).
+
+**Why the boot cannot poison the run:** `boot_codegraph` converts a dead or
+wedged CLI into `{'status': 'failed'|'skipped', 'reason': ...}` rather than
+raising (probed: an exploding runner yields `{'status': 'failed', 'reason':
+'OSError: ...'}`), and `CODEGRAPH_BOOT` reports it plus `boot_hint` in the prompt.
+The two overlapping phases touch different state: the tail extracts memory and
+audits claims, boot scaffolds files and syncs `.codegraph`. The tail does not
+refresh codegraph itself, so the index is not written by both.
+
+**The one thing that had to move:** `_boot_project` read the memory store to
+decide first-run onboarding. The tail *writes* that store, so reading it inside
+the boot thread would have decided "onboarding needed" against a store about to
+receive the answer ? a semantic change smuggled in by a perf ticket. The check
+moved to `_attach_onboarding`, which runs on the loop after the drain, so the
+ordering the serial code had is preserved exactly. `tests/test_engine.py` pins
+both halves: the drain observes boot already in flight (a serial boot cannot pass
+that assertion), boot runs off the loop thread, the awaited result is what the
+trace reports, and no onboarding check may run before the drain closes.
+
+**B, attempted, then refused ? the reason is the interesting part.** The claims
+fingerprint (`git diff HEAD`, also a subprocess, also previously an inline
+`await`) was first made a second task alongside the boot, so that both overlapped
+each other and the drain. A review killed it, correctly: the fingerprint must be
+taken *after* the drain, not beside it. The tail the drain waits out is itself a
+writer — the claims-retry agent is handed a shell tool, so `npm run build`-shaped
+commands can touch tracked files — and a hash taken mid-tail either arms the
+#310 gate for a turn that changed nothing (real retry spend) or, if the tail
+reverts a file, misses the change entirely. My justification for the overlap only
+covered the scaffold, which does create-if-absent only; it never considered the
+other writer in the frame. So the fingerprint stays where it was after the drain,
+still on a worker thread (loop-stall removal, which was the b3817ad fix), and its
+off-loop move now has a test it never had. Overlap for its own sake would have
+traded a correctness property for milliseconds.
+
+**What the reviews changed here.** Four findings, all real. (1) "boot cannot
+raise" was too strong: `boot_codegraph` guards its subprocess seam, but
+`_has_healthy_index` / `index_is_stale` probe the filesystem unguarded and an
+unreadable `.codegraph` raises `PermissionError` — and this boot is awaited on the
+run's critical path, so that would kill a run before its first request.
+`_boot_project` now converts any exception into a failed status, pinned at both
+levels by `test_boot_failure_degrades_instead_of_killing_the_run` (probe:
+patching `_has_healthy_index` to raise yields `{'status': 'failed', 'reason':
+'PermissionError: unreadable .codegraph'}`), which also runs a whole turn and
+asserts the answer still arrives. (2) The onboarding-ordering test passed against
+the serial code too; it now asserts `boot-end` precedes the onboarding read,
+which the pre-change shape cannot satisfy. (3) The onboarding *read* was the next
+unprotected statement: a store error there kills a run and leaves an empty
+session row for #305 to resume into, and the pipeline's directive builder makes
+the same call. The guard belongs in the seam rather than at either call site, so
+`onboarding.onboarding_needed` now answers False and warns when the store read
+fails — that is its module contract ("it never blocks a run") written as code, and
+one guard covers both callers. (4) The B attempt above, reverted.
+
+**Not changed, deliberately:** the drain's 300s bound. Bounding it tighter is a
+semantics change (which tails get dropped) that the ticket text defers to
+operator sign-off; it stays as-is with the overlap, which was the free half.

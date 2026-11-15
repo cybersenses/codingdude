@@ -144,11 +144,27 @@ def detect_conventions(workdir: Path) -> dict:
 
 
 def onboarding_needed(store: MemoryStore, workdir: str | Path) -> bool:
-    """True while the workdir has no 'Project conventions:' memory entry."""
+    """True while the workdir has no 'Project conventions:' memory entry.
+
+    Never raises, per this module's contract: it is read on the pre-request
+    path (twice — the trace event and the injected directive), so a store error
+    would kill a run before its first request instead of skipping a nudge. The
+    read is a plain SQLite query, and under write contention it genuinely can
+    fail (`sqlite3.OperationalError`), which is the case being handled. A
+    failure answers False — "do not nudge" — rather than True, so a transient
+    error cannot push the agent into an onboarding flow it does not need.
+    """
     wd = str(workdir)
+    try:
+        entries = store.all_entries()
+    except Exception as exc:  # noqa: BLE001 - onboarding must never block a run
+        logging.getLogger(__name__).warning(
+            'onboarding check failed (%s): %s', wd, exc
+        )
+        return False
     return not any(
         r['scope'] == 'workdir' and r['workdir'] == wd and MARKER in r['content']
-        for r in store.all_entries()
+        for r in entries
     )
 
 

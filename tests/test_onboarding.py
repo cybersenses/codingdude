@@ -143,3 +143,21 @@ def test_detect_conventions_empty_dir_is_safe(tmp_path):
     c = detect_conventions(tmp_path)
     assert c["python"] is None and c["javascript"] is None
     assert c["languages"] == {}
+
+
+def test_a_failing_store_read_skips_the_nudge_instead_of_raising(home):
+    """The module contract is "onboarding nudges, it never blocks a run", and
+    this read is on the pre-request path twice per run (the trace event and the
+    injected directive). Under write contention the query genuinely fails; the
+    answer must be "no nudge" (False), neither an exception nor "nudge" — a
+    transient lock must not push an already-onboarded project into the flow.
+    """
+    import sqlite3
+
+    from codingdude.db import Database
+
+    class Locked(MemoryStore):
+        def all_entries(self):
+            raise sqlite3.OperationalError('database is locked')
+
+    assert onboarding_needed(Locked(Database.connect(home)), str(home)) is False

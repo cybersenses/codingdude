@@ -78,9 +78,23 @@
   lines; chat citations are clickable.
 - **Kickoff prompts (R71)**: every session's first turn rides an executed
   orientation block, overridable per project with `[kickoff]`.
+- **Tech designs get a `delivered` state (#352)**: the ladder was
+  `draft` → `approved` → `superseded`, so a design whose work shipped read
+  `draft` — "not yet agreed" — because neither `approved` (agreed, unbuilt) nor
+  `superseded` (replaced) says it was built. Same fix PRDs received in #351,
+  including a per-status colour in the Planning panel so `delivered` and
+  `superseded` cannot render alike. Existing databases are rebuilt in place;
+  ids, bodies and `prd_id` links carry over.
 
 ### Changed
 
+- **The codegraph boot no longer waits behind the previous turn's tail (#301)**:
+  boot (project scaffold + index sync, both subprocess calls) ran inline on the
+  event loop *after* the post-run drain, so its time was added to the tail's
+  wall clock and the loop was blocked for its duration. It now runs on a worker
+  thread, concurrently with the drain. The first-run onboarding decision stayed
+  ordered the way it was — after the drain — because the tail writes the memory
+  it reads.
 - **`[delegation] max_cost_usd` is a ceiling, not a receipt (R94-B)**: it used to
   append "(note: delegation cost … exceeded the configured cap)" *after* the money
   was spent. It now translates into a real `cost_limit` slice (`already spent +
@@ -104,8 +118,8 @@
   pass was capped at a fixed 8 model requests, so a multi-file branch exhausted
   them before reaching a verdict and the gate reported the diff UNREVIEWED. The
   budget now follows the work — `limits.review_request_limit`, floor 8 plus two
-  requests per changed file, ceiling 120 (one request per file plus the floor up
-  to 56 files) — so a large review finishes and
+  requests per changed file and two per plan step, ceiling 120 (one request per
+  file plus the floor up to 56 files) — so a large review finishes and
   a small one stays cheap.
 - Delegated spend was counted twice: a delegation's requests and tokens sat in
   both its own usage row and the run's row (the shared accumulator made both

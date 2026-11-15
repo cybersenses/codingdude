@@ -104,7 +104,8 @@ export interface Prd {
 export interface TechDesign {
   id: number
   title: string
-  status: 'draft' | 'approved' | 'superseded'
+  // #352: same ladder as Prd — 'delivered' is the shipped state.
+  status: 'draft' | 'approved' | 'delivered' | 'superseded'
   body: string
   prd_id: number | null
   updated_at: string
