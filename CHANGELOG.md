@@ -100,6 +100,12 @@
 
 ### Fixed
 
+- **The pre-push review could not finish a large diff (R92/R94-B)**: the reviewer
+  pass was capped at a fixed 8 model requests, so a multi-file branch exhausted
+  them before reaching a verdict and the gate reported the diff UNREVIEWED. The
+  budget now follows the work — `limits.review_request_limit`, floor 8 plus two
+  requests per changed file, ceiling 40 — so a large review finishes and a small
+  one stays cheap.
 - Delegated spend was counted twice: a delegation's requests and tokens sat in
   both its own usage row and the run's row (the shared accumulator made both
   true at once), so the session total — and the Budget Cap that reads it —

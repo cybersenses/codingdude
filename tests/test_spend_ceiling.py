@@ -449,3 +449,21 @@ def test_the_post_hoc_cost_note_is_gone():
 
     source = Path(tools_module.__file__).read_text(encoding='utf-8')
     assert 'exceeded the configured cap of' not in source
+
+
+def test_a_review_pass_budget_scales_with_the_files_it_must_read():
+    """A cap that refuses before the work is not a budget, it is an outage.
+
+    The reviewer's tools are per-file reads, so a fixed cap stops a multi-file
+    review before it can return a verdict: the fixed 8 aborted this branch's own
+    pre-push review (seventeen files) and the gate reported the diff UNREVIEWED.
+    """
+    from codingdude.limits import review_request_limit
+
+    assert review_request_limit(0) == 8
+    assert review_request_limit(1) == 10
+    assert review_request_limit(17) == 40  # 8 + 2*17 = 42, capped
+    assert review_request_limit(10_000) == 40
+    assert review_request_limit(-3) == 8  # never below the floor
+    budgets = [review_request_limit(n) for n in range(30)]
+    assert budgets == sorted(budgets)  # monotone until the ceiling holds it

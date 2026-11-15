@@ -65,3 +65,20 @@ def spend_limits(models, request_limit: int | None = None) -> UsageLimits | None
         cost_limit=Decimal(str(cost)) if cost is not None else None,
         total_tokens_limit=tokens,
     )
+
+
+#: A review pass reads the workdir file by file, so its request cost tracks the
+#: number of files the diff touches. A fixed budget is a cap that refuses before
+#: the work: R94-B's own pre-push review stopped at the old fixed 8 on a
+#: seventeen-file branch and produced no verdict at all [probe: `_review_impl`
+#: returned "REVIEW FAILED ... request_limit of 8"]. The ceiling keeps a
+#: tool-happy reviewer from spinning.
+_REVIEW_REQUEST_FLOOR = 8
+_REVIEW_REQUESTS_PER_FILE = 2
+_REVIEW_REQUEST_CEILING = 40
+
+
+def review_request_limit(changed_files: int) -> int:
+    """Requests for one review pass: the floor plus two per changed file."""
+    per_file = _REVIEW_REQUESTS_PER_FILE * max(0, int(changed_files))
+    return min(_REVIEW_REQUEST_CEILING, _REVIEW_REQUEST_FLOOR + per_file)

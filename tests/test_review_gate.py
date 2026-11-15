@@ -40,6 +40,7 @@ from codingdude.approvals import ApprovalPolicy  # noqa: E402
 from codingdude.review_gate import (  # noqa: E402
     EMPTY_TREE,
     ReviewGateError,
+    changed_file_count,
     collect_review_diff,
     record_review,
     require_review,
@@ -249,3 +250,18 @@ def test_file_tools_cannot_write_inside_the_git_dir(repo: Path) -> None:
         )
     assert 'git directory' in str(err.value)
     assert tools.tools['edit_file'].function  # surfaced, not silently stripped
+
+
+def test_the_changed_file_count_reads_the_diff_headers() -> None:
+    """The review budget is derived from this count, so it must count files
+    rather than diff hunks: one `diff --git` header per file, however many
+    hunks that file has."""
+    diff = (
+        'diff --git a/x.py b/x.py\n'
+        '--- a/x.py\n+++ b/x.py\n@@ -1 +1 @@\n-a\n+b\n@@ -9 +9 @@\n-c\n+d\n'
+        'diff --git a/y.md b/y.md\n'
+        '--- a/y.md\n+++ b/y.md\n@@ -1 +1 @@\n-e\n+f\n'
+    )
+    assert changed_file_count(diff) == 2
+    assert changed_file_count('') == 0
+    assert changed_file_count('--- a/x.py\n+++ b/x.py\n') == 0  # no header, no file

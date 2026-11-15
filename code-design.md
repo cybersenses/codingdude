@@ -1365,6 +1365,16 @@ Pre-push review (2026-11-13, two-axis delegates over `origin/main...2f35e94`, ru
 
 **Known limits (stated, not implied):** the gate cannot verify the evidence — an agent can record a review it did not perform, the same accepted boundary as `update_execution_step`; the record is per-clone and last-write-wins; the longrun `pre`-authorized draft-PR path is exempt because its review cycle is a separate design; the shell guard is a regex over the command text, so a script invoked by name that pushes internally is not caught (closing that needs the sandbox/lane layer); and `gh pr create` plus the GitHub MCP file tools are not gated.
 
+**Review budget, corrected after this seam failed R94's own pre-push gate.** The
+reviewer pass carried a fixed 8-request cap, chosen so a tool-happy reviewer could
+not spin inside its 300 s timeout. On a seventeen-file branch that cap refused
+before the work: the reviewer ran out of requests without producing a verdict and
+the gate reported the diff UNREVIEWED — the loud failure doing its job, but with
+nothing behind it. The budget now follows what the pass must read
+(`limits.review_request_limit`: floor 8, two requests per changed file, ceiling
+40), and `review_gate.changed_file_count` derives the file count from the diff
+headers so the two definitions cannot drift.
+
 ## R93 — delegation budget integrity, harness capabilities, local-OTLP tracing (#340–#342)
 
 **Problem (read in source, not inferred).** Three independent holes, found by checking our run path against pydantic-ai's multi-agent guide:
@@ -1489,8 +1499,8 @@ the warning's message.
   and run against the shipped `ROADMAP.md`: every id-heading parses, no heading
   repeats its own id, ids are unique.
 
-**Second review round.** Four corrections, each a place where the prose and the
-code disagreed:
+**Second and third review rounds.** Four corrections, each a place where the
+prose and the code disagreed:
 
 - **The `child_usage_limits` coercion was justified by a failure mode that does
   not exist.** The comment claimed `min()` between a float and a Decimal raises

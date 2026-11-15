@@ -30,7 +30,7 @@ from pydantic_ai.toolsets import FunctionToolset
 
 from .config import ThinkingSetting
 from .db import utc_now_iso as _now
-from .review_gate import collect_review_diff
+from .review_gate import changed_file_count, collect_review_diff
 
 logger = logging.getLogger(__name__)
 
@@ -221,7 +221,7 @@ async def _review_impl(db, session_id: str, review_model, checklist: str, plan, 
     from pydantic_ai import Agent
 
     from .agent_caps import ONE_SHOT, cache_capabilities
-    from .limits import spend_limits
+    from .limits import review_request_limit, spend_limits
     from .prompts import load_prompt
     from .tools import build_toolset
 
@@ -267,10 +267,16 @@ async def _review_impl(db, session_id: str, review_model, checklist: str, plan, 
         f'DIRECTIVES:\n{checklist[:2000]}\n\nDIFF:\n{_capped_diff(diff)}'
     )
     try:
-        # request_limit bounds the read loop so a tool-happy reviewer cannot
-        # spin inside the 300s timeout (same pattern as the evaluator pass).
+        # Bounds the read loop so a tool-happy reviewer cannot spin inside the
+        # 300s timeout (same pattern as the evaluator pass). Scaled by the
+        # diff's file count: the reviewer's tools are per-file reads, so a
+        # fixed cap refuses before the work on a multi-file branch -- the fixed
+        # 8 aborted this branch's own pre-push review with no verdict.
         result = await reviewer.run(
-            prompt, usage_limits=spend_limits(models, 8)
+            prompt,
+            usage_limits=spend_limits(
+                models, review_request_limit(changed_file_count(diff))
+            ),
         )
     except Exception as exc:  # noqa: BLE001 — a review failure must not fail the run
         # Returning '' here read as CLEAN: a reviewer that never ran was
