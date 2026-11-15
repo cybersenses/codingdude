@@ -776,7 +776,7 @@ def main(argv=None) -> int:
         '--review',
         metavar='SESSION',
         default=None,
-        help='review a session\'s working-tree diff, print findings JSON, exit',
+        help='review a session\'s branch diff, print findings JSON, exit',
     )
     parser.add_argument('--server', help='ws:// URL of the server')
     parser.add_argument('--session')

@@ -313,7 +313,7 @@ class Engine:
         return config_home()
 
     async def review_diff(self, session_id: str) -> str:
-        """On-demand review of the Session's working-tree diff (UI button)."""
+        """On-demand review of the Session's BRANCH diff vs the merge-base (UI button; R92 #339)."""
         from .planning import review_diff_findings
 
         return await review_diff_findings(
