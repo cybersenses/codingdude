@@ -1408,7 +1408,7 @@ it. The guide's "Observing Multi-Agent Systems" section is unimplemented.
   request instead of requiring inference.
 
 ## R94 — Run observability & spend governance — span attribution, a real cost ceiling, and a trace UI
-**Status:** in_progress — R94-A/B/C implemented in PR `codingdude/r94-observability-spend` (#345, #346, #347); flips to done on merge.
+**Status:** in_progress — R94-A/B/C implemented in PR `codingdude/r94-observability-spend` (#345, #346, #347), with the ROADMAP heading repair (#348); all four flip to done on merge.
 
 Audience: agent — the agent's own runs become diagnosable and its spend bounded. The human payoff is (a) a budget that refuses instead of narrating, and (b) finally being able to *see* which agent, model and tool burned the time and the tokens, instead of inferring it from a provider error string.
 

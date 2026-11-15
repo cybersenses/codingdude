@@ -13,7 +13,7 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-"""What one model call may spend (R94-B #346).
+"""What one `agent.run()` may spend (R94-B #346).
 
 One definition for every seam that builds `UsageLimits`. Before this module
 existed, only request *counts* were bounded: the main run, the fix loop, the
@@ -40,7 +40,7 @@ from pydantic_ai.usage import UsageLimits
 
 
 def spend_limits(models, request_limit: int | None = None) -> UsageLimits | None:
-    """Ceilings for one model call, or None when nothing is configured.
+    """Ceilings for one `agent.run()`, or None when nothing is configured.
 
     `request_limit=None` leaves the request cap exactly as the caller had it —
     pydantic-ai's own default — so a seam that never bounded requests does not

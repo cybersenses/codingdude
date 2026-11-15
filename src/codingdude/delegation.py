@@ -187,7 +187,18 @@ def child_usage_limits(
     if cost_ceiling is None:
         return limits
     parent_cost = parent_limits.cost_limit
-    tighter = cost_ceiling if parent_cost is None else min(parent_cost, cost_ceiling)
+    if parent_cost is None:
+        return replace(limits, cost_limit=cost_ceiling)
+    # Normalised to Decimal for type hygiene, NOT because the mixed comparison
+    # fails: it does not, and a float ceiling is enforced correctly.
+    # [probe: python -c "min(0.6, Decimal('0.75'))" -> 0.6, no TypeError;
+    #  UsageLimits(cost_limit=0.6).cost_limit -> 0.6, i.e. the float is kept
+    #  as-is rather than coerced; check_before_request with that limit passes
+    #  at cost=Decimal('0.10') and raises UsageLimitExceeded at
+    #  Decimal('1.00')]. `UsageLimits` keeps whatever type it was handed, so
+    # without this the ceiling this seam returns would be a float or a Decimal
+    # depending on the caller, while every other ceiling here is a Decimal.
+    tighter = min(Decimal(str(parent_cost)), cost_ceiling)
     return replace(limits, cost_limit=tighter)
 
 

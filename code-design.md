@@ -1465,8 +1465,12 @@ the warning's message.
   `usage_limits`. Together with the evaluator, the planning reviewer, the
   summariser, memory extraction, the claims auditor and the vision inspector,
   that was seven seams where a run's ceiling did not apply. All now go through
-  `limits.spend_limits`, and an AST guard over `(module, receiver)` pairs fails
-  if any `*.run()` stops passing `usage_limits` — proven to bite by removing one.
+  `limits.spend_limits`, and an AST guard enumerates every `(module, receiver,
+  method)` seam a run makes — the main loop's `agent.iter`, then every
+  `*.run()` — and fails if any of the ten stops passing `usage_limits`. Proven to
+  bite by removing the argument from two of them: the evaluator's `agent.run` and
+  the main loop's `agent.iter` each failed the guard with their file and line,
+  then both were restored.
 - **`[delegation].max_cost_usd` had no validation.** `load_config` read it raw,
   so `0` and `-1` silently meant "no cap" and `true` would have raised
   `Decimal(str(True))` mid-delegation. Now validated at load like `[models]`,
@@ -1484,6 +1488,40 @@ the warning's message.
   now distinguish a stale prefix (id followed by a heading delimiter) from prose,
   and run against the shipped `ROADMAP.md`: every id-heading parses, no heading
   repeats its own id, ids are unique.
+
+**Second review round.** Four corrections, each a place where the prose and the
+code disagreed:
+
+- **The `child_usage_limits` coercion was justified by a failure mode that does
+  not exist.** The comment claimed `min()` between a float and a Decimal raises
+  `TypeError`. It does not, and a float ceiling is enforced as intended: [probe:
+  `python -c "min(0.6, Decimal('0.75'))"` -> 0.6 with no exception;
+  `UsageLimits(cost_limit=0.6).cost_limit` -> 0.6, the float kept rather than
+  coerced; `check_before_request` with that limit passes at
+  `cost=Decimal('0.10')` and raises `UsageLimitExceeded` at
+  `cost=Decimal('1.00')`]. The coercion stays — `UsageLimits` keeps whatever type
+  it is handed, so without it this seam could return a float while every other
+  ceiling is a Decimal — and the comment now gives that reason instead.
+- **"Per run" was wrong in four places.** `UsageLimits` is checked against *that
+  `agent.run()`'s* own usage, and the auxiliary agents do not share the main
+  loop's accumulator, so `max_cost_usd = 2` can be spent per call site rather
+  than once per run. `CHANGELOG.md`, `docs/manual/configuration.md`, `limits.py`
+  and `config.py` now say "each `agent.run()`" and point at `--budget` for the
+  session total.
+- **The guard covered four of ten seams.** The main loop (`agent.iter`), the
+  evaluator, the planning reviewer, memory extraction, the claims retry and the
+  delegation were unpinned while the CHANGELOG claimed a guard test fails if any
+  seam stops passing its limits. All ten are enumerated now, which is what makes
+  that sentence true rather than aspirational.
+- **The round wrote two files with CRLF.** A Python write that omitted
+  `newline=''` normalised `run_pipeline.py` (LF throughout its history) and
+  `code-design.md` (26 mixed-ending lines) to all-CRLF, so a commit changing a
+  handful of real lines carried a whole-file rewrite of both. They were rebuilt
+  from the two git blobs so unchanged lines keep their original terminators, and
+  the content was verified identical apart from the terminators; the commit's
+  stat went from +2,511/-2,289 to +279/-57. The lesson generalises: a
+  `git diff --stat` showing a whole file for a small change is a line-ending
+  problem, and `git diff --ignore-cr-at-eol` is the probe that separates the two.
 
 **Waived, with reasons.** A `RequestSlice` value object to replace the
 `(used_requests, max_requests)` pair, and a cost-ceiling type replacing the bare

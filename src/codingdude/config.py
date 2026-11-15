@@ -49,9 +49,11 @@ def _default_config_toml(lineup: ModelLineup) -> str:
         '# Max model requests per run (pydantic-ai default 50 is too low for\n'
         '# long agentic sessions)\n'
         '# request_limit = 500\n'
-        '# Hard per-run ceilings (R94-B). Enforced BEFORE the next request, so\n'
-        '# the call is refused instead of a note added after the spend. Both\n'
-        '# unset by default. max_cost_usd needs a priced model to be\n'
+        '# Hard ceilings applied to every agent.run() call (R94-B).\n'
+        '# Enforced BEFORE the next request, so the call is refused instead of\n'
+        '# a note added after the spend. Each agent.run() gets its own\n'
+        '# allowance; the cumulative session total is --budget / the Budget Cap.\n'
+        '# Both unset by default. max_cost_usd needs a priced model to be\n'
         '# enforceable; max_total_tokens always is.\n'
         '# max_cost_usd = 2.00\n'
         '# max_total_tokens = 2000000\n'
@@ -122,9 +124,14 @@ class ModelLineup:
     # Max model requests per run. pydantic-ai defaults to 50, which a long
     # agentic session exhausts; raise it so long runs aren't cut off.
     request_limit: int = 500
-    # Hard per-run ceilings (R94-B #346). Unlike [delegation].max_cost_usd
-    # these are enforced *before* the next request — pydantic-ai raises, the
-    # call is refused, rather than a note appended after the money is spent.
+    # Hard ceilings applied to every agent.run() call (R94-B #346). Unlike
+    # [delegation].max_cost_usd these are enforced *before* the next request —
+    # pydantic-ai raises, the call is refused, rather than a note appended
+    # after the money is spent.
+    # Scope, precisely: each `agent.run()` gets its own allowance, because the
+    # auxiliary agents do not share the run's usage accumulator. The cumulative
+    # total across a run is what the session Budget Cap over `db.session_usage`
+    # enforces. Do not read these as "this run cannot spend more than $N".
     # None = no ceiling, which is the default and the previous behaviour.
     # `max_cost_usd` can only be enforced when pydantic-ai can price the
     # model (it warns and enforces nothing otherwise); `max_total_tokens`

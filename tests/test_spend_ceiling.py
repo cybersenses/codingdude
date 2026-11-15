@@ -156,20 +156,29 @@ def test_no_agent_seam_builds_ceiling_less_limits(module):
     )
 
 
-#: Every seam that runs a model inside a run. Each must pass usage_limits, or a
-#: configured ceiling silently does not apply to it (R94-B #346). The fix loop
-#: was the one this guard was written for: it is part of the run, billed into it,
-#: and carried no limits at all.
+#: Every agent call a run makes. Each must pass `usage_limits`, or a configured
+#: ceiling silently does not apply to that seam (R94-B #346). Listed explicitly
+#: as `(module, receiver, method)` rather than discovered: the main loop reaches
+#: pydantic-ai through `agent.iter`, every other seam through `.run`, and the
+#: guard's `assert calls` below turns a stale entry into a failure instead of a
+#: silent pass. The fix loop is the seam this was written for — part of the run,
+#: billed into it, and carrying no limits at all.
 _SEAMS = [
-    ('engine.py', 'retry_agent'),
-    ('run_pipeline.py', 'summarizer'),
-    ('run_pipeline.py', 'auditor'),
-    ('vision.py', 'agent'),
+    ('engine.py', 'agent', 'iter'),             # main loop
+    ('engine.py', 'retry_agent', 'run'),        # fix loop
+    ('evaluator.py', 'agent', 'run'),           # evaluator pass
+    ('planning.py', 'reviewer', 'run'),         # planning reviewer
+    ('run_pipeline.py', 'summarizer', 'run'),
+    ('run_pipeline.py', 'agent', 'run'),        # memory extraction
+    ('run_pipeline.py', 'auditor', 'run'),      # claims audit
+    ('run_pipeline.py', 'retry_agent', 'run'),  # claims retry
+    ('vision.py', 'agent', 'run'),
+    ('tools.py', 'sub_agent', 'run'),           # delegation: a slice, not the run ceiling
 ]
 
 
-@pytest.mark.parametrize(('module', 'receiver'), _SEAMS)
-def test_every_model_call_seam_passes_usage_limits(module, receiver):
+@pytest.mark.parametrize(('module', 'receiver', 'method'), _SEAMS)
+def test_every_agent_call_seam_passes_usage_limits(module, receiver, method):
     import ast
 
     root = Path(__file__).resolve().parent.parent / 'src' / 'codingdude'
@@ -178,13 +187,13 @@ def test_every_model_call_seam_passes_usage_limits(module, receiver):
         node for node in ast.walk(tree)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
-        and node.func.attr == 'run'
+        and node.func.attr == method
         and ast.unparse(node.func.value).endswith(receiver)
     ]
-    assert calls, f'{module}: no {receiver}.run(...) found — guard is blind'
+    assert calls, f'{module}: no {receiver}.{method}(...) found — guard is blind'
     for node in calls:
         assert any(kw.arg == 'usage_limits' for kw in node.keywords), (
-            f'{module}:{node.lineno} {receiver}.run() does not pass '
+            f'{module}:{node.lineno} {receiver}.{method}() does not pass '
             'usage_limits — the run ceiling would not reach it'
         )
 
@@ -242,6 +251,24 @@ def test_the_delegation_cost_slice_never_outruns_the_run_ceiling():
         3, parent, 5, used_cost=Decimal('0.50'), max_cost_usd=0.25,
     )
     assert limits.cost_limit == Decimal('0.60')
+
+
+def test_a_float_parent_ceiling_comes_back_as_a_decimal():
+    """`UsageLimits` keeps whatever type it is handed — `cost_limit=0.6` stays a
+    float, it is not coerced — so the slice normalises rather than letting the
+    returned ceiling's type depend on the caller. Every other ceiling this
+    module builds is a Decimal."""
+    parent = UsageLimits(request_limit=100, cost_limit=0.6)
+    tighter_parent = child_usage_limits(
+        3, parent, 5, used_cost=Decimal('0.50'), max_cost_usd=0.25,
+    )
+    tighter_slice = child_usage_limits(
+        3, parent, 5, used_cost=Decimal('0.10'), max_cost_usd=0.25,
+    )
+    assert tighter_parent.cost_limit == Decimal('0.6')
+    assert tighter_slice.cost_limit == Decimal('0.35')
+    for limits in (tighter_parent, tighter_slice):
+        assert isinstance(limits.cost_limit, Decimal)
 
 
 def test_a_delegation_inherits_the_run_token_ceiling_when_it_has_no_slice():

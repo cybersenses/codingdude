@@ -123,8 +123,8 @@ endpoints must be `https://`.
 | `prompt_cache_messages` | `true` | also cache the growing conversation (main loop only; one-shot agents never do) |
 | `prompt_cache_settings` | `{}` | provider-specific cache settings; takes precedence over `prompt_cache` for that provider |
 | `request_limit` | `500` | max model requests per run (the library default of 50 is too low for agentic sessions) |
-| `max_cost_usd` | *(unset)* | hard per-run USD ceiling, enforced **before** the next request — see [Run ceilings](#run-ceilings) |
-| `max_total_tokens` | *(unset)* | hard per-run token ceiling, enforced **before** the next request |
+| `max_cost_usd` | *(unset)* | hard USD ceiling applied to **each `agent.run()`** in a run — see [Run ceilings](#run-ceilings) |
+| `max_total_tokens` | *(unset)* | hard token ceiling applied to **each `agent.run()`** in a run |
 | `pricing` | *(unset)* | cost rates — see [pricing](#pricing) |
 
 ### Run ceilings
@@ -133,12 +133,21 @@ endpoints must be `https://`.
 long run of large ones, was unbounded in tokens and in money. `max_cost_usd` and
 `max_total_tokens` are hard stops: pydantic-ai checks them *before* the next
 request and raises, so the call is refused rather than narrated afterwards. They
-apply to **every model call inside the run** — the main loop, the fix loop, the
-evaluator, the planning reviewer, the summariser, memory extraction, the claims
-auditor and the vision inspector — not just the main loop. Both are unset by
+apply to **every `agent.run()` inside the run** — the main loop, the fix loop, the
+claims retry, the evaluator, the planning reviewer, the summariser, memory
+extraction, the claims auditor and the vision inspector — not just the main loop. Both are unset by
 default, so an unconfigured install behaves exactly as before. The Config panel
 carries both keys through a save unchanged, but has no input for them yet — set
 them in `config.toml`.
+
+**Read these as a per-call ceiling, not a run total.** Each `agent.run()` gets
+its own allowance, because the auxiliary agents do not share the main loop's usage
+accumulator: with `max_cost_usd = 2`, one run may legitimately spend up to about
+$2 per call site rather than $2 in total. The cumulative figure — the one that
+answers "what did this session cost" — is the ledger (`db.session_usage`), and
+the mechanism that stops spend against it is `--budget` (the Budget Cap). Use the
+ceilings to stop any single call running away, and the Budget Cap to bound the
+session.
 
 **Honest ceiling:** `max_cost_usd` can only be enforced when pydantic-ai can
 price the model in use. On an unpriced provider the boundary check silently
@@ -151,14 +160,14 @@ Which ceiling owns what:
 
 | Where | Scope | Mechanism |
 |---|---|---|
-| `[models] max_cost_usd` / `max_total_tokens` | one run | `UsageLimits`, checked before each request |
+| `[models] max_cost_usd` / `max_total_tokens` | one `agent.run()` | `UsageLimits`, checked before each request |
 | `[delegation] max_cost_usd` / `max_requests` | one `delegate` call | a *slice* of the run's spend, same mechanism |
 | `--budget` (Budget Cap) | whole session | the usage ledger in the database, across runs |
 
-They do not disagree: the session cap is the ledger total, the run cap is where a
-call is actually refused, and a delegation gets the remainder it may reach. A
-malformed value in either `[models]` ceiling fails loudly at load rather than
-silently becoming no cap.
+They do not disagree: the session cap is the ledger total, the per-`agent.run()`
+cap is where a call is actually refused, and a delegation gets the remainder it may
+reach. A malformed value in either `[models]` ceiling fails loudly at load rather
+than silently becoming no cap.
 
 ### Prompt caching
 
