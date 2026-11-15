@@ -1282,12 +1282,10 @@ Small tracked issues in codingdude's own tooling/docs that don't belong to featu
 
 **Closed out (2026-11-15).** Both tickets filed under this umbrella are done:
 
-- **#353** — the plan/step reviewer was budgeted from the diff alone, so on a clean tree it got the floor of 8 requests and refused before reading anything (R95/#349's defect at a second call site). Fixed in `0fe066d`; budget now tracks plan steps as well as files.
-- **#352** — `DESIGN_STATUSES` had no state meaning "shipped", the same misdescription #351 fixed for PRDs. Fixed in `bb8343b`: `draft → approved → delivered → superseded`, one shared table-rebuild seam for both document types.
+- **#353** — the plan/step reviewer was budgeted from the diff alone, so on a clean tree it got the floor of 8 requests and refused before reading anything (R95/#349's defect at a second call site). Fixed under #353; budget now tracks plan steps as well as files.
+- **#352** — `DESIGN_STATUSES` had no state meaning "shipped", the same misdescription #351 fixed for PRDs. Fixed under #352: `draft → approved → delivered → superseded`, one shared table-rebuild seam for both document types.
 
 Carried out of scope under this umbrella and also closed: **R89** (its one recorded finding shipped as #334). Nothing is left open here; new tooling/doc hygiene issues get a fresh umbrella rather than reviving this one.
-
-Small tracked issues in codingdude's own tooling/docs that don't belong to feature umbrellas.
 
 ## R87 — Wireframes v2 — renderer quality + artifact surfacing in chat
 **Status:** done
@@ -1337,17 +1335,11 @@ non-artifacts `show:` nav-preferring fallback (band-shape docking when the
 active panel is floating/popped out and no editor is open) — surfaced by the
 post-push review of `3df4f9d..7634c0d` (the R88 fix cycle's pre-squash range, rewritten by that squash) while verifying R88 #331's fix scope.
 
-**Closed (2026-11-15) — the one recorded finding shipped as #334.** No entry was ever added after the first, and that first entry is exactly what **#334** ("show: non-artifacts panels keep the nav-preferring fallback — same band shape as #331 when the active panel is floating/popped out") fixed in `50d1892`. Verified rather than assumed at closure: #334 is `done`, closed by that commit, and its body describes the same case (non-artifacts `show:` target, floating/popped-out active panel, no editor open → nav-preferring band shape).
+**Closed (2026-11-15) — the one recorded finding shipped as #334.** No entry was ever added after the first, and that first entry is exactly what **#334** ("show: non-artifacts panels keep the nav-preferring fallback — same band shape as #331 when the active panel is floating/popped out") fixed in `7901f28` — the squash commit on main. (Its pre-squash head was cited here
+first and failed CI's `commit does not exist` check: a squash rewrites the commit, so a
+fresh clone cannot resolve it.) Verified rather than assumed at closure: #334 is `done`, closed by that commit, and its body describes the same case (non-artifacts `show:` target, floating/popped-out active panel, no editor open → nav-preferring band shape).
 
 So this umbrella held a single item, it landed, and nothing remains. New review findings get filed under the umbrella of the work that produced them — that is what #353/#352 did under R86 — rather than reopening this container.
-
-**Audience:** human
-
-Catch-all under R86 for review findings that are real but out of scope of the
-ticket they were found on, filed so they are not lost. First entry: the
-non-artifacts `show:` nav-preferring fallback (band-shape docking when the
-active panel is floating/popped out and no editor is open) — surfaced by the
-post-push review of `3df4f9d..7634c0d` (the R88 fix cycle's pre-squash range, rewritten by that squash) while verifying R88 #331's fix scope.
 
 ## R90 — Reviewer repo access + ask_user payload hardening
 **Status:** done
@@ -1388,18 +1380,6 @@ Status notes: levers 1+2 adopted locally pre-deploy (user decision 2026-11-13), 
 **6 — optional dependency refresh: declined, on purpose.** Installed vs the levers' targets: pydantic 2.14.1 (target 2.14.3), pydantic-settings 2.16.1 (target 2.16.3), logfire 5.3.0 (target 5.6.0). The observability half of this lever already shipped — R93-C wired local-OTLP tracing with `logfire>=5.3.0`, `send_to_logfire=False`, no token. What remains is patch-level: it requires re-syncing the venv that a running server is using, which is a deliberate manual step (`uv sync` mutates the live env; `uv run` does it implicitly), not something to slip into a documentation close-out. The `extra='forbid'` JSON change flagged above is the reason it stays a considered move rather than a bump — it needs its own read of the 2.14.2 release notes.
 
 **Monty: still parked** for the original reason (no third-party packages → cannot run our tool code).
-
-From research 2026-11-13 (reference/research/pydantic-ecosystem.md, primary-source). Goal: make CodingDude runs faster and cheaper via upstream pydantic-ai levers instead of hand-rolled code.
-
-Levers (ranked):
-1. Per-request compaction — upstream ProcessHistory / before_model_request / harness TieredCompaction replaces our run-start-only maybe_compact (deepseek 400-class fix). Batched/trigger-based to protect prompt cache. Verify exact plain-Agent API on installed version first.
-2. Prompt caching — Caching capability: 0.1x cache reads on our large static prefix (directives/AGENT.md/skills/tool catalog) from request #2; monitor cache_hit_ratio / WarnOnCacheBusts.
-3. Real cost accounting — surface RequestUsage.cost (genai-prices) per run in worker/UI; UsageLimits(cost_limit, per_request_input_tokens_limit); prices.update_in_background().
-4. Upgrade 2.66.0 → 2.68.0 — OutputTokenLimitExceeded+ModelFallback, service tiers, framing_announcement='when_needed', AskUser on deferred pipeline. Keep <3 pin (v3 TODOs exist, no milestone). Re-verify #253 retry seam after bump.
-5. BatchModelRequests (~50%) for bench.py / evals offline work.
-6. Optional: logfire 5.6.0 local OTLP observability ($0 via send_to_logfire=False + local backend); pydantic 2.14.3 / core 2.50.4 patch bump (check 2.14.2 extra='forbid' JSON change); pydantic-settings 2.16.3. Monty parked (no third-party packages → can't run our tool code).
-
-Status notes: levers 1+2 adopted locally pre-deploy (user decision 2026-11-13), then shipped in #228; lever 2 made general in #338 — every agent carries a cache profile (run vs one-shot), retention/messages/provider-passthrough configurable. 3 partially — estimator exists but provider-reported cost unused.
 
 ## R92 — Enforce pre-push code review as a hard gate
 **Status:** done
