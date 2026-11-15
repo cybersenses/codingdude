@@ -21,7 +21,10 @@ Up: [User Manual](../USER-MANUAL.md) · Next: [Configuration](configuration.md)
    step that can be skipped.
 
 Work worth tracking lands in the **Planning** panel as tickets under a
-roadmap item; the agent keeps statuses current and you can too.
+roadmap item; the agent keeps statuses current and you can too. A shipped PRD
+or tech design moves to `delivered` — not `sunset` or `superseded`, which mean
+retired and replaced. The full set of ladders is in
+[Panels › Planning](panels.md#planning).
 
 ## Reviewing and undoing
 

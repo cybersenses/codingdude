@@ -1475,3 +1475,15 @@ Follow-ups found by reading the code after R94-B #346 shipped the scaled reviewe
 **Also:** three docstrings on the review path still describe pre-fix behaviour and would teach the next maintainer to restore it — `planning.review_diff_findings` ("working-tree diff"), `planning._run_review` ("or ''"), `engine.review` ("swallows failures and returns \"\""). The last one documents exactly the #266 bug class (a reviewer that never ran was indistinguishable from CLEAN).
 
 **Scope:** the ceiling + its invariant test, and the five docstring sites (the three found first, plus `engine.review_diff` and `worker --review` help, found by sweeping). No new seam test: `tests/test_review_seam.py::test_reviewer_failure_is_not_reported_as_clean` already pins "a failed pass is never CLEAN" transitively through `engine.review`, so the gap was documentation only.
+
+## R96 — Docs: planning lifecycle reference + landing-page currency
+**Status:** open
+
+The audit of the documentation surfaces (README, docs/manual, .github, CHANGELOG, CONTRIBUTING) against the R91–R95 capability set found one real gap and one stale surface.
+
+**Gap.** The Planning panel reference (`docs/manual/panels.md`) is the natural home for the status vocabularies and named none of them — "Roadmap items, tickets, design decisions, PRDs and tech designs for the project, with status changes." The `delivered` state was added twice (#351 PRDs, #352 tech designs) precisely because `approved` and `delivered` mean different things, yet it was documented only in CHANGELOG. That semantic distinction is what the #351/#352 confusion was made of.
+
+**Stale surface.** README was last touched at R91/R92 (`8af11d4`): its engine bullet said "a budget cap" where R94-B put a hard per-call ceiling at the usage seam, and the Planning bullet listed the five item types with no lifecycle. The GitHub About description carried a typo and no topics.
+
+**Scope.** Documentation and repo metadata only — no behaviour change.
+
