@@ -1477,7 +1477,7 @@ Follow-ups found by reading the code after R94-B #346 shipped the scaled reviewe
 **Scope:** the ceiling + its invariant test, and the five docstring sites (the three found first, plus `engine.review_diff` and `worker --review` help, found by sweeping). No new seam test: `tests/test_review_seam.py::test_reviewer_failure_is_not_reported_as_clean` already pins "a failed pass is never CLEAN" transitively through `engine.review`, so the gap was documentation only.
 
 ## R96 — Docs: planning lifecycle reference + landing-page currency
-**Status:** open
+**Status:** done
 
 The audit of the documentation surfaces (README, docs/manual, .github, CHANGELOG, CONTRIBUTING) against the R91–R95 capability set found one real gap and one stale surface.
 
@@ -1486,4 +1486,6 @@ The audit of the documentation surfaces (README, docs/manual, .github, CHANGELOG
 **Stale surface.** README was last touched at R91/R92 (`8af11d4`): its engine bullet said "a budget cap" where R94-B put a hard per-call ceiling at the usage seam, and the Planning bullet listed the five item types with no lifecycle. The GitHub About description carried a typo and no topics.
 
 **Scope.** Documentation and repo metadata only — no behaviour change.
+
+**Outcome (`fe65250`).** `docs/manual/panels.md` gained the status-ladder table for all five item types, with the `approved`/`delivered`/`superseded` and `active`/`delivered`/`sunset` distinctions stated and the canonical-store rule named. README's engine bullet now describes the R94-B ceiling (per `agent.run()`, not per run) and its observability section gained the R93/R94 span and OTLP surfaces; `workflows.md` links the ladders. GitHub About carries the corrected description and ten topics — live metadata, deliberately not in the tree. A sweep of every other doc found no second status list to contradict. Gates: 1416 passed / 1 skipped, ruff and mypy clean; CI `test` 10m12s, `frontend` 1m4s, `bench` 34s.
 
