@@ -1416,3 +1416,80 @@ Pre-push review (2026-11-13, two-axis delegates over `origin/main...2f35e94`, ru
 - **Two claims corrected rather than implemented.** #341 said the surfaces are "validated at both config paths like `[models]`"; `[telemetry]` is read only by the global `load_config` and a project `.codingdude.toml [telemetry]` is ignored — recorded here and in the manual as global-only, since one collector serving every project is the intended shape, not an oversight. And "logged once" was not true: `_configured` stays False after a failure (that is what lets a later fixed call succeed), so every run re-warned; a separate `_warned` flag now makes it once per process.
 
 
+
+## R94 — run observability & spend governance (#345–#348)
+
+Three follow-on gaps left by R93, plus a docs repair, shipped as one branch.
+
+**Design.** Ownership of a spending cap was the open question, and the answer is
+three scopes with three mechanisms, no overlap:
+
+| Where | Scope | Mechanism |
+|---|---|---|
+| `[models] max_cost_usd` / `max_total_tokens` | one run | `UsageLimits`, checked by pydantic-ai before each request |
+| `[delegation] max_cost_usd` / `max_requests` | one `delegate` call | a slice of the run's spend, same mechanism |
+| `--budget` (Budget Cap) | whole session | the usage ledger (`db.session_usage`), across runs |
+
+`src/codingdude/limits.py` is the single definition of the first. It is
+deliberately not in `delegation.py`: nothing in it is delegation-specific, and
+that module already owns brief mining, delegation budget arithmetic and span
+naming. Its `request_limit=None` default is what preserves "an unconfigured
+install behaves exactly as before" — a seam that never bounded requests does not
+start doing so, and it returns `None` (the library default) rather than an
+empty `UsageLimits` that might differ.
+
+Delegation span naming is one helper, `delegation.delegate_span_name`, feeding
+both `Agent(name=...)` and the `span` field of `DELEGATION_COMPLETED`, so the
+trace and the event cannot drift into two vocabularies. Derived from the fixed
+function registry, never task text: an unbounded value in a span name is
+unbounded trace cardinality.
+
+**Ceilings stated rather than glossed.** `cost_limit` is enforceable only where
+pydantic-ai can price the model. Verified in 2.68.0: `check_before_request`
+cannot fire when `usage.cost is None`, and `UsageLimits.check_cost` emits
+`CostNotFoundWarning` to say so. `total_tokens_limit` needs no pricing, so it is
+the ceiling that always holds. Both behaviours are pinned by tests, including
+the warning's message.
+
+**Defects found by the two-axis review, each verified in source before fixing:**
+
+- **A configured ceiling vanished on any project override.** `apply_project_models`
+  rebuilds `ModelLineup` field by field; the two new keys were missing from
+  `current`, from `ModelLineupIn` and from the constructor call, so a project
+  with a `.codingdude.toml [models]` override reset both ceilings to `None` —
+  precisely the projects that believed they had a cap. The sibling was found by
+  sweeping: `models_payload` (the Config panel's view) omitted them too, so a
+  GET → PUT round-trip cleared a configured cap. Both pinned.
+- **The fix loop carried no limits at all.** `engine.py` `retry_agent.run(...)`
+  is part of the same run and its usage is billed into it, but it passed no
+  `usage_limits`. Together with the evaluator, the planning reviewer, the
+  summariser, memory extraction, the claims auditor and the vision inspector,
+  that was seven seams where a run's ceiling did not apply. All now go through
+  `limits.spend_limits`, and an AST guard over `(module, receiver)` pairs fails
+  if any `*.run()` stops passing `usage_limits` — proven to bite by removing one.
+- **`[delegation].max_cost_usd` had no validation.** `load_config` read it raw,
+  so `0` and `-1` silently meant "no cap" and `true` would have raised
+  `Decimal(str(True))` mid-delegation. Now validated at load like `[models]`,
+  and `cost_slice` no longer treats a non-positive allowance as unset — a value
+  that slipped through becomes a ceiling the delegation is already at, which
+  refuses, rather than silently meaning unlimited.
+- **A silent `getattr` on the delegation ceiling.** `getattr(ctx, 'usage_limits',
+  None)` would have dropped the run's own ceiling on every delegation, and no
+  test could see it because they all hand-build the context.
+  `RunContext.usage_limits` is a real 2.68 field, so it is accessed directly.
+- **The heading sweep missed a 32nd heading.** `## R24 — R22 — File-tools …`
+  carries a mismatched id, which the same-id pattern could not match. Guarding
+  it needed care: `## R89 — R86 review findings …` is a *legitimate*
+  cross-reference where a bare space after a different id is prose. The guards
+  now distinguish a stale prefix (id followed by a heading delimiter) from prose,
+  and run against the shipped `ROADMAP.md`: every id-heading parses, no heading
+  repeats its own id, ids are unique.
+
+**Waived, with reasons.** A `RequestSlice` value object to replace the
+`(used_requests, max_requests)` pair, and a cost-ceiling type replacing the bare
+`float | None` in four places: real smells, but the config boundary now validates
+both, so they are shape improvements rather than correctness gaps, and neither
+has a second consumer yet. `child_usage_limits` and `delegation_abort_message`
+both derive "which limit bound"; they share `delegation_slice` and the abort path
+is pinned by tests on all three branches, so the drift risk is covered rather
+than removed.

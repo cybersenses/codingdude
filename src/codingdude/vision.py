@@ -30,6 +30,8 @@ from pydantic_ai import Agent
 from pydantic_ai.models import Model
 from pydantic_ai.toolsets import FunctionToolset
 
+from .limits import spend_limits
+
 MEDIA_TYPES = {
     '.png': 'image/png',
     '.jpg': 'image/jpeg',
@@ -131,7 +133,7 @@ def build_vision_toolset(
         result = await agent.run([
             question.strip() or DEFAULT_QUESTION,
             BinaryContent(data=target.read_bytes(), media_type=media),
-        ])
+        ], usage_limits=spend_limits(models))
         if emitter is not None:
             emitter({'type': 'IMAGE_INSPECTED', 'path': path, 'question': question})
         return str(result.output)

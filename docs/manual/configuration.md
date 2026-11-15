@@ -132,8 +132,13 @@ endpoints must be `https://`.
 `request_limit` was the only thing ever bounded. A single enormous request, or a
 long run of large ones, was unbounded in tokens and in money. `max_cost_usd` and
 `max_total_tokens` are hard stops: pydantic-ai checks them *before* the next
-request and raises, so the call is refused rather than narrated afterwards. Both
-are unset by default, so an unconfigured install behaves exactly as before.
+request and raises, so the call is refused rather than narrated afterwards. They
+apply to **every model call inside the run** — the main loop, the fix loop, the
+evaluator, the planning reviewer, the summariser, memory extraction, the claims
+auditor and the vision inspector — not just the main loop. Both are unset by
+default, so an unconfigured install behaves exactly as before. The Config panel
+carries both keys through a save unchanged, but has no input for them yet — set
+them in `config.toml`.
 
 **Honest ceiling:** `max_cost_usd` can only be enforced when pydantic-ai can
 price the model in use. On an unpriced provider the boundary check silently
@@ -209,7 +214,7 @@ default = "bash"        # or "powershell"
 
 [delegation]            # how much MORE one `delegate` call may spend
 max_requests = 40
-# max_cost_usd = 1.00   # unset = no cost ceiling
+# max_cost_usd = 1.00   # unset = no cost ceiling (a ceiling, enforced, not a note)
 
 [planning]
 github_mirror = true    # mirror tickets/roadmap items to GitHub issues via gh

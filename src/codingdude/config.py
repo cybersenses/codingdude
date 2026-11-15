@@ -458,6 +458,10 @@ def models_payload(config: Config) -> dict:
             'max_tokens': config.models.max_tokens,
             'context_limit': config.models.context_limit,
             'request_limit': config.models.request_limit,
+            # R94-B #346: without these the Config panel cannot show a cap, and
+            # a GET -> PUT round-trip would silently clear one.
+            'max_cost_usd': config.models.max_cost_usd,
+            'max_total_tokens': config.models.max_total_tokens,
             'compact_per_request': config.models.compact_per_request,
             'prompt_cache': config.models.prompt_cache,
             'prompt_cache_messages': config.models.prompt_cache_messages,
@@ -1203,8 +1207,10 @@ def load_config(home: Path | None = None) -> Config:
     delegation = DelegationConfig(
         max_requests=delegation_raw.get(
             'max_requests', defaults.delegation.max_requests),
-        max_cost_usd=delegation_raw.get(
-            'max_cost_usd', defaults.delegation.max_cost_usd),
+        max_cost_usd=validate_optional_cost(
+            delegation_raw.get('max_cost_usd', defaults.delegation.max_cost_usd),
+            where='config.toml [delegation] max_cost_usd',
+        ),
     )
     planning_raw = raw.get('planning', {})
     if not isinstance(planning_raw, dict):

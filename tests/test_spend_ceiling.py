@@ -138,20 +138,88 @@ def test_the_warning_names_the_reason_it_cannot_enforce():
 # ---- every agent seam carries the ceilings ---------------------------
 
 
-@pytest.mark.parametrize('module', ['evaluator.py', 'planning.py', 'run_pipeline.py'])
+@pytest.mark.parametrize(
+    'module', ['evaluator.py', 'planning.py', 'run_pipeline.py']
+)
 def test_no_agent_seam_builds_ceiling_less_limits(module):
     """`UsageLimits(request_limit=...)` with nothing else was the R94 defect.
 
     The evaluator pass and the planning reviewer each built one, so a run could
     carry a cost ceiling while the agents it triggered spent without one. They
-    must go through `spend_limits`, the single definition.
+    must go through `limits.spend_limits`, the single definition.
     """
     source = (Path(__file__).resolve().parent.parent / 'src' / 'codingdude' / module)
     text = source.read_text(encoding='utf-8')
     assert 'UsageLimits(request_limit=' not in text, (
         f'{module} builds UsageLimits without the configured ceilings; '
-        'use delegation.spend_limits'
+        'use limits.spend_limits'
     )
+
+
+#: Every seam that runs a model inside a run. Each must pass usage_limits, or a
+#: configured ceiling silently does not apply to it (R94-B #346). The fix loop
+#: was the one this guard was written for: it is part of the run, billed into it,
+#: and carried no limits at all.
+_SEAMS = [
+    ('engine.py', 'retry_agent'),
+    ('run_pipeline.py', 'summarizer'),
+    ('run_pipeline.py', 'auditor'),
+    ('vision.py', 'agent'),
+]
+
+
+@pytest.mark.parametrize(('module', 'receiver'), _SEAMS)
+def test_every_model_call_seam_passes_usage_limits(module, receiver):
+    import ast
+
+    root = Path(__file__).resolve().parent.parent / 'src' / 'codingdude'
+    tree = ast.parse((root / module).read_text(encoding='utf-8'))
+    calls = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == 'run'
+        and ast.unparse(node.func.value).endswith(receiver)
+    ]
+    assert calls, f'{module}: no {receiver}.run(...) found — guard is blind'
+    for node in calls:
+        assert any(kw.arg == 'usage_limits' for kw in node.keywords), (
+            f'{module}:{node.lineno} {receiver}.run() does not pass '
+            'usage_limits — the run ceiling would not reach it'
+        )
+
+
+def test_the_delegation_config_cost_ceiling_is_validated_at_load(home):
+    """`[delegation].max_cost_usd` had no validation, so `0` or `-1` silently
+    meant "no cap" and `true` would blow up mid-delegation inside
+    `Decimal(str(True))`. Both are load-time errors now."""
+    from codingdude.config import load_config
+
+    home.mkdir(parents=True)
+    for bad in ('0', '-1', 'true', '"2.5"'):
+        (home / 'config.toml').write_text(
+            f'[delegation]\nmax_cost_usd = {bad}\n', encoding='utf-8'
+        )
+        with pytest.raises(ValueError, match='max_cost_usd'):
+            load_config()
+
+
+def test_the_config_panel_payload_carries_the_ceilings(home):
+    """A GET -> PUT round-trip must not clear a configured cap.
+
+    `models_payload` feeds the Config panel; omitting the keys means the panel
+    cannot show them and an unchanged save wipes them.
+    """
+    from codingdude.config import load_config, models_payload
+
+    home.mkdir(parents=True)
+    (home / 'config.toml').write_text(
+        '[models]\nmax_cost_usd = 2.5\nmax_total_tokens = 500000\n',
+        encoding='utf-8',
+    )
+    payload = models_payload(load_config(home))['models']
+    assert payload['max_cost_usd'] == 2.5
+    assert payload['max_total_tokens'] == 500000
 
 
 # ---- a delegation gets a slice of the same money ----------------------

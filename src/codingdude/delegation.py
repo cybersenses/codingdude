@@ -206,17 +206,15 @@ def cost_slice(
     the parent's accumulator, so a bare `cost_limit=max_cost_usd` would trip on
     the parent's spend before the delegation made a single request.
 
-    A non-positive allowance yields `None` rather than a limit the delegation is
-    already over: `max_cost_usd = 0` reads as "unset", and configuration
-    validation rejects negatives at the seam that parses them.
+    A non-positive allowance is *not* read as "unset": `load_config` rejects one
+    (`validate_optional_cost`), and a value that slipped through would otherwise
+    silently mean "unlimited" — the failure mode this ticket exists to remove.
+    It becomes a ceiling the delegation is already at, which refuses the spend.
     """
     if max_cost_usd is None:
         return None
-    allowance = Decimal(str(max_cost_usd))
-    if allowance <= 0:
-        return None
     already = Decimal(str(used_cost)) if used_cost is not None else Decimal('0')
-    return already + allowance
+    return already + Decimal(str(max_cost_usd))
 
 
 def delegation_abort_message(
@@ -253,34 +251,6 @@ def delegation_abort_message(
         'delegation aborted: exceeded the delegation budget of '
         f'{max_requests} model requests. Narrow the task and '
         'delegate again with a tighter question.'
-    )
-
-
-def spend_limits(models, request_limit: int) -> UsageLimits:
-    """`UsageLimits` carrying the configured run ceilings for one model call.
-
-    One definition for every seam that builds limits (R94-B #346). Without it a
-    run could carry a cost ceiling while an auxiliary agent it triggers spent
-    without one — the cap would be a claim rather than a limit. The evaluator
-    pass and the planning reviewer each constructed a bare
-    `UsageLimits(request_limit=...)`; the R94 problem statement names both.
-
-    Scope, stated: these are per-`agent.run()` ceilings. pydantic-ai checks them
-    against that call's own usage, and the one-shot agents bill their spend to
-    the session ledger separately (`record_model_usage`). The *total* across a
-    run remains the session Budget Cap over `db.session_usage`; this bounds any
-    single call.
-
-    `cost_limit` is enforceable only where pydantic-ai can price the model: the
-    boundary check cannot fire without a cost, and `UsageLimits.check_cost`
-    emits `CostNotFoundWarning` to say so. `max_total_tokens` needs no pricing,
-    so it is the ceiling that always holds.
-    """
-    cost = getattr(models, 'max_cost_usd', None)
-    return UsageLimits(
-        request_limit=request_limit,
-        cost_limit=Decimal(str(cost)) if cost is not None else None,
-        total_tokens_limit=getattr(models, 'max_total_tokens', None),
     )
 
 

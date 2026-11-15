@@ -6,11 +6,15 @@
 
 - **Hard per-run spend ceilings (R94-B)**: `[models] max_cost_usd` and
   `max_total_tokens`. Both are checked by pydantic-ai *before* the next request,
-  so the call is refused instead of the spend being narrated afterwards. Unset by
-  default, so nothing changes until you configure one. `max_cost_usd` can only be
-  enforced on a model pydantic-ai can price (it warns and enforces nothing
-  otherwise); `max_total_tokens` always holds. A malformed value fails at load
-  rather than silently becoming no cap.
+  so the call is refused instead of the spend being narrated afterwards. They
+  apply to every model call inside the run — the main loop, the fix loop, the
+  evaluator, the planning reviewer, the summariser, memory extraction, the claims
+  auditor and the vision inspector — via one definition
+  (`src/codingdude/limits.py`), with a guard test that fails if any seam stops
+  passing its limits. Unset by default, so nothing changes until you configure
+  one. `max_cost_usd` can only be enforced on a model pydantic-ai can price (it
+  warns and enforces nothing otherwise); `max_total_tokens` always holds. A
+  malformed value fails at load rather than silently becoming no cap.
 - **Per-function delegation spans (R94-A)**: every delegation used to be
   `name='delegate'`, so a designer run and a coder run on different models were
   indistinguishable in any trace. Spans are now `delegate.<function>`

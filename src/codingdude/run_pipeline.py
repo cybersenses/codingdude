@@ -142,6 +142,18 @@ class RunServices:
                 'usage recording failed for session %s', session_id, exc_info=True
             )
 
+    def ceiling_limits(self):
+        """Ceilings only; the request cap stays at the library default (R94-B).
+
+        For the one-shot post-run agents — summariser, memory extraction, claims
+        auditor — which never bounded requests. Applying this run's
+        `request_limit` to them would silently change their behaviour, so only
+        the configured cost/token ceilings are carried.
+        """
+        from .limits import spend_limits
+
+        return spend_limits(self._config.models)
+
     def usage_limits(self):
         """Per-run ceilings: requests, cost and tokens (R94-B #346).
 
@@ -151,10 +163,10 @@ class RunServices:
         before the next request, so money is refused rather than narrated
         afterwards. Both are None by default — the previous behaviour exactly.
 
-        Built by `spend_limits`, which the evaluator and planning reviewer share
-        so every seam carries the same ceilings.
+        Built by `limits.spend_limits`, which every other model-call seam in the
+        run also uses, so no seam can silently omit the ceilings.
         """
-        from .delegation import spend_limits
+        from .limits import spend_limits
 
         models = self._config.models
         return spend_limits(models, models.request_limit)
@@ -526,7 +538,8 @@ class HistoryManager:
             model=resolved, capabilities=one_shot_capabilities(self._services))
         summary_result = await summarizer.run(
             'Summarize the key facts and decisions of this conversation '
-            f'for continuity, in at most 200 words:\n\n{digest[:8000]}'
+            f'for continuity, in at most 200 words:\n\n{digest[:8000]}',
+            usage_limits=self._services.ceiling_limits(),
         )
         summary = summary_result.output
         self._services.record_model_usage(session_id, resolved, summary_result.usage)
@@ -651,7 +664,8 @@ class PostRunPipeline:
                 'nothing.\n\nKnown entries:\n'
                 + known_lines
                 + '\n\nTranscript:\n'
-                + transcript
+                + transcript,
+                usage_limits=self._services.ceiling_limits(),
             ), timeout=_POST_RUN_LLM_TIMEOUT_S)
         except Exception:  # noqa: BLE001 — extraction must never fail a run
             logging.getLogger(__name__).warning(
@@ -715,7 +729,11 @@ class PostRunPipeline:
         )
         try:
             audit = await asyncio.wait_for(
-                auditor.run(audit_prompt), timeout=_POST_RUN_LLM_TIMEOUT_S
+                auditor.run(
+                    audit_prompt,
+                    usage_limits=self._services.ceiling_limits(),
+                ),
+                timeout=_POST_RUN_LLM_TIMEOUT_S,
             )
         except Exception:  # noqa: BLE001 — verification must never fail the run
             # Review finding on b3817ad: this half previously returned bare,

@@ -204,7 +204,7 @@ class WorkEvaluator:
         from pydantic_ai.settings import ModelSettings
         from pydantic_ai.toolsets import FunctionToolset
 
-        from .delegation import spend_limits
+        from .limits import spend_limits
         from .prompts import load_prompt
         from .tool_errors import error_feedback_toolset
 

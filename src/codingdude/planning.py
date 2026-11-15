@@ -221,7 +221,7 @@ async def _review_impl(db, session_id: str, review_model, checklist: str, plan, 
     from pydantic_ai import Agent
 
     from .agent_caps import ONE_SHOT, cache_capabilities
-    from .delegation import spend_limits
+    from .limits import spend_limits
     from .prompts import load_prompt
     from .tools import build_toolset
 
