@@ -32,6 +32,16 @@ const PRD_STATUS_TONE = {
   delivered: 'text-success',
   sunset: 'text-ink-muted',
 }
+// #352: the tech-design ladder gets the same treatment, and for the same
+// reason — an inline `approved ? success : draft ? warning : muted` ternary
+// renders 'delivered' as muted (indistinguishable from 'superseded'), which is
+// exactly the collapse the new state exists to prevent.
+const DESIGN_STATUS_TONE = {
+  draft: 'text-warning',
+  approved: 'text-accent',
+  delivered: 'text-success',
+  superseded: 'text-ink-muted',
+}
 
 export function Planning({ workdir }) {
   // R68 (#256): planning data comes from the visibility-gated store, keyed by
@@ -161,7 +171,7 @@ export function Planning({ workdir }) {
         {data.designs?.map((d) => (
           <div key={d.id} className="flex items-center gap-1 rounded bg-neutral-900 p-1">
             <span
-              className={`min-w-0 flex-1 truncate text-xs ${d.status === 'approved' ? 'text-success' : d.status === 'draft' ? 'text-warning' : 'text-ink-muted'}`}
+              className={`min-w-0 flex-1 truncate text-xs ${DESIGN_STATUS_TONE[d.status] ?? 'text-ink-muted'}`}
               title={d.body}
             >
               #{d.id} {d.title}{d.prd_id && <span className="ml-1 text-[10px] text-neutral-500">PRD #{d.prd_id}</span>}
@@ -174,6 +184,7 @@ export function Planning({ workdir }) {
             >
               <option value="draft">draft</option>
               <option value="approved">approved</option>
+              <option value="delivered">delivered</option>
               <option value="superseded">superseded</option>
             </select>
           </div>

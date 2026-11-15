@@ -49,7 +49,12 @@ TICKET_STATUSES = ('todo', 'in_progress', 'done')
 # #351: 'delivered' is the shipped state. Without it, closing out a shipped
 # PRD has to claim it was retired ('sunset') or in flight ('active').
 PRD_STATUSES = ('draft', 'active', 'delivered', 'sunset')
-DESIGN_STATUSES = ('draft', 'approved', 'superseded')
+# #352: the same misdescription #351 fixed for PRDs, in the design vocabulary —
+# a design whose work shipped still read 'draft' ("not yet agreed"), because
+# neither 'approved' (agreed, not built) nor 'superseded' (replaced) says it
+# was built. 'delivered' is the shipped state and sits where the work actually
+# goes: after 'approved', before 'superseded'.
+DESIGN_STATUSES = ('draft', 'approved', 'delivered', 'superseded')
 
 
 # ---- ROADMAP.md bridge -----------------------------------------------------
@@ -354,7 +359,7 @@ class RoadmapStore:
         rows = self.db._conn.execute(
             'SELECT * FROM tech_designs WHERE workdir = ?'
             " ORDER BY CASE status WHEN 'draft' THEN 0 WHEN 'approved' THEN 1"
-            " ELSE 2 END, id",
+            " WHEN 'delivered' THEN 2 WHEN 'superseded' THEN 3 ELSE 4 END, id",
             (workdir,),
         ).fetchall()
         return [dict(r) for r in rows]
@@ -559,7 +564,7 @@ def build_roadmap_toolset(
         return f'tech design #{did} created{link}: {title}'
 
     async def update_tech_design(design_id: int, status: str | None = None, body: str | None = None) -> str:
-        """Update a tech design ('draft'|'approved'|'superseded') and/or its body. Supersede rather than rewrite an approved design."""
+        """Update a tech design ('draft'|'approved'|'delivered'|'superseded') and/or its body. Supersede rather than rewrite an approved design."""
         fields: dict = {}
         if status is not None:
             if status not in DESIGN_STATUSES:

@@ -528,12 +528,34 @@ class Engine:
             )
         session_id, created_session = self._ensure_session(session_id, workdir, prompt)
 
-        # Wait out the previous turn's background post-run passes so memory
-        # extraction lands before this prompt is assembled.
-        await self._drain_pending_post_run()
+        # #301: boot (project scaffold + codegraph index sync — subprocess calls,
+        # so the loop stalled for their whole duration) used to run inline
+        # *after* the drain, serially: the boot time was added to the post-run
+        # tail's wall clock. It now runs in a worker thread concurrently with
+        # the drain. The two touch different state — the tail extracts memory
+        # and audits claims, boot scaffolds and syncs the index — and boot
+        # cannot raise into this frame: `boot_codegraph` converts a dead CLI
+        # into a status dict [probe: boot_codegraph(tmp, runner=raising OSError,
+        # cli_path='codegraph') -> {'status': 'failed', 'reason': 'OSError:
+        # codegraph cli wedged'}], which CODEGRAPH_BOOT reports and `boot_hint`
+        # turns into a prompt hint.
+        boot_task = asyncio.create_task(
+            asyncio.to_thread(self._boot_project, workdir)
+        )
+        try:
+            # Wait out the previous turn's background post-run passes so memory
+            # extraction lands before this prompt is assembled.
+            await self._drain_pending_post_run()
+            boot_event = await boot_task
+        except BaseException:
+            # A cancel here must not leave an unretrieved task behind: the
+            # thread itself cannot be interrupted, but detaching the task means
+            # its result (or failure) is dropped instead of never awaited.
+            boot_task.cancel()
+            raise
 
+        boot_event = self._attach_onboarding(boot_event, workdir)
         traced = self._make_tracer(session_id, workdir, trace, emit, run_id=run_id)
-        boot_event = self._boot_project(workdir)
         # #310: the claims-audit gate is run-scoped. Two signals arm it:
         # edit-tool events this run produced, and any movement of the
         # tracked-file diff between now and run end (shell-mediated work).
@@ -732,6 +754,11 @@ class Engine:
         Emitted after USER_PROMPT in _prepare_history: the trace contract
         keeps USER_PROMPT as the first event of a run (test_evals relies on
         it), so the event is built here but traced later.
+
+        #301: this runs in a worker thread, concurrently with the previous
+        turn's post-run tail, so it reads nothing that tail may be writing —
+        the onboarding flag is attached afterwards, on the loop
+        (`_attach_onboarding`), for exactly that reason.
         """
         from .codegraph_boot import boot_codegraph
         from .scaffold import ensure_project_scaffold
@@ -745,8 +772,18 @@ class Engine:
             boot_event['scaffold_created'] = scaffold['created']
         if scaffold['errors']:
             logger.warning('project scaffold incomplete: %s', scaffold['errors'])
-        # Project onboarding (first-run): surface it in the trace so the UI
-        # and post-run analysis can see why the onboarding directive fired.
+        return boot_event
+
+    def _attach_onboarding(self, boot_event: dict, workdir: Path) -> dict:
+        """Surface first-run project onboarding in the trace (#301).
+
+        Runs on the event loop, after the drain, and NOT inside
+        `_boot_project`: the previous turn's memory extraction writes the store
+        this reads, so deciding "onboarding needed" inside the boot thread
+        could answer against a store that is about to receive the answer. The
+        overlap is meant to leave semantics alone, so the check stays ordered
+        the way it was when boot was serial.
+        """
         from .memory import MemoryStore
         from .onboarding import onboarding_needed
 

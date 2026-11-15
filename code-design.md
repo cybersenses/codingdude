@@ -45,8 +45,8 @@ from conversation straight to tickets.
 
 **Design (user-chosen: DB-backed like tickets, surfaced in web UI):**
 - Schema (db.py, additive): `prds` (status draft|active|delivered|sunset) and
-  `tech_designs` (status draft|approved|superseded, optional `prd_id` FK-ish
-  link for requirements traceability). Both workdir-scoped.
+  `tech_designs` (status draft|approved|delivered|superseded, optional `prd_id`
+  FK-ish link for requirements traceability). Both workdir-scoped.
 - RoadmapStore: list/create/update/delete for prds + designs; constants
   PRD_STATUSES / DESIGN_STATUSES.
 - Agent tools (build_roadmap_toolset): create_prd/read_prd/update_prd,
@@ -65,10 +65,11 @@ from conversation straight to tickets.
   Positioned explicitly against to-spec/grilling/grill-with-docs.
 
 **Impact:** additive schema for `tech_designs` (CREATE TABLE IF NOT EXISTS — no
-migration needed). `prds` is no longer purely additive: #351 widened its status
-CHECK, which SQLite cannot ALTER, so `_migrate` rebuilds that one table in place
-(see the R95 section below). /planning response gains two keys (frontend
-tolerates absence via optional chaining); no existing tool signatures changed.
+migration needed). The status CHECKs are no longer purely additive: #351 widened
+the `prds` one and #352 the `tech_designs` one, and SQLite cannot ALTER a CHECK,
+so `_migrate` rebuilds each table in place through one shared seam (see the R95
+section below). /planning response gains two keys (frontend tolerates absence via
+optional chaining); no existing tool signatures changed.
 
 ## GitHub issue auto-mirror (R53) — convention enforced in code
 
@@ -1632,11 +1633,79 @@ the `prds` table's CHECK constraint, which
 `CREATE TABLE IF NOT EXISTS` never widens an existing one. The bodies are closed
 out at that status.
 
-**Sibling left open on purpose (#352).** `DESIGN_STATUSES` has the same gap —
+**Sibling, closed at the same time (#352).** `DESIGN_STATUSES` had the same gap —
 `draft`/`approved`/`superseded`, no state meaning "shipped" — so tech designs #2,
-#3 and #4 still read `draft` although R80, R85 and R87 are all `done` (TD #4
-even carries "As-built amendments"). Recorded as #352, not fixed here: in that
-vocabulary `approved` (agreed) and "shipped" are independent states, and
-`superseded` is arguably a second axis, so it is a decision rather than a port
-of this change.
+#3 and #4 read `draft` although R80, R85 and R87 are all `done` (TD #4 even
+carries "As-built amendments"). #352 closed it as a port of #351's ladder:
+draft → approved → delivered → superseded.
 
+The ticket flagged one objection worth answering rather than overriding:
+`approved` (agreed) and "shipped" are independent, and `superseded` is arguably a
+second axis, so a single column might be the wrong shape. It is the right shape
+because a status answers *where a document stands now*, not *what path it took*:
+a document whose work shipped is no longer "agreed but unbuilt", and the only
+thing the ladder stops expressing is whether a delivered design was ever formally
+approved — a question about process compliance, which the body records. The
+alternative (a second `delivered`-style column) would have put two controls on
+every row of a compact panel for one bit, and `superseded` stays terminal:
+whether it shipped is trivia once something replaced it.
+
+**One seam, two callers.** `_widen_prd_status_check` became
+`_widen_status_check(table, check, rebuild_ddl)`: the guard (does this table's
+DDL already carry the widened CHECK text?), the transaction, the copy, the
+two-step rename. The per-table part is two constants and one call, so a third
+document type does not become a third copy of the rebuild. Two details are
+load-bearing and were both found by tests rather than by reading: the copy's
+column list must come from the rebuilt table *after* it is created (asking
+earlier returns `[]` and the INSERT becomes a syntax error), and the rebuilt
+table's DDL is compared against a freshly created one for both tables, so
+hand-written DDL cannot silently drift from `_SCHEMA`. The copy also keeps ids,
+the AUTOINCREMENT sequence and `tech_designs.prd_id` — asserted with
+non-contiguous ids (1 and 7) and one NULL `prd_id`, which a renumbering or
+column-dropping copy could not survive.
+
+**Frontend, same reasoning as #351.** The inline
+`approved ? success : draft ? warning : muted` ternary rendered any new status as
+muted, i.e. `delivered` would have looked exactly like `superseded` — the
+collapse the state exists to prevent. It became a `DESIGN_STATUS_TONE` map
+mirroring `PRD_STATUS_TONE`, with `approved` moving success → accent so shipped
+and agreed are distinguishable.
+
+## #301 ? codegraph boot overlaps the post-run drain
+
+**Problem:** `Engine.run` ran `_boot_project` (project scaffold + codegraph
+`sync`/`init`, both subprocess calls) inline on the event loop, *after* awaiting
+`_drain_pending_post_run` ? the previous turn's memory-extraction and
+claims-audit tail, which can run for a minute or more. Two costs: the boot's
+subprocess time was added serially to the tail's wall clock, and the loop was
+blocked for its whole duration (no token streaming, no UI poll answers).
+
+**Design:** the boot is started first as `asyncio.create_task(asyncio.to_thread(
+self._boot_project, workdir))`, then the drain is awaited, then the boot task is
+awaited. The overlap costs nothing when no tail is pending, because a pending
+tail is the only thing that was slow. On cancellation between the two awaits the
+task is cancelled before re-raising, so a cancelled run cannot leave an awaited
+task behind (the thread itself is not interruptible; its result is dropped
+instead of never retrieved).
+
+**Why the boot cannot poison the run:** `boot_codegraph` converts a dead or
+wedged CLI into `{'status': 'failed'|'skipped', 'reason': ...}` rather than
+raising (probed: an exploding runner yields `{'status': 'failed', 'reason':
+'OSError: ...'}`), and `CODEGRAPH_BOOT` reports it plus `boot_hint` in the prompt.
+The two overlapping phases touch different state: the tail extracts memory and
+audits claims, boot scaffolds files and syncs `.codegraph`. The tail does not
+refresh codegraph itself, so the index is not written by both.
+
+**The one thing that had to move:** `_boot_project` read the memory store to
+decide first-run onboarding. The tail *writes* that store, so reading it inside
+the boot thread would have decided "onboarding needed" against a store about to
+receive the answer ? a semantic change smuggled in by a perf ticket. The check
+moved to `_attach_onboarding`, which runs on the loop after the drain, so the
+ordering the serial code had is preserved exactly. `tests/test_engine.py` pins
+both halves: the drain observes boot already in flight (a serial boot cannot pass
+that assertion), boot runs off the loop thread, the awaited result is what the
+trace reports, and no onboarding check may run before the drain closes.
+
+**Not changed, deliberately:** the drain's 300s bound. Bounding it tighter is a
+semantics change (which tails get dropped) that the ticket text defers to
+operator sign-off; it stays as-is with the overlap, which was the free half.

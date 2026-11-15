@@ -239,7 +239,7 @@ CREATE TABLE IF NOT EXISTS tech_designs (
     workdir TEXT NOT NULL,
     title TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'draft'
-        CHECK (status IN ('draft', 'approved', 'superseded')),
+        CHECK (status IN ('draft', 'approved', 'delivered', 'superseded')),
     body TEXT NOT NULL DEFAULT '',
     prd_id INTEGER,
     created_at TEXT NOT NULL,
@@ -247,10 +247,11 @@ CREATE TABLE IF NOT EXISTS tech_designs (
 );
 """
 
-# #351: prds gained a 'delivered' status. `_SCHEMA` above declares the widened
-# CHECK for a fresh database; these two constants are the same constraint for a
-# database created before it existed — `_PRD_STATUS_CHECK` is what the guard
-# compares against, and `_PRD_REBUILD_DDL` installs it by rebuilding the table.
+# #351 (prds) and #352 (tech_designs): a document type gained a status the
+# schema's CHECK never allowed. `_SCHEMA` above declares the widened CHECK for a
+# fresh database; these constants are the same constraint for a database created
+# before it existed — `*_STATUS_CHECK` is what the guard compares against, and
+# `*_REBUILD_DDL` installs it by rebuilding the table.
 _PRD_STATUS_CHECK = (
     "CHECK (status IN ('draft', 'active', 'delivered', 'sunset'))"
 )
@@ -262,6 +263,21 @@ _PRD_REBUILD_DDL = (
     " status TEXT NOT NULL DEFAULT 'draft'"
     " CHECK (status IN ('draft', 'active', 'delivered', 'sunset')),"
     " body TEXT NOT NULL DEFAULT '',"
+    ' created_at TEXT NOT NULL,'
+    ' updated_at TEXT NOT NULL)'
+)
+_DESIGN_STATUS_CHECK = (
+    "CHECK (status IN ('draft', 'approved', 'delivered', 'superseded'))"
+)
+_DESIGN_REBUILD_DDL = (
+    'CREATE TABLE tech_designs_rebuilt ('
+    ' id INTEGER PRIMARY KEY AUTOINCREMENT,'
+    ' workdir TEXT NOT NULL,'
+    ' title TEXT NOT NULL,'
+    " status TEXT NOT NULL DEFAULT 'draft'"
+    " CHECK (status IN ('draft', 'approved', 'delivered', 'superseded')),"
+    " body TEXT NOT NULL DEFAULT '',"
+    ' prd_id INTEGER,'
     ' created_at TEXT NOT NULL,'
     ' updated_at TEXT NOT NULL)'
 )
@@ -457,9 +473,10 @@ class Database:
 
         `CREATE TABLE IF NOT EXISTS` won't alter existing databases, so new
         columns are added here, guarded by a PRAGMA check. A constraint that
-        cannot be ALTERed (the `prds` status CHECK, #351) is handled by a table
-        rebuild in the same pass. This method owns the only COMMIT on this
-        path — the helpers it calls leave the transaction open on purpose.
+        cannot be ALTERed (the `prds` and `tech_designs` status CHECKs, #351 /
+        #352) is handled by the table rebuild in the same pass. This method
+        owns the only COMMIT on this path — the helpers it calls leave the
+        transaction open on purpose.
         """
         existing = {
             r['name'] for r in self._conn.execute('PRAGMA table_info(sessions)')
@@ -536,50 +553,87 @@ class Database:
             self._conn.execute(
                 'ALTER TABLE runs ADD COLUMN long_run TEXT'
             )
-        self._widen_prd_status_check()
+        self._widen_status_check('prds', _PRD_STATUS_CHECK, _PRD_REBUILD_DDL)
+        self._widen_status_check(
+            'tech_designs', _DESIGN_STATUS_CHECK, _DESIGN_REBUILD_DDL
+        )
         self._commit()
 
-    def _widen_prd_status_check(self) -> None:
-        """#351: add 'delivered' to the prds status CHECK.
+    def _widen_status_check(
+        self, table: str, check: str, rebuild_ddl: str
+    ) -> None:
+        """Add a status value to `table`'s CHECK constraint in place.
 
-        A shipped PRD needs a state that says so — 'sunset' reads as retired
-        and 'active' as in flight. `CREATE TABLE IF NOT EXISTS` never rewrites
-        an existing table and SQLite cannot ALTER a CHECK, so the only way to
-        widen it is the documented table rebuild: create, copy, drop, rename.
-        Rows, ids and the AUTOINCREMENT sequence carry over unchanged; the
-        prune of the old table is what would lose PRD bodies, so the swap opens
-        one transaction when the caller has none.
+        #351 (prds: 'delivered') and #352 (tech_designs: 'delivered'): a
+        shipped document needs a state that says so — 'sunset'/'superseded'
+        read as retired or replaced, 'active'/'approved' as in flight.
+        `CREATE TABLE IF NOT EXISTS` never rewrites an existing table and
+        SQLite cannot ALTER a CHECK, so the only way to widen one is the
+        documented table rebuild: create, copy, drop, rename. Rows, ids and the
+        AUTOINCREMENT sequence carry over unchanged; the prune of the old table
+        is what would lose document bodies, so the swap opens one transaction
+        when the caller has none.
 
-        The guard compares the exact widened CHECK text rather than the word
-        'delivered', so an unrelated mention in this table's DDL (a future
-        `delivered_at` column) cannot make the rebuild skip itself.
+        Both the guard and the copy are table-agnostic on purpose: the
+        per-table arguments are the CHECK text to install and the rebuilt
+        table's own DDL. A third document type widens by adding two constants
+        and one call, not another copy of this method. The guard compares the
+        exact widened CHECK text rather than the new word, so an unrelated
+        mention in this table's DDL (a future `delivered_at` column) cannot
+        make the rebuild skip itself.
+
+        The copy's column list comes from the rebuilt table, so the old shape
+        must be a subset of it — `_migrate` runs its PRAGMA-guarded ALTERs
+        before this, which is what guarantees that for every existing table.
+
+        `table` is always a module-level literal here, never user input. SQL
+        identifiers cannot be parameters, so each statement is built in a named
+        local with the identifier check below standing in for binding — the
+        same seam `delete_session` uses for its per-table DELETE.
         The caller owns the COMMIT (`_migrate` is the only one). No rollback is
         handled here on purpose: every statement below runs through
         `_Connection.execute`, which rolls back and re-raises, and a second
         `rollback()` in this frame could replace the original error with its
         own — the masking `_rollback_quietly` exists to prevent.
         """
+        if not re.fullmatch(r'[a-z_]+', table):
+            raise ValueError(f'refusing to rebuild a table named {table!r}')
         row = self._conn.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='prds'"
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+            (table,),
         ).fetchone()
-        if row is None or _PRD_STATUS_CHECK in row[0]:
+        if row is None or check in row[0]:
             return
+        rebuilt = f'{table}_rebuilt'
+        # table is checked to [a-z_]+ above; these are the only interpolated
+        # identifiers in this module. One statement per line: bandit anchors
+        # B608 to the line the string is built on, so a wrapped concatenation
+        # moves the statement off its own nosec.
+        drop_stale = f'DROP TABLE IF EXISTS {rebuilt}'  # nosec B608 - identifier validated at the top of this method
+        drop_old = f'DROP TABLE {table}'  # nosec B608 - identifier validated at the top of this method
+        rename_new = f'ALTER TABLE {rebuilt} RENAME TO {table}'  # nosec B608 - identifier validated at the top of this method
         if not self._conn.in_transaction:
             self._conn.execute('BEGIN IMMEDIATE')
         # Belt-and-braces, not a fix for an observed state: SQLite rolls DDL
         # back with the transaction, so an interrupted earlier attempt cannot
         # leave a copy table behind. A stray name would otherwise fail the
         # CREATE below with an error that says nothing about this migration.
-        self._conn.execute('DROP TABLE IF EXISTS prds_rebuilt')
-        self._conn.execute(_PRD_REBUILD_DDL)
-        self._conn.execute(
-            'INSERT INTO prds_rebuilt'
-            ' (id, workdir, title, status, body, created_at, updated_at)'
-            ' SELECT id, workdir, title, status, body, created_at, updated_at'
-            ' FROM prds'
+        self._conn.execute(drop_stale)
+        self._conn.execute(rebuild_ddl)
+        # The copy is built AFTER the rebuilt table exists: its own column list
+        # is what both sides of the copy use, and asking for it earlier returns
+        # an empty list, which makes the INSERT a syntax error rather than a
+        # silently lossy copy (that is how this was caught). parameterized
+        # pragma_table_info(?) — PRAGMA itself takes no parameters.
+        columns = ', '.join(
+            r['name'] for r in self._conn.execute(
+                'SELECT name FROM pragma_table_info(?)', (rebuilt,)
+            )
         )
-        self._conn.execute('DROP TABLE prds')
-        self._conn.execute('ALTER TABLE prds_rebuilt RENAME TO prds')
+        copy_rows = f'INSERT INTO {rebuilt} ({columns}) SELECT {columns} FROM {table}'  # nosec B608 - identifier validated at the top of this method
+        self._conn.execute(copy_rows)
+        self._conn.execute(drop_old)
+        self._conn.execute(rename_new)
 
     def _commit(self) -> None:
         """Commit this thread's connection.
