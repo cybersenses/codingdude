@@ -1489,3 +1489,120 @@ The audit of the documentation surfaces (README, docs/manual, .github, CHANGELOG
 
 **Outcome (`fe65250`).** `docs/manual/panels.md` gained the status-ladder table for all five item types, with the `approved`/`delivered`/`superseded` and `active`/`delivered`/`sunset` distinctions stated and the canonical-store rule named. README's engine bullet now describes the R94-B ceiling (per `agent.run()`, not per run) and its observability section gained the R93/R94 span and OTLP surfaces; `workflows.md` links the ladders. GitHub About carries the corrected description and ten topics — live metadata, deliberately not in the tree. A sweep of every other doc found no second status list to contradict. Gates: 1416 passed / 1 skipped, ruff and mypy clean; CI `test` 10m12s, `frontend` 1m4s, `bench` 34s.
 
+## R97 — Visual review of rendered artifacts — run the gate that was skipped
+**Status:** done - 2026-11-16
+
+Audience: human
+
+**Resolution (2026-11-16) - the gate was run; 14 images were actually looked at**
+
+The vision path is the repo's own, not the MCP server: DeepSeek `deepseek-flash`
+accepts OpenAI-compatible `image_url` blocks, which is exactly the shape
+`vision.py` already produces (`MEDIA_TYPES` -> `BinaryContent` ->
+`build_run_prompt`, `vision.py:32-74`). `inspect_image` is wired in
+`plugins/__init__.py:192-196`, gated only on `ctx.vision_model` fed from
+`config.models.vision` (`worker.py:200-208`). So `zai-vision` is redundant; the
+standing answer is "vision through `models.vision`", and the only thing missing
+at runtime is that one config line.
+
+The pass was executed with `vision.INSPECT_INSTRUCTIONS` + `build_run_prompt`
+against `deepseek:deepseek-flash` (`.scratch/vision-probe.py`), because
+`models.vision` was still unset when it ran - the tool itself was unreachable in
+a live run. Verdicts, per image:
+
+| Image | Looked at | Verdict |
+| --- | --- | --- |
+| `sample-review.png` | yes | clean - no defects found; only a spacing preference in the footer |
+| `sample-approval.png` | yes | 5 findings: metadata row space-separated with run-together gaps; secondary button borders too faint; salmon "Revert" out-shouts the primary action; no overflow affordance in the diff; tight vertical padding in the code header |
+| `review.png` | yes | clean |
+| `Reviews_And_Memory.png` | yes | clean |
+| `Roadmap_2.png` | yes | clean |
+| `WIREFRAM_1.png` | yes | clean |
+| `costs.png` | yes | left-column labels clipped at the left edge; bottom table row clipped; tab close glyph flush against the label |
+| `DIFF_APproval.png` | yes | `-` rows misalign by about one character against the `+` rows |
+| `Editor_DIF_VS_HEAD.png` | yes | stray horizontal dividers cut across the editor; panel looks split; orphan glyph in the gutter; breadcrumb at near-unreadable contrast |
+| `MAP.png` | yes | connector arrow stops short of the `add` node |
+| `MAP_2.png` | yes | "Review changes" clipped; legend promises green/red reachability but every node renders neutral grey; native select breaks the theme; inconsistent dashed borders |
+| `Trace.png` | yes | long checkpoint text hard-clipped with no wrap or ellipsis |
+| `WaterFall.png` | yes | "Review changes" clipped by the top edge; file path clipped; "2" badge detached below its tab; selected row background stops short and its status shows a stray underline |
+| `Roadmap_1.png` | yes | two rows (#R2, #R17) render without the right-aligned status control every other row has |
+
+Eight defect images, six clean. The defects are tracked as R98 rather than
+folded in here - this item was "run the gate", and the gate is run.
+
+Still owned by the operator, not by the repo (`~/.codingdude` is read-only to
+the agent, so none of this can be fixed from here):
+
+1. Rotate both `[providers]` keys. They are byte-identical to values leaked in
+   an earlier session, so the previously proposed rotation never happened.
+2. Add `[models] vision = "deepseek:deepseek-flash"` and bounce; `inspect_image`
+   then appears in live runs and the probe script becomes unnecessary.
+3. Playwright capture and a tracked home for `docs/Screenshots/` are now
+   recorded in R98 - they are capture and policy questions, not part of
+   "look at what we made".
+
+**Context**
+
+Rendered artifacts are being produced and shipped without anyone looking at them. Two product-page graphics and a twelve-file screenshot set exist today; all of them were checked mechanically and none was reviewed by eye.
+
+What was checked mechanically (real, and it stays as the first line of defence):
+- HTML structure, zero undefined/unused CSS variables, token hexes matching the design lock verbatim
+- pixel colour counts and pairwise contrast arithmetic (fg 17.36:1, muted 7.82:1, success 10.29:1 — all AA/AAA)
+- centring and clipping (content centred 720/720 and 460/460; no edge-clipped tokens)
+
+What was **not** done: nobody *looked*. Mechanical checks cannot see a wrong-colour text run, a card that stacked badly, or a cropped eyebrow.
+
+**Why the gap exists — measured, not assumed**
+
+- `zai-vision` is a seeded MCP server (`~/.codingdude/mcp.json`, `Z_AI_API_KEY: ${ZAI_API_KEY:-}`), but the vision call made in-session returned an error instead of an analysis. The cause was **not** established, and an earlier quoted billing message ("HTTP 429 — Insufficient balance or no resource package") has been **withdrawn as unverifiable**.
+- `ZAI_API_KEY` is absent from: the shell environment (length 0), the user-level environment variable, `~/.codingdude/.env` (file absent), `G:\pydantic\.env` (file absent). `~/.codingdude/config.toml` has no `api_key` line and no `[providers.zai]` section. So the `${ZAI_API_KEY:-}` substitution the MCP server depends on resolves to empty in every location checked — which makes a keyless failure at least as likely as the billing error.
+- The renderer the visual gate wants is not installed: `node_modules\playwright` absent, `frontend\node_modules\playwright` absent, `frontend\node_modules\@playwright\test` absent.
+
+**Risk if left open**
+
+The graphics are content for the public site. Publishing them unreviewed makes an implicit claim — "this is what the product looks like" — that no model and no human has verified. A skipped visual gate must be visible here in the roadmap, not recorded in a chat note that scrolls away.
+
+**Scope**
+
+1. Establish a working vision path (documented key provisioning, or a local fallback), **or** a named human sign-off step — and state which one is the standing answer so this never silently degrades again.
+2. Actually review the two sample graphics (`sample-review.png`, `sample-approval.png`) and the twelve `docs/Screenshots/*.png` captures (incl. `review.png`, `DIFF_APproval.png`, `Reviews_And_Memory.png`); record a per-image verdict.
+3. Install the renderer the gate needs (Playwright) so `ss-verify` / `webapp-testing` can run against live UI, **or** record a decision that visual review is human-only by design.
+4. Decide the tracked home for the untracked `docs/Screenshots/` set against R74's binary-purge policy — 12 PNGs, roughly 800 KB, currently one `git clean -fdx` from deletion.
+
+**Not in scope**
+
+Re-rendering or redesigning the graphics; the product page itself; changing the mechanical checks, which already pass and are not the problem.
+
+**Delivery format**
+
+A per-image verdict table (image → looked at Y/N → findings) committed beside the images, plus the recorded decision on the vision path and on renderer availability. "Looked at" means a model or a human described the image — an arithmetic contrast figure does not count and must not be recorded as sight.
+
+## R98 — UI defects found by the first visual pass
+**Status:** open
+
+Audience: agent + human
+
+**Problem**
+
+The visual gate finally ran (R97, 2026-11-16) and it found real defects in eight of the twelve shipped screenshots. Mechanical checks could not have caught any of them, which is the point of the gate.
+
+**Findings, by surface**
+
+- Usage/costs (`costs.png`): left-column labels clipped at the left edge; bottom table row clipped by the viewport; tab close glyph flush against the tab label.
+- Diff approval (`DIFF_APproval.png`): `-` rows misalign about one character against the `+` rows, so the compared text does not line up.
+- Editor diff vs HEAD (`Editor_DIF_VS_HEAD.png`): stray horizontal dividers cut across the editor and make the panel look split; an orphan glyph floats in the left gutter; the file breadcrumb sits at near-unreadable contrast.
+- Repo map (`MAP.png`): a connector arrow stops short of the `add` node, so the edge visually does not connect.
+- Dead-code map (`MAP_2.png`): the legend promises green = reachable, red = dead, but every node renders neutral grey - the reachability colouring is not applied. This one is functional, not cosmetic. Also: "Review changes" clipped at the right edge; a native select breaks the dark theme; dashed node borders rendered inconsistently.
+- Trace (`Trace.png`): long checkpoint text hard-clipped with no wrap and no ellipsis.
+- Waterfall (`WaterFall.png`): "Review changes" clipped by the top edge; file path clipped with no ellipsis; the "2" count badge is detached below its tab; the selected row's background stops short of its status label, which also shows a stray underline.
+- Roadmap (`Roadmap_1.png`): two rows (#R2, #R17) render without the right-aligned status control that every other row has.
+
+**Desired outcome**
+
+Each finding either fixed or explicitly waived with a reason. The dead-code legend colouring is a bug (state says one thing, pixels another) and should be treated as such, not as polish.
+
+**Also recorded here (undecided, needs a call)**
+
+- Capture: the visual gate reads existing PNGs. Installing Playwright would let `ss-verify` capture live UI itself. Not required to review images, required to review screens.
+- Tracked home: `docs/Screenshots/*.png` - 12 files, about 800 KB, still untracked, one `git clean -fdx` from deletion, and in tension with R74's binary-purge policy.
+
