@@ -1538,14 +1538,33 @@ Operator config, written under explicit permission (2026-11-16):
    LF, parses with `tomllib`). Verified end to end, not just parsed:
    `load_config()` reports the slot; `_resolve_worker_slots` returns a real
    `OpenAIChatModel`; and `plugins.build_all` emits a `FunctionToolset` whose
-   `.tools` contains `inspect_image`. The gate at `plugins/__init__.py:192` is
-   open; the probe script is now unnecessary and the tool is reachable in live
-   runs.
-2. **Still open, and only the operator can close it:** rotate both
-   `[providers]` keys. They are byte-identical to the values leaked earlier, so
-   the proposed rotation never happened. Rotation needs the provider
-   dashboard; writing new values into the config is the agent's part whenever
-   they arrive.
+   `.tools` contains `inspect_image`.
+
+   Then exercised for real, in a live run. Per-turn worker spawn is why no
+   server bounce is needed: every run gets a fresh worker subprocess
+   (`server.py:674`), which resolves `config.models.vision` at startup
+   (`worker.py:200-208`), so a config edit takes effect on the next turn.
+   Evidence, against the current provider key:
+
+   - `inspect_image("docs/Screenshots/MAP_2.png")` - the shipped tool - returned
+     5 findings, including the legend/node contradiction ("legend says green
+     reachable, red dead code, but all three nodes render grey with dashed amber
+     borders").
+   - `vision-probe.py --terse MAP_2.png review.png` - the raw shipped prompt
+     path - independently returned the same grey-node contradiction for
+     `MAP_2.png`, and `NO DEFECTS VISIBLE` for `review.png`. Two different
+     prompt shapes agree on the defect and the clean image stays clean, so the
+     model is reading pixels rather than describing a screenshot in general.
+   - The 4 extra `MAP_2` findings the tool added (unlabelled warning icons,
+     solid vs dashed borders, select overlapping the canvas, arrowheads on the
+     node border) are single-pass and uncorroborated; R98 carries them as
+     candidates.
+2. **Keys: rotation deferred by operator decision, still open.** The current
+   `[providers]` values are byte-identical to the leaked pair, and the operator
+   chose to keep using them until a bounce confirms the system still works, then
+   rotate. Nothing in the vision path needs new keys - the calls above ran on
+   the current ones. Rotating needs the provider dashboard; writing new values
+   into the config is the agent's part whenever they arrive.
 3. Playwright capture and a tracked home for `docs/Screenshots/` are now
    recorded in R98 - they are capture and policy questions, not part of
    "look at what we made".
