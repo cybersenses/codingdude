@@ -1502,13 +1502,14 @@ accepts OpenAI-compatible `image_url` blocks, which is exactly the shape
 `build_run_prompt`, `vision.py:32-74`). `inspect_image` is wired in
 `plugins/__init__.py:192-196`, gated only on `ctx.vision_model` fed from
 `config.models.vision` (`worker.py:200-208`). So `zai-vision` is redundant; the
-standing answer is "vision through `models.vision`", and the only thing missing
-at runtime is that one config line.
+standing answer is "vision through `models.vision`", and the only thing that was
+missing at runtime was that one config line — now set (see the operator section
+below).
 
 The pass was executed with `vision.INSPECT_INSTRUCTIONS` + `build_run_prompt`
 against `deepseek:deepseek-flash` (`.scratch/vision-probe.py`), because
 `models.vision` was still unset when it ran - the tool itself was unreachable in
-a live run. Verdicts, per image:
+a live run at that moment. Verdicts, per image:
 
 | Image | Looked at | Verdict |
 | --- | --- | --- |
@@ -1530,13 +1531,21 @@ a live run. Verdicts, per image:
 Eight defect images, six clean. The defects are tracked as R98 rather than
 folded in here - this item was "run the gate", and the gate is run.
 
-Still owned by the operator, not by the repo (`~/.codingdude` is read-only to
-the agent, so none of this can be fixed from here):
+Operator config, written under explicit permission (2026-11-16):
 
-1. Rotate both `[providers]` keys. They are byte-identical to values leaked in
-   an earlier session, so the previously proposed rotation never happened.
-2. Add `[models] vision = "deepseek:deepseek-flash"` and bounce; `inspect_image`
-   then appears in live runs and the probe script becomes unnecessary.
+1. `[models] vision = "deepseek:deepseek-flash"` is **set** in
+   `~/.codingdude/config.toml` (backup `config.toml.bak-20261116`; file still
+   LF, parses with `tomllib`). Verified end to end, not just parsed:
+   `load_config()` reports the slot; `_resolve_worker_slots` returns a real
+   `OpenAIChatModel`; and `plugins.build_all` emits a `FunctionToolset` whose
+   `.tools` contains `inspect_image`. The gate at `plugins/__init__.py:192` is
+   open; the probe script is now unnecessary and the tool is reachable in live
+   runs.
+2. **Still open, and only the operator can close it:** rotate both
+   `[providers]` keys. They are byte-identical to the values leaked earlier, so
+   the proposed rotation never happened. Rotation needs the provider
+   dashboard; writing new values into the config is the agent's part whenever
+   they arrive.
 3. Playwright capture and a tracked home for `docs/Screenshots/` are now
    recorded in R98 - they are capture and policy questions, not part of
    "look at what we made".
