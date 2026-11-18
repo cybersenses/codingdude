@@ -1500,7 +1500,7 @@ The vision path is the repo's own, not the MCP server: DeepSeek `deepseek-flash`
 accepts OpenAI-compatible `image_url` blocks, which is exactly the shape
 `vision.py` already produces (`MEDIA_TYPES` -> `BinaryContent` ->
 `build_run_prompt`, `vision.py:32-74`). `inspect_image` is wired in
-`plugins/__init__.py:192-196`, gated only on `ctx.vision_model` fed from
+`src/codingdude/plugins/__init__.py:192-196`, gated only on `ctx.vision_model` fed from
 `config.models.vision` (`worker.py:200-208`). So `zai-vision` is redundant; the
 standing answer is "vision through `models.vision`", and the only thing that was
 missing at runtime was that one config line — now set (see the operator section
@@ -1668,7 +1668,11 @@ The operator also flagged the cost of the check: OpenLIT needs Docker. CtrlSpice
 
 Two things the evidence changed in the manual rather than confirming: the store was documented as a black box, and it is not one (it holds prompts, outputs and instructions, which is the argument for local-only export, now stated); and the "not yet verified" caveat had to be **narrowed, not deleted** — our spans are proven to render in one viewer, so leaving OpenLIT marked unverified is the honest state, while promoting it by association would repeat the original defect.
 
-Gates: `ruff check src tests` exit 0 ("All checks passed!"), `mypy` exit 0 (83 source files). No test asserts documentation content (`tests/*` reference `README.md` only as a `list_dir` fixture name), so the suite was not re-run for a markdown-only diff; CI runs it on the PR.
+Gates: `ruff check src tests` exit 0 ("All checks passed!"), `mypy` exit 0 (83 source files). The claim-check test *does* assert documentation content — `tests/test_claim_check.py::test_living_documents_carry_no_unsupported_claims` runs `tools/claim_check.py` over the strict docs, `ROADMAP.md` included — so a markdown-only diff is not test-free: run `uv run pytest tests/test_claim_check.py -q` at minimum.
+
+Correction (2026-11-18): this item first closed claiming "no test asserts documentation content ... so the suite was not re-run for a markdown-only diff". That was wrong, and it cost a red CI run: the same paragraph cited the installer path without its `src/codingdude/` prefix, and a slash-bearing path must resolve from the repository root, so the checker reported "line reference to a missing file". The line range was right; only the prefix was missing, and it is now present at the citation above.
+
+Re-run after the fix, all from the repo root: `uv run pytest tests/test_claim_check.py -q` → 56 passed; `uv run ruff check src tests` → "All checks passed!"; `uv run mypy` → "Success: no issues found in 83 source files"; `uv run pytest -q` → 1416 passed, 1 skipped in 703.64s.
 
 Correction recorded against this item's first draft, which is why the Problem paragraph now reads the way it does: it claimed "the whole `[telemetry]` path rested on the exporter's unit test alone". The wiring test above existed and says more than that; the honest gap was narrower — a live model call through logfire's instrumentation, and a real collector storing the result.
 
