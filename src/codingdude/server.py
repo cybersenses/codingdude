@@ -44,6 +44,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import __version__
@@ -372,6 +373,50 @@ def _project_codegraph_boot(workdir: Path, boot=None) -> dict:
             'PROJECT_CODEGRAPH_BOOT_FAILED workdir=%s: %s: %s',
             workdir, type(exc).__name__, exc)
         return {'status': 'failed', 'reason': f'{type(exc).__name__}: {exc}'}
+
+
+def _frontend_dist() -> Path:
+    """Where the built bundle lives.
+
+    Resolved through a function so tests can point the mount at a throwaway
+    tree instead of depending on a real `npm run build` having happened.
+    """
+    return Path(__file__).resolve().parents[2] / 'frontend' / 'dist'
+
+
+#: One year: Vite writes content-hashed filenames under `assets/`, so a changed
+#: file gets a new name and the old bytes never need revalidating.
+_IMMUTABLE_ASSETS = 'public, max-age=31536000, immutable'
+#: Revalidate every time. `no-cache` means "store, but check first" — the 304
+#: that follows costs one round trip and keeps the entry point honest.
+_REVALIDATE = 'no-cache'
+
+
+def cache_control_for(path: str) -> str:
+    """#363: the bundle holds two kinds of file, and they need opposite rules.
+
+    Only `index.html` names the hashed assets, so it is the file that must not
+    be cached blindly. With no `Cache-Control` at all the browser falls back to
+    heuristic caching, pins yesterday's `index.html`, keeps requesting the asset
+    filenames it names (which no longer exist after a rebuild) and a new build
+    is invisible until the user clears site data — the exact "ui sha is stale,
+    server sha is current" symptom.
+
+    `path` arrives with OS separators: Starlette normalises through
+    `os.path.normpath`, so on Windows it is `assets\\index-abc.js`.
+    """
+    normalised = path.replace('\\', '/').lstrip('/')
+    return _IMMUTABLE_ASSETS if normalised.startswith('assets/') else _REVALIDATE
+
+
+class _CachedStaticFiles(StaticFiles):
+    """StaticFiles that states its cache policy instead of leaving the browser
+    to guess (#363)."""
+
+    async def get_response(self, path: str, scope) -> Response:
+        response = await super().get_response(path, scope)
+        response.headers['Cache-Control'] = cache_control_for(path)
+        return response
 
 
 def create_app(
@@ -1952,11 +1997,9 @@ def create_app(
             raise
 
     # Serve the built frontend when it exists (single-command deployment).
-    dist = Path(__file__).resolve().parents[2] / 'frontend' / 'dist'
+    dist = _frontend_dist()
     if dist.exists():
-        from fastapi.staticfiles import StaticFiles
-
-        app.mount('/', StaticFiles(directory=dist, html=True), name='ui')
+        app.mount('/', _CachedStaticFiles(directory=dist, html=True), name='ui')
 
     app.state.token = token
     app.state.db = db

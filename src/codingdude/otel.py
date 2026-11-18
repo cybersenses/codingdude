@@ -30,7 +30,9 @@ So every read here is a JSON-RPC call to the running viewer. If someone later
 "optimises" this into a direct ``duckdb.connect``, the panel stops answering
 whenever a viewer is up — and a viewer must be up for the panel to have any
 spans to show, so the read path would only be exercised in the one state it
-cannot serve.
+cannot serve. ``tests/test_otel.py`` executes this read path under a meta-path
+watcher that records any attempt to import ``duckdb``, so the constraint fails
+a test rather than living only here (#362).
 
 Two things worth stating in code rather than in a commit message:
 

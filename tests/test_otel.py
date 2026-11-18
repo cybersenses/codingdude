@@ -17,10 +17,17 @@
 
 The store is never opened here (see `codingdude.otel`): DuckDB is single-writer
 and the viewer owns the file, so every read is a JSON-RPC call to the viewer
-that already holds it.
+that already holds it. #362: that rule is pinned at the end of this file — a
+docstring cannot fail CI, so the read path is executed under a watcher that
+records any attempt to import duckdb.
 """
+import ast
+import importlib
+import importlib.util
 import socket
+import sys
 import types
+from pathlib import Path
 
 import pytest
 
@@ -318,3 +325,119 @@ def test_the_worker_flag_is_tri_state(monkeypatch):
         for handler in list(root.handlers):
             if handler not in before:
                 root.removeHandler(handler)
+
+
+# --- the rule, enforced (#362) ----------------------------------------------
+#
+# `codingdude.otel`'s docstring says the read path never opens the store. Prose
+# does not fail CI: nothing stopped the next edit from adding `import duckdb`
+# and taking the single-writer lock the viewer already holds — and because
+# duckdb is *not* a dependency of this project (the viewer owns it), a direct
+# `duckdb.connect` would fail in a way that looks like a missing package rather
+# than a broken invariant. So the rule is executed, not just written down.
+
+
+class _ForbiddenModule(types.ModuleType):
+    """Stands in for duckdb: the import itself succeeds (so the attempt is
+    recorded rather than dying in the importer), but touching it fails loudly."""
+
+    def __getattr__(self, name):
+        # The import machinery probes dunders (``__path__``, ``__all__``) while
+        # initialising the module handle — those must behave normally or the
+        # stub breaks the import instead of recording it.
+        if name.startswith('__') and name.endswith('__'):
+            raise AttributeError(name)
+        raise AssertionError(
+            f'codingdude.otel reached duckdb.{name} — the store belongs to the '
+            'viewer that holds it open; read it over JSON-RPC instead'
+        )
+
+
+class _StubLoader:
+    def __init__(self, module):
+        self.module = module
+
+    def create_module(self, spec):
+        return self.module
+
+    def exec_module(self, module):
+        return None
+
+
+class _DuckDBWatcher:
+    """Meta-path finder that answers `import duckdb` with a stub and remembers
+    that someone asked."""
+
+    def __init__(self):
+        self.attempts: list[str] = []
+        self._stub = _ForbiddenModule('duckdb')
+
+    def find_spec(self, name, path=None, target=None):
+        if name != 'duckdb' and not name.startswith('duckdb.'):
+            return None
+        self.attempts.append(name)
+        return importlib.util.spec_from_loader(name, _StubLoader(self._stub))
+
+
+def _span_payload():
+    return {
+        'columns': [
+            {'name': 'trace_id', 'type': 'VARCHAR'},
+            {'name': 'name', 'type': 'VARCHAR'},
+            {'name': 'start_time', 'type': 'UBIGINT'},
+            {'name': 'duration_ns', 'type': 'UBIGINT'},
+            {'name': 'status_code', 'type': 'TINYINT'},
+        ],
+        'rows': [['t1', 'chat m', 1795001109831587200, 4209298200, 0]],
+        'truncated': False,
+    }
+
+
+def test_the_module_never_names_duckdb_in_an_import():
+    """#362, static half. A *top-level* `import duckdb` runs before any test can
+    install a watcher, so the runtime check below cannot see it: with duckdb
+    absent the suite dies at collection with a puzzling "No module named
+    'duckdb'", and with duckdb installed it would sail straight through. So the
+    source is parsed — any import statement naming duckdb fails here, wherever
+    in the module it sits."""
+    tree = ast.parse(Path(otel.__file__).read_text(encoding='utf-8'))
+    named: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            named.update(alias.name.split('.')[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            named.add(node.module.split('.')[0])
+    assert 'duckdb' not in named
+
+
+def test_the_read_path_never_imports_duckdb(monkeypatch):
+    """#362: reload the module under the watcher and run a real read.
+
+    A reload re-executes the module body, so a `import duckdb` added at the top
+    is caught here; running `session_spans` catches one added inside the query
+    path (that import would also resolve to the stub, whose first attribute
+    access raises)."""
+    watcher = _DuckDBWatcher()
+    sys.meta_path.insert(0, watcher)
+    try:
+        module = importlib.reload(otel)
+        monkeypatch.setattr(module, '_rpc', lambda *a, **k: _span_payload())
+        assert module.session_spans('sess1')['spans'][0]['name'] == 'chat m'
+    finally:
+        sys.meta_path.remove(watcher)
+        sys.modules.pop('duckdb', None)  # the stub must not outlive the test
+    assert watcher.attempts == []
+
+
+def test_the_watcher_fires_on_a_direct_import():
+    """The negative control, without which the assertion above could pass for
+    the trivial reason that the watcher never sees anything."""
+    watcher = _DuckDBWatcher()
+    sys.meta_path.insert(0, watcher)
+    try:
+        importlib.import_module('duckdb')
+    finally:
+        sys.meta_path.remove(watcher)
+        sys.modules.pop('duckdb', None)
+    assert watcher.attempts == ['duckdb']
+

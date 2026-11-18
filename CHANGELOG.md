@@ -140,6 +140,29 @@
 
 ### Fixed
 
+- **A stale bundle could not announce itself (#363)**: the built frontend was
+  served with no `Cache-Control` at all, so `index.html` — the only file that
+  names the content-hashed assets — fell back to heuristic caching. A pinned
+  copy kept requesting asset filenames that no longer existed after a rebuild,
+  and the footer read `ui <old sha>` while `/health` reported the current one;
+  nothing short of clearing site data brought them back together. The mount now
+  states the policy: files under `assets/` are `public, max-age=31536000,
+  immutable`, everything else is `no-cache`, so a reload costs one 304.
+- **A build made from a dirty tree called itself a clean commit (#364)**:
+  `vite.config.js` stamped `git rev-parse --short HEAD` without asking whether
+  the working tree matched it, so a bundle containing uncommitted code
+  advertised the commit it was based on and looked identical to a clean build of
+  that commit. The stamp now reads `<sha>-dirty` when `git status --porcelain`
+  is non-empty, and `unknown` with a build warning instead of a silent empty
+  string when git cannot be run.
+- **The "never open the store" rule was prose only (#362)**: `codingdude.otel`
+  reads the OTel DuckDB file exclusively through the running viewer's JSON-RPC,
+  because DuckDB is single-writer and the viewer holds the lock — but nothing
+  tested that, and with duckdb not installed a direct `connect` would have
+  surfaced as a missing package rather than a broken invariant. A meta-path
+  watcher now records any `import duckdb` while the read path executes, and the
+  module source is parsed for import statements naming it, so either
+  regression fails the suite.
 - **The pre-push review could not finish a large diff (R92/R94-B)**: the reviewer
   pass was capped at a fixed 8 model requests, so a multi-file branch exhausted
   them before reaching a verdict and the gate reported the diff UNREVIEWED. The
