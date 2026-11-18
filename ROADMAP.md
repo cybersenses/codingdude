@@ -1634,3 +1634,31 @@ Each finding either fixed or explicitly waived with a reason. The dead-code lege
 - Capture: the visual gate reads existing PNGs. Installing Playwright would let `ss-verify` capture live UI itself. Not required to review images, required to review screens.
 - Tracked home: `docs/Screenshots/*.png` - 12 files, about 800 KB, still untracked, one `git clean -fdx` from deletion, and in tension with R74's binary-purge policy.
 
+## R99 — Trace viewer: verify the documented collector instead of asserting it
+**Status:** open
+
+Audience: agent + operator
+
+**Problem**
+
+R94-C (#347) documented OpenLIT as the OTLP receiver for `[telemetry]`, then the same section admitted the gap in one line: *"Not yet verified: that OpenLIT's dashboard renders spans produced by logfire's pydantic-ai instrumentation… start the container and confirm before relying on it."* A manual that ships a `docker compose` block plus a confession that nobody ran it is a claim, not a capability. Nothing in the repo had ever seen a CodingDude span reach any collector — so the whole `[telemetry]` path (config → `traces_url` → `OTLPSpanExporter` → a store) rested on the exporter's unit test alone.
+
+The operator also flagged the cost of the check: OpenLIT needs Docker. CtrlSpice's `otel-desktop-viewer` ships the same idea as one executable.
+
+**What was checked**
+
+- Receivers: gRPC `4317`, HTTP `4318`; UI `:8000`. Our default `otlp_endpoint` is `http://127.0.0.1:4318` and `traces_url` appends `/v1/traces` — the same port, so no code and no config value changes. License Apache-2.0; Windows amd64 archive 38.1 MB (v0.7.0, 2026-11-07).
+- End to end, through shipped code: telemetry enabled in memory (`TelemetryConfig` is frozen, so `dataclasses.replace`), `configure_tracing()` → `OTLPSpanExporter` at `http://127.0.0.1:4318/v1/traces`, then one real `deepseek-flash` request through `engine._model_from_name` + `pydantic_ai.Agent`.
+- Read back from the viewer's own DuckDB (`otel-desktop-viewer query`): two spans, `invoke_agent agent` and `chat deepseek-flash`, with `gen_ai.*` attributes intact — 43 input / 12 output tokens, `gen_ai.input.messages`, `gen_ai.output.messages`, `gen_ai.system_instructions`, and logfire's `operation.cost` (2.73e-05).
+
+**What shipped**
+
+- `docs/manual/configuration.md`: the section is now "a local collector"; the desktop viewer is the verified option and OpenLIT the Docker alternative, with its own unverified mark kept honest.
+- The span store is documented as sensitive — it carries prompts, outputs and instructions, which is the reason the export is local-only and off by default.
+- `README.md` names the verified viewer; CHANGELOG records it.
+
+**Not done, deliberately**
+
+- OpenLIT still has not been run here, so its line stays "not yet verified" for our spans. Marking it verified by association would be the same defect in a new place.
+- `[telemetry]` remains absent from the operator's `config.toml`: enabling tracing is consent-per-machine, and a probe must not flip it on for real runs.
+

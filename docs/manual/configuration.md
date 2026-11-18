@@ -289,18 +289,60 @@ how many tokens, how long.
 - `[telemetry]` is **global only** — it lives in `~/.codingdude/config.toml`,
   not in a project `.codingdude.toml`, so one collector serves every project.
 
-#### Viewing traces: OpenLIT as the collector
+#### Viewing traces: a local collector
 
 Traces have no UI of their own — this exports spans to a collector, and you
-need one running. [OpenLIT](https://github.com/openlit/openlit) is the
-self-hosted option that fits the local-only constraint (Apache-2.0, no fee, no
-account).
+need one running. Two self-hosted options fit the local-only constraint
+(Apache-2.0, no fee, no account): the **OTel Desktop Viewer** (one executable —
+the option verified against our spans, below) and **OpenLIT** (Docker, whose
+dashboard has not been verified against them).
 
 **Enabling tracing needs your consent, every time.** It is off by default for a
 reason: spans describe what your agent read and did, and the collector is
 another process on your machine. Nothing is exported until you set
 `enabled = true` yourself — no tool, agent or update will flip it for you. Leave
 it off unless you intend to run a collector and read the traces.
+
+##### OTel Desktop Viewer (one executable, no Docker)
+
+[CtlSpice/otel-desktop-viewer](https://github.com/CtrlSpice/otel-desktop-viewer)
+packages an OpenTelemetry Collector, a DuckDB store and a web UI into a single
+executable. Its receivers already listen where this export points, so no
+endpoint value needs changing.
+
+1. Download the release archive for your platform (`otel-desktop-viewer_windows_amd64.zip`
+   on Windows) and unzip it outside the repository — the binary is ~114 MB.
+2. Run `otel-desktop-viewer.exe`. It starts receivers on `4317` (gRPC) and
+   `4318` (HTTP) and serves the UI on <http://localhost:8000>; it opens a browser
+   on launch (`--open-browser=false` stops that).
+3. Set `enabled = true` as below. `otlp_endpoint` already holds the matching
+   value.
+
+Read traces at <http://localhost:8000/traces>. Storage is in memory by default;
+`--db telemetry.duckdb` persists it to a file and `--db-max-size` caps its
+growth (2 GB with a file, 512 MB in memory).
+
+**Verified here** (2026-11-18, viewer v0.7.0): with `[telemetry]` enabled through
+the shipped `tracing.configure_tracing` → `OTLPSpanExporter` at
+`http://127.0.0.1:4318/v1/traces`, one real `deepseek-flash` request stored both
+pydantic-ai spans — `invoke_agent agent` and `chat deepseek-flash` — with their
+`gen_ai.*` attributes intact (43 input / 12 output tokens). So the span path
+works end to end, not just "it should".
+
+**That store is sensitive.** The spans carry `gen_ai.input.messages`,
+`gen_ai.output.messages` and `gen_ai.system_instructions` — your prompts, the
+agent's answers and the instructions — plus logfire's own cost estimate
+(`operation.cost`). This is why the export is local-only and off by default.
+
+The same binary queries the running viewer without a browser:
+`otel-desktop-viewer query 'SHOW TABLES'`, `… query 'DESCRIBE spans'`, or any
+read-only `SELECT` — how a span's arrival can be checked from a terminal.
+
+A port already in use is the usual first problem: `4318` is the conventional
+OTLP/HTTP port, shared with Jaeger and the OpenTelemetry Collector, and only one
+process can bind it. Set `enabled = false` or stop the viewer to release it.
+
+##### OpenLIT (Docker)
 
 The compose step — save this compose file next to your `~/.codingdude` directory,
 then bring it up:
@@ -360,8 +402,9 @@ Cap reads. Treat any dashboard cost number as an independent estimate; where it
 disagrees with the ledger, the ledger wins.
 
 Not yet verified: that OpenLIT's dashboard renders spans produced by logfire's
-pydantic-ai instrumentation. They are standard OTLP spans, so it should, but it
-has not been run against a live collector here — start the container and confirm
+pydantic-ai instrumentation. The spans are standard OTLP and the same spans are
+confirmed to render in the OTel Desktop Viewer, so it should — but OpenLIT
+itself has not been run against them here; start the container and confirm
 before relying on it.
 
 Configuration is read once per worker process, so a change takes effect on the

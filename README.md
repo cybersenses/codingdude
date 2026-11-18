@@ -36,7 +36,8 @@ Highlights:
   lifecycle, so a shipped PRD reads `delivered` instead of being mislabelled
   retired (`sunset`) or still in flight (`active`).
 - **Observability & spend governance** — per-delegate trace spans, OTLP export
-  to a collector you run yourself (OpenLIT is the documented one), and hard
+  to a collector you run yourself (the OTel Desktop Viewer is the verified one;
+  OpenLIT is the Docker alternative), and hard
   `max_cost_usd` / `max_total_tokens` ceilings checked *before* each model
   request — a ceiling that stops the work, not a note about it afterwards.
 - **Review is a gate, not a habit** — pushing requires a recorded two-axis
