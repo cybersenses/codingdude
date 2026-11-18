@@ -310,8 +310,9 @@ packages an OpenTelemetry Collector, a DuckDB store and a web UI into a single
 executable. Its receivers already listen where this export points, so no
 endpoint value needs changing.
 
-1. Download the release archive for your platform (`otel-desktop-viewer_windows_amd64.zip`
-   on Windows) and unzip it outside the repository — the binary is ~114 MB.
+1. Download the release archive for your platform
+   (`otel-desktop-viewer_windows_amd64.zip` on Windows — 38.1 MB) and unzip it
+   outside the repository; the extracted binary is 109 MB.
 2. Run `otel-desktop-viewer.exe`. It starts receivers on `4317` (gRPC) and
    `4318` (HTTP) and serves the UI on <http://localhost:8000>; it opens a browser
    on launch (`--open-browser=false` stops that).
@@ -329,14 +330,19 @@ pydantic-ai spans — `invoke_agent agent` and `chat deepseek-flash` — with th
 `gen_ai.*` attributes intact (43 input / 12 output tokens). So the span path
 works end to end, not just "it should".
 
-**That store is sensitive.** The spans carry `gen_ai.input.messages`,
-`gen_ai.output.messages` and `gen_ai.system_instructions` — your prompts, the
-agent's answers and the instructions — plus logfire's own cost estimate
+**That store is sensitive.** Both spans carry
+`gen_ai.system_instructions`, and the `chat` span also carries
+`gen_ai.input.messages` and `gen_ai.output.messages` — the instructions, your
+prompts and the agent's answers — plus logfire's own cost estimate
 (`operation.cost`). This is why the export is local-only and off by default.
 
 The same binary queries the running viewer without a browser:
 `otel-desktop-viewer query 'SHOW TABLES'`, `… query 'DESCRIBE spans'`, or any
 read-only `SELECT` — how a span's arrival can be checked from a terminal.
+Attribute keys contain dots, so they need bracket access:
+`attributes['gen_ai.usage.input_tokens']` reads the value, while
+`attributes.gen_ai.usage.input_tokens` returns `NULL` for every row — a silent
+wrong answer rather than an error.
 
 A port already in use is the usual first problem: `4318` is the conventional
 OTLP/HTTP port, shared with Jaeger and the OpenTelemetry Collector, and only one
