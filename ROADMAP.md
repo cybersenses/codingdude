@@ -1509,7 +1509,9 @@ below).
 The pass was executed with `vision.INSPECT_INSTRUCTIONS` + `build_run_prompt`
 against `deepseek:deepseek-flash` (`.scratch/vision-probe.py`), because
 `models.vision` was still unset when it ran - the tool itself was unreachable in
-a live run at that moment. Verdicts, per image:
+a live run at that moment. Verdicts, per image (the two `sample-*` files are
+`.scratch/product-page/` artifacts, deliberately untracked; the rest are the
+committed `docs/Screenshots/` captures):
 
 | Image | Looked at | Verdict |
 | --- | --- | --- |
