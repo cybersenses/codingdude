@@ -4,6 +4,18 @@
 
 ### Added
 
+- **A trace viewer that is actually verified (R94-C follow-up)**: the manual
+  documented OpenLIT as the collector and then admitted its dashboard had never
+  been run against our spans. The OTel Desktop Viewer now leads instead — one
+  executable, no Docker, receivers already on `4318`, UI on `:8000` — and the
+  claim is measured rather than hoped: with `[telemetry]` enabled through the
+  shipped `configure_tracing` → `OTLPSpanExporter`, one real `deepseek-flash`
+  request stored `invoke_agent agent` and `chat deepseek-flash` with their
+  `gen_ai.*` attributes (43 in / 12 out tokens). The manual also says plainly
+  that the store holds prompts, outputs and instructions, since those
+  attributes ride the spans. OpenLIT stays documented as the Docker
+  alternative, still marked unverified for our spans specifically.
+
 - **Hard spend ceilings on every agent call (R94-B)**: `[models] max_cost_usd` and
   `max_total_tokens`. Both are checked by pydantic-ai *before* the next request,
   so the request is refused instead of the spend being narrated afterwards. They

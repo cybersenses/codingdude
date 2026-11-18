@@ -1489,3 +1489,190 @@ The audit of the documentation surfaces (README, docs/manual, .github, CHANGELOG
 
 **Outcome (`fe65250`).** `docs/manual/panels.md` gained the status-ladder table for all five item types, with the `approved`/`delivered`/`superseded` and `active`/`delivered`/`sunset` distinctions stated and the canonical-store rule named. README's engine bullet now describes the R94-B ceiling (per `agent.run()`, not per run) and its observability section gained the R93/R94 span and OTLP surfaces; `workflows.md` links the ladders. GitHub About carries the corrected description and ten topics — live metadata, deliberately not in the tree. A sweep of every other doc found no second status list to contradict. Gates: 1416 passed / 1 skipped, ruff and mypy clean; CI `test` 10m12s, `frontend` 1m4s, `bench` 34s.
 
+## R97 — Visual review of rendered artifacts — run the gate that was skipped
+**Status:** done - 2026-11-16
+
+Audience: human
+
+**Resolution (2026-11-16) - the gate was run; 14 images were actually looked at**
+
+The vision path is the repo's own, not the MCP server: DeepSeek `deepseek-flash`
+accepts OpenAI-compatible `image_url` blocks, which is exactly the shape
+`vision.py` already produces (`MEDIA_TYPES` -> `BinaryContent` ->
+`build_run_prompt`, `vision.py:32-74`). `inspect_image` is wired in
+`src/codingdude/plugins/__init__.py:192-196`, gated only on `ctx.vision_model` fed from
+`config.models.vision` (`worker.py:200-208`). So `zai-vision` is redundant; the
+standing answer is "vision through `models.vision`", and the only thing that was
+missing at runtime was that one config line — now set (see the operator section
+below).
+
+The pass was executed with `vision.INSPECT_INSTRUCTIONS` + `build_run_prompt`
+against `deepseek:deepseek-flash` (`.scratch/vision-probe.py`), because
+`models.vision` was still unset when it ran - the tool itself was unreachable in
+a live run at that moment. Verdicts, per image (the two `sample-*` files are
+`.scratch/product-page/` artifacts, deliberately untracked; the rest are the
+committed `docs/Screenshots/` captures):
+
+| Image | Looked at | Verdict |
+| --- | --- | --- |
+| `sample-review.png` | yes | clean - no defects found; only a spacing preference in the footer |
+| `sample-approval.png` | yes | 5 findings: metadata row space-separated with run-together gaps; secondary button borders too faint; salmon "Revert" out-shouts the primary action; no overflow affordance in the diff; tight vertical padding in the code header |
+| `review.png` | yes | clean |
+| `Reviews_And_Memory.png` | yes | clean |
+| `Roadmap_2.png` | yes | clean |
+| `WIREFRAM_1.png` | yes | clean |
+| `costs.png` | yes | left-column labels clipped at the left edge; bottom table row clipped; tab close glyph flush against the label |
+| `DIFF_APproval.png` | yes | `-` rows misalign by about one character against the `+` rows |
+| `Editor_DIF_VS_HEAD.png` | yes | stray horizontal dividers cut across the editor; panel looks split; orphan glyph in the gutter; breadcrumb at near-unreadable contrast |
+| `MAP.png` | yes | connector arrow stops short of the `add` node |
+| `MAP_2.png` | yes | "Review changes" clipped; legend promises green/red reachability but every node renders neutral grey; native select breaks the theme; inconsistent dashed borders |
+| `Trace.png` | yes | long checkpoint text hard-clipped with no wrap or ellipsis |
+| `WaterFall.png` | yes | "Review changes" clipped by the top edge; file path clipped; "2" badge detached below its tab; selected row background stops short and its status shows a stray underline |
+| `Roadmap_1.png` | yes | two rows (#R2, #R17) render without the right-aligned status control every other row has |
+
+Eight defect images, six clean. The defects are tracked as R98 rather than
+folded in here - this item was "run the gate", and the gate is run.
+
+Operator config, written under explicit permission (2026-11-16):
+
+1. `[models] vision = "deepseek:deepseek-flash"` is **set** in
+   `~/.codingdude/config.toml` (backup `config.toml.bak-20261116`; file still
+   LF, parses with `tomllib`). Verified end to end, not just parsed:
+   `load_config()` reports the slot; `_resolve_worker_slots` returns a real
+   `OpenAIChatModel`; and `plugins.build_all` emits a `FunctionToolset` whose
+   `.tools` contains `inspect_image`.
+
+   Then exercised for real, in a live run. Per-turn worker spawn is why no
+   server bounce is needed: every run gets a fresh worker subprocess
+   (`server.py:674`), which resolves `config.models.vision` at startup
+   (`worker.py:200-208`), so a config edit takes effect on the next turn.
+   Evidence, against the current provider key:
+
+   - `inspect_image("docs/Screenshots/MAP_2.png")` - the shipped tool - returned
+     5 findings, including the legend/node contradiction ("legend says green
+     reachable, red dead code, but all three nodes render grey with dashed amber
+     borders").
+   - `vision-probe.py --terse MAP_2.png review.png` - the raw shipped prompt
+     path - independently returned the same grey-node contradiction for
+     `MAP_2.png`, and `NO DEFECTS VISIBLE` for `review.png`. Two different
+     prompt shapes agree on the defect and the clean image stays clean, so the
+     model is reading pixels rather than describing a screenshot in general.
+   - The 4 extra `MAP_2` findings the tool added (unlabelled warning icons,
+     solid vs dashed borders, select overlapping the canvas, arrowheads on the
+     node border) are single-pass and uncorroborated; R98 carries them as
+     candidates.
+2. **Keys: rotation deferred by operator decision, still open.** The current
+   `[providers]` values are byte-identical to the leaked pair, and the operator
+   chose to keep using them until a bounce confirms the system still works, then
+   rotate. Nothing in the vision path needs new keys - the calls above ran on
+   the current ones. Rotating needs the provider dashboard; writing new values
+   into the config is the agent's part whenever they arrive.
+3. Playwright capture and a tracked home for `docs/Screenshots/` are now
+   recorded in R98 - they are capture and policy questions, not part of
+   "look at what we made".
+
+**Context**
+
+Rendered artifacts are being produced and shipped without anyone looking at them. Two product-page graphics and a twelve-file screenshot set exist today; all of them were checked mechanically and none was reviewed by eye.
+
+What was checked mechanically (real, and it stays as the first line of defence):
+- HTML structure, zero undefined/unused CSS variables, token hexes matching the design lock verbatim
+- pixel colour counts and pairwise contrast arithmetic (fg 17.36:1, muted 7.82:1, success 10.29:1 — all AA/AAA)
+- centring and clipping (content centred 720/720 and 460/460; no edge-clipped tokens)
+
+What was **not** done: nobody *looked*. Mechanical checks cannot see a wrong-colour text run, a card that stacked badly, or a cropped eyebrow.
+
+**Why the gap exists — measured, not assumed**
+
+- `zai-vision` is a seeded MCP server (`~/.codingdude/mcp.json`, `Z_AI_API_KEY: ${ZAI_API_KEY:-}`), but the vision call made in-session returned an error instead of an analysis. The cause was **not** established, and an earlier quoted billing message ("HTTP 429 — Insufficient balance or no resource package") has been **withdrawn as unverifiable**.
+- `ZAI_API_KEY` is absent from: the shell environment (length 0), the user-level environment variable, `~/.codingdude/.env` (file absent), `G:\pydantic\.env` (file absent). `~/.codingdude/config.toml` has no `api_key` line and no `[providers.zai]` section. So the `${ZAI_API_KEY:-}` substitution the MCP server depends on resolves to empty in every location checked — which makes a keyless failure at least as likely as the billing error.
+- The renderer the visual gate wants is not installed: `node_modules\playwright` absent, `frontend\node_modules\playwright` absent, `frontend\node_modules\@playwright\test` absent.
+
+**Risk if left open**
+
+The graphics are content for the public site. Publishing them unreviewed makes an implicit claim — "this is what the product looks like" — that no model and no human has verified. A skipped visual gate must be visible here in the roadmap, not recorded in a chat note that scrolls away.
+
+**Scope**
+
+1. Establish a working vision path (documented key provisioning, or a local fallback), **or** a named human sign-off step — and state which one is the standing answer so this never silently degrades again.
+2. Actually review the two sample graphics (`sample-review.png`, `sample-approval.png`) and the twelve `docs/Screenshots/*.png` captures (incl. `review.png`, `DIFF_APproval.png`, `Reviews_And_Memory.png`); record a per-image verdict.
+3. Install the renderer the gate needs (Playwright) so `ss-verify` / `webapp-testing` can run against live UI, **or** record a decision that visual review is human-only by design.
+4. Decide the tracked home for the untracked `docs/Screenshots/` set against R74's binary-purge policy — 12 PNGs, roughly 800 KB, currently one `git clean -fdx` from deletion.
+
+**Not in scope**
+
+Re-rendering or redesigning the graphics; the product page itself; changing the mechanical checks, which already pass and are not the problem.
+
+**Delivery format**
+
+A per-image verdict table (image → looked at Y/N → findings) committed beside the images, plus the recorded decision on the vision path and on renderer availability. "Looked at" means a model or a human described the image — an arithmetic contrast figure does not count and must not be recorded as sight.
+
+## R98 — UI defects found by the first visual pass
+**Status:** open
+
+Audience: agent + human
+
+**Problem**
+
+The visual gate finally ran (R97, 2026-11-16) and it found real defects in eight of the twelve shipped screenshots. Mechanical checks could not have caught any of them, which is the point of the gate.
+
+**Findings, by surface**
+
+- Usage/costs (`costs.png`): left-column labels clipped at the left edge; bottom table row clipped by the viewport; tab close glyph flush against the tab label.
+- Diff approval (`DIFF_APproval.png`): `-` rows misalign about one character against the `+` rows, so the compared text does not line up.
+- Editor diff vs HEAD (`Editor_DIF_VS_HEAD.png`): stray horizontal dividers cut across the editor and make the panel look split; an orphan glyph floats in the left gutter; the file breadcrumb sits at near-unreadable contrast.
+- Repo map (`MAP.png`): a connector arrow stops short of the `add` node, so the edge visually does not connect.
+- Dead-code map (`MAP_2.png`): the legend promises green = reachable, red = dead, but every node renders neutral grey - the reachability colouring is not applied. This one is functional, not cosmetic. Also: "Review changes" clipped at the right edge; a native select breaks the dark theme; dashed node borders rendered inconsistently.
+- Trace (`Trace.png`): long checkpoint text hard-clipped with no wrap and no ellipsis.
+- Waterfall (`WaterFall.png`): "Review changes" clipped by the top edge; file path clipped with no ellipsis; the "2" count badge is detached below its tab; the selected row's background stops short of its status label, which also shows a stray underline.
+- Roadmap (`Roadmap_1.png`): two rows (#R2, #R17) render without the right-aligned status control that every other row has.
+
+**Desired outcome**
+
+Each finding either fixed or explicitly waived with a reason. The dead-code legend colouring is a bug (state says one thing, pixels another) and should be treated as such, not as polish.
+
+**Also recorded here (undecided, needs a call)**
+
+- Capture: the visual gate reads existing PNGs. Installing Playwright would let `ss-verify` capture live UI itself. Not required to review images, required to review screens.
+- Tracked home: `docs/Screenshots/*.png` - 12 files, about 800 KB, still untracked, one `git clean -fdx` from deletion, and in tension with R74's binary-purge policy.
+
+## R99 — Trace viewer: verify the documented collector instead of asserting it
+**Status:** done
+
+Audience: agent + operator
+
+**Problem**
+
+R94-C (#347) documented OpenLIT as the OTLP receiver for `[telemetry]`, then the same section admitted the gap in one line: *"Not yet verified: that OpenLIT's dashboard renders spans produced by logfire's pydantic-ai instrumentation… start the container and confirm before relying on it."* A manual that ships a `docker compose` block plus a confession that nobody ran it is a claim, not a capability. The wiring itself was tested (`test_a_span_reaches_a_real_otlp_collector` runs a loopback receiver and asserts the bytes arrive at `/v1/traces`) and that test names its own ceiling: it does not prove logfire instruments pydantic-ai, which needs a live model call, and it proves receipt, not that a real collector stores the spans and keeps their attributes.
+
+The operator also flagged the cost of the check: OpenLIT needs Docker. CtrlSpice's `otel-desktop-viewer` ships the same idea as one executable.
+
+**What was checked**
+
+- Receivers: gRPC `4317`, HTTP `4318`; UI `:8000`. Our default `otlp_endpoint` is `http://127.0.0.1:4318` and `traces_url` appends `/v1/traces` — the same port, so no code and no config value changes. License Apache-2.0; Windows amd64 archive 38.1 MB (v0.7.0, 2026-11-07).
+- End to end, through shipped code: telemetry enabled in memory (`TelemetryConfig` is frozen, so `dataclasses.replace`), `configure_tracing()` → `OTLPSpanExporter` at `http://127.0.0.1:4318/v1/traces`, then one real `deepseek-flash` request through `engine._model_from_name` + `pydantic_ai.Agent`.
+- Read back from the viewer's own DuckDB (`otel-desktop-viewer query`): two spans, `invoke_agent agent` and `chat deepseek-flash`, with `gen_ai.*` attributes intact — 43 input / 12 output tokens, `gen_ai.input.messages`, `gen_ai.output.messages`, `gen_ai.system_instructions`, and logfire's `operation.cost` (2.73e-05).
+
+**What shipped**
+
+- `docs/manual/configuration.md`: the section is now "a local collector"; the desktop viewer is the verified option and OpenLIT the Docker alternative, with its own unverified mark kept honest.
+- The span store is documented as sensitive — it carries prompts, outputs and instructions, which is the reason the export is local-only and off by default.
+- `README.md` names the verified viewer; CHANGELOG records it.
+
+**Not done, deliberately**
+
+- OpenLIT still has not been run here, so its line stays "not yet verified" for our spans. Marking it verified by association would be the same defect in a new place.
+- `[telemetry]` remains absent from the operator's `config.toml`: enabling tracing is consent-per-machine, and a probe must not flip it on for real runs.
+
+**Outcome (`d3034c8`).** The viewer was installed beside the repo, not inside it (`.scratch/otel/`, gitignored), and the probe drove the shipped seam: `load_config()` → `replace(cfg.telemetry, enabled=True)` → `configure_tracing()` returned **True** at `http://127.0.0.1:4318/v1/traces`, then `engine._model_from_name(cfg.models.main, …)` + `pydantic_ai.Agent` produced one real request (`deepseek-flash`, 43 in / 12 out, output `'OK'`). Read back from the viewer's own store, not from the exporter's log: `SELECT service_name, name, count(*) FROM spans` returned `invoke_agent agent` 1 and `chat deepseek-flash` 1, and a second query showed the attributes — `gen_ai.input.messages`, `gen_ai.output.messages`, `gen_ai.system_instructions`, `operation.cost` 2.73e-05.
+
+Two things the evidence changed in the manual rather than confirming: the store was documented as a black box, and it is not one (it holds prompts, outputs and instructions, which is the argument for local-only export, now stated); and the "not yet verified" caveat had to be **narrowed, not deleted** — our spans are proven to render in one viewer, so leaving OpenLIT marked unverified is the honest state, while promoting it by association would repeat the original defect.
+
+Gates: `ruff check src tests` exit 0 ("All checks passed!"), `mypy` exit 0 (83 source files). The claim-check test *does* assert documentation content — `tests/test_claim_check.py::test_living_documents_carry_no_unsupported_claims` runs `tools/claim_check.py` over the strict docs, `ROADMAP.md` included — so a markdown-only diff is not test-free: run `uv run pytest tests/test_claim_check.py -q` at minimum.
+
+Correction (2026-11-18): this item first closed claiming "no test asserts documentation content ... so the suite was not re-run for a markdown-only diff". That was wrong, and it cost a red CI run: the same paragraph cited the installer path without its `src/codingdude/` prefix, and a slash-bearing path must resolve from the repository root, so the checker reported "line reference to a missing file". The line range was right; only the prefix was missing, and it is now present at the citation above.
+
+Re-run after the fix, all from the repo root: `uv run pytest tests/test_claim_check.py -q` → 56 passed; `uv run ruff check src tests` → "All checks passed!"; `uv run mypy` → "Success: no issues found in 83 source files"; `uv run pytest -q` → 1416 passed, 1 skipped in 703.64s.
+
+Correction recorded against this item's first draft, which is why the Problem paragraph now reads the way it does: it claimed "the whole `[telemetry]` path rested on the exporter's unit test alone". The wiring test above existed and says more than that; the honest gap was narrower — a live model call through logfire's instrumentation, and a real collector storing the result.
+
