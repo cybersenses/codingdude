@@ -56,8 +56,11 @@ logger = logging.getLogger(__name__)
 #: OTLP, not SQL — the query API lives beside the web UI, not beside ingest.
 DEFAULT_VIEWER_ENDPOINT = 'http://127.0.0.1:8000'
 
-#: Session ids are minted by the server (``secrets.token_urlsafe``) and appear
-#: in URLs, so 64 characters of that alphabet is a generous ceiling.
+#: Session ids are minted by ``db.create_session`` as ``uuid.uuid4().hex`` (32
+#: lowercase hex characters) and appear in URLs; run ids are
+#: ``secrets.token_urlsafe``. Allowlisting 64 characters of that combined
+#: alphabet is a generous ceiling that still cannot carry a quote, a space or a
+#: semicolon into the viewer's raw-SQL ``query`` method.
 _SESSION_ID = re.compile(r'^[A-Za-z0-9_-]{1,64}$')
 
 #: OTel ``SpanStatusCode``: 0 unset, 1 ok, 2 error.
