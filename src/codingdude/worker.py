@@ -588,9 +588,17 @@ async def run(args) -> int:
         config = apply_project_models(config, Path(args.workdir).resolve())
     # R93-C: local-OTLP tracing for agent spans, off unless [telemetry] enabled.
     # Never raises: an absent collector degrades to no traces, not a dead run.
+    # R100: the run may override the config default either way (the chat
+    # panel's trace checkbox), and always stamps its session/run onto the
+    # span resource so a span can be traced back to one conversation.
     from codingdude.tracing import configure_tracing
 
-    configure_tracing(config)
+    configure_tracing(
+        config,
+        enabled=getattr(args, 'telemetry', None),
+        session_id=args.session,
+        run_id=getattr(args, 'run_id', None),
+    )
     engine = Engine(
         config=config,
         db=Database.connect(config_home()),
@@ -798,6 +806,14 @@ def main(argv=None) -> int:
     )
     parser.add_argument('--image', default=None, help='path to an image to include with the prompt')
     parser.add_argument('--budget', type=float, default=None)
+    parser.add_argument(
+        '--telemetry',
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help='record OTel spans for this run: --telemetry forces on, '
+             '--no-telemetry forces off, absent lets [telemetry] enabled '
+             'decide (R100 — the chat panel sends one of the two)',
+    )
     parser.add_argument('--run-id', default=None, help='run id for durable lifecycle records (R31)')
     args = load_prompt_file(parser.parse_args(argv))
     # Lifecycle diagnostics (R31): always mirror worker logs to a file under

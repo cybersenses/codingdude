@@ -191,12 +191,16 @@ export const api = {
     // today's behavior. The server validates ('assisted' | 'unattended',
     // else 422); null is omitted so the payload stays byte-compat.
     longRun: 'assisted' | 'unattended' | null = null,
+    // R100: per-run OTel recording. null = no opinion, so the worker falls back
+    // to `[telemetry] enabled`; true/false forces this run either way.
+    telemetry: boolean | null = null,
   ): Promise<{ run_id: string }> =>
     call<{ run_id: string }>(`/sessions/${sessionId}/runs`, {
       method: 'POST',
       body: JSON.stringify({
         prompt, model, fix_loop: fixLoop, image_b64: imageB64, yolo,
         ...(longRun ? { long_run: longRun } : {}),
+        ...(telemetry === null ? {} : { telemetry }),
       }),
     }),
   cancelRun: (runId: string): Promise<unknown> => call(`/runs/${runId}`, { method: 'DELETE' }),

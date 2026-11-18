@@ -36,8 +36,8 @@ export const GEOMETRY = {
 
 export type PanelId = 'nav' | 'explorer' | 'editor' | 'chat' | 'diff' | 'graph'
   | 'planning' | 'artifacts' | 'notes' | 'renders' | 'terminal' | 'output'
-  | 'waterfall' | 'trace' | 'cost' | 'memory' | 'mcp' | 'config' | 'standards'
-  | 'processes'
+  | 'waterfall' | 'trace' | 'otel' | 'cost' | 'memory' | 'mcp' | 'config'
+  | 'standards' | 'processes'
 
 export interface PanelSpec {
   /** Stable id: persisted in saved layouts (P3) and used as the dockview panel id. */
@@ -78,6 +78,9 @@ export const PANELS: readonly PanelSpec[] = [
   { id: 'output', title: 'Output', component: 'output' },
   { id: 'waterfall', title: 'Waterfall', component: 'waterfall' },
   { id: 'trace', title: 'Trace', component: 'trace' },
+  // R100: spans recorded by the local OTel collector, one conversation at a
+  // time. Distinct from `trace`, which is CodingDude's own JSONL event trace.
+  { id: 'otel', title: 'OTel Traces', component: 'otel' },
   { id: 'cost', title: 'Cost', component: 'cost' },
   { id: 'memory', title: 'Memory', component: 'memory' },
   { id: 'mcp', title: 'MCP', component: 'mcp' },

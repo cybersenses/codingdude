@@ -83,6 +83,9 @@ def _default_config_toml(lineup: ModelLineup) -> str:
         '# enabled = false\n'
         '# otlp_endpoint = "http://127.0.0.1:4318"\n'
         '# service_name = "codingdude"\n'
+        '# otel-desktop-viewer UI + query port (the in-app Traces panel reads\n'
+        '# through it; 4318 above accepts spans and cannot be queried)\n'
+        '# viewer_endpoint = "http://127.0.0.1:8000"\n'
     )
 
 
@@ -1087,6 +1090,10 @@ class TelemetryConfig:
     enabled: bool = False
     otlp_endpoint: str = 'http://127.0.0.1:4318'
     service_name: str = 'codingdude'
+    #: R100: the viewer's *HTTP* port, where its query API lives (`POST /rpc`).
+    #: Deliberately separate from ``otlp_endpoint``: 4318 accepts spans and
+    #: cannot be queried, and the two ports can be remapped independently.
+    viewer_endpoint: str = 'http://127.0.0.1:8000'
 
 
 def _reject_non_positive(value, where: str) -> None:
@@ -1126,12 +1133,11 @@ def validate_optional_tokens(value, where: str) -> int | None:
 
 
 def validate_otlp_endpoint(value, where: str) -> str:
-    """An http(s) URL for the local OTLP collector.
+    """An http(s) URL for a local OTel endpoint: the collector, or the viewer.
 
     Rejects a malformed endpoint loudly at this seam; `load_config` catches it
-    and degrades to "tracing off" rather than stopping the worker (see the
-    `[telemetry]` block there) — silently exporting nowhere is the failure this
-    setting exists to prevent, and refusing to start is the opposite failure.
+    and decides the consequence per key — a bad `otlp_endpoint` switches tracing
+    off, a bad `viewer_endpoint` only breaks the read path (R100).
     """
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f'{where}: must be a non-empty http(s) URL')
@@ -1274,10 +1280,22 @@ def load_config(home: Path | None = None) -> Config:
             defaults.telemetry.service_name,
         )
         service_name = defaults.telemetry.service_name
+    # R100: the viewer's query endpoint. A typo here breaks the in-app Traces
+    # panel and nothing else, so it degrades to the default with a warning —
+    # unlike otlp_endpoint above, it must never switch tracing off.
+    viewer_endpoint = defaults.telemetry.viewer_endpoint
+    try:
+        viewer_endpoint = validate_otlp_endpoint(
+            telemetry_raw.get('viewer_endpoint', viewer_endpoint),
+            where='config.toml [telemetry] viewer_endpoint',
+        )
+    except ValueError as exc:
+        logging.getLogger(__name__).warning('%s - using %s', exc, viewer_endpoint)
     telemetry = TelemetryConfig(
         enabled=enabled,
         otlp_endpoint=otlp_endpoint,
         service_name=service_name,
+        viewer_endpoint=viewer_endpoint,
     )
     config = Config(
         models=ModelLineup(

@@ -1676,3 +1676,20 @@ Re-run after the fix, all from the repo root: `uv run pytest tests/test_claim_ch
 
 Correction recorded against this item's first draft, which is why the Problem paragraph now reads the way it does: it claimed "the whole `[telemetry]` path rested on the exporter's unit test alone". The wiring test above existed and says more than that; the honest gap was narrower — a live model call through logfire's instrumentation, and a real collector storing the result.
 
+## R100 — Per-conversation OTel recording: chat-toggle, session attribution, in-app Traces panel
+**Status:** open
+
+**Why.** R93-C made OTel recording possible but only as a global, all-or-nothing switch in `~/.codingdude/config.toml`. Recording is expensive in bytes (each `chat` span carries ~70KB of input messages + ~43KB of instructions — a 20-minute session produced an 8.5MB WAL), so "record everything always" is not sustainable, and "record nothing" leaves no forensics. Two further gaps made the data unusable even when it existed:
+
+- **No session attribution.** `gen_ai.conversation.id` is pydantic-ai's own UUID7 per run (its `Conversation.conversation_id` default factory), never the CodingDude session id, so no span could be tied to the conversation it came from.
+- **No in-app reader.** Nothing under `src/codingdude/` reads the OTel store; `WaterfallPanel` is built from the JSONL event trace, not spans.
+
+**What this delivers.**
+
+1. `tracing.configure_tracing(config, *, enabled, session_id, run_id)` — tri-state override of the config default, plus `resource_attributes` (logfire 5.3.0's parameter name, verified) carrying `codingdude.session_id` / `codingdude.run_id` on every span.
+2. `worker.py` `--telemetry` / `--no-telemetry` (absent = config decides), plumbed from `RunBody.telemetry` exactly as `yolo` is (`server.py:528` → `:645`). One worker process = one run, so per-conversation granularity is per turn by construction.
+3. `src/codingdude/otel.py` — reads the store **only** through the running viewer's JSON-RPC (`POST /rpc`, method `query`, params `{sql, limit}`; `GET /openrpc.json` documents it). The DuckDB file is never opened directly: single-writer locking makes that unsafe next to the viewer, and the viewer's own guide says to reuse the running process.
+4. `GET /api/sessions/{sid}/otel/spans` (compact projection — message bodies excluded) and `GET /api/telemetry/status` for the collector/viewer liveness dot.
+5. Frontend: a `trace` checkbox beside `yolo` in the prompt settings row with a live/dead dot, and an `otel` panel grouping spans by `trace_id` with token and cost columns.
+
+**Constraints recorded.** Never open `telemetry.duckdb` from the app; session ids are validated by allowlist regex before interpolation (the RPC takes raw SQL, so this is the injection boundary); `start_time` is UBIGINT nanoseconds above JS's `2^53`, so conversion to ISO happens in Python.

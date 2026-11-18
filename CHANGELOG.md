@@ -4,6 +4,20 @@
 
 ### Added
 
+- **Per-conversation trace recording (R100)**: tracing was all-or-nothing and
+  unattributable — every span carried only pydantic-ai's own per-run
+  `gen_ai.conversation.id`, a UUID7 no CodingDude surface knows, so "show me
+  that conversation" had no answer. A `trace` checkbox beside `yolo` now
+  decides recording per run (untouched = `[telemetry] enabled` decides), with a
+  dot that turns amber when nothing is listening on the OTLP port — a
+  `BatchSpanProcessor` drops spans on its own thread and the run still looks
+  clean, so "recording is on" must not be the only signal. Every span now
+  carries `codingdude.session_id`/`codingdude.run_id`, and a new **OTel Traces**
+  panel groups one conversation's spans by `trace_id` with per-trace token and
+  cost totals. It reads the store through the running viewer's JSON-RPC over the
+  new `[telemetry] viewer_endpoint` (default `http://127.0.0.1:8000`) and never
+  opens the DuckDB file, which the viewer holds locked as its single writer.
+
 - **A trace viewer that is actually verified (R94-C follow-up)**: the manual
   documented OpenLIT as the collector and then admitted its dashboard had never
   been run against our spans. The OTel Desktop Viewer now leads instead — one

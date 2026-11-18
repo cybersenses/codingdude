@@ -25,7 +25,7 @@ const REGISTERED = [
   'nav', 'explorer', 'editor', 'chat', 'diff',
   // R59 P2
   'graph', 'planning', 'artifacts', 'notes', 'renders', 'terminal', 'output',
-  'waterfall', 'trace', 'cost', 'memory', 'mcp', 'config', 'standards', 'processes',
+  'waterfall', 'trace', 'otel', 'cost', 'memory', 'mcp', 'config', 'standards', 'processes',
 ]
 
 describe('panel catalogue', () => {
@@ -60,12 +60,12 @@ describe('panel catalogue', () => {
     const list = panelListFor(['chat', 'trace', 'processes', 'gone'])
     expect(list.map((p) => p.id)).toEqual([
       'explorer', 'editor', 'chat', 'diff', 'graph', 'planning', 'artifacts',
-      'notes', 'renders', 'terminal', 'output', 'waterfall', 'trace', 'cost',
-      'memory', 'mcp', 'config', 'standards', 'processes',
+      'notes', 'renders', 'terminal', 'output', 'waterfall', 'trace', 'otel',
+      'cost', 'memory', 'mcp', 'config', 'standards', 'processes',
     ])
     expect(list.filter((p) => p.open).map((p) => p.id)).toEqual(['chat', 'trace', 'processes'])
     // 'gone' is not a catalogue panel: an unknown id must not grow the list.
-    expect(list).toHaveLength(19)
+    expect(list).toHaveLength(20)
     expect(list.every((p) => typeof p.title === 'string' && p.title.length > 0)).toBe(true)
   })
 

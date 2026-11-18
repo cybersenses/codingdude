@@ -61,6 +61,7 @@ import {
   StandardsPanel,
   TerminalPanel,
   TracePanel,
+  OtelPanel,
   WaterfallPanel,
 } from './panels.jsx'
 
@@ -190,6 +191,8 @@ const GatedCostPanel = visible('cost', CostPanel)
 const GatedMemoryPanel = visible('memory', MemoryPanel)
 const GatedMcpPanel = visible('mcp', McpPanel)
 const GatedTracePanel = visible('trace', TracePanel)
+// R100: OTel spans are session-scoped like trace, so the same gating applies.
+const GatedOtelPanel = visible('otel', OtelPanel)
 const GatedOutputPanel = visible('output', OutputPanel)
 const GatedWaterfallPanel = visible('output', WaterfallPanel)
 const GatedProcessesPanel = visible('processes', ProcessesPanel)
@@ -214,6 +217,7 @@ const COMPONENTS = {
   output: GatedOutputPanel,
   waterfall: GatedWaterfallPanel,
   trace: GatedTracePanel,
+  otel: GatedOtelPanel,
   cost: GatedCostPanel,
   memory: GatedMemoryPanel,
   mcp: GatedMcpPanel,

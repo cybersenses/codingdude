@@ -100,6 +100,9 @@ DOCK_PANELS = {
     "output": "Output",
     "waterfall": "Waterfall",
     "trace": "Trace",
+    # R100: the OTel spans panel; the UI walk opens it through the palette
+    # (`show:otel`), so it belongs in the catalogue the gate walks.
+    "otel": "OTel Traces",
     "cost": "Cost",
     "memory": "Memory",
     "mcp": "MCP",

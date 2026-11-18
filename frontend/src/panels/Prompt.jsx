@@ -89,7 +89,14 @@ export function ModelPicker({ models, model, setModel }) {
   )
 }
 
-export function Prompt({ onSend, disabled, running = false, suggestMode, setSuggestMode, fixLoop, setFixLoop, models, modelsError, model, setModel, yolo, setYolo, longRun, setLongRun, notify, toggleNotify }) {
+// R100: tracing is a per-turn switch beside yolo; the state rules live in
+// otelView.ts so they can be tested without React.
+import { traceSwitchState } from '../otelView'
+
+export function Prompt({ onSend, disabled, running = false, suggestMode, setSuggestMode, fixLoop, setFixLoop, models, modelsError, model, setModel, yolo, setYolo, longRun, setLongRun, notify, toggleNotify, otel, setOtel, telemetry }) {
+  // R100: the trace switch is tri-state — `null` means this browser has never
+  // touched it, so the config default decides; true/false are a real choice.
+  const trace = traceSwitchState(otel, telemetry)
   const [text, setText] = useState('')
   // R85 #317 (REQ-7): the composer prefill seam's composer half — panels
   // (wireframe implement buttons) call prefillComposer; this registration is
@@ -249,6 +256,26 @@ export function Prompt({ onSend, disabled, running = false, suggestMode, setSugg
       <label className={`flex items-center gap-1 text-[10px] ${yolo ? 'text-danger' : 'text-neutral-400'}`} title="yolo = the approval-policy switch: auto-approve every gated action for this session. It is NOT the long-run mode — see --long-run.">
         <input type="checkbox" checked={yolo} onChange={(e) => setYolo(e.target.checked)} />
         yolo
+      </label>
+      {/* R100: per-conversation OTel recording. Sends an explicit true/false
+          for this run; leaving it untouched leaves the config default in
+          charge. It records prompts and repository code - locally only. */}
+      <label
+        className={`flex items-center gap-1 text-[10px] ${trace.on ? 'text-accent' : 'text-neutral-400'}`}
+        title={`trace = record OpenTelemetry spans for THIS run, to the local collector only (prompts and repo code included). ${trace.label}`}
+      >
+        <input
+          type="checkbox"
+          checked={trace.on}
+          onChange={(e) => setOtel(e.target.checked)}
+          aria-label="Record OTel spans for this run"
+        />
+        trace
+        <span
+          data-trace-dot={trace.detail}
+          className={`inline-block h-1.5 w-1.5 rounded-full ${trace.dot}`}
+          aria-hidden="true"
+        />
       </label>
       <select
         className={`rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs ${longRun ? 'text-warning' : 'text-ink'}`}

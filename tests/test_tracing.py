@@ -152,6 +152,47 @@ def test_a_broken_logfire_setup_degrades_instead_of_raising(fake_tracing):
     assert fake_tracing.instrument_calls == 0
 
 
+# --- R100: the per-conversation override and attribution --------------------
+
+
+def test_a_run_can_force_tracing_on_against_the_config_default(fake_tracing):
+    """The chat panel's checkbox is per turn: the config default is a default,
+    not a veto — otherwise the switch could only ever turn things off."""
+    assert configure_tracing(_config(enabled=False), enabled=True) is True
+    assert len(fake_tracing.configure_calls) == 1
+
+
+def test_a_run_can_force_tracing_off_against_the_config(fake_tracing):
+    """The expensive direction: an operator with tracing on must still be able
+    to keep one conversation out of the store."""
+    assert configure_tracing(_config(enabled=True), enabled=False) is False
+    assert fake_tracing.configure_calls == []
+    assert fake_tracing.instrument_calls == 0
+
+
+def test_absent_override_is_the_config_default(fake_tracing):
+    assert configure_tracing(_config(enabled=True), enabled=None) is True
+    assert configure_tracing(_config(enabled=False), enabled=None) is False
+
+
+def test_the_conversation_is_stamped_on_the_span_resource(fake_tracing):
+    """Without these a span only carries pydantic-ai's own per-run
+    `gen_ai.conversation.id`, which no CodingDude surface knows."""
+    assert configure_tracing(
+        _config(enabled=True), session_id='sess-1', run_id='run-1') is True
+    [kwargs] = fake_tracing.configure_calls
+    assert kwargs['resource_attributes'] == {
+        'codingdude.session_id': 'sess-1',
+        'codingdude.run_id': 'run-1',
+    }
+
+
+def test_an_unstamped_run_sends_no_empty_attributes(fake_tracing):
+    assert configure_tracing(_config(enabled=True)) is True
+    [kwargs] = fake_tracing.configure_calls
+    assert kwargs['resource_attributes'] == {}
+
+
 def test_the_logfire_api_surface_we_call_still_exists():
     """The fakes above prove our wiring; this proves the API we wire *to*.
 
@@ -164,7 +205,11 @@ def test_the_logfire_api_surface_we_call_still_exists():
     import logfire
 
     params = inspect.signature(logfire.configure).parameters
-    for keyword in ('send_to_logfire', 'service_name', 'additional_span_processors'):
+    for keyword in (
+        'send_to_logfire', 'service_name', 'additional_span_processors',
+        # R100: the parameter that ties a span to a conversation.
+        'resource_attributes',
+    ):
         assert keyword in params
     assert callable(logfire.instrument_pydantic_ai)
 
@@ -177,6 +222,25 @@ def test_config_toml_documents_the_telemetry_keys():
     assert '[telemetry]' in text
     assert 'enabled = false' in text
     assert 'otlp_endpoint' in text
+    # R100: the query port the in-app panel reads through.
+    assert 'viewer_endpoint' in text
+
+
+def test_load_config_reads_the_viewer_endpoint(tmp_path):
+    (tmp_path / 'config.toml').write_text(
+        '[telemetry]\nviewer_endpoint = "http://127.0.0.1:9000"\n', encoding='utf-8')
+    telemetry = load_config(tmp_path).telemetry
+    assert telemetry.viewer_endpoint == 'http://127.0.0.1:9000'
+
+
+def test_a_bad_viewer_endpoint_degrades_the_panel_not_tracing(tmp_path):
+    """Unlike a bad otlp_endpoint, this one must NOT switch recording off: the
+    viewer endpoint is a read path, and losing the panel is not losing data."""
+    (tmp_path / 'config.toml').write_text(
+        '[telemetry]\nenabled = true\nviewer_endpoint = "8000"\n', encoding='utf-8')
+    telemetry = load_config(tmp_path).telemetry
+    assert telemetry.enabled is True
+    assert telemetry.viewer_endpoint == TelemetryConfig().viewer_endpoint
 
 
 def test_load_config_parses_the_telemetry_surface(tmp_path):
@@ -262,9 +326,11 @@ async def test_the_worker_enables_tracing_before_it_builds_the_engine(
     import codingdude.worker as worker
 
     calls: list[str] = []
+    seen: dict = {}
 
-    def fake_configure(config):
+    def fake_configure(config, **kwargs):
         calls.append('configure')
+        seen.update(kwargs)
         return True
 
     class Stop(Exception):
@@ -276,10 +342,18 @@ async def test_the_worker_enables_tracing_before_it_builds_the_engine(
 
     monkeypatch.setattr(tracing_module, 'configure_tracing', fake_configure)
     monkeypatch.setattr(engine_module, 'Engine', fake_engine)
-    args = SimpleNamespace(workdir=None, budget=None, model=None)
+    args = SimpleNamespace(
+        workdir=None, budget=None, model=None,
+        session='sess-1', run_id='run-1', telemetry=True,
+    )
     with pytest.raises(Stop):
         await worker.run(args)
     assert calls == ['configure', 'engine']
+    # R100: the run's own identity travels with the call — without it a span
+    # cannot be tied to the conversation it came from.
+    assert seen == {
+        'enabled': True, 'session_id': 'sess-1', 'run_id': 'run-1',
+    }
 
 
 def test_every_agent_construction_is_named():
