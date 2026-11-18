@@ -163,12 +163,21 @@ def test_the_collector_probe_sees_a_listening_port():
 
 
 @pytest.mark.parametrize('bad', [
-    '', 'not-a-url', 'http://127.0.0.1', 'ftp://x:1',
+    '', '   ', 'not-a-url', 'ftp://x:1',
     # `.port` raises ValueError on these; the probe answers False instead of
     # letting a malformed config value 500 the status endpoint.
     'http://127.0.0.1:abc', 'http://127.0.0.1:99999', 'http://[::1',
 ])
 def test_an_unusable_endpoint_is_not_reachable(bad):
+    """Malformed means "cannot be addressed at all" — never "nothing answered".
+
+    A portless `http://host` is NOT in this list, and CI said so: it resolves to
+    the scheme default (port 80), which `_endpoint_address` returns as a real
+    address and this probe then dials. On a runner where something listens on
+    127.0.0.1:80 the answer is True, so asserting False there was asserting a
+    property of the machine, not of the code — the sibling test below pins the
+    resolution instead, which is the part that is actually ours.
+    """
     assert otel.collector_reachable(bad) is False
 
 
