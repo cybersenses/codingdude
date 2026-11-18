@@ -100,4 +100,14 @@ describe('traceSwitchState', () => {
     expect(state.detail).toBe('collector state unknown')
     expect(state.dot).toBe('bg-warning')
   })
+
+  it('never claims "off" while nothing has said which setting applies', () => {
+    // No choice in this browser and no answer from /telemetry/status: the
+    // server's [telemetry] setting decides, so "off" here would be a claim the
+    // code cannot support - a run can record while the row says it is not.
+    const state = traceSwitchState(null, null)
+    expect(state.on).toBe(false)
+    expect(state.label.startsWith('unknown:')).toBe(true)
+    expect(state.detail).toContain('config decides')
+  })
 })

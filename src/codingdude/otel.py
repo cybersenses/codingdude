@@ -74,6 +74,11 @@ _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 _REQUEST_TIMEOUT_S = 10.0
 _MAX_LIMIT = 500
 
+#: A URL without an explicit port means the scheme default. An exporter POSTs
+#: to that same port, so the reachability probe has to resolve it the same way
+#: instead of declaring a perfectly good endpoint unreachable.
+_SCHEME_PORTS = {'http': 80, 'https': 443}
+
 #: The projection is deliberately narrow. ``gen_ai.input.messages``,
 #: ``gen_ai.output.messages`` and ``gen_ai.system_instructions`` hold the full
 #: prompt and repository code (70-113KB each, observed live) — shipping those
@@ -224,6 +229,32 @@ def viewer_reachable(
     return True, None
 
 
+def _endpoint_address(otlp_endpoint: str) -> tuple[str, int] | None:
+    """The ``(host, port)`` the exporter would contact, or ``None``.
+
+    Only http/https address anything here (``validate_otlp_endpoint`` enforces
+    the same at the config seam), and a missing port means the scheme default -
+    which is what an exporter POSTs to, so the probe resolves it identically
+    instead of declaring a perfectly good endpoint unreachable.
+
+    A malformed endpoint is ``None`` rather than an exception: reading ``.port``
+    raises ``ValueError`` on ``http://127.0.0.1:abc``, on an out-of-range port
+    and on an unparseable IPv6 literal, and this is a status-row probe whose
+    contract is an answer.
+    """
+    try:
+        parsed = urlparse(otlp_endpoint or '')
+        port = parsed.port
+    except ValueError as exc:
+        logger.debug(
+            'collector_reachable: unusable endpoint %r: %s', otlp_endpoint, exc)
+        return None
+    default = _SCHEME_PORTS.get(parsed.scheme)
+    if default is None or not parsed.hostname:
+        return None
+    return parsed.hostname, port or default
+
+
 def collector_reachable(otlp_endpoint: str, *, timeout: float = 0.5) -> bool:
     """TCP-probe the OTLP/HTTP receiver.
 
@@ -231,12 +262,11 @@ def collector_reachable(otlp_endpoint: str, *, timeout: float = 0.5) -> bool:
     listening, so a run with tracing on and no collector looks exactly like a
     successful run. The settings row needs this answer to say otherwise.
     """
-    parsed = urlparse(otlp_endpoint or '')
-    host, port = parsed.hostname, parsed.port
-    if not host or not port:
+    address = _endpoint_address(otlp_endpoint)
+    if address is None:
         return False
     try:
-        with socket.create_connection((host, port), timeout=timeout):
+        with socket.create_connection(address, timeout=timeout):
             return True
     except OSError:
         return False

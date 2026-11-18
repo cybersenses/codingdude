@@ -79,8 +79,12 @@ export default function App() {
   const [model, setModel] = useState(() => localStorage.getItem('cd-model') || '')
   const [yolo, setYolo] = useState(() => localStorage.getItem('cd-yolo') === '1')
   // R100: per-conversation OTel recording. Tri-state on purpose — `null` means
-  // this browser has never made a choice, so the config default decides; it is
-  // seeded from /telemetry/status once and persisted like yolo after that.
+  // this browser has never made a choice, so the config default decides. It is
+  // deliberately NOT seeded into state: seeding turned the config default into
+  // something the persistence effect below read as a choice, stamped it into
+  // localStorage, and from then on a later `[telemetry] enabled` change could
+  // never take effect in this browser. `traceSwitchState` already resolves
+  // `null` against `/telemetry/status` for display, so nothing needs seeding.
   const [otel, setOtel] = useState(() => {
     const stored = localStorage.getItem('cd-otel')
     return stored === null ? null : stored === '1'
@@ -150,11 +154,6 @@ export default function App() {
     const timer = setInterval(load, 20000)
     return () => { alive = false; clearInterval(timer) }
   }, [loggedIn])
-
-  // R100: seed the switch from the config default, exactly once per browser.
-  useEffect(() => {
-    if (otel === null && telemetry) setOtel(Boolean(telemetry.config_enabled))
-  }, [otel, telemetry])
 
   // Notifications: tab title + sound + toast on run state changes.
   const [notify, setNotify] = useState(() => localStorage.getItem('cd-notify') === '1')

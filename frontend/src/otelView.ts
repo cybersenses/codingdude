@@ -99,16 +99,24 @@ export function traceSwitchState(
   otel: boolean | null,
   telemetry: OtelStatus | null | undefined,
 ): TraceSwitch {
+  // Neither a choice here nor an answer from /telemetry/status: the server's
+  // [telemetry] setting decides and we do not know what it says. Rendering
+  // "off" in that state is a claim the code cannot support - the run may be
+  // recording, because an absent override is exactly what lets the config win.
+  const unknown = otel === null && !telemetry
   const on = otel === null ? Boolean(telemetry && telemetry.config_enabled) : otel
   const dot = !on
     ? 'bg-neutral-600'
     : telemetry && telemetry.collector_reachable ? 'bg-success' : 'bg-warning'
-  const detail = !on
-    ? 'recording is off for this run'
-    : !telemetry
-      ? 'collector state unknown'
-      : telemetry.collector_reachable
-        ? `recording spans to ${telemetry.otlp_endpoint}`
-        : `nothing is listening on ${telemetry.otlp_endpoint} - spans will be dropped`
-  return { on, dot, detail, label: `${on ? 'on' : 'off'}: ${detail}` }
+  const detail = unknown
+    ? 'recording setting unknown - /telemetry/status has not answered, so the config decides'
+    : !on
+      ? 'recording is off for this run'
+      : !telemetry
+        ? 'collector state unknown'
+        : telemetry.collector_reachable
+          ? `recording spans to ${telemetry.otlp_endpoint}`
+          : `nothing is listening on ${telemetry.otlp_endpoint} - spans will be dropped`
+  const state = unknown ? 'unknown' : on ? 'on' : 'off'
+  return { on, dot, detail, label: `${state}: ${detail}` }
 }

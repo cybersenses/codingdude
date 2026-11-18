@@ -268,6 +268,19 @@ def test_a_malformed_endpoint_is_rejected_loudly(bad):
         validate_otlp_endpoint(bad, where='test')
 
 
+@pytest.mark.parametrize('bad', [
+    'http://127.0.0.1:abc',   # non-numeric port: urlparse().port raises
+    'http://127.0.0.1:99999',  # out of range: same exception, different text
+    'http://[::1',             # unparseable IPv6 literal
+])
+def test_an_endpoint_with_an_unusable_port_is_rejected(bad):
+    """The prefix check alone accepted these, and the failure then surfaced
+    from `.port` deep in the status probe as a 500 rather than as a config
+    error the operator can read."""
+    with pytest.raises(ValueError, match='port|host'):
+        validate_otlp_endpoint(bad, where='test')
+
+
 def test_a_malformed_endpoint_disables_tracing_instead_of_failing_boot(tmp_path):
     """#341: tracing is optional telemetry — a typo must not stop the worker."""
     (tmp_path / 'config.toml').write_text(

@@ -24,6 +24,7 @@ import tomllib
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal, cast
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
@@ -1146,6 +1147,16 @@ def validate_otlp_endpoint(value, where: str) -> str:
         raise ValueError(
             f'{where}: {value!r} must start with http:// or https://'
         )
+    # The prefix check alone let `http://127.0.0.1:abc` through, and reading
+    # `.port` on that raises ValueError — so a malformed endpoint surfaced as a
+    # 500 from /telemetry/status instead of a config error at this seam.
+    try:
+        parsed = urlparse(endpoint)
+        _explicit_port = parsed.port  # reading it is the check: raises on 'abc'
+    except ValueError as exc:
+        raise ValueError(f'{where}: {value!r} has an unusable port: {exc}') from exc
+    if not parsed.hostname:
+        raise ValueError(f'{where}: {value!r} names no host')
     return endpoint
 
 

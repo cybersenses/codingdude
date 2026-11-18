@@ -1846,3 +1846,88 @@ returned HTTP 200 with the span; a 65-character id returned 400. Backend: 70
 tests in the two affected files, ruff clean, mypy clean (84 files). Frontend:
 328 vitest tests, `npm run build` ok.
 
+## #362-#364 - cache policy, dirty build stamp, and the store rule enforced
+
+**Problem.** One concrete symptom - the footer read `ui v0.4.0+541bfb5` while
+`/health` reported `srv cc320f7` - produced three defects. (a) The built
+frontend was mounted as plain `StaticFiles`, which sends no `Cache-Control`, so
+`index.html` (the only file that names the content-hashed assets) fell back to
+heuristic caching and a pinned copy kept asking for filenames that no longer
+existed. (b) `vite.config.js` stamped `git rev-parse --short HEAD` without
+asking whether the tree matched it, so a bundle built from uncommitted code
+advertised a clean commit. (c) "the read path never opens the store" lived in a
+docstring with nothing testing it.
+
+**Design - one seam per defect, no new dependency.**
+
+1. *Cache policy* (`server.cache_control_for`, `_CachedStaticFiles`): the mount
+   states the policy instead of leaving it to the browser. Files under
+   `assets/` are content-hashed, so they are `public, max-age=31536000,
+   immutable`; everything else is `no-cache` - revalidate, not "do not store",
+   so the follow-up 304 keeps it cheap. `StaticFiles.get_response` is the
+   override point; `_frontend_dist()` exists so the mount can be pointed at a
+   throwaway tree instead of requiring a real build.
+2. *Build stamp* (`frontend/buildStamp.js`): `gitSha(exec)` appends `-dirty`
+   when `git status --porcelain` is non-empty and returns `unknown` with a
+   warning when git cannot be run. Extracted from `vite.config.js` so the four
+   states are unit-testable through an injected `exec`.
+3. *The store rule* (`tests/test_otel.py`): the module source is parsed for
+   import statements naming `duckdb`, the read path is executed under a
+   meta-path watcher that records any `import duckdb`, and a negative control
+   proves the watcher fires.
+
+**Review round on this diff (four findings, each verified in the code first).**
+
+- The trace switch was *seeded* from `/telemetry/status` into the same state the
+  persistence effect reads, so the config default was stamped into
+  `localStorage` as if it were a choice and a later `[telemetry] enabled` change
+  could never take effect in that browser - contradicting both the comment
+  beside the persistence effect and the CHANGELOG. The seed is gone:
+  `traceSwitchState` already resolves `null` against the status payload for
+  display, so `null` now genuinely means "the config decides".
+- `traceSwitchState(null, null)` rendered "recording is off for this run" while
+  no override is exactly what lets the config win. It now resolves to an
+  explicit `unknown` state whose text says the config decides.
+- `validate_otlp_endpoint` accepted `http://127.0.0.1:abc` (prefix check only)
+  and `otel.collector_reachable` read `.port` outside its guard, so that value
+  500'd `/telemetry/status` instead of failing as a config error. Validation now
+  reads `.port` and `.hostname` at the seam; the probe catches `ValueError` and
+  answers `False` at its own boundary.
+
+**Impact - checked upstream and downstream.**
+
+| touched | upstream (who calls it) | downstream (what it calls) |
+| --- | --- | --- |
+| `server.cache_control_for` / `_CachedStaticFiles` | the `ui` mount in `create_app` only | `StaticFiles.get_response`; headers only, no routing change |
+| `server._frontend_dist` | `create_app` | `Path` only; identical in production |
+| `frontend/buildStamp.gitSha` | `vite.config.js` define block | `child_process.execSync`; the footer string gains a suffix at most |
+| `config.validate_otlp_endpoint` | `load_config`, both telemetry keys | `urlparse`; a stricter reject degrades to the default, never a boot failure |
+| `otel.collector_reachable` | `/telemetry/status` | `socket.create_connection`; still boolean, never raises |
+| `App.jsx` `otel` state | `Prompt` checkbox, `startRun` | `localStorage`; `null` survives a load, so the config keeps deciding |
+| `otelView.traceSwitchState` | `Prompt` | pure; adds an `unknown` state, no API change |
+
+Seams reused rather than reinvented: `StaticFiles` (overridden, not replaced),
+`_test_app` for the header tests, the existing endpoint parametrisation in
+`tests/test_otel.py`, and `validate_otlp_endpoint` for the config seam.
+
+**Alternatives rejected.** (a) A blanket `no-store` - makes every reload refetch
+hashed assets that can never change. (b) A service worker - heavier than one
+header per response for the same guarantee. (c) `git diff --quiet` instead of
+`status --porcelain` - blind to untracked files, which is exactly the state a
+first build is in. (d) Catching `ValueError` inside `/telemetry/status` - hides
+the cause and leaves a malformed config silent.
+
+**Verification (2026-11-18).** Plain `StaticFiles` over the same files answers
+`cache-control=None` for `/` and `/assets/app-abc123.js`; `_CachedStaticFiles`
+answers `no-cache` and `immutable`, and a conditional request returns 304 with
+the policy intact: 10 tests in `tests/test_static_cache.py`. `npm run build` on
+a dirty tree inlined `Dh="cc320f7-dirty"` as `__GIT_SHA__` in the workspace
+chunk of the built bundle while HEAD was `cc320f7`. With `import duckdb`
+temporarily added to `otel.py` and a stub `duckdb` on `PYTHONPATH`,
+`test_the_module_never_names_duckdb_in_an_import` failed with
+`assert 'duckdb' not in {'__future__', 'datetime', 'duckdb', 'httpx', ...}`;
+reverted, `tests/test_otel.py` passes in full. `urlparse(...).port` raises
+`ValueError` for both `http://127.0.0.1:abc` and `:99999`, and
+`collector_reachable` now answers `False` for each.
+
+

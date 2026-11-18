@@ -162,9 +162,33 @@ def test_the_collector_probe_sees_a_listening_port():
     assert otel.collector_reachable(f'http://127.0.0.1:{port}') is False
 
 
-@pytest.mark.parametrize('bad', ['', 'not-a-url', 'http://127.0.0.1', 'ftp://x:1'])
+@pytest.mark.parametrize('bad', [
+    '', 'not-a-url', 'http://127.0.0.1', 'ftp://x:1',
+    # `.port` raises ValueError on these; the probe answers False instead of
+    # letting a malformed config value 500 the status endpoint.
+    'http://127.0.0.1:abc', 'http://127.0.0.1:99999', 'http://[::1',
+])
 def test_an_unusable_endpoint_is_not_reachable(bad):
     assert otel.collector_reachable(bad) is False
+
+
+@pytest.mark.parametrize(('endpoint', 'expected'), [
+    ('http://127.0.0.1:4318', ('127.0.0.1', 4318)),
+    ('https://box:6006', ('box', 6006)),
+    # No port means the scheme default - the exporter POSTs there, so the probe
+    # has to resolve it the same way or it reports "nothing listening" for a
+    # URL that is perfectly reachable.
+    ('http://box', ('box', 80)),
+    ('https://box', ('box', 443)),
+    # Malformed or not addressable: an answer, never an exception.
+    ('http://127.0.0.1:abc', None),
+    ('http://127.0.0.1:99999', None),
+    ('http://[::1', None),
+    ('ftp://box:21', None),
+    ('', None),
+])
+def test_the_probe_resolves_the_address_the_exporter_would_use(endpoint, expected):
+    assert otel._endpoint_address(endpoint) == expected
 
 
 # --- endpoints --------------------------------------------------------------
