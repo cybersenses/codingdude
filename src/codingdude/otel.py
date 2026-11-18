@@ -27,8 +27,10 @@ that file**, and that is a hard constraint, not a preference:
   says to reuse the running viewer and never stop one you did not start.
 
 So every read here is a JSON-RPC call to the running viewer. If someone later
-"optimises" this into a direct ``duckdb.connect``, the panel breaks whenever a
-viewer is running — which is always.
+"optimises" this into a direct ``duckdb.connect``, the panel stops answering
+whenever a viewer is up — and a viewer must be up for the panel to have any
+spans to show, so the read path would only be exercised in the one state it
+cannot serve.
 
 Two things worth stating in code rather than in a commit message:
 
