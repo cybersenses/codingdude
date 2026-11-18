@@ -1635,13 +1635,13 @@ Each finding either fixed or explicitly waived with a reason. The dead-code lege
 - Tracked home: `docs/Screenshots/*.png` - 12 files, about 800 KB, still untracked, one `git clean -fdx` from deletion, and in tension with R74's binary-purge policy.
 
 ## R99 — Trace viewer: verify the documented collector instead of asserting it
-**Status:** open
+**Status:** done
 
 Audience: agent + operator
 
 **Problem**
 
-R94-C (#347) documented OpenLIT as the OTLP receiver for `[telemetry]`, then the same section admitted the gap in one line: *"Not yet verified: that OpenLIT's dashboard renders spans produced by logfire's pydantic-ai instrumentation… start the container and confirm before relying on it."* A manual that ships a `docker compose` block plus a confession that nobody ran it is a claim, not a capability. Nothing in the repo had ever seen a CodingDude span reach any collector — so the whole `[telemetry]` path (config → `traces_url` → `OTLPSpanExporter` → a store) rested on the exporter's unit test alone.
+R94-C (#347) documented OpenLIT as the OTLP receiver for `[telemetry]`, then the same section admitted the gap in one line: *"Not yet verified: that OpenLIT's dashboard renders spans produced by logfire's pydantic-ai instrumentation… start the container and confirm before relying on it."* A manual that ships a `docker compose` block plus a confession that nobody ran it is a claim, not a capability. The wiring itself was tested (`test_a_span_reaches_a_real_otlp_collector` runs a loopback receiver and asserts the bytes arrive at `/v1/traces`) and that test names its own ceiling: it does not prove logfire instruments pydantic-ai, which needs a live model call, and it proves receipt, not that a real collector stores the spans and keeps their attributes.
 
 The operator also flagged the cost of the check: OpenLIT needs Docker. CtrlSpice's `otel-desktop-viewer` ships the same idea as one executable.
 
@@ -1661,4 +1661,12 @@ The operator also flagged the cost of the check: OpenLIT needs Docker. CtrlSpice
 
 - OpenLIT still has not been run here, so its line stays "not yet verified" for our spans. Marking it verified by association would be the same defect in a new place.
 - `[telemetry]` remains absent from the operator's `config.toml`: enabling tracing is consent-per-machine, and a probe must not flip it on for real runs.
+
+**Outcome (`d3034c8`).** The viewer was installed beside the repo, not inside it (`.scratch/otel/`, gitignored), and the probe drove the shipped seam: `load_config()` → `replace(cfg.telemetry, enabled=True)` → `configure_tracing()` returned **True** at `http://127.0.0.1:4318/v1/traces`, then `engine._model_from_name(cfg.models.main, …)` + `pydantic_ai.Agent` produced one real request (`deepseek-flash`, 43 in / 12 out, output `'OK'`). Read back from the viewer's own store, not from the exporter's log: `SELECT service_name, name, count(*) FROM spans` returned `invoke_agent agent` 1 and `chat deepseek-flash` 1, and a second query showed the attributes — `gen_ai.input.messages`, `gen_ai.output.messages`, `gen_ai.system_instructions`, `operation.cost` 2.73e-05.
+
+Two things the evidence changed in the manual rather than confirming: the store was documented as a black box, and it is not one (it holds prompts, outputs and instructions, which is the argument for local-only export, now stated); and the "not yet verified" caveat had to be **narrowed, not deleted** — our spans are proven to render in one viewer, so leaving OpenLIT marked unverified is the honest state, while promoting it by association would repeat the original defect.
+
+Gates: `ruff check src tests` exit 0 ("All checks passed!"), `mypy` exit 0 (83 source files). No test asserts documentation content (`tests/*` reference `README.md` only as a `list_dir` fixture name), so the suite was not re-run for a markdown-only diff; CI runs it on the PR.
+
+Correction recorded against this item's first draft, which is why the Problem paragraph now reads the way it does: it claimed "the whole `[telemetry]` path rested on the exporter's unit test alone". The wiring test above existed and says more than that; the honest gap was narrower — a live model call through logfire's instrumentation, and a real collector storing the result.
 
