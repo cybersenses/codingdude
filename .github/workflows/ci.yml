@@ -10,6 +10,10 @@ jobs:
   # protection requires it by name (docs/GITHUB-STRATEGY.md).
   test:
     runs-on: windows-latest
+    # Observed 11m14s at worst (7m40s and 10m12s in other green runs; 671s for
+    # the full suite locally). Run 44471486460 sat silent for 78 minutes on the
+    # 6-hour default, so a wedged runner now fails in bounded time (#366).
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -61,6 +65,8 @@ jobs:
   # Job name is a required status check — do not rename casually.
   frontend:
     runs-on: windows-latest
+    # Observed 1m04s-1m22s; 15 minutes leaves room for a cold npm cache (#366).
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: frontend
@@ -84,6 +90,8 @@ jobs:
   # (docs/GITHUB-STRATEGY.md, CI policy).
   bench:
     runs-on: windows-latest
+    # Observed 31s-34s; 10 minutes is a wedge detector, not a budget (#366).
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
