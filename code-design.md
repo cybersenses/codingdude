@@ -1849,7 +1849,8 @@ tests in the two affected files, ruff clean, mypy clean (84 files). Frontend:
 ## #362-#364 - cache policy, dirty build stamp, and the store rule enforced
 
 **Problem.** One concrete symptom - the footer read `ui v0.4.0+541bfb5` while
-`/health` reported `srv cc320f7` - produced three defects. (a) The built
+`/health` reported `srv` as the branch HEAD while the footer named the base
+commit the bundle was stamped with - produced three defects. (a) The built
 frontend was mounted as plain `StaticFiles`, which sends no `Cache-Control`, so
 `index.html` (the only file that names the content-hashed assets) fell back to
 heuristic caching and a pinned copy kept asking for filenames that no longer
@@ -1922,7 +1923,8 @@ the cause and leaves a malformed config silent.
 answers `no-cache` and `immutable`, and a conditional request returns 304 with
 the policy intact: 10 tests in `tests/test_static_cache.py`. `npm run build` on
 a dirty tree inlined `Dh="cc320f7-dirty"` as `__GIT_SHA__` in the workspace
-chunk of the built bundle while HEAD was `cc320f7`. With `import duckdb`
+chunk - a pre-squash branch commit - so the stamp named a commit whose content
+was not in the bundle. With `import duckdb`
 temporarily added to `otel.py` and a stub `duckdb` on `PYTHONPATH`,
 `test_the_module_never_names_duckdb_in_an_import` failed with
 `assert 'duckdb' not in {'__future__', 'datetime', 'duckdb', 'httpx', ...}`;
