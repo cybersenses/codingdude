@@ -68,10 +68,12 @@ def _docker_probe(
 ) -> subprocess.CompletedProcess[str] | None:
     """Run one bounded docker call; None when the daemon does not answer.
 
-    #368: an unhealthy or hung daemon must not escape as an exception. The
-    callers below ask a yes/no question ("is docker usable?", "is the image
-    here?"), so an unanswerable probe is a NO. `tests/test_sandbox.py` probed
-    at import time, a 30s `docker info` timeout escaped as TimeoutExpired, and
+    #368: an unhealthy or hung daemon must not escape as an exception. Most
+    callers ask a yes/no question ("is docker usable?", "is the image here?",
+    "is the container up?"), so an unanswerable probe is a NO. The removers
+    ask no question, so there silence means no-op, not a hidden failure — they
+    discard the result either way. `tests/test_sandbox.py` probed at import
+    time, a 30s `docker info` timeout escaped as TimeoutExpired, and
     collection of the entire suite aborted — one slow daemon reddened the job.
     """
     try:
