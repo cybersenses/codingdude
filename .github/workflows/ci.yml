@@ -22,7 +22,7 @@ jobs:
           fetch-depth: 0
       - uses: astral-sh/setup-uv@v5
       - name: Lint
-        run: uv run ruff check src tests bench.py
+        run: uv run ruff check src tests tools bench.py
       - name: Type check
         run: uv run mypy
       # tree_sitter_language_pack downloads grammars from the xberg-io release
