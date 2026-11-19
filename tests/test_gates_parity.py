@@ -65,7 +65,8 @@ def test_no_live_doc_restates_a_different_ruff_target_set() -> None:
         if not path.exists():
             continue
         for captured in re.findall(r"ruff check ([`\w./ -]*)", path.read_text(encoding="utf-8")):
-            restated = {t.strip("`") for t in captured.split() if t.strip("`")}
+            # Drop backticks and flags: `ruff check --fix` states no target set.
+            restated = {t.strip("`") for t in captured.split() if t.strip("`")[:1] != "-"}
             if not restated:
                 continue  # a bare `ruff check` mention states no target set
             assert restated == local, f"{name} restates the ruff targets as {sorted(restated)}"
