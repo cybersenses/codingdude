@@ -586,19 +586,11 @@ async def run(args) -> int:
     # #210: per-project [models] overrides from the workdir's .codingdude.toml.
     if args.workdir:
         config = apply_project_models(config, Path(args.workdir).resolve())
-    # R93-C: local-OTLP tracing for agent spans, off unless [telemetry] enabled.
-    # Never raises: an absent collector degrades to no traces, not a dead run.
-    # R100: the run may override the config default either way (the chat
-    # panel's trace checkbox), and always stamps its session/run onto the
-    # span resource so a span can be traced back to one conversation.
-    from codingdude.tracing import configure_tracing
-
-    configure_tracing(
-        config,
-        enabled=getattr(args, 'telemetry', None),
-        session_id=args.session,
-        run_id=getattr(args, 'run_id', None),
-    )
+    # R93-C/R100: tracing is configured by the engine (engine.run), where the
+    # session id a run writes to actually exists — #361: doing it here left
+    # review mode, headless and eval replay with no spans. The run's own
+    # override (the chat panel's trace checkbox) travels to the engine through
+    # engine_run_kwargs, so the choice is never dropped on the way.
     engine = Engine(
         config=config,
         db=Database.connect(config_home()),
@@ -736,6 +728,8 @@ def engine_run_kwargs(args, model, vision_model=None) -> dict:
         'vision_model': vision_model,
         'run_id': getattr(args, 'run_id', None),
         'long_run': getattr(args, 'long_run', None),
+        # #361: the per-run tracing choice rides with the run it belongs to.
+        'telemetry': getattr(args, 'telemetry', None),
     }
 
 

@@ -1932,4 +1932,52 @@ reverted, `tests/test_otel.py` passes in full. `urlparse(...).port` raises
 `ValueError` for both `http://127.0.0.1:abc` and `:99999`, and
 `collector_reachable` now answers `False` for each.
 
+## #361 - tracing at the engine entry points, not the worker
+
+**Problem.** `configure_tracing` was one line in `worker.run()`: of the four
+`Engine` construction sites, only the interactive chat run emitted spans.
+`worker.review()` (`--review`), headless (`cli.py`) and `evals.replay()` are all
+real agent runs — the review and evaluator paths are among the most expensive —
+and none of them appeared in the store that R100 sells as "monitor individual
+conversations". The ticket's own objection is why the fix is not the line copied
+three times: only the engine knows the session id a run writes to. Headless and
+`evals.replay` mint theirs inside `Engine._ensure_session`, so a worker-side call
+can only ever attribute callers that already know the id.
+
+**Seam.** The call moves into the two engine entry points that execute agent
+runs:
+
+| entry point | correlation id | override |
+|---|---|---|
+| `Engine.run` (after `_ensure_session`) | the id the run writes to — minted or given, including the #305 re-create-under-the-same-id path | new keyword-only `telemetry: bool \| None` |
+| `Engine.review(session_id)` | the reviewed session | none — the config default decides |
+
+`worker.run()` keeps its `--telemetry`/`--no-telemetry` choice but forwards it
+through `engine_run_kwargs` instead of acting on it, so the choice cannot be
+dropped between CLI and engine (the H2 precedent: `--fix-loop` was parsed and
+never forwarded). `evals.replay()` passes `telemetry=False`: it drives a
+scripted model, so its token counts are simulated and must not enter a store
+read as real spend.
+
+**Alternatives rejected.** (a) Copy the call into all four sites — three of them
+have no id at that point, so the spans would either be unattributed or need a
+second id invented at each site. (b) Configure in `Engine.__init__` — construction
+happens before the session exists and in tests that never run. (c) Trace the eval
+replay — fabricated usage in the same table as real spend. (d) Give the CLI a
+`--telemetry` flag — the chat switch is a conversation affordance; automation
+follows the config default, and the gap is recorded rather than hidden.
+
+**Known gap, recorded not papered over.** A review spawned from a conversation
+whose owner turned the trace switch off still records when `[telemetry] enabled`
+is on: `POST /sessions/{id}/review` carries no telemetry field, so the
+subprocess can only see the config. Closing it needs a field on that endpoint.
+
+**Verification (2026-11-19).** RED before the change: six new tests in
+`tests/test_tracing.py` failed — the source guard reported
+`configure_tracing belongs at the engine entry points only; found: worker.py`,
+`engine_run_kwargs` raised `KeyError: 'telemetry'`, and `Engine.run` /
+`Engine.review` never called tracing. GREEN after: `47 passed` in
+`tests/test_tracing.py` (25.3s), including the source-scan guard that fails if a
+call site reappears outside `engine.py`.
+
 

@@ -20,6 +20,7 @@ import sys
 from types import SimpleNamespace
 
 import pytest
+from helpers import say, scripted
 
 from codingdude.config import (
     Config,
@@ -326,47 +327,129 @@ def test_a_configuration_failure_is_reported_once(fake_tracing, caplog):
 # --- adoption guard --------------------------------------------------------
 
 
-async def test_the_worker_enables_tracing_before_it_builds_the_engine(
-    home, monkeypatch,
-):
-    """Tracing is only worth configuring if the process that executes runs turns
-    it on. Nothing else pins the call site, so deleting it would leave the whole
-    suite green. Ordering is the contract: configure first, then run."""
-    from types import SimpleNamespace
+# #361: `configure_tracing` used to be one line inside `worker.run()`, so the
+# three other places that execute an agent run - review mode, headless and the
+# eval replay - emitted no spans at all. The fix is not that line copied three
+# times: only the engine knows the session id a run actually writes to
+# (headless and eval runs mint theirs *inside* `_ensure_session`), so the call
+# lives at the two engine entry points and every caller inherits it.
 
-    import codingdude.engine as engine_module
+
+def _recording_configure(monkeypatch) -> list[dict]:
+    """Capture the arguments the shipped code path passes to tracing."""
     import codingdude.tracing as tracing_module
-    import codingdude.worker as worker
 
-    calls: list[str] = []
-    seen: dict = {}
+    seen: list[dict] = []
 
     def fake_configure(config, **kwargs):
-        calls.append('configure')
-        seen.update(kwargs)
+        seen.append(kwargs)
         return True
 
-    class Stop(Exception):
-        pass
-
-    def fake_engine(**kwargs):
-        calls.append('engine')
-        raise Stop
-
     monkeypatch.setattr(tracing_module, 'configure_tracing', fake_configure)
-    monkeypatch.setattr(engine_module, 'Engine', fake_engine)
-    args = SimpleNamespace(
-        workdir=None, budget=None, model=None,
-        session='sess-1', run_id='run-1', telemetry=True,
+    return seen
+
+
+async def test_a_run_configures_tracing_with_the_session_it_writes_to(
+    engine, workdir, monkeypatch,
+):
+    """The id does not exist before the engine resolves the session, so a
+    worker-side call could only ever attribute the runs that already know
+    theirs - which is why the other three paths had no spans."""
+    seen = _recording_configure(monkeypatch)
+    outcome = await engine.run(
+        prompt='hi', workdir=workdir, model=scripted(say('done')), run_id='run-7',
     )
-    with pytest.raises(Stop):
-        await worker.run(args)
-    assert calls == ['configure', 'engine']
-    # R100: the run's own identity travels with the call — without it a span
-    # cannot be tied to the conversation it came from.
-    assert seen == {
-        'enabled': True, 'session_id': 'sess-1', 'run_id': 'run-1',
+    assert len(seen) == 1
+    assert seen[0]['session_id'] == outcome.session_id
+    assert seen[0]['run_id'] == 'run-7'
+    # No override: `[telemetry] enabled` decides. The chat panel's switch is
+    # the only thing that forces the choice either way.
+    assert seen[0]['enabled'] is None
+
+
+async def test_a_run_forwards_its_own_telemetry_choice(engine, workdir, monkeypatch):
+    """A run that says "do not record me" must reach tracing as a decision."""
+    seen = _recording_configure(monkeypatch)
+    await engine.run(
+        prompt='hi', workdir=workdir, model=scripted(say('done')), telemetry=False,
+    )
+    assert [call['enabled'] for call in seen] == [False]
+
+
+async def test_a_review_configures_tracing_with_the_conversation_it_reviews(
+    engine, monkeypatch,
+):
+    """Review mode is a real agent run that spends real money; with nothing
+    recording it, a reader of the panel would conclude no review ever ran."""
+    from codingdude.engine import Engine
+
+    seen = _recording_configure(monkeypatch)
+
+    async def fake_review_diff(self, session_id):
+        return ''
+
+    monkeypatch.setattr(Engine, 'review_diff', fake_review_diff)
+    verdict = await engine.review('sess-42')
+    assert verdict.startswith('CLEAN')
+    # No `enabled` override: the config default decides (the server spawns
+    # `--review <sid>` with no telemetry flag).
+    assert seen == [{'session_id': 'sess-42'}]
+
+
+def test_the_worker_forwards_the_telemetry_choice_instead_of_configuring(home):
+    """The worker used to configure tracing itself, before an Engine existed.
+    It now hands the choice to the engine - and must not drop it on the way
+    (the H2 lesson: `--fix-loop` was parsed and never forwarded)."""
+    from codingdude.worker import engine_run_kwargs
+
+    def run_kwargs(**overrides):
+        args = SimpleNamespace(
+            prompt='p', workdir='w', image=None, session='s', fix_loop=False,
+            run_id='r', long_run=None,
+        )
+        for key, value in overrides.items():
+            setattr(args, key, value)
+        return engine_run_kwargs(args, model=None)
+
+    assert run_kwargs(telemetry=True)['telemetry'] is True
+    assert run_kwargs(telemetry=False)['telemetry'] is False
+    assert run_kwargs()['telemetry'] is None  # no flag = the config decides
+
+
+async def test_a_replay_does_not_record_its_simulated_run(
+    home, workdir, monkeypatch,
+):
+    """`evals.replay` drives a *scripted* model: its token counts are invented,
+    and the store it would write to is read as real spend. The opt-out is
+    explicit so the omission is a decision rather than a blind spot."""
+    from codingdude.evals import replay
+
+    seen = _recording_configure(monkeypatch)
+    scenario = {
+        'name': 'sim', 'prompt': 'hi',
+        'responses': [{'text': 'hello', 'tool_calls': []}], 'checks': [],
     }
+    await replay(scenario, workdir, home)
+    assert [call['enabled'] for call in seen] == [False]
+
+
+def test_tracing_is_configured_at_the_engine_seam_and_nowhere_else():
+    """The durable guard: this defect was one call site where four were
+    needed. Scanning the source is the only check that also covers entry
+    points nobody has written yet."""
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[1] / 'src' / 'codingdude'
+    callers = {
+        path.name
+        for path in root.glob('*.py')
+        if path.name != 'tracing.py'
+        and 'configure_tracing(' in path.read_text(encoding='utf-8')
+    }
+    assert callers == {'engine.py'}, (
+        'configure_tracing belongs at the engine entry points only; found: '
+        + ', '.join(sorted(callers))
+    )
 
 
 def test_every_agent_construction_is_named():
