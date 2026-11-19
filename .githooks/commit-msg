@@ -1,0 +1,31 @@
+#!/bin/sh
+# R62 (#241) shipped the failure-mode claim gate but left enforcement to "the
+# agent as its documented pre-commit step" — and recorded the hook as "a
+# separate decision". This is that decision: a commit message now has to pass
+# the checker, so a claim like "silently returns 0" cannot enter history
+# without the command that demonstrated it.
+#
+# Uses the repo's venv python directly. `uv run` syncs the environment, which a
+# commit hook must never do.
+#
+# Ceilings, stated because they are real: it ships OFF per clone (activate with
+# `git config core.hooksPath .githooks`), `git commit --no-verify` bypasses it,
+# and it fails open when no interpreter is available — a hook that blocks every
+# commit on a fresh clone is a hook that gets switched off, not obeyed.
+# CLAIM_CHECK_PY overrides the interpreter, which is how the tests exercise this.
+root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+checker="$root/tools/claim_check.py"
+if [ ! -f "$checker" ]; then
+    echo "claim_check: $checker missing - commit message NOT checked" >&2
+    exit 0
+fi
+if [ -n "$CLAIM_CHECK_PY" ]; then
+    exec "$CLAIM_CHECK_PY" "$checker" --message-file "$1"
+fi
+for py in "$root/.venv/Scripts/python.exe" "$root/.venv/bin/python"; do
+    if [ -x "$py" ]; then
+        exec "$py" "$checker" --message-file "$1"
+    fi
+done
+echo "claim_check: no .venv python found - commit message NOT checked" >&2
+exit 0

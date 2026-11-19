@@ -1044,12 +1044,34 @@ splitting now breaks on any newline, not just blank ones); `pecan never` matched
 `can never` (multiword verbs gained word boundaries); and a document named in the
 same run as a `--message-file` inherited the message's failure-mode default.
 
-**What this does not do.** Nothing runs the checker at commit time — no hook,
-no `gates.bat` step — so "rejected" means "the check fails when run with
-`--message-file`, which is this agent's documented pre-commit step", not a
-mechanical git-level block. Wiring a commit-msg hook is a separate decision.
-And the gate cannot force the probe to be honest; it forces the author to choose
-between naming a command and writing `not yet verified`.
+**What this does not do.** The gate cannot force the probe to be honest; it
+forces the author to choose between naming a command and writing `not yet
+verified`.
+
+**Where it was not wired, and is now (R62 follow-up).** As shipped, nothing ran
+the checker mechanically — no hook, no `gates.bat` step — so "rejected" meant
+"the check fails when the agent remembers to run it". That was the defect, not
+the rule: a gate whose trigger is memory is a suggestion. Two wires close it.
+`.githooks/commit-msg` runs the checker over every commit message, activated
+once per clone with `git config core.hooksPath .githooks`; it invokes the repo's
+`.venv` python directly because `uv run` syncs the environment, and it fails
+**open** with a warning when no venv exists — stated because a hook that blocks
+every commit on a fresh clone is worse than one that admits it did not run. And
+`review_gate.claim_check_findings` runs the same checker over both review axes
+inside `record_review`, so a failure-mode claim cannot enter the record a push
+must carry: the reviewer's objection is answered at the artefact that caused it
+instead of after publication. Reused rather than reimplemented, because two
+copies of the rule drift apart.
+
+**Ceilings of the wiring, and its evidence.** The hook ships *off* per clone and
+`git commit --no-verify` bypasses it. Inside `record_review` the whole check set
+runs rather than only failure modes — backticked paths, `file:LINE` references,
+commit refs and line counts must resolve too, with symbol checking off because
+evidence prose legitimately names things the diff does not contain — and a
+checker that exits outside `{0, 1}` is a refusal, never a clean review. Impact:
+the full suite and CI are green on the change, and `tests/test_review_gate.py`
+gains the refusal, the fail-closed case, and a test that drives the hook through
+`git commit` itself.
 
 **Impact.** `tests/test_claim_check.py` 43 → 47 tests; the living-docs sweep is
 unchanged (paths/refs/counts only). Shipped in `1560772`, tightened after review.

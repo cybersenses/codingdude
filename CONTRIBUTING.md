@@ -66,7 +66,17 @@ Frontend (`frontend/`): `npm run lint`, `npm test` (vitest), and
 
    What the gate does and does not prove: it proves a review was recorded with
    both axes named, and that the pushed diff is the one reviewed. It cannot
-   prove the review was any good — that stays a human judgement.
+   prove the review was any good — that stays a human judgement. It does now
+   check the class a reviewer keeps bouncing: `record_review` runs the R62
+   failure-mode checker over both axes, so a claim like "the poll error can
+   never be missed" is refused until it names the command that demonstrated it
+   (`[probe: <command>]`) or says "not yet verified".
+
+8. **Commit messages pass the claim gate.** `.githooks/commit-msg` runs
+   `tools/claim_check.py --message-file` on every commit. Activate it once per
+   clone: `git config core.hooksPath .githooks`. It calls the repo's `.venv`
+   python directly — not `uv run`, which syncs the environment — and warns,
+   then fails open, when no virtualenv exists.
 
 ## Pull requests
 

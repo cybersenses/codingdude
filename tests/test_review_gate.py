@@ -252,6 +252,95 @@ def test_file_tools_cannot_write_inside_the_git_dir(repo: Path) -> None:
     assert tools.tools['edit_file'].function  # surfaced, not silently stripped
 
 
+def _install_claim_check(repo: Path) -> None:
+    """Give the fixture repo the real R62 checker, as the real repo has it."""
+    target = repo / 'tools'
+    target.mkdir(exist_ok=True)
+    (target / 'claim_check.py').write_text(
+        (Path(__file__).resolve().parents[1] / 'tools' / 'claim_check.py')
+        .read_text(encoding='utf-8'),
+        encoding='utf-8',
+    )
+
+
+def test_unprobed_failure_mode_claim_refuses_the_record(repo: Path) -> None:
+    """R62's rule reaches review evidence, not just commit messages.
+
+    The reviewer bounced eight pushes in a row on sentences like this one. The
+    record is the one artefact a push must carry, so the claim stops there.
+    """
+    _install_claim_check(repo)
+    _commit_change(repo)
+    with pytest.raises(ModelRetry) as err:
+        asyncio.run(_tool(_tools(repo), 'record_review')(
+            standards='no findings',
+            spec='the poll error can never be missed because the guard '
+                 're-reads the element',
+        ))
+    assert 'did not pass the claim checker' in str(err.value)
+    assert 'can never be missed' in str(err.value)
+    # the refusal left the fixture's baseline record untouched, so the push
+    # gate still sees the older review rather than a fabricated new one.
+    record = (repo / '.git' / 'codingdude' / 'review.json').read_text(encoding='utf-8')
+    assert 'baseline' in record
+
+
+def test_a_checker_that_cannot_answer_refuses_the_record(repo: Path) -> None:
+    """Fail closed: a checker that never answered is not a clean review.
+
+    Exit 2 is what the checker does when its own CLI drifts, and a traceback
+    prints to stderr with an empty stdout — both used to read as "no findings".
+    """
+    (repo / 'tools').mkdir(exist_ok=True)
+    (repo / 'tools' / 'claim_check.py').write_text(
+        'import sys\nsys.exit(2)\n', encoding='utf-8')
+    _commit_change(repo)
+    with pytest.raises(ModelRetry) as err:
+        asyncio.run(_tool(_tools(repo), 'record_review')(
+            standards='no findings', spec='no findings',
+        ))
+    assert 'did not answer' in str(err.value)
+
+
+def test_the_commit_hook_refuses_an_unprobed_message(repo: Path) -> None:
+    """The hook, driven through `git commit` — the path a commit really takes.
+
+    With the wiring removed the commit succeeds, so this bites.
+    """
+    hook_dir = Path(__file__).resolve().parents[1] / '.githooks'
+    _install_claim_check(repo)
+    git(repo, 'config', 'core.hooksPath', str(hook_dir))
+    message = repo / 'msg.txt'
+    message.write_text('fix: the banner silently returns 0\n', encoding='utf-8')
+    proc = subprocess.run(  # nosec B603 B607 - fixed argv, no shell
+        ['git', 'commit', '--allow-empty', '-F', str(message)],
+        cwd=repo, capture_output=True, text=True,
+        env={**os.environ, 'CLAIM_CHECK_PY': sys.executable},
+    )
+    assert proc.returncode != 0
+    assert 'unsupported claim' in proc.stdout + proc.stderr
+    message.write_text('fix: plain message, no claim\n', encoding='utf-8')
+    proc = subprocess.run(  # nosec B603 B607 - fixed argv, no shell
+        ['git', 'commit', '--allow-empty', '-F', str(message)],
+        cwd=repo, capture_output=True, text=True,
+        env={**os.environ, 'CLAIM_CHECK_PY': sys.executable},
+    )
+    assert proc.returncode == 0
+
+
+def test_probed_failure_mode_claim_records_cleanly(repo: Path) -> None:
+    """The same sentence with its probe is accepted — the gate asks for
+    evidence, not silence."""
+    _install_claim_check(repo)
+    _commit_change(repo)
+    out = asyncio.run(_tool(_tools(repo), 'record_review')(
+        standards='no findings',
+        spec='the poll error can never be missed [probe: '
+             'uv run pytest -q tests/test_review_gate.py -k poll]',
+    ))
+    assert 'recorded' in out
+
+
 def test_the_changed_file_count_reads_the_diff_headers() -> None:
     """The review budget is derived from this count, so it must count files
     rather than diff hunks: one `diff --git` header per file, however many
