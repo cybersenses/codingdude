@@ -180,12 +180,15 @@ async def _run(argv: list[str], cwd: Path, timeout: int) -> str:
 
 
 async def container_running(container: str) -> bool:
-    """True when the sandbox container is up and reachable."""
-    proc = subprocess.run(
-        [docker_cli() or 'docker', 'inspect', '-f',
-         '{{.State.Running}}', container],
-        capture_output=True, text=True, env=scrubbed_env())
-    return proc.returncode == 0 and 'true' in proc.stdout
+    """True when the sandbox container is up and reachable.
+
+    A read-only boolean query, so it takes the same bounded path as the probes
+    above (#368). Unbounded it was the worst of the family: no timeout at all,
+    so `sandbox_exec` against a wedged daemon did not fail — it hung."""
+    proc = _docker_probe(
+        docker_cli() or 'docker', 'inspect', '-f',
+        '{{.State.Running}}', container)
+    return proc is not None and proc.returncode == 0 and 'true' in proc.stdout
 
 
 async def exec_in_sandbox_dir(

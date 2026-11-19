@@ -328,3 +328,40 @@ def test_the_import_time_probe_degrades_to_skip():
 def test_the_import_time_probe_passes_a_clean_answer_through():
     """Negative control for the guard above: a working probe still decides."""
     assert _probe_image(lambda image: True, IMAGE) is True
+
+
+async def test_container_running_is_false_when_the_daemon_times_out(monkeypatch):
+    """The same family, one rung worse: `container_running` had no timeout at
+    all, so a wedged daemon hung `sandbox_exec` instead of reporting down."""
+    import codingdude.sandbox as sb
+
+    def hang(argv, **kw):
+        raise subprocess.TimeoutExpired(cmd=argv, timeout=30)
+
+    monkeypatch.setattr(sb, 'docker_cli', lambda: 'docker')
+    monkeypatch.setattr(subprocess, 'run', hang)
+    assert await sb.container_running('sandbox-x') is False
+
+
+async def test_container_running_still_sees_a_running_container(monkeypatch):
+    """Negative control: bounded must not mean blind."""
+    import codingdude.sandbox as sb
+
+    def answer(argv, **kw):
+        return subprocess.CompletedProcess(argv, 0, 'true\n', '')
+
+    monkeypatch.setattr(sb, 'docker_cli', lambda: 'docker')
+    monkeypatch.setattr(subprocess, 'run', answer)
+    assert await sb.container_running('sandbox-x') is True
+
+
+async def test_container_running_is_false_when_the_container_is_down(monkeypatch):
+    """A clean non-zero answer is a NO, not an exception."""
+    import codingdude.sandbox as sb
+
+    def missing(argv, **kw):
+        return subprocess.CompletedProcess(argv, 1, '', 'No such object')
+
+    monkeypatch.setattr(sb, 'docker_cli', lambda: 'docker')
+    monkeypatch.setattr(subprocess, 'run', missing)
+    assert await sb.container_running('sandbox-x') is False

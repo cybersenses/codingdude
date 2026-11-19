@@ -151,9 +151,12 @@
   `_docker_probe()` returning `None` on `TimeoutExpired`/`OSError`, an
   unanswerable inspect no longer falls through to a pull that would hang
   against the same dead daemon, and the import-time probe degrades to a skip
-  with a warning naming the failure. Six tests pin it, including negative
-  controls that a healthy linux daemon still reports `True` and that the probe
-  still lets a clean answer through.
+  with a warning naming the failure. `container_running()` - the same kind of
+  question, but with *no* timeout at all, so `sandbox_exec` against a wedged
+  daemon hung rather than failing - takes the bounded path too. Nine tests pin
+  it, including negative controls that a healthy linux daemon still reports
+  `True`, that the probe still lets a clean answer through, and that a running
+  container is still seen.
 - **A wedged CI runner blocked a required check for 78 minutes (R101)**: no job
   declared `timeout-minutes`, so a `test` job that stopped emitting at 67% sat
   against GitHub's 6-hour default while the PR's merge state read BLOCKED — not a
