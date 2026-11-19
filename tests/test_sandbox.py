@@ -365,3 +365,83 @@ async def test_container_running_is_false_when_the_container_is_down(monkeypatch
     monkeypatch.setattr(sb, 'docker_cli', lambda: 'docker')
     monkeypatch.setattr(subprocess, 'run', missing)
     assert await sb.container_running('sandbox-x') is False
+
+
+def test_remove_container_survives_a_wedged_daemon(monkeypatch):
+    """`lane.py`'s long-run cleanup calls this during teardown. Unbounded, a
+    dead daemon could wedge the worker it was cleaning up after."""
+    import codingdude.sandbox as sb
+
+    def hang(argv, **kw):
+        raise subprocess.TimeoutExpired(cmd=argv, timeout=30)
+
+    monkeypatch.setattr(sb, 'docker_cli', lambda: 'docker')
+    monkeypatch.setattr(subprocess, 'run', hang)
+    sb.remove_container('lane-x')  # returns instead of raising or blocking
+
+
+def test_remove_container_still_asks_a_healthy_daemon(monkeypatch):
+    """Negative control: bounded must not mean the removal stops happening."""
+    import codingdude.sandbox as sb
+
+    seen: list[list[str]] = []
+
+    def answer(argv, **kw):
+        seen.append(list(argv))
+        return subprocess.CompletedProcess(argv, 0, '', '')
+
+    monkeypatch.setattr(sb, 'docker_cli', lambda: 'docker')
+    monkeypatch.setattr(subprocess, 'run', answer)
+    sb.remove_container('lane-x')
+    assert seen == [['docker', 'rm', '-f', 'codingdude-sb-lane-x']]
+
+
+async def test_teardown_survives_a_wedged_daemon(repo, monkeypatch):
+    """sandbox_teardown removes the container before the worktree; that removal
+    must not be able to hold the teardown open. Only docker hangs here — the
+    git calls are delegated to the real runner."""
+    import codingdude.sandbox as sb
+
+    real_run = subprocess.run
+
+    def wedged_for_docker(argv, **kw):
+        if argv and 'docker' in str(argv[0]):
+            raise subprocess.TimeoutExpired(cmd=argv, timeout=30)
+        return real_run(argv, **kw)
+
+    monkeypatch.setattr(sb, 'docker_cli', lambda: 'docker')
+    monkeypatch.setattr(subprocess, 'run', wedged_for_docker)
+    toolset = build_sandbox_toolset(repo, policy())
+    await create_ok(toolset, 'wd', tier='worktree')
+    result = await toolset.tools['sandbox_teardown'].function(name='wd')
+    assert 'torn down' in result
+    assert not (repo / '.codingdude-worktrees' / 'wd').exists()
+
+
+async def test_create_survives_a_wedged_daemon_during_the_stale_removal(
+    repo, monkeypatch,
+):
+    """create_sandbox clears a stale container before `docker run`. With the
+    daemon wedged for removals only, creation still reaches the run."""
+    import codingdude.sandbox as sb
+
+    real_run = subprocess.run
+    dockers: list[list[str]] = []
+
+    def wedged_for_docker(argv, **kw):
+        if argv and 'docker' in str(argv[0]):
+            dockers.append(list(argv))
+            raise subprocess.TimeoutExpired(cmd=argv, timeout=30)
+        return real_run(argv, **kw)
+
+    async def fake_run_captured(argv, **kw):
+        return types.SimpleNamespace(code=0, combined='abc123')
+
+    monkeypatch.setattr(sb, 'docker_usable', lambda: True)
+    monkeypatch.setattr(sb, 'docker_cli', lambda: 'docker')
+    monkeypatch.setattr(sb, 'run_captured', fake_run_captured)
+    monkeypatch.setattr(subprocess, 'run', wedged_for_docker)
+    toolset = build_sandbox_toolset(repo, policy(yolo=True))
+    result = await create_ok(toolset, 'wedge', tier='container')
+    assert dockers and dockers[0][:3] == ['docker', 'rm', '-f'], dockers
+    assert 'tier=container' in result

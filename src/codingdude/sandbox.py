@@ -66,10 +66,10 @@ IMAGE_PULL_TIMEOUT = 180
 def _docker_probe(
     cli: str, *args: str, timeout: int = DOCKER_PROBE_TIMEOUT,
 ) -> subprocess.CompletedProcess[str] | None:
-    """Run one read-only docker query; None when the daemon does not answer.
+    """Run one bounded docker call; None when the daemon does not answer.
 
-    #368: an unhealthy or hung daemon must not escape as an exception. Every
-    caller below asks a yes/no question ("is docker usable?", "is the image
+    #368: an unhealthy or hung daemon must not escape as an exception. The
+    callers below ask a yes/no question ("is docker usable?", "is the image
     here?"), so an unanswerable probe is a NO. `tests/test_sandbox.py` probed
     at import time, a 30s `docker info` timeout escaped as TimeoutExpired, and
     collection of the entire suite aborted — one slow daemon reddened the job.
@@ -117,6 +117,16 @@ def container_image_ready(image: str) -> bool:
         return True
     pull = _docker_probe(cli, 'pull', image, timeout=IMAGE_PULL_TIMEOUT)
     return pull is not None and pull.returncode == 0
+
+
+def _docker_remove(container: str) -> None:
+    """Best-effort `docker rm -f`, bounded like the probes above (#368).
+
+    Fire-and-forget already — an absent container is fine — so an unanswerable
+    daemon means "not confirmed", not a teardown that hangs. `lane.py`'s
+    long-run cleanup reaches this, so before the bound it could wedge a worker
+    on the same dead daemon it was trying to clean up after."""
+    _docker_probe(docker_cli() or 'docker', 'rm', '-f', container)
 
 
 def free_port() -> int:
@@ -261,9 +271,7 @@ async def create_sandbox(
     if want_container:
         container = CONTAINER_PREFIX + name
         # Deterministic names: a stale container must not block reuse.
-        subprocess.run(
-            [docker_cli() or 'docker', 'rm', '-f', container],
-            capture_output=True, text=True, env=scrubbed_env())  # nosec B603 - fixed-argv docker CLI, no shell
+        _docker_remove(container)
         port = free_port()
         run = await _run([
             docker_cli() or 'docker', 'run', '-d', '--name', container,
@@ -290,9 +298,7 @@ async def create_sandbox(
 
 def remove_container(name: str) -> None:
     """Best-effort removal of sandbox `name`'s container (absent is fine)."""
-    subprocess.run(
-        [docker_cli() or 'docker', 'rm', '-f', CONTAINER_PREFIX + name],
-        capture_output=True, text=True, env=scrubbed_env())  # nosec B603 - fixed-argv docker CLI, no shell
+    _docker_remove(CONTAINER_PREFIX + name)
 
 
 def build_sandbox_toolset(workdir: Path, policy) -> FunctionToolset:
@@ -317,9 +323,7 @@ def build_sandbox_toolset(workdir: Path, policy) -> FunctionToolset:
             return f'error: no sandbox named {name} — nothing to tear down'
         before = _status(workdir)
         # Container tier: remove the container first (ignore absent).
-        subprocess.run(
-            [docker_cli() or 'docker', 'rm', '-f', CONTAINER_PREFIX + name],
-            capture_output=True, text=True, env=scrubbed_env())
+        _docker_remove(CONTAINER_PREFIX + name)
         _git(workdir, 'worktree', 'remove', '--force', str(sandbox))
         _git(workdir, 'worktree', 'prune')
         _git(workdir, 'branch', '-D', f'{BRANCH_PREFIX}{name}')
