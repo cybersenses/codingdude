@@ -153,6 +153,11 @@ async def replay(
         model=scripted(_replay_model(spec)),
         approvals=ApprovalPolicy(),
         emit=lambda event: None,
+        # #361: a replay is a *simulated* run — the token counts come from the
+        # recorded responses, not from a provider — so recording it would put
+        # invented spend in a store that is read as real. Every other path is
+        # traced by the engine itself.
+        telemetry=False,
     )
     return {
         'scenario': scenario['name'],

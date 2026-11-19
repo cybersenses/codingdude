@@ -37,8 +37,14 @@ tool results and the system instructions (70-113KB observed live). Recording
 every conversation forever fills the local store; recording none leaves no
 forensics. Per-run consent is the only honest middle.
 
-Configured once per process, in the worker (workers are what execute runs; the
-server executes none, so instrumenting it would only add HTTP noise).
+Configured once per process, by the engine's two agent-executing entry points
+(`Engine.run` and `Engine.review`) — the first places where a run's own session
+id exists, so a span can name the conversation it belongs to. The server
+executes no runs, so instrumenting it would only add HTTP noise; every caller
+that does execute (interactive worker, headless CLI, review mode) inherits the
+call. The one exception is `evals.replay`, which opts out explicitly: it drives
+a scripted model, so its token counts are simulated and must not enter a store
+that is read as real spend (#361).
 """
 from __future__ import annotations
 
@@ -52,9 +58,10 @@ logger = logging.getLogger(__name__)
 
 #: Set once `logfire.configure` has run. Guards against double configuration
 #: (logfire warns and the second call would add a duplicate span processor).
-#: One worker process executes exactly one run (ADR-0002), so a second call in
-#: a process can never mean a second conversation — the first run's session
-#: attribution is the right one to keep, and this guard is what preserves it.
+#: One worker process executes exactly one run (ADR-0002) and review mode one
+#: review per subprocess (#361), so a second call in a process can never mean a
+#: second conversation — the first run's session attribution is the right one to
+#: keep, and this guard is what preserves it.
 _configured = False
 #: Set once a configuration failure has been reported, so a worker that calls
 #: this per run does not spam the same warning (`_configured` stays False on

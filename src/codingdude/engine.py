@@ -287,7 +287,14 @@ class Engine:
         fallback below untouched because it is truthy. Only a genuinely empty
         finding set becomes the CLEAN verdict (the #266 class: a reviewer that
         never ran must not be indistinguishable from one that found nothing).
-        """
+
+        #361: a review is a real agent run that spends real money, so it is
+        traced under the session it reviews — the panel would otherwise insist
+        no review had ever run. The config default decides here (the server
+        spawns `--review <sid>` with no telemetry flag)."""
+        from .tracing import configure_tracing
+
+        configure_tracing(self._config, session_id=session_id)
         findings = await self.review_diff(session_id)
         return findings or 'CLEAN — no findings'
 
@@ -517,6 +524,7 @@ class Engine:
         vision_model: Model | None = None,
         run_id: str | None = None,
         long_run: str | None = None,
+        telemetry: bool | None = None,
     ) -> RunOutcome:
         """Flat orchestrator: each stage is a private method; no logic here."""
         if long_run is not None and long_run not in ('assisted', 'unattended'):
@@ -527,6 +535,19 @@ class Engine:
                 "'unattended'"
             )
         session_id, created_session = self._ensure_session(session_id, workdir, prompt)
+
+        # R100 #361: tracing is configured here, not in the worker, because this
+        # is the first point where the run's own identity exists. Headless
+        # (`cli.py`) and eval replay mint their session id in the line above, so
+        # a worker-side call could only ever attribute the callers that already
+        # know theirs - which is how three of the four entry points ended up
+        # with no spans. Never raises: an absent collector is no traces, not a
+        # dead run (tracing.configure_tracing).
+        from .tracing import configure_tracing
+
+        configure_tracing(
+            self._config, enabled=telemetry, session_id=session_id, run_id=run_id,
+        )
 
         # #301: boot (project scaffold + codegraph index sync — subprocess calls,
         # so the loop stalled for their whole duration) used to run inline

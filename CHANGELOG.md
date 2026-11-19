@@ -140,6 +140,20 @@
 
 ### Fixed
 
+- **Three of the four agent entry points recorded nothing (#361)**: tracing was
+  configured in one line inside `worker.run()`, so review mode (`--review`),
+  headless runs and the eval replay — all real agent runs, the first two among
+  the most expensive — emitted no spans at all, and the OTel Traces panel would
+  insist no review had ever run. The call now lives at the engine's two
+  executing entry points, `Engine.run` and `Engine.review`, where the session id
+  the run writes to actually exists (headless and the replay mint theirs inside
+  `_ensure_session`, which is why a worker-side call could never attribute
+  them); the worker forwards its `--telemetry` choice instead of acting on it.
+  The eval replay opts out explicitly with `telemetry=False` — it drives a
+  scripted model, so its token counts are invented and must not enter a store
+  read as real spend. Known gap, recorded rather than hidden: a review spawned
+  from a conversation whose switch is off still follows `[telemetry] enabled`,
+  because `POST /sessions/{id}/review` carries no telemetry field.
 - **A stale bundle could not announce itself (#363)**: the built frontend was
   served with no `Cache-Control` at all, so `index.html` — the only file that
   names the content-hashed assets — fell back to heuristic caching. A pinned
