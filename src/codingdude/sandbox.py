@@ -55,38 +55,80 @@ def docker_cli() -> str | None:
     return None
 
 
+DOCKER_PROBE_TIMEOUT = 30
+# A pull is a network operation over image layers, not a local query, so it
+# gets its own bounded budget. Unbounded was the defect (#368): a wedged
+# daemon hung the caller forever, and for the import-time probe that meant the
+# CI job sat silent until its 30-minute cap.
+IMAGE_PULL_TIMEOUT = 180
+
+
+def _docker_probe(
+    cli: str, *args: str, timeout: int = DOCKER_PROBE_TIMEOUT,
+) -> subprocess.CompletedProcess[str] | None:
+    """Run one bounded docker call; None when the daemon does not answer.
+
+    #368: an unhealthy or hung daemon must not escape as an exception. Most
+    callers ask a yes/no question ("is docker usable?", "is the image here?",
+    "is the container up?"), so an unanswerable probe is a NO. The removers
+    ask no question, so there silence means no-op, not a hidden failure — they
+    discard the result either way. `tests/test_sandbox.py` probed at import
+    time, a 30s `docker info` timeout escaped as TimeoutExpired, and
+    collection of the entire suite aborted — one slow daemon reddened the job.
+    """
+    try:
+        return subprocess.run(  # nosec B603 - fixed-argv docker CLI, no shell
+            [cli, *args], capture_output=True, text=True,
+            env=scrubbed_env(), timeout=timeout)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+
+
 def docker_usable() -> bool:
     """CLI present AND daemon answering AND able to run LINUX containers —
     a broken daemon, or a Windows-containers daemon (windows-latest CI)
-    that cannot run our linux images, must not be chosen."""
+    that cannot run our linux images, must not be chosen.
+
+    Never raises (#368): every probe is bounded and silence reports False,
+    which is the path all four callers already handle."""
     cli = docker_cli()
     if cli is None:
         return False
-    proc = subprocess.run(
-        [cli, 'version', '--format', '{{.Server.Version}}'],
-        capture_output=True, text=True, env=scrubbed_env(), timeout=30)
-    if proc.returncode != 0:
+    version = _docker_probe(cli, 'version', '--format', '{{.Server.Version}}')
+    if version is None or version.returncode != 0:
         return False
-    os_type = subprocess.run(
-        [cli, 'info', '--format', '{{.OSType}}'],
-        capture_output=True, text=True, env=scrubbed_env(), timeout=30)
-    return os_type.stdout.strip() == 'linux'
+    os_type = _docker_probe(cli, 'info', '--format', '{{.OSType}}')
+    return os_type is not None and os_type.stdout.strip() == 'linux'
 
 
 def container_image_ready(image: str) -> bool:
-    """True when the image is available locally or can be pulled."""
+    """True when the image is available locally or can be pulled.
+
+    Bounded and exception-free like `docker_usable()` (#368). An unanswerable
+    inspect returns False rather than falling through to a pull: the pull
+    would block against the same dead daemon for another full timeout."""
     if not docker_usable():
         return False
     cli = docker_cli()
-    assert cli is not None  # docker_usable() proved the CLI exists
-    ok = subprocess.run([cli, 'image', 'inspect', image],
-                        capture_output=True, text=True,
-                        env=scrubbed_env()).returncode == 0
-    if ok:
+    if cli is None:
+        return False  # raced: the CLI vanished between the two probes
+    inspect = _docker_probe(cli, 'image', 'inspect', image)
+    if inspect is None:
+        return False
+    if inspect.returncode == 0:
         return True
-    pull = subprocess.run([cli, 'pull', image], capture_output=True, text=True,
-                          env=scrubbed_env())
-    return pull.returncode == 0
+    pull = _docker_probe(cli, 'pull', image, timeout=IMAGE_PULL_TIMEOUT)
+    return pull is not None and pull.returncode == 0
+
+
+def _docker_remove(container: str) -> None:
+    """Best-effort `docker rm -f`, bounded like the probes above (#368).
+
+    Fire-and-forget already — an absent container is fine — so an unanswerable
+    daemon means "not confirmed", not a teardown that hangs. `lane.py`'s
+    long-run cleanup reaches this, so before the bound it could wedge a worker
+    on the same dead daemon it was trying to clean up after."""
+    _docker_probe(docker_cli() or 'docker', 'rm', '-f', container)
 
 
 def free_port() -> int:
@@ -150,12 +192,15 @@ async def _run(argv: list[str], cwd: Path, timeout: int) -> str:
 
 
 async def container_running(container: str) -> bool:
-    """True when the sandbox container is up and reachable."""
-    proc = subprocess.run(
-        [docker_cli() or 'docker', 'inspect', '-f',
-         '{{.State.Running}}', container],
-        capture_output=True, text=True, env=scrubbed_env())
-    return proc.returncode == 0 and 'true' in proc.stdout
+    """True when the sandbox container is up and reachable.
+
+    A read-only boolean query, so it takes the same bounded path as the probes
+    above (#368). Unbounded it was the worst of the family: no timeout at all,
+    so `sandbox_exec` against a wedged daemon did not fail — it hung."""
+    proc = _docker_probe(
+        docker_cli() or 'docker', 'inspect', '-f',
+        '{{.State.Running}}', container)
+    return proc is not None and proc.returncode == 0 and 'true' in proc.stdout
 
 
 async def exec_in_sandbox_dir(
@@ -228,9 +273,7 @@ async def create_sandbox(
     if want_container:
         container = CONTAINER_PREFIX + name
         # Deterministic names: a stale container must not block reuse.
-        subprocess.run(
-            [docker_cli() or 'docker', 'rm', '-f', container],
-            capture_output=True, text=True, env=scrubbed_env())  # nosec B603 - fixed-argv docker CLI, no shell
+        _docker_remove(container)
         port = free_port()
         run = await _run([
             docker_cli() or 'docker', 'run', '-d', '--name', container,
@@ -257,9 +300,7 @@ async def create_sandbox(
 
 def remove_container(name: str) -> None:
     """Best-effort removal of sandbox `name`'s container (absent is fine)."""
-    subprocess.run(
-        [docker_cli() or 'docker', 'rm', '-f', CONTAINER_PREFIX + name],
-        capture_output=True, text=True, env=scrubbed_env())  # nosec B603 - fixed-argv docker CLI, no shell
+    _docker_remove(CONTAINER_PREFIX + name)
 
 
 def build_sandbox_toolset(workdir: Path, policy) -> FunctionToolset:
@@ -284,9 +325,7 @@ def build_sandbox_toolset(workdir: Path, policy) -> FunctionToolset:
             return f'error: no sandbox named {name} — nothing to tear down'
         before = _status(workdir)
         # Container tier: remove the container first (ignore absent).
-        subprocess.run(
-            [docker_cli() or 'docker', 'rm', '-f', CONTAINER_PREFIX + name],
-            capture_output=True, text=True, env=scrubbed_env())
+        _docker_remove(CONTAINER_PREFIX + name)
         _git(workdir, 'worktree', 'remove', '--force', str(sandbox))
         _git(workdir, 'worktree', 'prune')
         _git(workdir, 'branch', '-D', f'{BRANCH_PREFIX}{name}')

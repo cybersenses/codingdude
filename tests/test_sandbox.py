@@ -23,6 +23,7 @@ import os
 import re
 import subprocess
 import types
+import warnings
 
 import pytest
 
@@ -32,7 +33,25 @@ from codingdude.tools import GateRequired
 
 IMAGE = 'python:3.12-alpine'
 
-docker_ready = container_image_ready(IMAGE)
+
+def _probe_image(fn, image: str) -> bool:
+    """Import-time docker probe, guarded (#368).
+
+    A probe answers one question — may the container tests run? — so any
+    failure means SKIP, and the exception is reported rather than swallowed.
+    Unguarded, a 30s docker timeout here aborted collection of the entire
+    suite: one slow daemon reddened the test job on a docs-only PR.
+    """
+    try:
+        return fn(image)
+    except Exception as exc:  # a probe must never abort collection
+        warnings.warn(
+            f'docker probe failed ({type(exc).__name__}: {exc}) — '
+            f'container tests will skip', stacklevel=2)
+        return False
+
+
+docker_ready = _probe_image(container_image_ready, IMAGE)
 
 
 def git(workdir, *args):
@@ -230,3 +249,199 @@ async def test_container_run_publishes_loopback_only(repo, monkeypatch):
     assert port, result
     assert spec == f'127.0.0.1:{port.group(1)}:8000'
     assert '-e' not in argv
+
+
+# ---- #368: a docker probe answers "no", it never raises ----
+#
+# These patch subprocess.run itself rather than sandbox's `subprocess` name:
+# the except clause resolves subprocess.TimeoutExpired lazily, so swapping the
+# module out from under it hides the very exception class under test.
+
+
+def test_docker_usable_is_false_when_the_daemon_times_out(monkeypatch):
+    """The exact CI failure: `docker info` timed out after 30s and escaped as
+    TimeoutExpired instead of reporting 'docker unavailable'."""
+    import codingdude.sandbox as sb
+
+    def hang(argv, **kw):
+        raise subprocess.TimeoutExpired(cmd=argv, timeout=30)
+
+    monkeypatch.setattr(sb, 'docker_cli', lambda: 'docker')
+    monkeypatch.setattr(subprocess, 'run', hang)
+    assert sb.docker_usable() is False
+
+
+def test_docker_usable_is_false_when_the_cli_vanishes(monkeypatch):
+    """A CLI that disappears between `which` and the call raises OSError —
+    also a no, not a traceback."""
+    import codingdude.sandbox as sb
+
+    def gone(argv, **kw):
+        raise FileNotFoundError(2, 'No such file or directory', argv[0])
+
+    monkeypatch.setattr(sb, 'docker_cli', lambda: 'docker')
+    monkeypatch.setattr(subprocess, 'run', gone)
+    assert sb.docker_usable() is False
+
+
+def test_docker_usable_still_says_yes_to_a_linux_daemon(monkeypatch):
+    """Negative control: the guard must not swallow a healthy daemon."""
+    import codingdude.sandbox as sb
+
+    def answer(argv, **kw):
+        out = 'linux' if 'info' in argv else '27.0.0'
+        return subprocess.CompletedProcess(argv, 0, out, '')
+
+    monkeypatch.setattr(sb, 'docker_cli', lambda: 'docker')
+    monkeypatch.setattr(subprocess, 'run', answer)
+    assert sb.docker_usable() is True
+
+
+def test_image_probe_false_and_no_pull_when_inspect_hangs(monkeypatch):
+    """An unanswerable inspect must not fall through to a pull: that would
+    block against the same dead daemon for a second full timeout."""
+    import codingdude.sandbox as sb
+
+    seen: list[list[str]] = []
+
+    def hang(argv, **kw):
+        seen.append(list(argv))
+        raise subprocess.TimeoutExpired(cmd=argv, timeout=30)
+
+    monkeypatch.setattr(sb, 'docker_usable', lambda: True)
+    monkeypatch.setattr(sb, 'docker_cli', lambda: 'docker')
+    monkeypatch.setattr(subprocess, 'run', hang)
+    assert sb.container_image_ready(IMAGE) is False
+    assert [argv[:2] for argv in seen] == [['docker', 'image']]
+
+
+def test_the_import_time_probe_degrades_to_skip():
+    """#368, second half: a probe failure means SKIP — and says why. Unguarded
+    it aborted collection of every test in the suite."""
+    def explode(image):
+        raise RuntimeError('daemon exploded')
+
+    with pytest.warns(UserWarning, match='daemon exploded'):
+        assert _probe_image(explode, IMAGE) is False
+
+
+def test_the_import_time_probe_passes_a_clean_answer_through():
+    """Negative control for the guard above: a working probe still decides."""
+    assert _probe_image(lambda image: True, IMAGE) is True
+
+
+async def test_container_running_is_false_when_the_daemon_times_out(monkeypatch):
+    """The same family, one rung worse: `container_running` had no timeout at
+    all, so a wedged daemon hung `sandbox_exec` instead of reporting down."""
+    import codingdude.sandbox as sb
+
+    def hang(argv, **kw):
+        raise subprocess.TimeoutExpired(cmd=argv, timeout=30)
+
+    monkeypatch.setattr(sb, 'docker_cli', lambda: 'docker')
+    monkeypatch.setattr(subprocess, 'run', hang)
+    assert await sb.container_running('sandbox-x') is False
+
+
+async def test_container_running_still_sees_a_running_container(monkeypatch):
+    """Negative control: bounded must not mean blind."""
+    import codingdude.sandbox as sb
+
+    def answer(argv, **kw):
+        return subprocess.CompletedProcess(argv, 0, 'true\n', '')
+
+    monkeypatch.setattr(sb, 'docker_cli', lambda: 'docker')
+    monkeypatch.setattr(subprocess, 'run', answer)
+    assert await sb.container_running('sandbox-x') is True
+
+
+async def test_container_running_is_false_when_the_container_is_down(monkeypatch):
+    """A clean non-zero answer is a NO, not an exception."""
+    import codingdude.sandbox as sb
+
+    def missing(argv, **kw):
+        return subprocess.CompletedProcess(argv, 1, '', 'No such object')
+
+    monkeypatch.setattr(sb, 'docker_cli', lambda: 'docker')
+    monkeypatch.setattr(subprocess, 'run', missing)
+    assert await sb.container_running('sandbox-x') is False
+
+
+def test_remove_container_survives_a_wedged_daemon(monkeypatch):
+    """`lane.py`'s long-run cleanup calls this during teardown. Unbounded, a
+    dead daemon could wedge the worker it was cleaning up after."""
+    import codingdude.sandbox as sb
+
+    def hang(argv, **kw):
+        raise subprocess.TimeoutExpired(cmd=argv, timeout=30)
+
+    monkeypatch.setattr(sb, 'docker_cli', lambda: 'docker')
+    monkeypatch.setattr(subprocess, 'run', hang)
+    sb.remove_container('lane-x')  # returns instead of raising or blocking
+
+
+def test_remove_container_still_asks_a_healthy_daemon(monkeypatch):
+    """Negative control: bounded must not mean the removal stops happening."""
+    import codingdude.sandbox as sb
+
+    seen: list[list[str]] = []
+
+    def answer(argv, **kw):
+        seen.append(list(argv))
+        return subprocess.CompletedProcess(argv, 0, '', '')
+
+    monkeypatch.setattr(sb, 'docker_cli', lambda: 'docker')
+    monkeypatch.setattr(subprocess, 'run', answer)
+    sb.remove_container('lane-x')
+    assert seen == [['docker', 'rm', '-f', 'codingdude-sb-lane-x']]
+
+
+async def test_teardown_survives_a_wedged_daemon(repo, monkeypatch):
+    """sandbox_teardown removes the container before the worktree; that removal
+    must not be able to hold the teardown open. Only docker hangs here — the
+    git calls are delegated to the real runner."""
+    import codingdude.sandbox as sb
+
+    real_run = subprocess.run
+
+    def wedged_for_docker(argv, **kw):
+        if argv and 'docker' in str(argv[0]):
+            raise subprocess.TimeoutExpired(cmd=argv, timeout=30)
+        return real_run(argv, **kw)
+
+    monkeypatch.setattr(sb, 'docker_cli', lambda: 'docker')
+    monkeypatch.setattr(subprocess, 'run', wedged_for_docker)
+    toolset = build_sandbox_toolset(repo, policy())
+    await create_ok(toolset, 'wd', tier='worktree')
+    result = await toolset.tools['sandbox_teardown'].function(name='wd')
+    assert 'torn down' in result
+    assert not (repo / '.codingdude-worktrees' / 'wd').exists()
+
+
+async def test_create_survives_a_wedged_daemon_during_the_stale_removal(
+    repo, monkeypatch,
+):
+    """create_sandbox clears a stale container before `docker run`. With the
+    daemon wedged for removals only, creation still reaches the run."""
+    import codingdude.sandbox as sb
+
+    real_run = subprocess.run
+    dockers: list[list[str]] = []
+
+    def wedged_for_docker(argv, **kw):
+        if argv and 'docker' in str(argv[0]):
+            dockers.append(list(argv))
+            raise subprocess.TimeoutExpired(cmd=argv, timeout=30)
+        return real_run(argv, **kw)
+
+    async def fake_run_captured(argv, **kw):
+        return types.SimpleNamespace(code=0, combined='abc123')
+
+    monkeypatch.setattr(sb, 'docker_usable', lambda: True)
+    monkeypatch.setattr(sb, 'docker_cli', lambda: 'docker')
+    monkeypatch.setattr(sb, 'run_captured', fake_run_captured)
+    monkeypatch.setattr(subprocess, 'run', wedged_for_docker)
+    toolset = build_sandbox_toolset(repo, policy(yolo=True))
+    result = await create_ok(toolset, 'wedge', tier='container')
+    assert dockers and dockers[0][:3] == ['docker', 'rm', '-f'], dockers
+    assert 'tier=container' in result
