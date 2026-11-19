@@ -140,6 +140,15 @@
 
 ### Fixed
 
+- **A wedged CI runner blocked a required check for 78 minutes (R101)**: no job
+  declared `timeout-minutes`, so a `test` job that stopped emitting at 67% sat
+  against GitHub's 6-hour default while the PR's merge state read BLOCKED — not a
+  failing check, an absent verdict. The command itself was healthy: the same
+  `uv run pytest -q` passed locally in 671s and the job re-ran green in 11m14s.
+  `test` now declares 30 minutes, `frontend` 15 and `bench` 10, each sized from
+  its observed worst case and stated with those numbers in
+  `docs/GITHUB-STRATEGY.md`, so a wedge fails in bounded time and is re-run
+  instead of diagnosed by cancellation.
 - **Three of the four agent entry points recorded nothing (#361)**: tracing was
   configured in one line inside `worker.run()`, so review mode (`--review`),
   headless runs and the eval replay — all real agent runs, the first two among

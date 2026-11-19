@@ -1707,3 +1707,79 @@ Verification, from the repo root: `uv run ruff check src tests` → "All checks 
 Live after a bounce, read off the running server rather than the source: `/health` reported the same short sha the served bundle bakes, so the footer's `ui` and `srv` halves agree; `GET /` returns `cache-control: no-cache` plus an ETag, and a re-request that matches the ETag gets 304 with the same header; the hashed asset returns `public, max-age=31536000, immutable`. The dirty-tree stamp was proven in both directions — with an untracked file present `gitSha()` returned the sha with a `-dirty` suffix, and on the clean tree the bare sha.
 
 Recorded, not fixed (out of scope here): `tests/test_mcp.py::test_preflight_verifies_servers_concurrently` failed once in two full-suite runs on a loaded dev box, and passed in isolation, at file level, and under six CPU hogs. Its assertions are a 7-second wall-clock bound plus a healthy-server count, so it is load-sensitive rather than wrong; the failing run's assertion text was not captured, so which of the two fired is not known.
+
+## R101 — CI jobs have no timeout — a wedged run costs hours instead of failing fast
+**Status:** done · **Area:** CI / delivery · **Surfaced by:** PR #275 (run 44471486460)
+
+Audience: agent
+
+### Problem
+
+No job in `.github/workflows/ci.yml` declared `timeout-minutes`, so GitHub's
+6-hour default was the only ceiling. On PR #275 the `test` job stopped making
+progress at 67% and emitted nothing further:
+
+    06:26:02  ....[ 67%]
+    07:44:31  ...............47 dots, then "##[error]The operation was canceled."
+
+78 minutes of a required status check reporting nothing, with `mergeStateStatus:
+BLOCKED` the whole time. The work was not at fault — the identical command run
+locally, `uv run pytest -q`, gave 1487 passed / 1 skipped in 670.94s (exit 0),
+and a re-run of the same job succeeded in 11m14s. A wedged runner is
+indistinguishable from a hanging test until someone cancels the job to get its
+partial log, and cancelling is the only way to learn which.
+
+### Impact
+
+- A required check can sit "pending" for hours; the merge gate is blocked by
+  infrastructure silence rather than by a verdict. The failure mode has no
+  visible owner and no automatic resolution.
+- The only available diagnosis costs a cancelled run plus a full local
+  reproduction (~11 min of the developer's own wall clock) to prove a negative.
+- It compounds: `frontend` and `bench` share the same exposure, so any of the
+  three can wedge the same way.
+
+### Desired behaviour
+
+Every job declares a `timeout-minutes` comfortably above its measured worst
+case, so a wedge fails in bounded time and the operator can simply re-run. The
+values are policy, not guesses, and the policy is written down where the CI
+table already lives (`docs/GITHUB-STRATEGY.md`).
+
+Measured on `windows-latest` before choosing the floors (PR #275 run history,
+plus the local full suite):
+
+| Job | Observed | Floor chosen |
+| --- | --- | --- |
+| `test` | 11m14s re-run; 10m12s and 7m40s in earlier green runs; 671s local suite | 30 min |
+| `frontend` | 1m04s–1m22s | 15 min |
+| `bench` | 31s–34s | 10 min |
+
+### Not in scope
+
+Investigating why that one runner wedged (runner-side, not reproducible here);
+retry/auto-re-run machinery; moving any gate between jobs.
+
+### No new test, deliberately
+
+GitHub Actions is the parser: a malformed workflow shows up as a missing or
+failing check on the very PR that changes it, so the YAML is validated by
+running it. A Python test asserting the field exists would need PyYAML, which is
+not a declared dependency here (present only transitively, importable but
+unpinned) — adding a dependency to lint three YAML lines is the wrong trade. The
+policy lives in the CI-policy table instead, where a maintainer adding a job
+will read it.
+
+### Verification
+
+From the repo root, after the change: the workflow parses with PyYAML and every
+job carries its timeout (`test` 30, `frontend` 15, `bench` 10, step counts 8/6/3
+unchanged); `uv run ruff check src tests` → "All checks passed!"; `uv run mypy` →
+"Success: no issues found in 84 source files"; `uv run pytest -q` → 1487 passed,
+1 skipped in 717.23s; `tools/claim_check.py` exit 0 on `ROADMAP.md` and
+`CHANGELOG.md`.
+
+No commit sha is cited here on purpose. A branch sha dangles the moment the PR
+is squash-merged, and this repo has already paid for that lesson once (R99 →
+`db4a652`); the ticket `#366` records the squash commit instead, after the merge.
+
