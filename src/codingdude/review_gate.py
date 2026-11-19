@@ -16,11 +16,12 @@
 """Pre-push review gate: a push carries a review of the exact diff it publishes.
 
 Why this exists: pre-push two-axis review was mandated as prose (project notes
-#22/#25) with no enforcement point anywhere. `.git/hooks` is empty,
-`core.hooksPath` is unset, `gates.bat` runs ruff/mypy/pytest only, and the sole
-automated nudge was a string appended to the `git push` *output* — it fired
-after the irreversible act it was supposed to prevent. So review stayed a
-multi-step ritual that a turn could simply not perform.
+#22/#25) with no enforcement point anywhere. At the time this gate was written,
+`.git/hooks` was empty, `core.hooksPath` was unset, `gates.bat` ran
+ruff/mypy/pytest only, and the sole automated nudge was a string appended to the
+`git push` *output* — it fired after the irreversible act it was supposed to
+prevent. So review stayed a multi-step ritual that a turn could simply not
+perform.
 
 This turns it into state: `git push` refuses unless a record exists whose
 `diff_key` equals the sha256 of the content about to be published — the
@@ -34,17 +35,29 @@ An agent can record a review it did not perform — the same accepted boundary a
 `update_execution_step` (#293). It guarantees publishing requires a deliberate,
 recorded, axis-labelled act; it cannot guarantee the review was competent.
 
+What it *does* now check is the class the reviewer kept bouncing: R62 (#241)
+already required failure-mode prose to carry `[probe: ...]`, but the rule ran
+only when the agent remembered to run it before committing, and never over
+review evidence. `record_review` now runs that same checker over both axes, so
+"the banner can never be missed" cannot reach a record without the command that
+demonstrated it. Reused, not reimplemented: two copies of the rule would drift.
+
 Ceiling: `<git-dir>/codingdude/review.json` is per-clone and last-write-wins.
 """
 
 import hashlib
 import json
 import subprocess  # nosec B404 - fixed-argv git only, no shell
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
 DEFAULT_BASE = 'origin/main'
 RECORD_NAME = 'review.json'
+#: The repo's own failure-mode checker (R62 #241), reused rather than copied.
+CLAIM_CHECK = Path('tools') / 'claim_check.py'
+#: A checker that cannot answer in this long is a defect, not a slow review.
+CLAIM_CHECK_TIMEOUT = 60
 #: git's empty tree — the base for a branch with no remote ref yet, so a first
 #: push reviews its whole content instead of an empty range.
 EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
@@ -128,6 +141,57 @@ def record_path(workdir: Path) -> Path:
     return root / 'codingdude' / RECORD_NAME
 
 
+def claim_check_findings(workdir: Path, text: str) -> list[str]:
+    """Findings from the repo's claim checker (R62 #241) over review evidence.
+
+    A review says things like "the banner can never be missed" or "an unquoted
+    id silently returns 0" — claims about what happens when something goes
+    wrong, the class a reviewer most often cannot verify. R62 already requires
+    `[probe: <command>]` or "not yet verified"; this runs that checker over the
+    evidence itself rather than trusting that it was run.
+
+    Ceilings, stated so nobody has to discover them:
+    * A workdir with no `tools/claim_check.py` is skipped — the checker is this
+      project's convention, and the review gate also runs against other projects.
+    * The whole check set runs, not only failure modes: a backticked path, a
+      `path:LINE` reference, a commit ref or a line count in the evidence must
+      also resolve. Symbol checking is off, because evidence prose names things
+      the diff does not contain and a false refusal is how a gate gets ignored.
+
+    Fails closed: an exit code outside {0, 1}, or exit 1 with nothing on stdout,
+    is a checker that did not answer — never a clean review.
+    """
+    tool = Path(workdir) / CLAIM_CHECK
+    if not tool.is_file():
+        return []
+    try:
+        proc = subprocess.run(  # nosec B603 B607 - fixed argv, no shell
+            [sys.executable, str(tool), '--message-file', '-',
+             '--failure-modes', '--no-symbols'],
+            cwd=workdir, input=text, capture_output=True,
+            encoding='utf-8', errors='replace', timeout=CLAIM_CHECK_TIMEOUT,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ReviewGateError(
+            f'the claim checker at {tool} could not run ({exc}). Fix the '
+            'checker rather than recording a review nothing checked.'
+        ) from None
+    findings = [
+        line.strip().removeprefix('<stdin>: ')
+        for line in (proc.stdout or '').splitlines()
+        if line.strip()
+    ]
+    if findings and proc.returncode in (0, 1):
+        return findings
+    if proc.returncode == 0:
+        return []
+    raise ReviewGateError(
+        f'the claim checker at {tool} did not answer (exit {proc.returncode}): '
+        f'{(proc.stderr or "").strip()[-400:] or "no stderr"}. Fix the checker '
+        'rather than recording a review nothing checked.'
+    )
+
+
 def record_review(
     workdir: Path,
     *,
@@ -159,6 +223,22 @@ def record_review(
         )
     if findings < 0:
         raise ReviewGateError(f'record_review: findings must be ≥ 0, got {findings}')
+    unbacked = [
+        f'{axis}: {line}'
+        for axis, value in (
+            ('standards_evidence', standards_evidence),
+            ('spec_evidence', spec_evidence),
+        )
+        for line in claim_check_findings(workdir, value)
+    ]
+    if unbacked:
+        raise ReviewGateError(
+            'the review evidence did not pass the claim checker. Settle each '
+            'line below: cite only what exists (a path, a `file:LINE`, a commit '
+            'ref), and give a failure-mode claim the command that demonstrated '
+            'it as [probe: <command>] — or write "not yet verified" so the '
+            'reader can weigh it.\n  ' + '\n  '.join(unbacked)
+        )
     head = _git(workdir, 'rev-parse', 'HEAD').strip()
     payload = {
         'diff_key': review_diff_key(workdir, base),

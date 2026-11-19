@@ -4,6 +4,18 @@
 
 ### Added
 
+- **The claim gate now runs where a push must carry it (R62 follow-up)**: R62's
+  failure-mode checker shipped with a limitation it named itself — nothing ran
+  it at commit time, so it fired only when the agent remembered to run it, and
+  never over the review evidence a push must carry. Two wires close that.
+  `.githooks/commit-msg` runs the checker over every commit message (activate
+  once per clone: `git config core.hooksPath .githooks`), and `record_review`
+  now runs it over both review axes, so a failure-mode claim is refused until
+  it carries `[probe: <command>]` or says "not yet verified". The hook uses the
+  repo's `.venv` python rather than `uv run`, which syncs the environment; with
+  no venv present it warns and fails open — a hook that blocks every commit on a
+  fresh clone would be switched off, not obeyed.
+
 - **Per-conversation trace recording (R100)**: tracing was all-or-nothing and
   unattributable — every span carried only pydantic-ai's own per-run
   `gen_ai.conversation.id`, a UUID7 no CodingDude surface knows, so "show me
