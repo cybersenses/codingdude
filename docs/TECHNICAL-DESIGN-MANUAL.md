@@ -287,8 +287,10 @@ Summary of ADR-0004 posture, as implemented:
 
 - Engine tested at seams with scripted `FunctionModel` runs against temp
   workdirs (`tests/`, 1200+ tests).
-- Gates: `gates.bat` = `uv run pytest -q`, `uv run ruff check src tests`,
-  `uv run mypy`; frontend: `npm run build` + vitest.
+- Gates: `gates.bat` runs `ruff check`, `mypy` and `pytest`; frontend:
+  `npm run build` + vitest. The lint target set lives in `gates.bat` itself and
+  is pinned by `tests/test_gates_parity.py`, which also pins CI to the same set
+  (and fails if any live doc restates it differently).
 - CI (`.github/workflows/ci.yml`) runs on `windows-latest` in three jobs:
   lint/type-check/pytest, the frontend (lint, vitest, build), and the scripted
   benchmark.

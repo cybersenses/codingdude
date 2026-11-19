@@ -46,7 +46,19 @@ nothing for hours blocks a merge with no verdict and no owner; that is
 what run 44471486460 (PR #275) did for 78 minutes before it was
 cancelled to recover its log. The command itself was healthy — the same
 `uv run pytest -q` passed locally in 671s and the job re-ran green in
-11m14s (R101, #366).
+11m14s (R101, #366). A job cap bounds the damage but not the diagnosis: the
+wedged job still burned its full 30 minutes without naming a test. pytest
+therefore carries its own bound as well — `timeout = 180` in `pyproject.toml`,
+five times the worst single test observed (36.0s on a machine running a second
+suite concurrently; 12.6s quiet, across 1500 tests). It fires in three minutes
+and names the test rather than leaving an anonymous cap to cancel by hand
+(#368).
+
+**Gate parity.** The local gate and the `test` job must run the same checks.
+They drifted once — `gates.bat` linted `src tests tools` while CI linted
+`src tests bench.py` — so a `bench.py` edit passed locally and failed CI, which
+is a manufactured re-run of the very job the drift was hiding from.
+`tests/test_gates_parity.py` pins both to `src tests tools bench.py`.
 
 | Job        | Timeout | Observed                                      |
 | ---------- | ------- | --------------------------------------------- |
@@ -119,7 +131,7 @@ AI-generated-comment disclaimer on everything we post.
 3. **Scope gate.** One logical change. Feature PRs without a promoting
    issue go back to issue-first (comment, don't merge). Mass
    reformatting and drive-by refactors close without ceremony;
-   rejected enhancement requests are recorded in `.out-of-scope/`.
+   rejected enhancement requests close with the reason stated on the issue.
 4. **Code review.** The `code-review` skill over the diff: correctness
    (verified, not claimed), standards (CONTRIBUTING ground rules +
    CONTEXT.md vocabulary), tests at real seams. Diffs touching auth,

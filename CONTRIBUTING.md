@@ -21,10 +21,20 @@ security@cyberflex.io per [SECURITY.md](SECURITY.md), never to issues.
 
 ```bash
 uv sync
-uv run pytest -q          # tests
-uv run ruff check src tests
-uv run mypy
+gates.bat                  # ruff + mypy + full suite: the same commands CI runs
+gates.bat tests/test_x.py  # the iteration loop: same lint, only the tests that matter
 ```
+
+`gates.bat` is the single definition of the gates. Don't restate the commands
+elsewhere, because the copies drift: this file said `src tests`, `gates.bat`
+said `src tests tools`, and CI said `src tests bench.py`, so a `bench.py` edit
+passed every local gate and failed CI. `tests/test_gates_parity.py` now pins
+the target set and fails if any of these files restates it differently.
+
+Iterate with `gates.bat <changed tests>`; keep the full suite for the pre-push
+check or leave it to CI, which runs the identical commands. Every test carries
+a 180s bound, so a wedged test names itself in three minutes instead of
+burning the job's 30-minute cap.
 
 Frontend (`frontend/`): `npm run lint`, `npm test` (vitest), and
 `npm run build` must all be clean — CI enforces all three.

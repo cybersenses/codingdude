@@ -140,6 +140,28 @@
 
 ### Fixed
 
+- **A wedged test still burned the whole job cap (#368, cause 2)**: R101 bounded
+  each *job*, which capped the damage but not the diagnosis — a hung test sat
+  until the 30-minute cap with nothing naming it, and the re-run that followed
+  cost another 10-100 minutes. pytest now runs under `pytest-timeout` with
+  `timeout = 180` in `pyproject.toml`, sized from the measured distribution of
+  1500 tests (759s total; slowest single test 12.6s, 36.0s with a second suite
+  running concurrently, so 5x the worst observed). Red-proofed by forcing the
+  budget to 2s: the slowest test fails with a `Timeout` block and exit 1
+  instead of passing. `tests/test_gates_parity.py` pins the setting so it
+  cannot be silently deleted, and `timeout_method = "thread"` because
+  signal-based timeouts do not exist on Windows.
+
+- **The local gate and CI linted different targets (#368)**: `gates.bat`
+  checked `src tests tools` while the `test` job checked `src tests bench.py`,
+  so a `bench.py` edit passed every local gate and failed CI — a manufactured
+  re-run, and the same shape as the trailing-whitespace incident in R101. Both
+  now check `src tests tools bench.py`, and the same set was restated two more
+  ways in prose: `CONTRIBUTING.md` and `docs/TECHNICAL-DESIGN-MANUAL.md` both
+  said `src tests`. Those now point at `gates.bat` as the single definition
+  instead of copying the command. `tests/test_gates_parity.py` failed before
+  the fix, naming `tools` as local-only and `bench.py` as CI-only, and it fails
+  if any live doc restates a different set.
 - **One slow Docker daemon could take down the whole test job (#368)**:
   `docker_usable()` ran `docker version`/`docker info` under a 30s timeout and
   caught nothing, so an unhealthy daemon escaped as `TimeoutExpired` instead of

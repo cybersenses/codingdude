@@ -64,6 +64,7 @@ dev = [
     "playwright>=1.62.0",
     "mutmut<3",
     "hypothesis>=6.168.2",
+    "pytest-timeout>=2.4.0",
 ]
 
 [build-system]
@@ -72,6 +73,15 @@ build-backend = "uv_build"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# #368: bound every test so one hang cannot burn the job's 30-minute cap.
+# Sized from measurement, not taste: over 1500 tests (759s total) the slowest
+# single test is 12.6s; the same test took 36.0s on a machine busy with a
+# concurrent suite run, so the honest worst case observed is 36s. 180s is 5x
+# that — it fires only on a wedge, and when it fires it names the test instead
+# of leaving a 30-minute anonymous cap to cancel by hand.
+# 'thread' because signal-based timeouts do not exist on Windows.
+timeout = 180
+timeout_method = "thread"
 # '.scratch' is the scratch-probe area; the rest restores pytest's FULL
 # default exclusion set — the earlier two-entry list clobbered '.*', so
 # .codingdude-worktrees (lane worktrees kept by design after long-runs)
