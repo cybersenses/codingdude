@@ -37,20 +37,22 @@ Windows runners throughout, matching the dev environment. Bench is
 advisory on purpose: benchmark noise must never block a merge; measured
 performance work goes through `compare_bench` evidence instead.
 
-**Timeouts.** Every job declares `timeout-minutes`, sized at roughly 2-3x
-its observed worst case, so a wedged runner fails in bounded time instead
-of running against GitHub's 6-hour default. A required check that reports
+**Timeouts.** Every job declares `timeout-minutes`, set from its measured worst
+case: roughly 2-3x for a long job, and for a short one a flat floor generous
+enough to absorb a cold cache while still catching a wedge long before it costs
+a working day. Either way a wedged runner fails in bounded time instead of
+running against GitHub's 6-hour default. A required check that reports
 nothing for hours blocks a merge with no verdict and no owner; that is
 what run 44471486460 (PR #275) did for 78 minutes before it was
 cancelled to recover its log. The command itself was healthy — the same
 `uv run pytest -q` passed locally in 671s and the job re-ran green in
 11m14s (R101, #366).
 
-| Job | Timeout | Observed |
-| --- | --- | --- |
-| `test` | 30 min | 7m40s-11m14s; 671s for the full suite locally |
-| `frontend` | 15 min | 1m04s-1m22s |
-| `bench` | 10 min | 31s-34s |
+| Job        | Timeout | Observed                                      |
+| ---------- | ------- | --------------------------------------------- |
+| `test`     | 30 min  | 7m40s–11m14s; 671s for the full suite locally  |
+| `frontend` | 15 min  | 1m04s–1m22s                                    |
+| `bench`    | 10 min  | 31s–34s                                        |
 
 A new job without a timeout is a regression of this rule, not a default.
 

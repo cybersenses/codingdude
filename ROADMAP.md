@@ -1715,8 +1715,8 @@ Audience: agent
 
 ### Problem
 
-No job in `.github/workflows/ci.yml` declares `timeout-minutes`, so GitHub's
-6-hour default is the only ceiling. On PR #275 the `test` job stopped making
+No job in `.github/workflows/ci.yml` declared `timeout-minutes`, so GitHub's
+6-hour default was the only ceiling. On PR #275 the `test` job stopped making
 progress at 67% and emitted nothing further:
 
     06:26:02  ....[ 67%]

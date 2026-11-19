@@ -65,7 +65,7 @@ jobs:
   # Job name is a required status check — do not rename casually.
   frontend:
     runs-on: windows-latest
-    # Observed 1m04s-1m22s; 15 minutes leaves room for a cold npm cache (#366).
+    # Observed 1m04s–1m22s; 15 minutes leaves room for a cold npm cache (#366).
     timeout-minutes: 15
     defaults:
       run:
@@ -90,7 +90,7 @@ jobs:
   # (docs/GITHUB-STRATEGY.md, CI policy).
   bench:
     runs-on: windows-latest
-    # Observed 31s-34s; 10 minutes is a wedge detector, not a budget (#366).
+    # Observed 31s–34s; 10 minutes is a wedge detector, not a budget (#366).
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
