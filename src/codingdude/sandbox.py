@@ -55,38 +55,68 @@ def docker_cli() -> str | None:
     return None
 
 
+DOCKER_PROBE_TIMEOUT = 30
+# A pull is a network operation over image layers, not a local query, so it
+# gets its own bounded budget. Unbounded was the defect (#368): a wedged
+# daemon hung the caller forever, and for the import-time probe that meant the
+# CI job sat silent until its 30-minute cap.
+IMAGE_PULL_TIMEOUT = 180
+
+
+def _docker_probe(
+    cli: str, *args: str, timeout: int = DOCKER_PROBE_TIMEOUT,
+) -> subprocess.CompletedProcess[str] | None:
+    """Run one read-only docker query; None when the daemon does not answer.
+
+    #368: an unhealthy or hung daemon must not escape as an exception. Every
+    caller below asks a yes/no question ("is docker usable?", "is the image
+    here?"), so an unanswerable probe is a NO. `tests/test_sandbox.py` probed
+    at import time, a 30s `docker info` timeout escaped as TimeoutExpired, and
+    collection of the entire suite aborted — one slow daemon reddened the job.
+    """
+    try:
+        return subprocess.run(  # nosec B603 - fixed-argv docker CLI, no shell
+            [cli, *args], capture_output=True, text=True,
+            env=scrubbed_env(), timeout=timeout)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+
+
 def docker_usable() -> bool:
     """CLI present AND daemon answering AND able to run LINUX containers —
     a broken daemon, or a Windows-containers daemon (windows-latest CI)
-    that cannot run our linux images, must not be chosen."""
+    that cannot run our linux images, must not be chosen.
+
+    Never raises (#368): every probe is bounded and silence reports False,
+    which is the path all four callers already handle."""
     cli = docker_cli()
     if cli is None:
         return False
-    proc = subprocess.run(
-        [cli, 'version', '--format', '{{.Server.Version}}'],
-        capture_output=True, text=True, env=scrubbed_env(), timeout=30)
-    if proc.returncode != 0:
+    version = _docker_probe(cli, 'version', '--format', '{{.Server.Version}}')
+    if version is None or version.returncode != 0:
         return False
-    os_type = subprocess.run(
-        [cli, 'info', '--format', '{{.OSType}}'],
-        capture_output=True, text=True, env=scrubbed_env(), timeout=30)
-    return os_type.stdout.strip() == 'linux'
+    os_type = _docker_probe(cli, 'info', '--format', '{{.OSType}}')
+    return os_type is not None and os_type.stdout.strip() == 'linux'
 
 
 def container_image_ready(image: str) -> bool:
-    """True when the image is available locally or can be pulled."""
+    """True when the image is available locally or can be pulled.
+
+    Bounded and exception-free like `docker_usable()` (#368). An unanswerable
+    inspect returns False rather than falling through to a pull: the pull
+    would block against the same dead daemon for another full timeout."""
     if not docker_usable():
         return False
     cli = docker_cli()
-    assert cli is not None  # docker_usable() proved the CLI exists
-    ok = subprocess.run([cli, 'image', 'inspect', image],
-                        capture_output=True, text=True,
-                        env=scrubbed_env()).returncode == 0
-    if ok:
+    if cli is None:
+        return False  # raced: the CLI vanished between the two probes
+    inspect = _docker_probe(cli, 'image', 'inspect', image)
+    if inspect is None:
+        return False
+    if inspect.returncode == 0:
         return True
-    pull = subprocess.run([cli, 'pull', image], capture_output=True, text=True,
-                          env=scrubbed_env())
-    return pull.returncode == 0
+    pull = _docker_probe(cli, 'pull', image, timeout=IMAGE_PULL_TIMEOUT)
+    return pull is not None and pull.returncode == 0
 
 
 def free_port() -> int:

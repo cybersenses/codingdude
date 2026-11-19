@@ -140,6 +140,20 @@
 
 ### Fixed
 
+- **One slow Docker daemon could take down the whole test job (#368)**:
+  `docker_usable()` ran `docker version`/`docker info` under a 30s timeout and
+  caught nothing, so an unhealthy daemon escaped as `TimeoutExpired` instead of
+  the `False` its callers are written against; `container_image_ready()` then
+  made two *unbounded* calls (`image inspect`, `pull`). Because
+  `tests/test_sandbox.py` probed at import time, that exception aborted
+  collection of the entire suite — a docs-only PR went red in 62s without
+  running a single test. Every docker query now goes through one bounded
+  `_docker_probe()` returning `None` on `TimeoutExpired`/`OSError`, an
+  unanswerable inspect no longer falls through to a pull that would hang
+  against the same dead daemon, and the import-time probe degrades to a skip
+  with a warning naming the failure. Six tests pin it, including negative
+  controls that a healthy linux daemon still reports `True` and that the probe
+  still lets a clean answer through.
 - **A wedged CI runner blocked a required check for 78 minutes (R101)**: no job
   declared `timeout-minutes`, so a `test` job that stopped emitting at 67% sat
   against GitHub's 6-hour default while the PR's merge state read BLOCKED — not a
