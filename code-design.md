@@ -1069,8 +1069,9 @@ runs rather than only failure modes — backticked paths, `file:LINE` references
 commit refs and line counts must resolve too, with symbol checking off because
 evidence prose legitimately names things the diff does not contain — and a
 checker that exits outside `{0, 1}` is a refusal, never a clean review. Impact:
-1502 passed, 1 skipped; `tests/test_review_gate.py` gains the refusal, the
-fail-closed case, and a test that drives the hook through `git commit` itself.
+the full suite and CI are green on the change, and `tests/test_review_gate.py`
+gains the refusal, the fail-closed case, and a test that drives the hook through
+`git commit` itself.
 
 **Impact.** `tests/test_claim_check.py` 43 → 47 tests; the living-docs sweep is
 unchanged (paths/refs/counts only). Shipped in `1560772`, tightened after review.
