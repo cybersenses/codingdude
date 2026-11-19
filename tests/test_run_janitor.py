@@ -216,3 +216,78 @@ async def test_janitor_spares_healthy_booted_worker(tmp_path, monkeypatch):
     task.cancel()
     assert not worker.terminated
     assert db.get_run('runX')['status'] == 'running'
+
+
+def write_worker_log(tmp_path, session_id, body):
+    """The worker mirrors its lifecycle log to <home>/logs/worker-<session>.log."""
+    logs = tmp_path / 'logs'
+    logs.mkdir(parents=True, exist_ok=True)
+    (logs / f'worker-{session_id[:16]}.log').write_text(body, encoding='utf-8')
+
+
+DROP_LINE = (
+    '2026-11-19 13:44:50 WARNING codingdude.worker WORKER_TERMINAL_DROPPED '
+    'run={run} — ws died mid-run; the run is persisted locally but the server '
+    'never received the terminal event, exiting non-zero so the reaper reports '
+    'the loss\n'
+)
+
+
+async def test_reap_worker_reports_terminal_lost_not_a_crash(tmp_path, monkeypatch):
+    """#369 cause 2: the TERMINAL_DROPPED path exits 1 *on purpose* so the loss
+    is reported — it is not a crash, and the work is on disk. Live run
+    L_AssjFaqRA: 23 minutes of work, commit + review record present, reported
+    to the user as 'worker exited unexpectedly (code 1)'."""
+    import codingdude.server as srv
+    monkeypatch.setattr(srv, 'config_home', lambda: tmp_path)
+    write_worker_log(tmp_path, 'sess1', DROP_LINE.format(run='runX'))
+
+    worker = FakeWorker(poll_result=1)
+    ch, db = make_channel(worker, tmp_path)
+    await _reap_worker(ch, db)
+
+    err = [e for e in ch.history if e['type'] == 'RUN_ERROR'][0]
+    assert err['code'] == 'terminal_lost', err
+    assert 'runX' in err['message'], err['message']
+    assert 'finished' in err['message'], err['message']
+    assert 'persisted' in err['message'], err['message']
+    assert 'exited unexpectedly' not in err['message'], err['message']
+    # The stderr tail on this path is MCP banner noise; it must not be offered
+    # as the cause of a run that finished.
+    assert 'stderr' not in err['message'].lower(), err['message']
+
+
+async def test_reap_worker_ignores_a_drop_marker_from_another_run(tmp_path, monkeypatch):
+    """The worker log is keyed on the session, so it outlives a run. Evidence
+    for a different run must not launder this run's crash."""
+    import codingdude.server as srv
+    monkeypatch.setattr(srv, 'config_home', lambda: tmp_path)
+    write_worker_log(tmp_path, 'sess1', DROP_LINE.format(run='runOLD'))
+
+    worker = FakeWorker(poll_result=1)
+    ch, db = make_channel(worker, tmp_path)
+    await _reap_worker(ch, db)
+
+    err = [e for e in ch.history if e['type'] == 'RUN_ERROR'][0]
+    assert err['code'] == 'worker_died', err
+    assert 'exited unexpectedly' in err['message'], err['message']
+
+
+async def test_reap_worker_omits_stderr_clause_when_stderr_is_only_mcp_noise(tmp_path):
+    """#369 cause 2, second half: a healthy spawn's stderr is MCP banner bytes.
+    When nothing survives the noise filter the RUN_ERROR must carry no
+    `stderr:` clause at all, rather than presenting chatter as a cause."""
+    worker = FakeWorker(poll_result=1)
+    ch, db = make_channel(worker, tmp_path)
+    stderr_log = tmp_path / 'worker-runX.stderr.log'
+    stderr_log.write_text(
+        'time=2026-11-19T13:22:45Z level=debug msg="MCP server starting"\n'
+        'npx chrome-devtools-mcp Unknown arguments: --performance-crux\n',
+        encoding='utf-8',
+    )
+    ch.stderr_path = stderr_log
+
+    await _reap_worker(ch, db)
+
+    err = [e for e in ch.history if e['type'] == 'RUN_ERROR'][0]
+    assert 'stderr' not in err['message'].lower(), err['message']

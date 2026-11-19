@@ -152,6 +152,28 @@
 
 ### Fixed
 
+- **A worker that finished is no longer reported as a crash (#369)**: live run
+  `L_AssjFaqRA` landed 23 minutes of work (commit and review record both on
+  disk) and the UI said `worker exited unexpectedly (code 1)`. The worker had
+  exited non-zero *on purpose* — its socket died mid-run, so it could not
+  deliver the terminal event and said so in its own log — but nothing read that
+  log, and `except WebSocketDisconnect: pass` meant `server.log` held no
+  ws-close line in its entire history. Three changes: the socket close is now
+  logged with run id, close code, reason and `terminal_seen` (plus a 1011 hint,
+  which is what uvicorn sends when its keepalive ping goes unanswered), the two
+  close-without-accept paths (4401/4404) are logged instead of vanishing, and
+  the reaper reads the worker log tail — when it says this run dropped its
+  terminal, the RUN_ERROR reads "finished, but its terminal event was lost …
+  the work is persisted" with no `stderr:` clause instead of quoting MCP banner
+  bytes as a cause. The runs row stays `failed` (the enum has no "unknown
+  outcome" state, and `completed` would claim a success nobody observed), but
+  the cause is now durable in the log and in the message. `serve()` also pins
+  `ws_ping_interval`/`ws_ping_timeout` at 20s each, so the timeout that decides
+  when a stalled worker loses its channel is a declared number rather than a
+  framework default — and the worker log path now comes from `config_home()`
+  instead of a hardcoded `~/.codingdude/logs`, so the server can actually find
+  the file it is asked to read.
+
 - **A wedged test still burned the whole job cap (#368, cause 2)**: R101 bounded
   each *job*, which capped the damage but not the diagnosis — a hung test sat
   until the 30-minute cap with nothing naming it, and the re-run that followed
