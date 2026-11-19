@@ -30,6 +30,13 @@ Off unless ``[telemetry] enabled = true``: a collector that is not running must
 never be the thing that breaks a run, so configuration failure degrades to
 "tracing off" with one warning rather than raising.
 
+R100: ``[telemetry] enabled`` is the *default*, not the last word. A run may
+override it either way (the chat panel's trace checkbox), because recording is
+expensive — one `chat` span carries the full prompt, the repository code in the
+tool results and the system instructions (70-113KB observed live). Recording
+every conversation forever fills the local store; recording none leaves no
+forensics. Per-run consent is the only honest middle.
+
 Configured once per process, in the worker (workers are what execute runs; the
 server executes none, so instrumenting it would only add HTTP noise).
 """
@@ -45,6 +52,9 @@ logger = logging.getLogger(__name__)
 
 #: Set once `logfire.configure` has run. Guards against double configuration
 #: (logfire warns and the second call would add a duplicate span processor).
+#: One worker process executes exactly one run (ADR-0002), so a second call in
+#: a process can never mean a second conversation — the first run's session
+#: attribution is the right one to keep, and this guard is what preserves it.
 _configured = False
 #: Set once a configuration failure has been reported, so a worker that calls
 #: this per run does not spam the same warning (`_configured` stays False on
@@ -63,8 +73,25 @@ def traces_url(endpoint: str) -> str:
     return base if base.endswith('/v1/traces') else f'{base}/v1/traces'
 
 
-def configure_tracing(config: Config) -> bool:
-    """Turn on agent tracing from ``[telemetry]``. Returns True when enabled.
+def configure_tracing(
+    config: Config,
+    *,
+    enabled: bool | None = None,
+    session_id: str | None = None,
+    run_id: str | None = None,
+) -> bool:
+    """Turn on agent tracing for this run. Returns True when enabled.
+
+    ``enabled`` overrides ``[telemetry] enabled`` for this run (R100): ``None``
+    means "the config decides", ``True``/``False`` force the decision. One
+    worker process serves exactly one run, so that is all a per-conversation
+    switch needs.
+
+    ``session_id``/``run_id`` are attached to the span *resource* as
+    ``codingdude.session_id``/``codingdude.run_id``. Without them a span is only
+    attributable to pydantic-ai's own per-run ``gen_ai.conversation.id`` (a
+    fresh UUID7; ``pydantic_ai/conversation.py``), which no CodingDude surface
+    knows — so "monitor this conversation" would be impossible to answer.
 
     Never raises: a missing exporter, a malformed endpoint or an import failure
     is logged once and tracing stays off.
@@ -72,7 +99,9 @@ def configure_tracing(config: Config) -> bool:
     global _configured, _warned
 
     settings = getattr(config, 'telemetry', None)
-    if settings is None or not settings.enabled:
+    if settings is None:
+        return False
+    if not (settings.enabled if enabled is None else enabled):
         return False
     if _configured:
         return True
@@ -84,9 +113,16 @@ def configure_tracing(config: Config) -> bool:
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
         exporter = OTLPSpanExporter(endpoint=traces_url(settings.otlp_endpoint))
+        resource_attributes = {}
+        if session_id:
+            resource_attributes['codingdude.session_id'] = session_id
+        if run_id:
+            resource_attributes['codingdude.run_id'] = run_id
         logfire.configure(
             send_to_logfire=False,
             service_name=settings.service_name,
+            # Correlates every span in this process with one conversation.
+            resource_attributes=resource_attributes,
             # Batched: an unreachable collector fails on the exporter's own
             # thread and cannot block or fail a model request.
             additional_span_processors=[BatchSpanProcessor(exporter)],
@@ -100,7 +136,8 @@ def configure_tracing(config: Config) -> bool:
     _configured = True
     _warned = False
     logger.info(
-        'TRACING_ENABLED endpoint=%s service=%s',
+        'TRACING_ENABLED endpoint=%s service=%s session=%s',
         traces_url(settings.otlp_endpoint), settings.service_name,
+        session_id or '-',
     )
     return True

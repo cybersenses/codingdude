@@ -136,7 +136,9 @@ describe('commandList', () => {
 describe('filterCommands', () => {
   it('filters case-insensitively on label and passes everything on empty query', () => {
     const cmds = commandList(fakeApi(), ctx())
-    expect(filterCommands(cmds, 'trac').map((c) => c.id)).toEqual(['show:trace'])
+    // 'trac' now matches two: 'Trace' and 'OTel Traces' (R100) — two distinct
+    // surfaces, CodingDude's JSONL event trace and the collector's spans.
+    expect(filterCommands(cmds, 'trac').map((c) => c.id)).toEqual(['show:trace', 'show:otel'])
     expect(filterCommands(cmds, 'hide ed').map((c) => c.id)).toEqual(['hide:editor'])
     expect(filterCommands(cmds, '').length).toBe(cmds.length)
   })

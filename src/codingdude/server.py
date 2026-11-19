@@ -44,6 +44,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import __version__
@@ -374,6 +375,50 @@ def _project_codegraph_boot(workdir: Path, boot=None) -> dict:
         return {'status': 'failed', 'reason': f'{type(exc).__name__}: {exc}'}
 
 
+def _frontend_dist() -> Path:
+    """Where the built bundle lives.
+
+    Resolved through a function so tests can point the mount at a throwaway
+    tree instead of depending on a real `npm run build` having happened.
+    """
+    return Path(__file__).resolve().parents[2] / 'frontend' / 'dist'
+
+
+#: One year: Vite writes content-hashed filenames under `assets/`, so a changed
+#: file gets a new name and the old bytes never need revalidating.
+_IMMUTABLE_ASSETS = 'public, max-age=31536000, immutable'
+#: Revalidate every time. `no-cache` means "store, but check first" — the 304
+#: that follows costs one round trip and keeps the entry point honest.
+_REVALIDATE = 'no-cache'
+
+
+def cache_control_for(path: str) -> str:
+    """#363: the bundle holds two kinds of file, and they need opposite rules.
+
+    Only `index.html` names the hashed assets, so it is the file that must not
+    be cached blindly. With no `Cache-Control` at all the browser falls back to
+    heuristic caching, pins yesterday's `index.html`, keeps requesting the asset
+    filenames it names (which no longer exist after a rebuild) and a new build
+    is invisible until the user clears site data — the exact "ui sha is stale,
+    server sha is current" symptom.
+
+    `path` arrives with OS separators: Starlette normalises through
+    `os.path.normpath`, so on Windows it is `assets\\index-abc.js`.
+    """
+    normalised = path.replace('\\', '/').lstrip('/')
+    return _IMMUTABLE_ASSETS if normalised.startswith('assets/') else _REVALIDATE
+
+
+class _CachedStaticFiles(StaticFiles):
+    """StaticFiles that states its cache policy instead of leaving the browser
+    to guess (#363)."""
+
+    async def get_response(self, path: str, scope) -> Response:
+        response = await super().get_response(path, scope)
+        response.headers['Cache-Control'] = cache_control_for(path)
+        return response
+
+
 def create_app(
     home: Path | None = None, token: str | None = None, allow_testclient: bool = False
 ) -> FastAPI:
@@ -532,6 +577,9 @@ def create_app(
         # #297 REQ-6: long-run work-mode level — per-run, opt-in, validated
         # fail-fast (unknown levels are a 422, never a silent default).
         long_run: Literal['assisted', 'unattended'] | None = None
+        # R100: per-run OTel recording. None = `[telemetry] enabled` decides;
+        # True/False is the chat panel's trace checkbox, forced either way.
+        telemetry: bool | None = None
 
     @app.post('/sessions')
     def create_session(body: SessionIn, _: None = Depends(authorize)) -> dict:
@@ -644,6 +692,10 @@ def create_app(
             cmd += ['--model', body.model]
         if body.yolo:
             cmd.append('--yolo')
+        if body.telemetry is not None:
+            # R100: the switch is per run, so the worker never has to guess
+            # whether an absent flag meant "off" or "no opinion".
+            cmd.append('--telemetry' if body.telemetry else '--no-telemetry')
         if body.budget is not None:
             cmd += ['--budget', str(body.budget)]
         if body.fix_loop:
@@ -859,6 +911,63 @@ def create_app(
     @app.get('/sessions/{session_id}/usage')
     def session_usage(session_id: str, _: None = Depends(authorize)) -> dict:
         return db.session_usage(session_id)
+
+    # ---- R100: per-conversation OTel recording -----------------------------
+    # Both endpoints are read-only views onto the local OTel store, and both
+    # reach it the only safe way: through the running viewer's JSON-RPC (see
+    # codingdude.otel — the DuckDB file is never opened by this process).
+
+    @app.get('/telemetry/status')
+    def telemetry_status(_: None = Depends(authorize)) -> dict:
+        """What the chat panel's trace dot reports.
+
+        Three independent facts, because each fails differently: the config
+        default, whether the OTLP receiver is accepting spans, and whether the
+        viewer can answer queries. Tracing with no collector is a silent no-op
+        (a BatchSpanProcessor drops spans on its own thread), so the UI has to
+        be able to say that instead of implying a successful recording.
+        """
+        from .config import load_config
+        from .otel import collector_reachable, viewer_reachable
+
+        settings = load_config(home).telemetry
+        viewer_ok, viewer_error = viewer_reachable(settings.viewer_endpoint)
+        return {
+            'config_enabled': settings.enabled,
+            'otlp_endpoint': settings.otlp_endpoint,
+            'collector_reachable': collector_reachable(settings.otlp_endpoint),
+            'viewer_endpoint': settings.viewer_endpoint,
+            'viewer_reachable': viewer_ok,
+            'viewer_error': viewer_error,
+        }
+
+    @app.get('/sessions/{session_id}/otel/spans')
+    def session_otel_spans(
+        session_id: str, limit: int = 200, _: None = Depends(authorize)
+    ) -> dict:
+        """Spans recorded for one conversation (R100).
+
+        A missing viewer is a *state*, not an error — the panel explains it, so
+        this returns reachable=False rather than a 500 that would look like a
+        CodingDude bug. The one genuine error is a session id that could reach
+        the viewer's raw-SQL query method.
+        """
+        from .config import load_config
+        from .otel import ViewerUnavailable, session_spans
+
+        endpoint = load_config(home).telemetry.viewer_endpoint
+        try:
+            result = session_spans(session_id, limit=limit, endpoint=endpoint)
+        except ValueError:
+            raise HTTPException(
+                status_code=400, detail=f'invalid session id: {session_id!r}'
+            ) from None
+        except ViewerUnavailable as exc:
+            return {
+                'spans': [], 'truncated': False, 'reachable': False,
+                'error': str(exc),
+            }
+        return {**result, 'reachable': True, 'error': None}
 
     @app.get('/sessions/{session_id}/diff')
     def session_diff(session_id: str, _: None = Depends(authorize)) -> dict:
@@ -1888,11 +1997,9 @@ def create_app(
             raise
 
     # Serve the built frontend when it exists (single-command deployment).
-    dist = Path(__file__).resolve().parents[2] / 'frontend' / 'dist'
+    dist = _frontend_dist()
     if dist.exists():
-        from fastapi.staticfiles import StaticFiles
-
-        app.mount('/', StaticFiles(directory=dist, html=True), name='ui')
+        app.mount('/', _CachedStaticFiles(directory=dist, html=True), name='ui')
 
     app.state.token = token
     app.state.db = db

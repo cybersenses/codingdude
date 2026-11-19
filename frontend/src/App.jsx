@@ -78,6 +78,18 @@ export default function App() {
   const [modelsError, setModelsError] = useState('')
   const [model, setModel] = useState(() => localStorage.getItem('cd-model') || '')
   const [yolo, setYolo] = useState(() => localStorage.getItem('cd-yolo') === '1')
+  // R100: per-conversation OTel recording. Tri-state on purpose — `null` means
+  // this browser has never made a choice, so the config default decides. It is
+  // deliberately NOT seeded into state: seeding turned the config default into
+  // something the persistence effect below read as a choice, stamped it into
+  // localStorage, and from then on a later `[telemetry] enabled` change could
+  // never take effect in this browser. `traceSwitchState` already resolves
+  // `null` against `/telemetry/status` for display, so nothing needs seeding.
+  const [otel, setOtel] = useState(() => {
+    const stored = localStorage.getItem('cd-otel')
+    return stored === null ? null : stored === '1'
+  })
+  const [telemetry, setTelemetry] = useState(null)
   // #300 DE-6: long-run work-mode level ('' = off). Deliberately NOT persisted
   // — the feature contract is per-run opt-in, never a sticky default.
   const [longRun, setLongRun] = useState('')
@@ -124,6 +136,24 @@ export default function App() {
   }, [loggedIn])
   useEffect(() => { localStorage.setItem('cd-model', model) }, [model])
   useEffect(() => { localStorage.setItem('cd-yolo', yolo ? '1' : '0') }, [yolo])
+  // R100: persist only a real choice — never stamp the config default into
+  // this browser, or a later config change could never take effect here.
+  useEffect(() => {
+    if (otel !== null) localStorage.setItem('cd-otel', otel ? '1' : '0')
+  }, [otel])
+
+  // R100: the trace dot must show the collector leg too. Polled, because a
+  // viewer started after this page loaded has to turn the dot green.
+  useEffect(() => {
+    if (!loggedIn) return undefined
+    let alive = true
+    const load = () => call('/telemetry/status')
+      .then((s) => { if (alive) setTelemetry(s) })
+      .catch(() => { if (alive) setTelemetry(null) })
+    load()
+    const timer = setInterval(load, 20000)
+    return () => { alive = false; clearInterval(timer) }
+  }, [loggedIn])
 
   // Notifications: tab title + sound + toast on run state changes.
   const [notify, setNotify] = useState(() => localStorage.getItem('cd-notify') === '1')
@@ -356,6 +386,8 @@ export default function App() {
         image ? image.b64 : null,
         yolo,
         longRun || null,
+        // R100: per-run recording switch; null = let [telemetry] decide.
+        otel,
       )
       .then(({ run_id }) => {
         runRef.current = run_id
@@ -649,6 +681,9 @@ export default function App() {
     setModel,
     yolo,
     setYolo,
+    otel,
+    setOtel,
+    telemetry,
     longRun,
     setLongRun,
     notify,

@@ -27,7 +27,7 @@ import type { TopicFetcher } from './sessionData'
 // selected session). `config` and `memory` are deliberately absent: they are
 // session-independent and must keep polling on a fresh workspace.
 const SESSION_REQUIRED = new Set([
-  'diff', 'cost', 'mcp', 'renders', 'trace', 'output', 'processes',
+  'diff', 'cost', 'mcp', 'renders', 'trace', 'output', 'processes', 'otel',
 ])
 
 export function requiresSession(topic: string): boolean {
@@ -51,6 +51,10 @@ export const sessionTopics: Record<string, TopicFetcher> = {
     trace: await call(`/sessions/${sid}/trace?limit=50`),
     checkpoints: await call(`/sessions/${sid}/checkpoints`),
   }),
+  // R100: the OTel spans this conversation recorded, read through the running
+  // viewer. `reachable: false` is a state the panel explains (a viewer that is
+  // not running), not an error — the server answers 200 either way.
+  otel: (sid) => call(`/sessions/${sid}/otel/spans?limit=200`),
   output: async (sid) => ({
     runs: await call(`/sessions/${sid}/runs`),
     runEvents: await call(`/sessions/${sid}/trace?limit=300`),

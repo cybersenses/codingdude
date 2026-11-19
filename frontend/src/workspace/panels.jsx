@@ -35,6 +35,7 @@ import { buildRepoQuestionPrompt } from '../repoqa'
 import { structureRows } from '../structure'
 import { Mermaid } from '../ui.jsx'
 import { useSessionData } from '../store/sessionData'
+import { SPAN_KIND_COLOR, groupSpansByTrace, spanKind } from '../otelView'
 import { errMsg } from '../pollErrors'
 import { MEMORY_LIMIT } from '../limits'
 import { Terminal } from '../panels/dock/Terminal.jsx'
@@ -472,6 +473,67 @@ export function OutputPanel() {
         </div>
       ) : !snap.error && <div className="rounded border border-line bg-surface p-4 text-ink-muted">loading…</div>}
     </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// OTel spans (R100)
+// ---------------------------------------------------------------------------
+
+export function OtelPanel() {
+  return (
+    <TopicPanel topic="otel">
+      {(data) => {
+        if (!data.reachable) {
+          return (
+            <div className="rounded border border-line bg-surface p-4 text-ink-muted">
+              No OTel viewer answering.
+              {data.error ? <span className="text-warning"> {data.error}</span> : null}
+              <div className="mt-1 text-[10px]">
+                Recording is unaffected - only this view is. Start otel-desktop-viewer
+                and reopen the panel.
+              </div>
+            </div>
+          )
+        }
+        const traces = groupSpansByTrace(data.spans)
+        if (!traces.length) {
+          return (
+            <div className="rounded border border-line bg-surface p-4 text-ink-muted">
+              No spans recorded for this conversation.
+              <div className="mt-1 text-[10px]">
+                Turn on <span className="text-ink">trace</span> beside yolo (or set
+                [telemetry] enabled = true) and run again.
+              </div>
+            </div>
+          )
+        }
+        return (
+          <div className="space-y-3">
+            {traces.map((t) => (
+              <div key={t.id} className="space-y-0.5">
+                <div className="flex justify-between font-mono text-[10px] text-ink-muted">
+                  <span className="truncate">{String(t.id).slice(0, 18)}</span>
+                  <span className="ml-2 shrink-0">{t.inputTokens} tok / ${t.cost.toFixed(5)}</span>
+                </div>
+                {t.spans.map((s, i) => (
+                  <div key={`${t.id}-${i}`} className="flex items-baseline gap-2 font-mono text-[10px]">
+                    <span className={`shrink-0 ${SPAN_KIND_COLOR[spanKind(s.name)]}`}>{s.name}</span>
+                    <span className="ml-auto shrink-0 text-ink-muted">
+                      {s.duration_s != null ? `${s.duration_s.toFixed(2)}s` : '-'}
+                      {s.status === 'error' ? ' error' : ''}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ))}
+            {data.truncated && (
+              <div className="text-[10px] text-warning">older spans truncated</div>
+            )}
+          </div>
+        )
+      }}
+    </TopicPanel>
   )
 }
 

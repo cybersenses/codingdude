@@ -122,6 +122,20 @@ the time go" or "is it stalled".
 The raw event trace, colour-coded by type, plus **checkpoints** — file
 snapshots taken before edits, each with a **rewind** button.
 
+## OTel Traces
+
+The OpenTelemetry spans the local collector stored for this session, grouped by
+trace (one turn per trace) with per-trace token and cost totals. This is the
+other kind of trace: `Trace` is CodingDude's own event log, this one is the
+collector's span timeline — model requests, tool calls, agents and their
+durations.
+
+Recording is opt-in per run (`trace` beside `yolo` in the prompt row) and every
+span carries the session id it came from, so one conversation can be isolated.
+The panel reads through the running OTel Desktop Viewer; if no viewer is
+running it says so, and recording is unaffected. Colour by kind: model spans
+brand, tool spans accent, agent spans warning.
+
 ## Cost
 
 Token and cost usage for the session: requests, input/output tokens, cost,

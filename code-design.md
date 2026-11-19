@@ -533,7 +533,7 @@ per-tab poll, which fired on mount rather than at the next tick).
 | `frontend/src/workspace/catalogue.ts` | 15 new entries; `renderer:'always'` on artifacts/renders/terminal/config/standards |
 | `frontend/src/workspace/Workspace.jsx` | store instance, `visible()` gating wrapper, panel bar, extended shell context |
 | `frontend/src/limits.ts` | `MEMORY_LIMIT` shared by both shells (was an App.jsx local) |
-| `tools/ui_smoke.py` | dock walk now opens all 20 panels from the panel bar and checks each |
+| `tools/ui_smoke.py` | dock walk now opens all 21 panels from the panel bar and checks each |
 
 **Decisions and why.**
 
@@ -1091,7 +1091,7 @@ Problem: P4 left the dock shell with no always-visible catalogue of its panels -
 
 Design: the `nav` panel's Sidebar gains a "Panels" section. The list is a pure derivation - `panelListFor(openIds)` in catalogue.ts returns every panel except `nav` itself (the list lives in nav) flagged open/closed from a snapshot of `api.panels`; NavPanel keeps that snapshot fresh off dockview's `onDidAddPanel`/`onDidRemovePanel` events, no polling. Clicking a row calls `shell.showPanel(id)`, defined in Workspace beside the palette context: an open panel is focused via `setActive`, a closed one is opened by running the palette's own `show:` command (`runCommand('show:'+id, api, paletteCtx)`) - the sidebar carries no second placement policy, so the floating/popout reference guard applies to it too. Because the click happens inside nav, nav is the active panel and the show command would dock a new panel *within* nav's group (a tab in the 256 px sidebar column, found by the round-1 review), so showPanel activates the editor first - the same state a user clicking the editor and then the palette produces; with no editor open, the command's own reference logic takes over. Rows carry `data-panel-row="<id>"` and the list `data-panel-list`; hiding stays palette-only (deliberate: one click path, one hide path).
 
-Seams and evidence: `panelListFor` is unit-tested in catalogue.test.ts (worked example: literal id list, open flags, unknown open ids cannot grow the list). The dock gate gained a live probe - `_walk_dock` clicks the Waterfall row and requires `[data-panel="waterfall"]` to mount, recorded as `sidebar_panel_open`; `verdict()` fails on present-but-not-opened (absent is exempt, the `visible`-key precedent, covered in test_ui_smoke_verdict.py), and a source-parse test pins that the walk still writes the key, so deleting the probe cannot pass silently. Waterfall is excluded from the palette walk's Show loop because an open panel's command is "Hide" - keeping it there would run no command and prove nothing about the palette path (the palette show path is therefore proven for 19 of 20 panels). Round-1 review fixes: the editor pre-activation above; the gate's docstring/comments corrected from "every remaining panel from the palette"; ui_smoke.py gained the AGPL header. Live gate: smoke exit 0, 20/20 tabs, probe opened=true. Known limits: clicking the row of a panel that lives in a popout window activates it in the layout but does not raise the OS window (setActive semantics); the expand/collapse toggle is per render session (defaults open, not persisted with the layout).
+Seams and evidence: `panelListFor` is unit-tested in catalogue.test.ts (worked example: literal id list, open flags, unknown open ids cannot grow the list). The dock gate gained a live probe - `_walk_dock` clicks the Waterfall row and requires `[data-panel="waterfall"]` to mount, recorded as `sidebar_panel_open`; `verdict()` fails on present-but-not-opened (absent is exempt, the `visible`-key precedent, covered in test_ui_smoke_verdict.py), and a source-parse test pins that the walk still writes the key, so deleting the probe cannot pass silently. Waterfall is excluded from the palette walk's Show loop because an open panel's command is "Hide" - keeping it there would run no command and prove nothing about the palette path (the palette show path is therefore proven for 20 of 21 panels, R100's `otel` included). Round-1 review fixes: the editor pre-activation above; the gate's docstring/comments corrected from "every remaining panel from the palette"; ui_smoke.py gained the AGPL header. Live gate: smoke exit 0, 20/20 tabs, probe opened=true. Known limits: clicking the row of a panel that lives in a popout window activates it in the layout but does not raise the OS window (setActive semantics); the expand/collapse toggle is per render session (defaults open, not persisted with the layout).
 
 
 ### R65 - sash affordance (the resize handles nobody could find)
@@ -1758,3 +1758,176 @@ one guard covers both callers. (4) The B attempt above, reverted.
 **Not changed, deliberately:** the drain's 300s bound. Bounding it tighter is a
 semantics change (which tails get dropped) that the ticket text defers to
 operator sign-off; it stays as-is with the overlap, which was the free half.
+
+## R100 — per-conversation OTel recording: switch, attribution, Traces panel
+
+**Problem.** R93-C made spans possible and then left three gaps that made them
+unusable for the stated purpose ("understand what the agent did, in one
+conversation"). (1) The only switch was global, so the choice was record
+everything forever or record nothing — one `chat` span carries 70-113KB of
+prompt, instructions and repository code. (2) No attribution: `gen_ai.
+conversation.id` is pydantic-ai's own UUID7 per run, minted in
+`pydantic-ai`'s own `Conversation.conversation_id` default factory, and no
+CodingDude surface knows it. (3) No
+reader: nothing under `src/codingdude/` touched the store, and `WaterfallPanel`
+is built from the JSONL event trace, not spans.
+
+**Design — three seams, no new dependency.**
+
+1. *Consent* (`tracing.configure_tracing`): `enabled: bool | None` overrides
+   `[telemetry] enabled` per run; `None` means "the config decides". One worker
+   process executes exactly one run (ADR-0002), so per-run consent is
+   per-conversation consent without any mid-process reconfiguration — which
+   matters, because `logfire.configure` cannot be undone once it has installed
+   the global provider and span processor.
+2. *Attribution*: the same call passes `session_id`/`run_id` into logfire's
+   `resource_attributes` (the real parameter name in logfire 5.3.0 — checked
+   against the installed signature, not assumed), so `codingdude.session_id`
+   rides every span in the process: `chat`, `execute_tool`, `invoke_agent` and
+   each delegation.
+3. *Reading* (`codingdude.otel`): JSON-RPC to the running viewer. The DuckDB
+   file is never opened. DuckDB is single-writer and the viewer holds the file
+   read-write for its whole life, so a second process cannot take the lock; the
+   viewer's own guide says to reuse the running process and never stop one you
+   did not start. `GET /openrpc.json` documents the method (`query`, params
+   `{sql, limit}`) and `POST /rpc` serves it — both verified live before the
+   module was written.
+
+**Logic and the two traps the implementation is shaped around.**
+
+- The RPC takes **raw SQL with no parameter binding**, so the session id is the
+  injection boundary: `valid_session_id` allowlists `^[A-Za-z0-9_-]{1,64}$` and
+  the endpoint answers 400 otherwise. Rejecting beats escaping — an escaped
+  value could still name the wrong conversation.
+- `start_time`/`end_time` are UBIGINT **nanoseconds**; 1.79e18 exceeds
+  JavaScript's `2^53`, so the browser would round every timestamp to the nearest
+  256ns. Conversion happens in `_ns_to_iso` (integer arithmetic via `timedelta`,
+  never a float) and the API emits ISO strings plus float seconds.
+- The projection deliberately omits `gen_ai.input.messages`,
+  `gen_ai.output.messages` and `gen_ai.system_instructions`. Tokens, cost and
+  timing answer "what happened"; the message bodies would ship repository code
+  into a browser panel and make it unusable.
+- A viewer that is not running is a *state*: `reachable: false` with the reason,
+  HTTP 200, and the panel explains it. Only an invalid id is a client error.
+- The dot beside the checkbox reports the collector leg separately from the
+  switch, because `BatchSpanProcessor` drops spans on its own thread: an
+  unreachable collector produces a normal-looking run and no traces at all.
+
+**Impact — checked upstream and downstream.**
+
+| touched | upstream (who calls it) | downstream (what it calls) |
+| --- | --- | --- |
+| `tracing.configure_tracing` | `worker.run` only | logfire `configure` + `instrument_pydantic_ai`; contract "never raises, warn once" unchanged |
+| `worker` CLI | `server.start_run` argv | `configure_tracing`; new flag is tri-state so an absent flag keeps old behaviour |
+| `RunIn` / server | the frontend run POST, CLI clients | worker argv; `body.telemetry is None` adds nothing |
+| `config.load_config` | every process | new `viewer_endpoint` degrades to default on a typo — it must not switch tracing off the way a bad `otlp_endpoint` does |
+| `src/codingdude/otel.py` | `telemetry_status`, `session_otel_spans` | httpx POST to the viewer; never the DB file |
+| catalogue/panels | `Workspace` COMPONENTS registry, palette, `panelListFor` | new `otel` topic in `sessionTopics`, gated like `trace` |
+
+Existing seams reused rather than reinvented: `yolo`'s plumbing for the run
+flag, `TopicPanel`+`useSessionData` for the panel, `_test_app`/`fake_popen` for
+the endpoint and argv tests, `validate_otlp_endpoint` for the new URL key.
+
+**Alternatives rejected.** (a) Opening `telemetry.duckdb` directly from the app
+— fails or races the viewer's lock, and would break exactly when a viewer is
+running, i.e. always. (b) Turning tracing on for every run once `enabled = true`
+— that is the status quo that made recording unsustainable. (c) Writing
+`config.toml` from the checkbox — one file write per click, for a decision that
+is per run. (d) A `duckdb` Python dependency — unnecessary weight for a
+read-only view another process already serves.
+
+**Verification (2026-11-18).** Probe through the shipped seam: `configure_tracing
+(cfg, enabled=True, session_id='probe-r100')` → span `codingdude-r100-probe` →
+`otel.session_spans('probe-r100')` returned it with a correct ISO timestamp,
+`duration_s 0.011`, `status unset`, and `session_spans('probe-r100-other')`
+returned 0 (isolation). Both endpoints exercised against the live viewer:
+`/telemetry/status` reported every leg; `/sessions/probe-r100/otel/spans`
+returned HTTP 200 with the span; a 65-character id returned 400. Backend: 70
+tests in the two affected files, ruff clean, mypy clean (84 files). Frontend:
+328 vitest tests, `npm run build` ok.
+
+## #362-#364 - cache policy, dirty build stamp, and the store rule enforced
+
+**Problem.** One concrete symptom - the footer read `ui v0.4.0+541bfb5` while
+`/health` reported `srv cc320f7` - produced three defects. (a) The built
+frontend was mounted as plain `StaticFiles`, which sends no `Cache-Control`, so
+`index.html` (the only file that names the content-hashed assets) fell back to
+heuristic caching and a pinned copy kept asking for filenames that no longer
+existed. (b) `vite.config.js` stamped `git rev-parse --short HEAD` without
+asking whether the tree matched it, so a bundle built from uncommitted code
+advertised a clean commit. (c) "the read path never opens the store" lived in a
+docstring with nothing testing it.
+
+**Design - one seam per defect, no new dependency.**
+
+1. *Cache policy* (`server.cache_control_for`, `_CachedStaticFiles`): the mount
+   states the policy instead of leaving it to the browser. Files under
+   `assets/` are content-hashed, so they are `public, max-age=31536000,
+   immutable`; everything else is `no-cache` - revalidate, not "do not store",
+   so the follow-up 304 keeps it cheap. `StaticFiles.get_response` is the
+   override point; `_frontend_dist()` exists so the mount can be pointed at a
+   throwaway tree instead of requiring a real build.
+2. *Build stamp* (`frontend/buildStamp.js`): `gitSha(exec)` appends `-dirty`
+   when `git status --porcelain` is non-empty and returns `unknown` with a
+   warning when git cannot be run. Extracted from `vite.config.js` so the four
+   states are unit-testable through an injected `exec`.
+3. *The store rule* (`tests/test_otel.py`): the module source is parsed for
+   import statements naming `duckdb`, the read path is executed under a
+   meta-path watcher that records any `import duckdb`, and a negative control
+   proves the watcher fires.
+
+**Review round on this diff (four findings, each verified in the code first).**
+
+- The trace switch was *seeded* from `/telemetry/status` into the same state the
+  persistence effect reads, so the config default was stamped into
+  `localStorage` as if it were a choice and a later `[telemetry] enabled` change
+  could never take effect in that browser - contradicting both the comment
+  beside the persistence effect and the CHANGELOG. The seed is gone:
+  `traceSwitchState` already resolves `null` against the status payload for
+  display, so `null` now genuinely means "the config decides".
+- `traceSwitchState(null, null)` rendered "recording is off for this run" while
+  no override is exactly what lets the config win. It now resolves to an
+  explicit `unknown` state whose text says the config decides.
+- `validate_otlp_endpoint` accepted `http://127.0.0.1:abc` (prefix check only)
+  and `otel.collector_reachable` read `.port` outside its guard, so that value
+  500'd `/telemetry/status` instead of failing as a config error. Validation now
+  reads `.port` and `.hostname` at the seam; the probe catches `ValueError` and
+  answers `False` at its own boundary.
+
+**Impact - checked upstream and downstream.**
+
+| touched | upstream (who calls it) | downstream (what it calls) |
+| --- | --- | --- |
+| `server.cache_control_for` / `_CachedStaticFiles` | the `ui` mount in `create_app` only | `StaticFiles.get_response`; headers only, no routing change |
+| `server._frontend_dist` | `create_app` | `Path` only; identical in production |
+| `frontend/buildStamp.gitSha` | `vite.config.js` define block | `child_process.execSync`; the footer string gains a suffix at most |
+| `config.validate_otlp_endpoint` | `load_config`, both telemetry keys | `urlparse`; a stricter reject degrades to the default, never a boot failure |
+| `otel.collector_reachable` | `/telemetry/status` | `socket.create_connection`; still boolean, never raises |
+| `App.jsx` `otel` state | `Prompt` checkbox, `startRun` | `localStorage`; `null` survives a load, so the config keeps deciding |
+| `otelView.traceSwitchState` | `Prompt` | pure; adds an `unknown` state, no API change |
+
+Seams reused rather than reinvented: `StaticFiles` (overridden, not replaced),
+`_test_app` for the header tests, the existing endpoint parametrisation in
+`tests/test_otel.py`, and `validate_otlp_endpoint` for the config seam.
+
+**Alternatives rejected.** (a) A blanket `no-store` - makes every reload refetch
+hashed assets that can never change. (b) A service worker - heavier than one
+header per response for the same guarantee. (c) `git diff --quiet` instead of
+`status --porcelain` - blind to untracked files, which is exactly the state a
+first build is in. (d) Catching `ValueError` inside `/telemetry/status` - hides
+the cause and leaves a malformed config silent.
+
+**Verification (2026-11-18).** Plain `StaticFiles` over the same files answers
+`cache-control=None` for `/` and `/assets/app-abc123.js`; `_CachedStaticFiles`
+answers `no-cache` and `immutable`, and a conditional request returns 304 with
+the policy intact: 10 tests in `tests/test_static_cache.py`. `npm run build` on
+a dirty tree inlined `Dh="cc320f7-dirty"` as `__GIT_SHA__` in the workspace
+chunk of the built bundle while HEAD was `cc320f7`. With `import duckdb`
+temporarily added to `otel.py` and a stub `duckdb` on `PYTHONPATH`,
+`test_the_module_never_names_duckdb_in_an_import` failed with
+`assert 'duckdb' not in {'__future__', 'datetime', 'duckdb', 'httpx', ...}`;
+reverted, `tests/test_otel.py` passes in full. `urlparse(...).port` raises
+`ValueError` for both `http://127.0.0.1:abc` and `:99999`, and
+`collector_reachable` now answers `False` for each.
+
+

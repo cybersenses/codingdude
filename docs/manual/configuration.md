@@ -261,6 +261,7 @@ OpenTelemetry spans for agent runs, exported to a **local** collector.
 enabled = false                            # off by default
 otlp_endpoint = "http://127.0.0.1:4318"    # any local OTLP/HTTP collector
 service_name = "codingdude"
+viewer_endpoint = "http://127.0.0.1:8000"  # otel-desktop-viewer UI + query API
 ```
 
 This is the other kind of trace, and it answers a different question. The
@@ -286,10 +287,57 @@ how many tokens, how long.
   (`delegate.designer`, `delegate.coder`, …; plain `delegate` when no function
   was requested). Filter spans by agent name to see where the time or the
   tokens actually went.
-- `[telemetry]` is **global only** — it lives in `~/.codingdude/config.toml`,
+- `[telemetry]` is **global** — it lives in `~/.codingdude/config.toml`,
   not in a project `.codingdude.toml`, so one collector serves every project.
 
+#### Per-conversation recording (R100)
+
+`enabled` is a **default, not the last word**. The prompt row carries a `trace`
+checkbox beside `yolo`, and it decides recording for each run:
+
+| how the run was started | what is recorded |
+| --- | --- |
+| chat row, `trace` ticked | spans, for that turn |
+| chat row, `trace` unticked | nothing, even if `enabled = true` |
+| headless CLI / another client | `[telemetry] enabled` |
+
+The checkbox is seeded from `enabled` the first time a browser sees it and is
+then remembered per browser (`localStorage cd-otel`), so a config change still
+reaches a browser that has never touched the switch. Precedence is honest in
+both directions: the switch wins once set, the config decides until then.
+
+Two reasons this is per run rather than global: one `chat` span carries the
+full prompt, the system instructions and the repository code in the tool
+results (70-113KB observed for one request), and a stored span is only useful
+if you can say which conversation it belongs to. So every span also carries
+`codingdude.session_id` and `codingdude.run_id` on its resource, which is what
+makes one conversation isolable.
+
+Beside the checkbox is a dot, and it is deliberately not decoration:
+
+| dot | meaning |
+| --- | --- |
+| grey | recording is off for this run |
+| green | recording is on **and** the collector port is accepting |
+| amber | recording is on but nothing is listening — spans are being dropped |
+
+The amber case is why the dot exists. The exporter is a `BatchSpanProcessor`:
+it drops spans on its own thread, the run completes normally, and without the
+dot a green "tracing on" would be the only signal — a lie.
+
+The **OTel Traces** panel (command palette: `show:otel`) groups the recorded
+spans by `trace_id` for the selected session, with per-trace token and cost
+totals. It reads the store through the running viewer's JSON-RPC (`POST
+/rpc`, method `query`) at `viewer_endpoint`; it never opens the DuckDB file,
+because DuckDB is single-writer and the viewer already holds that lock. A
+viewer that is not running renders as "no viewer answering" — a state, not an
+error, and recording is unaffected.
+
+If you move the viewer's UI port (`--browser-port`), set `viewer_endpoint` to
+match; `otlp_endpoint` is a different port and cannot be queried.
+
 #### Viewing traces: a local collector
+
 
 Traces have no UI of their own — this exports spans to a collector, and you
 need one running. Two self-hosted options fit the local-only constraint
