@@ -156,8 +156,12 @@
   checked `src tests tools` while the `test` job checked `src tests bench.py`,
   so a `bench.py` edit passed every local gate and failed CI — a manufactured
   re-run, and the same shape as the trailing-whitespace incident in R101. Both
-  now check `src tests tools bench.py`. `tests/test_gates_parity.py` failed
-  before the fix, naming `tools` as local-only and `bench.py` as CI-only.
+  now check `src tests tools bench.py`, and the same set was restated two more
+  ways in prose: `CONTRIBUTING.md` and `docs/TECHNICAL-DESIGN-MANUAL.md` both
+  said `src tests`. Those now point at `gates.bat` as the single definition
+  instead of copying the command. `tests/test_gates_parity.py` failed before
+  the fix, naming `tools` as local-only and `bench.py` as CI-only, and it fails
+  if any live doc restates a different set.
 - **One slow Docker daemon could take down the whole test job (#368)**:
   `docker_usable()` ran `docker version`/`docker info` under a 30s timeout and
   caught nothing, so an unhealthy daemon escaped as `TimeoutExpired` instead of

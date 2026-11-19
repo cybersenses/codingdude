@@ -50,6 +50,27 @@ def test_local_gate_and_ci_lint_the_same_targets() -> None:
     assert {"tools", "bench.py"} <= local
 
 
+def test_no_live_doc_restates_a_different_ruff_target_set() -> None:
+    """Mentioning the lint command is fine; mentioning a *different* one is drift.
+
+    code-design.md is deliberately excluded: it is a historical journal whose
+    "gates this round" lines record the command that actually ran at the time,
+    so rewriting them would falsify the record rather than fix a drift.
+    """
+    local = _ruff_targets(ROOT / "gates.bat")
+    live_docs = ("CONTRIBUTING.md", "README.md", "docs/TECHNICAL-DESIGN-MANUAL.md")
+
+    for name in live_docs:
+        path = ROOT / name
+        if not path.exists():
+            continue
+        for captured in re.findall(r"ruff check ([`\w./ -]*)", path.read_text(encoding="utf-8")):
+            restated = {t.strip("`") for t in captured.split() if t.strip("`")}
+            if not restated:
+                continue  # a bare `ruff check` mention states no target set
+            assert restated == local, f"{name} restates the ruff targets as {sorted(restated)}"
+
+
 def test_pytest_is_bounded_so_one_hang_cannot_burn_the_job_cap() -> None:
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
