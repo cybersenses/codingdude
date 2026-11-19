@@ -1783,3 +1783,26 @@ No commit sha is cited here on purpose. A branch sha dangles the moment the PR
 is squash-merged, and this repo has already paid for that lesson once (R99 →
 `db4a652`); the ticket `#366` records the squash commit instead, after the merge.
 
+## R102 — The session ledger held two running totals and no gate — durable state drifted because I carried the value, not the path
+**Status:** done
+
+**What happened.** The scoring ledger was written every turn for four turns, then four turns passed with no entry. Reported total was -4.31; the file on disk said -2.072 and was last written 2026-11-18T16:00 with HEAD at 2026-11-19T11:49.
+
+**Not "I forgot a fact".** The number survived context compaction intact — the summary carried "running total -4.31". What did not survive was the duty to append. A stale total is indistinguishable from a fresh one, so the preserved value aged while still reading as current.
+
+**Four independently closable causes, verified on disk:**
+
+1. **Untracked location.** `.scratch/scorecard.md` is ignored (`.gitignore:23`), so no gate can see it and it is one `git clean -fdx` from deletion. Known open note since R99.
+2. **No freshness stamp.** No `As of:` line, no date on the total. Two days of drift looked like zero.
+3. **Two running totals coexist.** `L41: RUNNING TOTAL: -1.322` was never removed when `L67: RUNNING TOTAL: -2.072` superseded it. The file contradicts itself; the first match wins for any `grep -m1` reader.
+4. **No recompute gate.** `sum(entries) == total` is trivially checkable, and nothing checked it. The sibling comparison first written here was wrong on its strongest clause: the review record is content-addressed and `claim_check` guards docs (both true), but ticket closing shas are **not** ancestry-checked by any tool — `tools` holds only `claim_check.py` and `ui_smoke.py`, and the 260/260 audit was an ad-hoc query, since corrected. The ledger was the one hand-maintained number with no anchor at all.
+
+**Root cause.** Durable state was recorded as a **value** (a number in prose) instead of a **path plus the obligation to recompute it**. A path cannot rot. A number rots silently, and the more confidently it is restated the longer it goes unnoticed. This is the same class as the `update_roadmap_item` insertion-duplication defect: the obsolete statement survives beside its own correction, and nothing detects the divergence.
+
+**Outcome: cancelled, not built.** The scorecard was an experiment to measure memory drift, not a deliverable; its drift was the finding. Gating a retired instrument would also have been the wrong shape — a push-time check fires late, so four turns can pass before it reports staleness.
+- Nothing was created: no tracked ledger document, no per-entry checker tool, no gates or CI line, no test. Ticket `#367` closed as cancelled.
+- The generalisable part left the instrument and became a project rule (note 30): anchor or derive; obligations need a close action; recompute at report time.
+- What survives is the finding: the total cited no path, sha, symbol or line, so `claim_check` — a citation gate — could never see it, and it was the only durable number here with no resolvable anchor.
+
+**Impact.** None on code or gates: no tool, no doc move, no `gates.bat`/`ci.yml` line, no product surface. The retired ledger stays where it was, gitignored; this item exists so the root cause and its closure are durable instead of carried in memory.
+
