@@ -209,6 +209,21 @@ def _dock_tab(page, title: str):
     return None
 
 
+def _activate_tab(page, title: str) -> bool:
+    """Click the dock tab labelled `title`; `False` when the dock has no such tab.
+
+    Activation *is* the state a probe depends on (#333 for Explorer, #372 for
+    Editor), so it is named once instead of spelled as `if tab is not None:
+    tab.click()` in each caller. The caller decides whether a missing tab is a
+    finding or an exemption — this reports, it does not judge.
+    """
+    tab = _dock_tab(page, title)
+    if tab is None:
+        return False
+    tab.click()
+    return True
+
+
 def _panel_banner_selector(panel_id: str) -> str:
     """A panel's own error banner, whether it *is* the panel root or nested in it.
 
@@ -475,6 +490,57 @@ def _no_readme_reason(report: dict) -> str:
     return "README.md not in the explorer — editor never opened"
 
 
+def _dock_state(page) -> dict:
+    """The dock's own account of itself, for a Monaco timeout.
+
+    Read from the live DOM because the classes are dockview's, not ours:
+    `dv-active-group` marks the active group and `dv-active-tab` one tab inside
+    each group (measured on the running app — every group has exactly one
+    active tab, only one group is the active group).
+
+    Never raises: this runs on the failure path, where a second exception would
+    replace the finding with a traceback and lose the report.
+    """
+    try:
+        return page.evaluate(
+            """() => {
+  const active = document.querySelector('.dv-active-group .dv-tab.dv-active-tab');
+  const tabs = [...document.querySelectorAll('.dv-default-tab')]
+    .map((t) => (t.textContent || '').trim());
+  return {
+    active_tab: active ? (active.textContent || '').trim() : null,
+    editor_tab: tabs.indexOf('Editor') !== -1,
+    groups: document.querySelectorAll('.dv-groupview').length,
+    monaco_nodes: document.querySelectorAll('.monaco-editor').length,
+  };
+}"""
+        )
+    except Exception:  # the diagnosis must not outrank the finding
+        return {}
+
+
+def _monaco_timeout_reason(state: dict) -> str:
+    """Why the editor never mounted, in the dock's own terms (pure: the tests drive it).
+
+    #333 recorded "the editor never mounted" — five words that name no cause, so
+    a recurrence costs a whole investigation to place. The dock state does name
+    one: which tab is active, whether an Editor tab exists at all, how many
+    groups there are, and whether any `.monaco-editor` node reached the document.
+    A non-dict `state` (the evaluate failed) still produces a sentence rather
+    than raising on the failure path.
+    """
+    if not isinstance(state, dict):
+        state = {}
+    active = state.get("active_tab") or "none"
+    detail = [
+        f'active tab "{active}"',
+        f"{state.get('groups') or 0} dock group(s)",
+        f"{state.get('monaco_nodes') or 0} .monaco-editor node(s)",
+        "Editor tab present" if state.get("editor_tab") else "NO Editor tab",
+    ]
+    return "the editor never mounted (" + ", ".join(detail) + ")"
+
+
 def _monaco_reflow(page, report: dict, shots: Path | None) -> None:
     """The editor must reflow with its container, not keep the width it had.
 
@@ -497,20 +563,15 @@ def _monaco_reflow(page, report: dict, shots: Path | None) -> None:
     asserts the reflow it can actually reach and records the gap instead of
     faking it.
     """
-    tab = _dock_tab(page, "Editor")
-    if tab is not None:
-        tab.click()
+    if _activate_tab(page, "Editor"):
         page.wait_for_timeout(300)
     # #333: the walk leaves Explorer a background tab, and a dock panel that
     # was never active has not fetched its tree — the README opener then does
     # not exist and this probe recorded "the editor never mounted" on a healthy
     # app. Establish the precondition here rather than inheriting tab order.
-    explorer = _dock_tab(page, "Explorer")
-    if explorer is not None:
-        explorer.click()
-        if not _wait_for_tree(page, timeout_ms=30_000):
-            report["monaco"] = "the explorer tree never loaded"
-            return
+    if _activate_tab(page, "Explorer") and not _wait_for_tree(page, timeout_ms=30_000):
+        report["monaco"] = "the explorer tree never loaded"
+        return
     # Root-level file in the session's workdir, so the explorer has a stable,
     # unambiguous target to open. A workdir with no README.md fails loudly here
     # rather than silently skipping the check.
@@ -519,11 +580,21 @@ def _monaco_reflow(page, report: dict, shots: Path | None) -> None:
         report["monaco"] = _no_readme_reason(report)
         return
     opener.first.click()
+    # #372: the Explorer tab is the active group when the opener is clicked (the
+    # step above made it so), so the file loads into the Editor group while that
+    # group sits in the background. Activating the group that has to render the
+    # editor is the precondition this wait depends on, so make it explicit
+    # instead of inheriting whichever tab the walk left active. It is *not*
+    # proven to be the cause of the recorded timeout — that flake did not
+    # reproduce in 8 gate runs while this was written — which is why a timeout
+    # now reports the dock state rather than repeating five words.
+    if _activate_tab(page, "Editor"):
+        page.wait_for_timeout(300)
     editor = page.locator(".monaco-editor")
     try:
         editor.first.wait_for(timeout=20_000)
     except Exception:  # the gate reports the miss, it does not raise
-        report["monaco"] = "the editor never mounted"
+        report["monaco"] = _monaco_timeout_reason(_dock_state(page))
         return
     page.wait_for_timeout(800)
     before = editor.first.bounding_box()

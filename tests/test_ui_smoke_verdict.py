@@ -35,6 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
 from ui_smoke import (  # noqa: E402
     DOCK_PANELS,
+    _monaco_timeout_reason,
     _no_readme_reason,
     _panel_banner_selector,
     catalogue_panels,
@@ -349,10 +350,71 @@ def test_monaco_probe_establishes_its_own_explorer_precondition():
         Path(__file__).resolve().parents[1] / "tools" / "ui_smoke.py"
     ).read_text(encoding="utf-8")
     reflow = src[src.index("def _monaco_reflow") : src.index("def _monaco_followed")]
-    assert '_dock_tab(page, "Explorer")' in reflow
+    assert '_activate_tab(page, "Explorer")' in reflow
     assert "_wait_for_tree(" in reflow
     # The precondition check comes before the README lookup, or it is theatre.
     assert reflow.index("_wait_for_tree(") < reflow.index('button[title="README.md"]')
+
+
+def test_monaco_probe_activates_the_editor_group_after_the_file_click():
+    """#372: the file lands in a background Editor group.
+
+    Activating Explorer makes *Explorer* the active group, so `openFile` loads
+    the file into the Editor group with that group in the background. Whether
+    that is what timed the wait out is unproven — the flake did not reproduce in
+    8 gate runs — so what this locks is the precondition and its ordering: the
+    Editor is activated after the click and before the wait, and a timeout
+    diagnoses itself. A later tidy-up that moves the click back behind the wait
+    would silently restore the flake, which is why the order is asserted.
+    """
+    src = (
+        Path(__file__).resolve().parents[1] / "tools" / "ui_smoke.py"
+    ).read_text(encoding="utf-8")
+    reflow = src[src.index("def _monaco_reflow") : src.index("def _monaco_followed")]
+    click = reflow.index("opener.first.click()")
+    activate = reflow.index('_activate_tab(page, "Editor")', click)
+    wait = reflow.index("editor.first.wait_for(", activate)
+    assert click < activate < wait
+    # A timeout must diagnose itself, not repeat five words that name no cause.
+    assert "_monaco_timeout_reason(_dock_state(page))" in reflow
+
+
+def test_monaco_timeout_reason_names_the_dock_state():
+    """#372: a Monaco timeout has to say what the dock looked like.
+
+    With no cause in the record, the only way to place a recurrence is to
+    reproduce it by hand. The classes read here are dockview's own, verified on
+    the running app: `dv-active-group` marks the active group, `dv-active-tab`
+    one tab inside each group.
+    """
+    state = {
+        "active_tab": "Explorer",
+        "editor_tab": True,
+        "groups": 5,
+        "monaco_nodes": 0,
+    }
+    reason = _monaco_timeout_reason(state)
+    assert reason.startswith("the editor never mounted (")
+    assert 'active tab "Explorer"' in reason
+    assert "0 .monaco-editor node(s)" in reason
+    assert "Editor tab present" in reason
+    # A closed editor names itself rather than reporting a generic miss.
+    gone = _monaco_timeout_reason({**state, "editor_tab": False})
+    assert "NO Editor tab" in gone
+    # No active tab (the race this gate exists for) still reads as a sentence.
+    assert 'active tab "none"' in _monaco_timeout_reason({**state, "active_tab": None})
+    # The failure path cannot raise: a failed evaluate hands back `{}`.
+    assert "the editor never mounted (" in _monaco_timeout_reason({})
+
+
+def test_monaco_timeout_string_still_fails_the_gate():
+    """#372 acceptance: the diagnosed reason is still a failure, not a pass.
+
+    The reason text gained detail; `verdict` fails any non-dict `monaco`, so a
+    run that could not measure the reflow stays red whatever the sentence says.
+    """
+    reason = _monaco_timeout_reason({"active_tab": "Editor", "editor_tab": True})
+    assert verdict(dock_report(monaco=reason)) == 1
 
 
 # ---- R88 #331: the closed-path View probe ------------------------------------
