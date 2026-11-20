@@ -165,9 +165,10 @@
   the reaper reads the worker log tail — when it says this run dropped its
   terminal, the RUN_ERROR reads "finished, but its terminal event was lost …
   the work is persisted" with no `stderr:` clause instead of quoting MCP banner
-  bytes as a cause. The runs row stays `failed` (the enum has no "unknown
-  outcome" state, and `completed` would claim a success nobody observed), but
-  the cause is now durable in the log and in the message. `serve()` also pins
+  bytes as a cause. The runs row becomes `interrupted` rather than `failed`
+  (the value a cancelled run already uses for "ended without a delivered
+  terminal"), because the work is on disk and calling that a failure is a claim
+  nobody observed either. `serve()` also pins
   `ws_ping_interval`/`ws_ping_timeout` at 20s each, so the timeout that decides
   when a stalled worker loses its channel is a declared number rather than a
   framework default — and the worker log path now comes from `config_home()`

@@ -210,13 +210,14 @@ async def _reap_worker(channel, db: 'Database | None' = None) -> None:
     log.info(
         'WORKER_EXITED run=%s worker_pid=%s exit=%s terminal_seen=%s',
         channel.run_id, worker.pid, worker.returncode, channel.saw_terminal())
+    # #369: one read of the worker log decides both the durable row and the
+    # RUN_ERROR below, so the two surfaces cannot disagree about the death.
+    terminal_lost = (
+        not channel.saw_terminal()
+        and _terminal_was_dropped(channel.session_id, channel.run_id))
     if db is not None:
-        # The runs status stays 'failed': the enum has no "unknown outcome"
-        # state and 'completed' would claim a success nobody observed. The cause
-        # is durable in the log lines below and in the RUN_ERROR message, so the
-        # row is a non-clean end, not a silent crash (#369).
         db.record_run_end(
-            channel.run_id, _terminal_status(channel),
+            channel.run_id, _terminal_status(channel, terminal_lost=terminal_lost),
             exit_code=worker.returncode)
     if not channel.saw_terminal():
         stderr_tail = _read_tail(channel.stderr_path)
@@ -224,7 +225,7 @@ async def _reap_worker(channel, db: 'Database | None' = None) -> None:
             log.warning(
                 'WORKER_STDERR run=%s worker_pid=%s tail: %s',
                 channel.run_id, worker.pid, stderr_tail)
-        if _terminal_was_dropped(channel.session_id, channel.run_id):
+        if terminal_lost:
             log.warning(
                 'WORKER_TERMINAL_LOST run=%s worker_pid=%s exit=%s — worker log '
                 'says it finished and could not deliver its terminal event',
@@ -349,8 +350,14 @@ def _trace_tail_lines(trace_file: Path, limit: int) -> list[str]:
             window *= 4
 
 
-def _terminal_status(channel) -> str:
-    """Durable end-state for the runs row, derived from channel history."""
+def _terminal_status(channel, *, terminal_lost: bool = False) -> str:
+    """Durable end-state for the runs row, derived from channel history.
+
+    #369: `terminal_lost` is the worker telling us it finished and could not
+    deliver its terminal event. That row is 'interrupted' -- the value a
+    cancelled run already uses for "ended without a delivered terminal" -- not
+    'failed', which would call work that landed a failure.
+    """
     terminals = [e['type'] for e in channel.history
                  if e['type'] in TERMINAL_EVENTS]
     if terminals and terminals[-1] == 'RUN_FINISHED':
@@ -359,6 +366,8 @@ def _terminal_status(channel) -> str:
         # 'cancelled' is not in the runs CHECK constraint (db.py) — mapping to
         # 'interrupted' keeps record_run_end from crashing the reaper on every
         # user-cancelled run.
+        return 'interrupted'
+    if terminal_lost:
         return 'interrupted'
     return 'failed'
 

@@ -25,8 +25,19 @@ dead run indefinitely.
 import asyncio
 import sqlite3
 
+import pytest
+
 from codingdude.db import Database
 from codingdude.server import RunChannel, _reap_worker, _run_janitor
+
+
+@pytest.fixture(autouse=True)
+def _isolate_config_home(tmp_path, monkeypatch):
+    """#369: the reaper reads <config home>/logs/worker-<session>.log, so a test
+    that leaves `config_home` on the operator's real home would let a stray log
+    file decide a run's status."""
+    import codingdude.server as srv
+    monkeypatch.setattr(srv, 'config_home', lambda: tmp_path)
 
 
 class FakeWorker:
@@ -255,6 +266,8 @@ async def test_reap_worker_reports_terminal_lost_not_a_crash(tmp_path, monkeypat
     # The stderr tail on this path is MCP banner noise; it must not be offered
     # as the cause of a run that finished.
     assert 'stderr' not in err['message'].lower(), err['message']
+    # #369: the durable row must not call landed work a failure either.
+    assert db.get_run('runX')['status'] == 'interrupted'
 
 
 async def test_reap_worker_ignores_a_drop_marker_from_another_run(tmp_path, monkeypatch):
@@ -271,6 +284,7 @@ async def test_reap_worker_ignores_a_drop_marker_from_another_run(tmp_path, monk
     err = [e for e in ch.history if e['type'] == 'RUN_ERROR'][0]
     assert err['code'] == 'worker_died', err
     assert 'exited unexpectedly' in err['message'], err['message']
+    assert db.get_run('runX')['status'] == 'failed'
 
 
 async def test_reap_worker_omits_stderr_clause_when_stderr_is_only_mcp_noise(tmp_path):
