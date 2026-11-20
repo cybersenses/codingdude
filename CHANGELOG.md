@@ -5,19 +5,41 @@
 ### Added
 
 - **Human-in-the-loop repo map, foundation (#375, R103)**: the map comes from
-  floorplan, a node skill that draws a repo map and never calls a model, so the
-  integration is a process boundary rather than a re-implementation.
-  `src/codingdude/floorplan.py` is that whole boundary at this stage: locate
-  the skill (explicit path, then `CODINGDUDE_FLOORPLAN_HOME`, then a vendored
-  copy), run its scanner and builder with `--json --unattended` under a
-  timeout, and hand back their receipts. A missing skill, a missing node and a
-  timeout are all readable reasons, never an escaping exception: the map is an
-  aid, never a precondition for a run. Two shapes were measured rather than
-  assumed - the `--json` receipt carries `counts` plus repo and skip lists,
-  while the `scan.json` it writes carries the graph - so sizes come from the
-  graph and fall back to the receipt. Nineteen tests; the integration one
-  drives the real scanner over a fixture repo and is skipped when floorplan is
-  not installed.
+  floorplan, an upstream node project that draws a repo map and never calls a
+  model, so the integration is a process boundary rather than a
+  re-implementation. `src/codingdude/floorplan.py` is that whole boundary at
+  this stage: locate it (explicit path, then `CODINGDUDE_FLOORPLAN_HOME`, then
+  the copy vendored at `vendor/floorplan`), run its scanner and builder with
+  `--json --unattended` under a timeout, and hand back their receipts. The
+  payload ships with the repo rather than resolving from a path, because a core
+  surface must not be absent by default: `vendor/floorplan` is pinned to
+  upstream commit 94f81b4, with a checksum file that a test re-hashes, so an
+  upstream update cannot drift from its stated pin in silence. A missing copy, a
+  missing node and a timeout are all readable reasons, never an escaping
+  exception: the map is an aid, never a precondition for a run. Two shapes were
+  measured rather than assumed - the `--json` receipt carries `counts` plus repo
+  and skip lists, while the scan artifact it writes carries the graph - so sizes
+  come from the graph and fall back to the receipt. Twenty tests; the
+  integration one drives the real scanner over a fixture repo.
+
+- **The map gets its own panel (#377, R103)**: a catalogue panel (`map`,
+  `renderer: 'always'`) rather than an artifact card, and the reason is
+  mechanical. floorplan's output is a JavaScript app - 2.6 MB with the ELK
+  layout engine and the fonts inlined, so it loads nothing and works offline -
+  while the Artifacts viewer runs every artifact under `sandbox=""`, scripts
+  disabled. Widening that shared viewer to `allow-scripts` would hand script
+  execution to every artifact ever emitted, including chat-authored HTML, so
+  the map declares its own sandbox instead: `allow-scripts`, and deliberately
+  not `allow-same-origin`, which leaves the frame on an opaque origin that
+  cannot reach this app's DOM, storage or session cookie. The page is served by
+  `GET /sessions/{id}/map` from the project's own floorplan output directory
+  rather than carried as a payload - the artifacts endpoint is polled, so a
+  payload route would re-serialize 2.6 MB continuously - with `no-cache` so a
+  rebuild reaches the frame without a hard refresh, while `/map/state` answers
+  "is there a map" in JSON because a sandboxed frame reports no load failure to
+  its parent. Absent from `DEFAULT_PRESET` on purpose: reachable from the
+  sidebar and the palette like graph/planning/notes, and a 2.6 MB page is not
+  first-boot work.
 
 ### Fixed
 

@@ -109,6 +109,9 @@ DOCK_PANELS = {
     "config": "Config",
     "standards": "Standards",
     "processes": "Processes",
+    # R103 #377: the architecture map. Homonym warning for the gate: the *Graph*
+    # panel's banner is the call graph, this one is floorplan's map.
+    "map": "Architecture map",
 }
 PLACEHOLDER = "Select a session to see diffs, files, cost and trace."
 # The panels the default preset mounts on boot (catalogue.ts DEFAULT_PRESET);

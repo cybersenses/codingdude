@@ -13,8 +13,8 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-"""R103: the floorplan node boundary — locate the skill, run its headless
-scripts, hand back their receipts.
+"""R103: the floorplan boundary — locate floorplan, run its headless scripts,
+hand back their receipts.
 
 floorplan (`haydenschmitty/floorplan`, MIT, zero npm deps) draws a map of a
 repo. It never calls a model: a model writes `architecture.json`,
@@ -23,9 +23,13 @@ So the integration is a process boundary, not a re-implementation — no
 analysis logic lives here, only locate -> run -> validate -> report.
 
 Bounded by construction (#368's class): every call has a timeout and a timeout
-is a readable failure, never an escaping `TimeoutExpired`. A missing skill or a
+is a readable failure, never an escaping `TimeoutExpired`. A missing copy or a
 missing node is a readable reason, never an import-time or run-time crash — the
 map is an aid, never a precondition for the run.
+
+The payload ships with the repo (`vendor/floorplan`, pinned; see its
+`VENDORED.md`), so this is a core capability with no configuration step: the
+resolution order below is explicit > env > vendored, never "absent by default".
 
 Its scanner is heuristic. On this repo in 2026-11-20 it reported a HIGH
 "unprotected-endpoint" finding for an app whose 82 authorizing routes carry
@@ -50,9 +54,14 @@ SCAN_TIMEOUT = 120
 BUILD_TIMEOUT = 180
 PROBE_TIMEOUT = 15
 
-#: The scripts this adapter drives. `query-cli.mjs` is the query API the
-#: `map_query` tool wraps (#378); it is checked here so a half-copied skill is
-#: rejected once, at locate time, instead of failing three different ways.
+#: The scripts this adapter drives, and the only ones that must exist for the
+#: copy to count as usable: a half-copied payload is rejected once, at locate
+#: time, instead of failing three different ways.
+#:
+#: `query.mjs` is deliberately absent: `build.mjs` generates it into the map
+#: output dir from `assets/query-cli.mjs`, so it exists only after a build. The
+#: `map_query` tool (#378) reads it from there — requiring it here would reject
+#: every fresh copy.
 REQUIRED_SCRIPTS = ('scan.mjs', 'build.mjs')
 
 
@@ -91,15 +100,16 @@ class BuildResult:
 
 
 def _vendor_default() -> Path:
-    """`<repo>/vendor/floorplan` — only used when the skill has been vendored."""
+    """`<repo>/vendor/floorplan` — the pinned copy this repo ships."""
     return Path(__file__).resolve().parents[2] / 'vendor' / 'floorplan'
 
 
-def _skills_dir(candidate: Path) -> Path | None:
-    """The skills dir under `candidate`, or None when it is not one.
+def _floorplan_dir(candidate: Path) -> Path | None:
+    """The directory holding floorplan's scripts under `candidate`, or None.
 
     Both shapes are accepted because both are natural to point at: the
-    floorplan checkout itself, or its `skills/floorplan` directory.
+    floorplan checkout itself, or the `skills/floorplan` directory upstream
+    packages its scripts in (a plain directory here — our copy is not a skill).
     """
     for base in (candidate, candidate / 'skills' / MAP_DIRNAME):
         if all((base / 'scripts' / name).is_file() for name in REQUIRED_SCRIPTS):
@@ -124,7 +134,7 @@ def floorplan_home(explicit: str | Path | None = None) -> Path | None:
         candidates.append(Path(raw))
     candidates.append(_vendor_default())
     for candidate in candidates:
-        found = _skills_dir(candidate)
+        found = _floorplan_dir(candidate)
         if found is not None:
             return found
     return None
@@ -133,9 +143,9 @@ def floorplan_home(explicit: str | Path | None = None) -> Path | None:
 def unavailable_reason() -> str:
     """The message a caller shows when no floorplan checkout was found."""
     return (
-        'floorplan is not available: no checkout was found. Set '
-        f'{ENV_VAR} to a floorplan repo (or its skills/floorplan dir), or '
-        f'vendor it at {_vendor_default()}. '
+        'floorplan is not available: no copy was found. Expected the vendored '
+        f'copy at {_vendor_default()} (see its VENDORED.md), or a checkout '
+        f'named by {ENV_VAR}. '
         'The map is an aid — everything else works without it.'
     )
 
@@ -150,11 +160,26 @@ def node_binary() -> str | None:
     return shutil.which('node')
 
 
+def map_page(workdir: str | Path) -> Path:
+    """`<workdir>/floorplan/index.html` — where a build puts the map (#377).
+
+    One definition, because three places depend on the layout: the build itself,
+    the server route that serves the page to the Map panel, and the query tool
+    that reads the graph written beside it.
+    """
+    return Path(workdir) / MAP_DIRNAME / 'index.html'
+
+
+def map_graph(workdir: str | Path) -> Path:
+    """`<workdir>/floorplan/graph.json` — the data behind the map (#378)."""
+    return Path(workdir) / MAP_DIRNAME / 'graph.json'
+
+
 async def available(probe_timeout: int = PROBE_TIMEOUT) -> tuple[bool, str]:
     """(usable, detail) — node answering, and a floorplan checkout to drive."""
     node = node_binary()
     if node is None:
-        return False, 'node is not on PATH (floorplan is a node skill)'
+        return False, 'node is not on PATH — floorplan needs Node 18 or newer (https://nodejs.org)'
     cap = await run_captured([node, '--version'], cwd=Path.cwd(), timeout=probe_timeout)
     if cap is None:
         return False, f'node did not answer --version within {probe_timeout}s'
@@ -263,8 +288,8 @@ async def scan(
     if node_binary() is None:
         return ScanResult(
             ok=False,
-            error='node is not on PATH — floorplan is a node skill '
-                  '(https://nodejs.org, node >= 18)',
+            error='node is not on PATH — floorplan needs Node 18 or newer '
+                  '(https://nodejs.org)',
             scan_path=scan_path)
     cap, _ = await _run_script(
         resolved, 'scan.mjs',
@@ -312,8 +337,8 @@ async def build(
     if node_binary() is None:
         return BuildResult(
             ok=False, index_html=index_html, graph_json=graph_json,
-            error='node is not on PATH — floorplan is a node skill '
-                  '(https://nodejs.org, node >= 18)')
+            error='node is not on PATH — floorplan needs Node 18 or newer '
+                  '(https://nodejs.org)')
     argv = [str(workdir), '--out', str(out_dir), '--json', '--unattended']
     arch_path = Path(arch) if arch is not None else Path(workdir) / MAP_DIRNAME / 'architecture.json'
     if arch_path.is_file():

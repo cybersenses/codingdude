@@ -13,12 +13,13 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-"""R103 #375: the floorplan node boundary — bounded, degrading, never a hang.
+"""R103 #375: the floorplan boundary — bounded, degrading, never a hang.
 
 The mocked seam is the real one: `floorplan.run_captured` is the subprocess
 boundary, so the unit tests are about *our* decisions (which argv, what a
-timeout means, what a missing skill means), not about floorplan's scanner.
-One integration test runs the real thing and skips when it is absent.
+timeout means, what a missing copy means), not about floorplan's scanner.
+The integration test runs the real thing, skipped only when the vendored copy
+or node is genuinely absent.
 """
 
 import json
@@ -31,11 +32,16 @@ from codingdude import floorplan
 from codingdude.tools import Captured
 
 
-def _skill_tree(root: Path) -> Path:
-    """A fake floorplan skills dir: the three scripts, no node needed."""
+def _copy_tree(root: Path) -> Path:
+    """A fake floorplan copy: the two required scripts, no node needed.
+
+    Laid out the way upstream packages it (`skills/floorplan/`), because that
+    is one of the two shapes `floorplan_home` accepts. Nothing here is a skill
+    — the directory name is upstream's, not ours.
+    """
     scripts = root / 'skills' / 'floorplan' / 'scripts'
     scripts.mkdir(parents=True)
-    for name in ('scan.mjs', 'build.mjs', 'query-cli.mjs'):
+    for name in floorplan.REQUIRED_SCRIPTS:
         (scripts / name).write_text('// stub\n', encoding='utf-8')
     return root / 'skills' / 'floorplan'
 
@@ -108,30 +114,58 @@ def _graph(files: int = 3, edges: int = 2, routes: int = 1,
 # --- location ---------------------------------------------------------------
 
 def test_home_prefers_the_explicit_path_over_env_and_vendor(tmp_path, monkeypatch):
-    explicit = _skill_tree(tmp_path / 'explicit')
-    from_env = _skill_tree(tmp_path / 'from-env')
+    explicit = _copy_tree(tmp_path / 'explicit')
+    from_env = _copy_tree(tmp_path / 'from-env')
     monkeypatch.setenv(floorplan.ENV_VAR, str(from_env))
     assert floorplan.floorplan_home(explicit) == explicit
 
 
 def test_home_falls_back_to_the_env_var(tmp_path, monkeypatch):
-    from_env = _skill_tree(tmp_path / 'from-env')
+    from_env = _copy_tree(tmp_path / 'from-env')
     monkeypatch.setenv(floorplan.ENV_VAR, str(from_env))
     assert floorplan.floorplan_home() == from_env
 
 
 def test_home_accepts_a_repo_root_and_finds_skills_inside_it(tmp_path, monkeypatch):
-    repo = _skill_tree(tmp_path / 'fp-repo')
+    repo = _copy_tree(tmp_path / 'fp-repo')
     monkeypatch.delenv(floorplan.ENV_VAR, raising=False)
     # The checkout root is as legitimate a thing to point at as the skills dir.
     assert floorplan.floorplan_home(repo.parent.parent) == repo
 
 
 def test_home_is_none_when_nothing_carries_the_scripts(tmp_path, monkeypatch):
+    """No env var, no vendored copy: the honest "nothing to drive" case.
+
+    The vendored default is neutralised explicitly — since `vendor/floorplan`
+    ships with the repo, "point the env var at an empty dir" would now fall
+    through to a real copy and test the wrong thing.
+    """
     empty = tmp_path / 'empty'
     empty.mkdir()
     monkeypatch.setenv(floorplan.ENV_VAR, str(empty))
+    monkeypatch.setattr(floorplan, '_vendor_default', lambda: tmp_path / 'no-vendor')
     assert floorplan.floorplan_home() is None
+
+
+def test_the_vendored_copy_is_the_default_and_matches_its_checksums(monkeypatch):
+    """Core, not optional: with no argument and no env var, the repo's own
+    pinned copy is what resolves — and its CHECKSUMS file still describes it,
+    so an upstream update that forgets to regenerate that file fails here
+    instead of shipping a copy that silently differs from its stated pin."""
+    import hashlib
+
+    monkeypatch.delenv(floorplan.ENV_VAR, raising=False)
+    home = floorplan.floorplan_home()
+    assert home == floorplan._vendor_default()
+    lines = (home / 'CHECKSUMS.sha256').read_text(encoding='utf-8').splitlines()
+    assert len(lines) > 50, f'only {len(lines)} checksum lines'
+    mismatched = []
+    for line in lines:
+        expected, rel = line.split('  ', 1)
+        actual = hashlib.sha256((home / rel).read_bytes()).hexdigest()
+        if actual != expected:
+            mismatched.append(rel)
+    assert mismatched == []
 
 
 def test_unavailable_reason_names_the_knobs_a_reader_can_turn():
@@ -143,7 +177,7 @@ def test_unavailable_reason_names_the_knobs_a_reader_can_turn():
 # --- scan -------------------------------------------------------------------
 
 async def test_scan_runs_headless_with_json_and_unattended(tmp_path, monkeypatch):
-    home = _skill_tree(tmp_path / 'fp')
+    home = _copy_tree(tmp_path / 'fp')
     recorder = _Recorder(stdout=_scan_receipt())
     monkeypatch.setattr(floorplan, 'run_captured', recorder)
     await floorplan.scan(tmp_path, tmp_path / 'out', home=home)
@@ -154,7 +188,7 @@ async def test_scan_runs_headless_with_json_and_unattended(tmp_path, monkeypatch
 
 
 async def test_scan_reports_the_graph_counts_from_the_scan_artifact(tmp_path, monkeypatch):
-    home = _skill_tree(tmp_path / 'fp')
+    home = _copy_tree(tmp_path / 'fp')
     monkeypatch.setattr(floorplan, 'run_captured',
                         _Recorder(stdout=_scan_receipt(files=621, routes=88),
                                   graph=_graph(files=621, edges=848, routes=88,
@@ -169,7 +203,7 @@ async def test_scan_falls_back_to_the_receipts_counts(tmp_path, monkeypatch):
     """No scan.json on disk (a scan that stopped early): the printed receipt
     still answers the two questions it can, and the graph-only counts are 0
     rather than invented."""
-    home = _skill_tree(tmp_path / 'fp')
+    home = _copy_tree(tmp_path / 'fp')
     monkeypatch.setattr(floorplan, 'run_captured',
                         _Recorder(stdout=_scan_receipt(files=7, routes=2)))
     result = await floorplan.scan(tmp_path, tmp_path / 'out', home=home)
@@ -179,7 +213,7 @@ async def test_scan_falls_back_to_the_receipts_counts(tmp_path, monkeypatch):
 
 
 async def test_scan_timeout_names_the_bound_instead_of_raising(tmp_path, monkeypatch):
-    home = _skill_tree(tmp_path / 'fp')
+    home = _copy_tree(tmp_path / 'fp')
     monkeypatch.setattr(floorplan, 'run_captured', _Recorder(timeout=True))
     result = await floorplan.scan(tmp_path, tmp_path / 'out', home=home, timeout=7)
     assert result.ok is False
@@ -187,7 +221,7 @@ async def test_scan_timeout_names_the_bound_instead_of_raising(tmp_path, monkeyp
 
 
 async def test_scan_failure_carries_floorplan_stderr(tmp_path, monkeypatch):
-    home = _skill_tree(tmp_path / 'fp')
+    home = _copy_tree(tmp_path / 'fp')
     monkeypatch.setattr(floorplan, 'run_captured',
                         _Recorder(code=1, stderr='no files at all'))
     result = await floorplan.scan(tmp_path, tmp_path / 'out', home=home)
@@ -196,7 +230,7 @@ async def test_scan_failure_carries_floorplan_stderr(tmp_path, monkeypatch):
 
 
 async def test_scan_without_a_receipt_is_a_readable_error(tmp_path, monkeypatch):
-    home = _skill_tree(tmp_path / 'fp')
+    home = _copy_tree(tmp_path / 'fp')
     monkeypatch.setattr(floorplan, 'run_captured',
                         _Recorder(code=0, stdout='scanning... done'))
     result = await floorplan.scan(tmp_path, tmp_path / 'out', home=home)
@@ -206,13 +240,14 @@ async def test_scan_without_a_receipt_is_a_readable_error(tmp_path, monkeypatch)
 
 async def test_scan_without_floorplan_returns_the_reason(tmp_path, monkeypatch):
     monkeypatch.setenv(floorplan.ENV_VAR, str(tmp_path / 'nope'))
+    monkeypatch.setattr(floorplan, '_vendor_default', lambda: tmp_path / 'no-vendor')
     result = await floorplan.scan(tmp_path, tmp_path / 'out')
     assert result.ok is False
     assert floorplan.ENV_VAR in result.error
 
 
 async def test_scan_without_node_says_so(tmp_path, monkeypatch):
-    home = _skill_tree(tmp_path / 'fp')
+    home = _copy_tree(tmp_path / 'fp')
     monkeypatch.setattr(floorplan, 'node_binary', lambda: None)
     result = await floorplan.scan(tmp_path, tmp_path / 'out', home=home)
     assert result.ok is False
@@ -222,7 +257,7 @@ async def test_scan_without_node_says_so(tmp_path, monkeypatch):
 # --- build ------------------------------------------------------------------
 
 async def test_build_keeps_every_warning_verbatim(tmp_path, monkeypatch):
-    home = _skill_tree(tmp_path / 'fp')
+    home = _copy_tree(tmp_path / 'fp')
     warnings = [
         'node "worker" path "src/codingdude/engine_entry.py" matches no included file',
         'node "gates" path "src/codingdude/claim_check.py" matches no included file',
@@ -237,7 +272,7 @@ async def test_build_keeps_every_warning_verbatim(tmp_path, monkeypatch):
 
 
 async def test_build_exit_1_is_reported_with_its_errors(tmp_path, monkeypatch):
-    home = _skill_tree(tmp_path / 'fp')
+    home = _copy_tree(tmp_path / 'fp')
     monkeypatch.setattr(floorplan, 'run_captured',
                         _Recorder(code=1,
                                   stdout=_build_receipt(ok=False,
@@ -248,7 +283,7 @@ async def test_build_exit_1_is_reported_with_its_errors(tmp_path, monkeypatch):
 
 
 async def test_build_points_at_the_files_it_wrote(tmp_path, monkeypatch):
-    home = _skill_tree(tmp_path / 'fp')
+    home = _copy_tree(tmp_path / 'fp')
     monkeypatch.setattr(floorplan, 'run_captured',
                         _Recorder(stdout=_build_receipt()))
     out = tmp_path / 'out'
@@ -279,10 +314,10 @@ async def test_scan_a_fixture_repo_with_the_real_node(tmp_path):
 
 
 @pytest.mark.skipif(shutil.which('node') is None, reason='node is not installed')
-async def test_available_probes_node_and_names_the_skill(tmp_path, monkeypatch):
-    """The node probe runs for real (bounded); the skill is stubbed so the test
-    does not depend on a floorplan checkout being installed."""
-    home = _skill_tree(tmp_path / 'fp')
+async def test_available_probes_node_and_names_the_copy(tmp_path, monkeypatch):
+    """The node probe runs for real (bounded); the copy is stubbed so the test
+    does not depend on the vendored checkout being present."""
+    home = _copy_tree(tmp_path / 'fp')
     monkeypatch.setattr(floorplan, 'floorplan_home', lambda *a, **k: home)
     ok, detail = await floorplan.available()
     assert ok is True, detail

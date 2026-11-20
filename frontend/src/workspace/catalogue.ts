@@ -37,7 +37,7 @@ export const GEOMETRY = {
 export type PanelId = 'nav' | 'explorer' | 'editor' | 'chat' | 'diff' | 'graph'
   | 'planning' | 'artifacts' | 'notes' | 'renders' | 'terminal' | 'output'
   | 'waterfall' | 'trace' | 'otel' | 'cost' | 'memory' | 'mcp' | 'config'
-  | 'standards' | 'processes'
+  | 'standards' | 'processes' | 'map'
 
 export interface PanelSpec {
   /** Stable id: persisted in saved layouts (P3) and used as the dockview panel id. */
@@ -87,6 +87,15 @@ export const PANELS: readonly PanelSpec[] = [
   { id: 'config', title: 'Config', component: 'config', renderer: 'always' },
   { id: 'standards', title: 'Standards', component: 'standards', renderer: 'always' },
   { id: 'processes', title: 'Processes', component: 'processes' },
+  // R103 #377: the architecture map, on a surface of its own. The Artifacts
+  // viewer runs every artifact with scripts disabled (`sandbox=""`), and
+  // floorplan's page is a JavaScript app, so it cannot render there — loosening
+  // that shared viewer would give script execution to every artifact instead.
+  // Deliberately absent from DEFAULT_PRESET: reachable from the sidebar and the
+  // palette like graph/planning/notes, and a 2.6 MB page is not first-boot work.
+  // `renderer: 'always'` keeps it mounted, so switching tabs does not re-run the
+  // layout and lose the reader's zoom.
+  { id: 'map', title: 'Map', component: 'map', renderer: 'always' },
 ]
 
 export function panelSpec(id: string): PanelSpec | undefined {

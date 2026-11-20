@@ -43,7 +43,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -859,6 +859,68 @@ def create_app(
                 yield f'data: {json.dumps(event)}\n\n'
 
         return StreamingResponse(sse(), media_type='text/event-stream')
+
+    def _map_absent_reason() -> str:
+        """Why the Map panel has nothing to show (#377).
+
+        Names the file it looked for, because "no map yet" alone sends the
+        reader looking in the wrong place — floorplan writes into the scanned
+        project, not into our home dir.
+        """
+        from .floorplan import MAP_DIRNAME
+
+        return (
+            'no map has been built for this project yet: expected '
+            f'{MAP_DIRNAME}/index.html at the project root. '
+            'Ask the agent to build the map.'
+        )
+
+    @app.get('/sessions/{session_id}/map/state')
+    def session_map_state(session_id: str, _: None = Depends(authorize)) -> dict:
+        """Whether this project has a built map, and how big it is (#377).
+
+        The panel asks this before setting an iframe src: a sandboxed frame
+        reports no load failure to its parent, so without a JSON answer the
+        empty state would be a silent blank rectangle.
+        """
+        workdir = db.session_workdir(session_id)
+        if not workdir:
+            raise HTTPException(status_code=404, detail='no such session')
+        from .floorplan import MAP_DIRNAME, map_page
+
+        page = map_page(workdir)
+        if not page.is_file():
+            return {'built': False, 'reason': _map_absent_reason(),
+                    'path': None, 'bytes': 0, 'built_at': None}
+        stat = page.stat()
+        return {
+            'built': True,
+            'reason': '',
+            'path': f'{MAP_DIRNAME}/index.html',
+            'bytes': stat.st_size,
+            'built_at': datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat(),
+        }
+
+    @app.get('/sessions/{session_id}/map')
+    def session_map(session_id: str, _: None = Depends(authorize)) -> FileResponse:
+        """The built map itself (#377), served as a file rather than a payload.
+
+        It is one self-contained page (2.6 MB, ELK and the fonts inlined, so it
+        fetches nothing and works offline). Serving it beats shipping it through
+        the artifacts JSON, which is polled and would re-serialize it each time;
+        this also keeps the frame's origin away from the app's own document.
+        """
+        workdir = db.session_workdir(session_id)
+        if not workdir:
+            raise HTTPException(status_code=404, detail='no such session')
+        from .floorplan import map_page
+
+        page = map_page(workdir)
+        if not page.is_file():
+            raise HTTPException(status_code=404, detail=_map_absent_reason())
+        return FileResponse(
+            page, media_type='text/html', headers={'cache-control': 'no-cache'}
+        )
 
     @app.post('/artifacts/{artifact_id}/respond')
     def artifact_respond(artifact_id: str, body: ArtifactResponseIn, _: None = Depends(authorize)) -> dict:

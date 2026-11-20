@@ -2121,5 +2121,66 @@ needed. The durable
 outcome is the docstring correction in `tracing.py` naming the evaluator
 explicitly, so the next reader does not re-derive the same false negative.
 
+## R103 — the map: a vendored payload, its own panel, and two sandboxes that must stay apart
+
+**Decision: floorplan is core, and core means it ships.** The adapter was
+written first with a path-resolved payload (`floorplan_home()`: explicit > env >
+`vendor/floorplan`), and resolving from a path while the copy is optional leaves
+a core surface whose only possible answer on a fresh install is "not available".
+So `vendor/floorplan` is a verbatim copy of upstream `skills/floorplan` at
+upstream commit 94f81b4 (54 files, 2,961,212 B) with
+`vendor/floorplan/CHECKSUMS.sha256`, its licence files and
+`vendor/floorplan/VENDORED.md`. `tests/test_floorplan.py::test_the_vendored_copy_is_the_default_and_matches_its_checksums`
+proves both halves: with no argument and no env var the vendored copy is what
+resolves, and every hash in the file still matches the bytes on disk.
+
+Vocabulary note, because it was a real defect rather than a nit: the module and
+its messages used to call this "a node skill" and the helper was `_skills_dir`.
+That is upstream's packaging talking — floorplan ships its scripts as a Claude
+skill directory, and our adapter resolves that *shape*, not the concept. In our
+tree it is a core module, so the wording, the docstring and the helper name now
+say floorplan.
+
+**The query CLI is generated, not shipped.** The builder writes it into the map
+output dir (21,784 B, from `vendor/floorplan/assets/query-cli.mjs`) beside a
+small viewer server. So `REQUIRED_SCRIPTS` stays the scanner and the builder —
+a fresh copy has no generated CLI, and requiring one at locate time would reject
+every legitimate copy. The `map_query` tool (#378) reads it from the built
+output.
+
+**Two sandboxes, deliberately different.**
+- `frontend/src/panels/dock/Artifacts.jsx` renders every artifact with
+  `sandbox=""` — no scripts. That is the right posture for chat-authored HTML.
+- `frontend/src/panels/dock/Map.jsx` renders the map with
+  `sandbox="allow-scripts"` and no `allow-same-origin`: the page's own inlined
+  JS runs on an opaque origin, so it cannot touch this app's DOM, localStorage
+  or session cookie.
+
+They must never be merged. Merging means either the map is a blank rectangle
+(floorplan draws with JS) or every artifact gains script execution.
+`frontend/src/map.test.ts` pins both the presence of `allow-scripts` and the
+absence of `allow-same-origin`, so "add same-origin so a fetch works" fails a
+test rather than quietly widening the boundary.
+
+**The page is served, not stored.** `GET /sessions/{id}/map` streams
+`<workdir>/floorplan/index.html` with `no-cache`; `/map/state` returns
+`{built, reason, path, bytes, built_at}`. An artifact payload would be
+re-serialized on every artifacts poll (2.6 MB), and a sandboxed frame reports no
+load failure to its parent — hence the JSON state, which is what lets the panel
+say "no map yet, expected floorplan/index.html" instead of showing a blank
+rectangle. `floorplan.map_page()` / `map_graph()` are the single definition of
+where a build lands, shared by the adapter, the route and (later) the tool.
+
+**Placement.** `map` is in `PANELS` with `renderer: 'always'` (switching tabs
+must not re-run the layout) and is deliberately absent from `DEFAULT_PRESET`:
+reachable from the sidebar and the palette like graph/planning/notes, and 2.6 MB
+is not first-boot work.
+
+**Evidence.** `tests/test_floorplan.py` 20 passed (including a real-node run
+against the vendored copy); `tests/test_map_panel.py` 6 passed;
+`frontend/src/map.test.ts` 5 passed; `frontend/src/workspace/catalogue.test.ts`
+21 passed (its `REGISTERED` list is the guard that a catalogue entry without a
+component cannot ship).
+
 
 
