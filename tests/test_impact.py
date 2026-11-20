@@ -119,6 +119,27 @@ def test_impact_ignores_dependents_inside_skipped_directories(tmp_path: Path) ->
     assert out['edges'][0]['dependents'] == []
 
 
+def test_impact_ignores_dependents_in_side_venvs_and_plain_venv(tmp_path: Path) -> None:
+    """#371: the walker prunes with tools.skip_dir, not bare SKIP_DIRS.
+
+    A .venv-verify/.venv-harness sibling or a plain `venv` is a second
+    interpreter, never project source. Pruning only SKIP_DIRS reported those
+    files as dependents and left 24736 of this repo's 25122 walked files - 98%
+    of the cost this fix exists to remove - inside side venvs.
+    """
+    repo = _repo(tmp_path)
+    changed = repo / 'src' / 'pkg' / 'b.py'
+    changed.parent.mkdir(parents=True)
+    changed.write_text('VALUE = 1\n')
+    (repo / 'src' / 'user.py').write_text('import pkg.b\n')
+    for outside in ('.venv-verify', '.venv-harness', 'venv'):
+        site = repo / outside / 'site'
+        site.mkdir(parents=True)
+        (site / 'decoy.py').write_text('import pkg.b\n')
+    out = impact_graph(repo, ['src/pkg/b.py'])
+    assert out['edges'][0]['dependents'] == ['src/user.py']
+
+
 def test_impact_finds_javascript_dependents(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     (repo / 'util.js').write_text('export const x = 1\n')

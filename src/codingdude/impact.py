@@ -30,10 +30,9 @@ from pathlib import Path
 
 from codingdude.pyparse import parse_python
 
-from .tools import SKIP_DIRS
+from .tools import skip_dir
 
 SOURCE_EXTS = {'.py', '.js', '.jsx', '.ts', '.tsx'}
-_SKIP = frozenset(SKIP_DIRS)
 
 
 def _module_name(rel: str) -> str:
@@ -77,16 +76,21 @@ def _js_stems(rel: str) -> set[str]:
 
 
 def _source_files(workdir: Path, suffixes: set[str]) -> Iterator[Path]:
-    """Every file under workdir with one of `suffixes`, minus SKIP_DIRS.
+    """Every file under workdir with one of `suffixes`, minus skipped subtrees.
 
     os.walk rather than rglob: rglob descends into .venv/node_modules/.git and
     hands back every entry, so the caller pays for ~30k directory entries and
     stat() calls it then discards (#371). Pruning dirnames in place skips the
     subtree outright. Order is left as the filesystem gives it — the result is
     sorted where it is returned, so walk order cannot leak.
+
+    The skip test is tools.skip_dir, not SKIP_DIRS: it is the canonical rule for
+    workdir walkers and also covers the .venv-* side venvs and plain `venv`
+    (R75/#255). Using SKIP_DIRS alone walked 24736 of this repo's 25122 source
+    files out of .venv-harness/.venv-verify — 98% of the cost this fix targets.
     """
     for root, dirnames, filenames in os.walk(workdir):
-        dirnames[:] = [d for d in dirnames if d not in _SKIP]
+        dirnames[:] = [d for d in dirnames if not skip_dir(d)]
         for name in filenames:
             path = Path(root) / name
             if path.suffix in suffixes:

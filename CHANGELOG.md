@@ -11,8 +11,11 @@
   workdir on every call, including when nothing had changed. On this repo that
   was 104,435 directory entries per poll, and a session with a clean tree paid
   ~62s to prove the empty answer. Three cuts: an unchanged tree now returns
-  before the walk; `os.walk` prunes `.venv`/`node_modules` instead of walking
-  into them and discarding every file; and a file is only `ast.parse`d when its
+  before the walk; `os.walk` prunes with `tools.skip_dir` — the canonical
+  walker rule: `SKIP_DIRS` plus the `.venv-*` side venvs and plain `venv` —
+  instead of walking into them and discarding every file (24,736 of this
+  repo's 25,122 walked files were side-venv files); and a file is only
+  `ast.parse`d when its
   text actually contains the changed module's name — a necessary condition, so
   dependents are identical. Measured on this repo: 62.34s → 0.00s for an
   unchanged tree, 61.24s → ~6s for one changed file. A hung `git diff` now
