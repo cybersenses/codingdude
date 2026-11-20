@@ -828,6 +828,13 @@ export function GraphPanel() {
                   {data.cfgFunctions.map((fn) => <option key={fn} value={fn}>{fn}</option>)}
                 </select>
               </div>
+              {/* R98 #355: the pre-pick hint used to read "Green blocks are
+                  reachable; red blocks are dead code." on its own, directly under
+                  the call graph — which is grey by design (its dashed gold nodes
+                  are orphans). The sentence promised a colouring the graph above
+                  does not have, so the vision pass recorded it as "the legend
+                  promises green/red but every node renders grey". Naming the
+                  control that draws the coloured view removes the misreading. */}
               {data.cfgError
                 ? <div className="text-xs text-danger">{data.cfgError}</div>
                 : data.cfg
@@ -846,7 +853,11 @@ export function GraphPanel() {
                       })()}
                     </div>
                   )
-                  : <div className="text-xs text-ink-muted">Green blocks are reachable; red blocks are dead code.</div>}
+                  : (
+                    <div className="text-xs text-ink-muted">
+                      Pick a function to draw its control flow: green blocks are reachable, red blocks are dead code.
+                    </div>
+                  )}
             </div>
           )}
           {data.trust && data.trustPath === activePath && (
