@@ -679,10 +679,10 @@ async def run(args) -> int:
             )
         else:
             log.warning(
-                'WORKER_TERMINAL_DROPPED pid=%s — ws died mid-run; the run is '
-                'persisted locally but the server never received the terminal '
+                'WORKER_TERMINAL_DROPPED run=%s pid=%s — ws died mid-run; the run '
+                'is persisted locally but the server never received the terminal '
                 'event, exiting non-zero so the reaper reports the loss',
-                os.getpid(),
+                getattr(args, 'run_id', None), os.getpid(),
             )
         # The watchdog must cover the drain too: a drain that never returns
         # (blocked event loop, un-cancellable shielded cleanup) would never
@@ -754,6 +754,13 @@ def config_home():
     return config_home()
 
 
+def worker_log_path(session_id: str):
+    """Where this worker mirrors its lifecycle log (R31/#369)."""
+    from codingdude.config import worker_log_path
+
+    return worker_log_path(session_id)
+
+
 def load_prompt_file(args):
     """--prompt-file: read the prompt from a file instead of argv.
 
@@ -811,16 +818,16 @@ def main(argv=None) -> int:
     parser.add_argument('--run-id', default=None, help='run id for durable lifecycle records (R31)')
     args = load_prompt_file(parser.parse_args(argv))
     # Lifecycle diagnostics (R31): always mirror worker logs to a file under
-    # ~/.codingdude/logs/ so post-run forensics don't depend on a console.
+    # <config home>/logs/ so post-run forensics don't depend on a console.
+    # #369: config_home(), not Path.home() — the server reads this file to tell
+    # "finished, terminal lost" from "died", so both sides resolve one path.
     try:
-        log_dir = Path.home() / '.codingdude' / 'logs'
-        log_dir.mkdir(parents=True, exist_ok=True)
         # NOTE: uv's venv python.exe is a trampoline — os.getpid() here is the
         # real interpreter's pid, which differs from the server-recorded
         # Popen pid. Key the file on session id (unique, matches RUN_START).
-        session_tag = (args.session or f'pid{os.getpid()}')[:16]
-        handler = logging.FileHandler(
-            log_dir / f'worker-{session_tag}.log', encoding='utf-8')
+        log_file = worker_log_path(args.session or f'pid{os.getpid()}')
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        handler = logging.FileHandler(log_file, encoding='utf-8')
         handler.setFormatter(logging.Formatter(
             '%(asctime)s %(levelname)s %(name)s %(message)s'))
         logging.getLogger().addHandler(handler)

@@ -1200,6 +1200,20 @@ def config_home() -> Path:
     return Path(os.environ.get('CODEDUDE_HOME', Path.home() / '.codingdude'))
 
 
+def worker_log_path(session_id: str, home: Path | None = None) -> Path:
+    """Where a worker mirrors its lifecycle log (R31).
+
+    Keyed on session id, not run id: uv's venv python.exe is a trampoline, so
+    the worker's own os.getpid() differs from the server-recorded Popen pid,
+    while the session id is the one tag both sides know before it boots.
+
+    #369: one definition, so the server can read the file the worker wrote
+    instead of inferring a path — the worker used to hardcode
+    ~/.codingdude/logs while the server honoured CODEDUDE_HOME.
+    """
+    return (home or config_home()) / 'logs' / f'worker-{session_id[:16]}.log'
+
+
 def load_config(home: Path | None = None) -> Config:
     """Load config from `home` (default: CODEDUDE_HOME / ~/.codingdude).
 

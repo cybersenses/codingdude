@@ -48,7 +48,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import __version__
-from .config import config_home
+from .config import config_home, worker_log_path
 from .db import Database
 from .events import TERMINAL_EVENTS
 
@@ -192,6 +192,11 @@ async def _reap_worker(channel, db: 'Database | None' = None) -> None:
     R72 #264: the worker's stderr is captured at spawn (channel.stderr_path),
     so a pre-boot death (trampoline failure, ImportError) now carries its own
     evidence: the tail is logged and folded into the RUN_ERROR message.
+
+    #369: the worker's own log tells a second death apart — WORKER_TERMINAL_DROPPED
+    means it finished and the socket died before the terminal event arrived, which
+    is not a crash (live run L_AssjFaqRA: 23 minutes of landed work reported to the
+    operator as "exited unexpectedly").
     """
     log = logging.getLogger('codingdude.server')
     if channel.reaped:
@@ -205,27 +210,46 @@ async def _reap_worker(channel, db: 'Database | None' = None) -> None:
     log.info(
         'WORKER_EXITED run=%s worker_pid=%s exit=%s terminal_seen=%s',
         channel.run_id, worker.pid, worker.returncode, channel.saw_terminal())
+    # #369: one read of the worker log decides both the durable row and the
+    # RUN_ERROR below, so the two surfaces cannot disagree about the death.
+    terminal_lost = (
+        not channel.saw_terminal()
+        and _terminal_was_dropped(channel.session_id, channel.run_id))
     if db is not None:
         db.record_run_end(
-            channel.run_id, _terminal_status(channel),
+            channel.run_id, _terminal_status(channel, terminal_lost=terminal_lost),
             exit_code=worker.returncode)
     if not channel.saw_terminal():
-        stderr_tail = _read_stderr_tail(channel.stderr_path)
+        stderr_tail = _read_tail(channel.stderr_path)
         if stderr_tail:
             log.warning(
                 'WORKER_STDERR run=%s worker_pid=%s tail: %s',
                 channel.run_id, worker.pid, stderr_tail)
-        hint = ''
-        if stderr_tail:
-            hint_lines = _stderr_hint(stderr_tail)
-            if hint_lines:
-                hint = ' stderr: ' + ' '.join(hint_lines.split())[-400:]
-        channel.push({
-            'type': 'RUN_ERROR',
-            'code': 'worker_died',
-            'message': f'worker exited unexpectedly (code {worker.returncode}) '
-                       f'— run {channel.run_id} did not finish.{hint}',
-        })
+        if terminal_lost:
+            log.warning(
+                'WORKER_TERMINAL_LOST run=%s worker_pid=%s exit=%s — worker log '
+                'says it finished and could not deliver its terminal event',
+                channel.run_id, worker.pid, worker.returncode)
+            channel.push({
+                'type': 'RUN_ERROR',
+                'code': 'terminal_lost',
+                'message': f'run {channel.run_id} finished, but its terminal '
+                           f'event was lost when the worker connection dropped '
+                           f'— the work is persisted, so check the run trace '
+                           f'before redoing it.',
+            })
+        else:
+            hint = ''
+            if stderr_tail:
+                hint_lines = _stderr_hint(stderr_tail)
+                if hint_lines:
+                    hint = ' stderr: ' + ' '.join(hint_lines.split())[-400:]
+            channel.push({
+                'type': 'RUN_ERROR',
+                'code': 'worker_died',
+                'message': f'worker exited unexpectedly (code {worker.returncode}) '
+                           f'— run {channel.run_id} did not finish.{hint}',
+            })
         # Brief grace so subscribers consume the synthesized terminal, then reap.
         await asyncio.sleep(2.0)
     else:
@@ -237,6 +261,15 @@ async def _reap_worker(channel, db: 'Database | None' = None) -> None:
 
 
 _STDERR_TAIL_BYTES = 2000
+# #369: the worker log keeps its own R31 stream — boot banner, then the drain
+# chatter that follows a mid-run drop — so the evidence window is wider than the
+# stderr one, which only ever holds a pre-boot failure.
+_WORKER_LOG_TAIL_BYTES = 64 * 1024
+
+#: #369: the worker's own record that it finished but could not deliver its
+#: terminal event. It exists only in the worker log — the socket that would have
+#: carried the terminal is the thing that died.
+_TERMINAL_DROPPED_MARKER = 'WORKER_TERMINAL_DROPPED'
 
 # #287: the stderr tail of a healthy-spawned worker is dominated by MCP
 # child-process startup chatter (Go-style time=/level= log lines, server
@@ -264,18 +297,29 @@ def _stderr_hint(tail: str) -> str:
     return '\n'.join(keep).strip()
 
 
-def _read_stderr_tail(path) -> str:
-    """Last chunk of a worker's captured stderr; '' when absent/unreadable."""
+def _read_tail(path, max_bytes: int = _STDERR_TAIL_BYTES) -> str:
+    """Last chunk of a worker log file; '' when absent/unreadable."""
     if path is None:
         return ''
     try:
         with open(path, 'rb') as fh:
             fh.seek(0, 2)
             size = fh.tell()
-            fh.seek(max(0, size - _STDERR_TAIL_BYTES))
+            fh.seek(max(0, size - max_bytes))
             return fh.read().decode('utf-8', errors='replace').strip()
     except OSError:
         return ''
+
+
+def _terminal_was_dropped(session_id: str, run_id: str) -> bool:
+    """True when this run's worker logged that it dropped its terminal event.
+
+    #369: the worker log is keyed on the session, so it outlives a run — the
+    marker is matched against this run's id, never on its own, or a previous
+    drop would launder this run's crash.
+    """
+    tail = _read_tail(worker_log_path(session_id, config_home()), _WORKER_LOG_TAIL_BYTES)
+    return f'{_TERMINAL_DROPPED_MARKER} run={run_id}' in tail
 
 
 _TRACE_TAIL_WINDOW_BYTES = 64 * 1024
@@ -306,8 +350,14 @@ def _trace_tail_lines(trace_file: Path, limit: int) -> list[str]:
             window *= 4
 
 
-def _terminal_status(channel) -> str:
-    """Durable end-state for the runs row, derived from channel history."""
+def _terminal_status(channel, *, terminal_lost: bool = False) -> str:
+    """Durable end-state for the runs row, derived from channel history.
+
+    #369: `terminal_lost` is the worker telling us it finished and could not
+    deliver its terminal event. That row is 'interrupted' -- the value a
+    cancelled run already uses for "ended without a delivered terminal" -- not
+    'failed', which would call work that landed a failure.
+    """
     terminals = [e['type'] for e in channel.history
                  if e['type'] in TERMINAL_EVENTS]
     if terminals and terminals[-1] == 'RUN_FINISHED':
@@ -316,6 +366,8 @@ def _terminal_status(channel) -> str:
         # 'cancelled' is not in the runs CHECK constraint (db.py) — mapping to
         # 'interrupted' keeps record_run_end from crashing the reaper on every
         # user-cancelled run.
+        return 'interrupted'
+    if terminal_lost:
         return 'interrupted'
     return 'failed'
 
@@ -1853,12 +1905,19 @@ def create_app(
     ):
         host = ws.client.host if ws.client else ''
         local = ('127.0.0.1', '::1') + (('testclient',) if allow_testclient else ())
+        log = logging.getLogger('codingdude.server')
         if not _ct_eq(ws_token, token) or host not in local:
+            # #369: both close-without-accept paths were invisible, so a worker
+            # that never got a channel looked exactly like one that never booted.
+            log.warning(
+                'WORKER_WS_REJECTED run=%s code=4401 reason=bad-token-or-remote-host host=%s',
+                run_id, host or '?')
             await ws.close(code=4401)
             return
         await ws.accept()
         channel = channels.get(run_id)
         if channel is None:
+            log.warning('WORKER_WS_REJECTED run=%s code=4404 reason=unknown-run', run_id)
             await ws.close(code=4404)
             return
         channel.boot_seen = True  # #148: worker reached the server
@@ -1874,8 +1933,17 @@ def create_app(
             while True:
                 raw = await ws.receive_text()
                 channel.push(json.loads(raw))
-        except WebSocketDisconnect:
-            pass
+        except WebSocketDisconnect as exc:
+            # #369: this catch used to be `pass`, so server.log held no ws-close
+            # line in its entire history and every reaper story about a dead
+            # worker was guesswork. terminal_seen is the field that separates
+            # "closed after finishing" from "closed mid-run"; 1011 is what
+            # uvicorn sends when its keepalive ping goes unanswered.
+            note = (' hint=1011-uvicorn-keepalive-ping-timeout'
+                    if exc.code == 1011 else '')
+            log.warning(
+                'WORKER_WS_CLOSED run=%s code=%s reason=%r terminal_seen=%s%s',
+                run_id, exc.code, exc.reason or '', channel.saw_terminal(), note)
         finally:
             inbox_task.cancel()
             # R31: the worker closing its ws is the only worker-lifecycle
@@ -2049,7 +2117,12 @@ def serve(host: str = HOST, port: int = 8765) -> None:
     configure_file_logging(config_home() / 'logs')
     logging.getLogger(__name__).info('codingdude server on http://%s:%s', host, port)
     print(f'codingdude server on http://{host}:{port} token={token}')
-    uvicorn.run(app, host=host, port=port, log_level='warning')
+    # #369: pin the worker-socket keepalive instead of inheriting uvicorn's
+    # defaults. 20s interval + 20s timeout means a worker whose event loop
+    # stalls >40s silently loses its channel; the numbers belong here, declared,
+    # not in a framework's default.
+    uvicorn.run(app, host=host, port=port, log_level='warning',
+                ws_ping_interval=20.0, ws_ping_timeout=20.0)
 
 
 if __name__ == '__main__':
