@@ -32,6 +32,8 @@ import logging
 import typing
 from pathlib import Path
 
+from .tools import skip_parts
+
 if typing.TYPE_CHECKING:
     from .memory import MemoryStore
 
@@ -61,7 +63,11 @@ _SUFFIXES = {
     '.jsx': 'javascript', '.mjs': 'javascript', '.go': 'go', '.rs': 'rust',
     '.java': 'java', '.cs': 'csharp', '.php': 'php', '.rb': 'ruby',
 }
-_SKIP_DIRS = {'.git', '.venv', 'node_modules', '__pycache__', '.codegraph', 'dist'}
+# Subtree extras on top of the shared walker rule (tools.skip_parts): the
+# codegraph index and dist output are not project source. Before #374 this
+# module carried its own bare-name set, so a `.venv-verify/` side venv was
+# counted as project source and its thousands of .py files dominated the mix.
+_SCAN_EXTRAS = frozenset({'.codegraph', 'dist'})
 
 
 def detect_conventions(workdir: Path) -> dict:
@@ -80,7 +86,7 @@ def detect_conventions(workdir: Path) -> dict:
     try:
         counts: dict[str, int] = {}
         for p in workdir.rglob('*'):
-            if any(part in _SKIP_DIRS for part in p.relative_to(workdir).parts):
+            if skip_parts(p.relative_to(workdir), _SCAN_EXTRAS):
                 continue
             if p.is_file():
                 lang = _SUFFIXES.get(p.suffix.lower())
@@ -127,7 +133,7 @@ def detect_conventions(workdir: Path) -> dict:
                 break
             if p.suffix.lower() not in _SUFFIXES or not p.is_file():
                 continue
-            if any(part in _SKIP_DIRS for part in p.relative_to(workdir).parts):
+            if skip_parts(p.relative_to(workdir), _SCAN_EXTRAS):
                 continue
             data = p.read_bytes()[:20_000]
             if not data:

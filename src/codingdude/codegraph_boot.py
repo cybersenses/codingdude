@@ -27,6 +27,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from .tools import skip_dir
+
 # LocalAppData is the standard install location on Windows; resolve it from
 # the user's home directory so no user-specific path is baked into the source.
 _FALLBACK_CMD = (
@@ -34,10 +36,11 @@ _FALLBACK_CMD = (
 )
 
 
-_SKIP_DIRS = {
-    '.git', '.venv', 'node_modules', '__pycache__', '.mypy_cache',
-    '.pytest_cache', '.codegraph', '.codingdude', 'dist',
-}
+# Not project source for a staleness scan. On top of the shared directory rule
+# (tools.skip_dir) — before #374 this was a private bare-name set, so a
+# `.venv-verify/` file newer than the index reported the graph stale and
+# triggered a needless re-index.
+_INDEX_EXTRAS = {'.codegraph', '.codingdude', 'dist'}
 
 
 def index_is_stale(workdir: Path) -> bool:
@@ -57,7 +60,9 @@ def index_is_stale(workdir: Path) -> bool:
     except OSError:
         return True  # unreadable index — assume stale so boot re-inits
     for dirpath, dirnames, filenames in os.walk(workdir):
-        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
+        dirnames[:] = [
+            d for d in dirnames if not skip_dir(d) and d not in _INDEX_EXTRAS
+        ]
         for name in filenames:
             if not name.endswith(('.py', '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.go', '.rs', '.java', '.rb', '.php', '.cs', '.c', '.cpp', '.h')):
                 continue

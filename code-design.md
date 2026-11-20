@@ -2003,3 +2003,122 @@ subprocess can only see the config. Closing it needs a field on that endpoint.
 call site reappears outside `engine.py`.
 
 
+
+
+
+
+
+## #374/#373/#365: one skip rule, relative imports, and a false premise
+
+Three open tickets closed together: two real defects in the analysis walkers and
+a third whose stated cause did not survive its first probe.
+
+### #374: the skip rule had a parts-aware half that no walker called
+
+`tools.skip_dir` (R75/#255) answers "is this one *directory name* outside the
+project?" — `SKIP_DIRS`, any `.venv*` sibling, plain `venv`. Ten walkers collect
+files with `rglob` and then filter with `any(part in SKIP_DIRS for part in
+rel.parts)`: the same question, one rule short. `SKIP_DIRS` holds neither
+`.venv-verify` nor `venv`, so third-party copies were read as project source —
+24,736 of this repo's 25,122 walked files. The failures are wrong answers, not
+slow ones: a site-packages copy of `tools.py` counts as a dependent, its
+functions as project definitions, its `import x` lines as call-graph edges, and
+its thousands of `.py` files as the language mix.
+
+**Decision.** Add `tools.skip_parts(rel, extra=..., keep=...)`, the parts-aware
+twin, and migrate eighteen call sites across eleven modules: the seven the ticket
+listed (both deadcode walkers — the tree-sitter one carried its own private
+set), the two private bare-name copies in `onboarding.detect_conventions` and
+`codegraph_boot.index_is_stale`, `delegation._iter_target_files`, the two
+server scans that hand-rolled the `.venv*` prefix while still missing plain
+`venv`, and the Explorer tree fetch. A caller needing an extra
+subtree passes `extra` (semantic's `reference/`, deadcode's `dist`/`.next`/
+`build`, the staleness scan's `.codegraph`/`.codingdude`); a caller scanning for
+*output* rather than source passes `keep=ARTIFACT_KEEP`, because a screenshot
+lands in `.scratch` and an artifact scan that skipped it would hide the very
+file it exists to report.
+
+**The rule now defends itself.** `tests/test_skip_rule.py` carries one
+side-venv-decoy test per migrated walker plus a source-scan guard that fails if
+any module outside `tools.py` defines a SKIP* set again. The fork, not the
+individual site, is what the defect was: ten walkers answered the same question
+slightly differently, and the independent review of this change found an
+eleventh site (deadcode's tree-sitter walker), three more (the render scans and
+the Explorer tree fetch) and ast_tools' two nested walkers, none of which a
+grep for `SKIP_DIRS` by name could see.
+
+**Alternatives rejected.** (a) Rewrite all ten walkers to prune with `os.walk`
+like #371 — the predicate is the contract; the traversal shape is a separate,
+measurable change (they still pay the walk, they no longer read the files). (b)
+Keep one `skip_dir(name)` and call it per part at each site — that is what each
+site must get right ten times, which is the defect. (c) Fold the private sets
+into `SKIP_DIRS` — `.codegraph` is indexed state, not global noise, and widening
+the shared set would hide a project's own `reference/` from tools that should
+see it.
+
+### #373: a relative import is a dependency, and the level was being dropped
+
+`_py_imports_of` read `node.module` and ignored `node.level`, so `from .tools
+import X` produced `tools`. `_module_name` yields `codingdude.tools`, so the two
+never matched: an intra-package edge was invisible whenever the package prefix
+was omitted, which is the house style — 49 of this repo's 80 modules import
+relatively and only 16 carry an absolute sibling import. The graph's whole job
+is to say what a change touches, and it was understating it.
+
+**Decision.** Resolution needs the importer's package, which the old signature
+could not supply: `_py_imports_of(text, package)` with `_package_of(rel)` (a
+module inside a package maps to that package's dotted name; a package's own
+`__init__.py` maps to the package itself, since a package's module name *is* its
+package) and `_relative_base(package, level)`, which returns `None` when a level
+climbs past the root — an ImportError at runtime, not an edge to invent.
+`from . import x` resolves to `base.x`: Python imports the submodule when one
+exists, and a changed file is the only thing that can match.
+
+**The pre-filter had to move with it.** #371 kept `ast.parse` off irrelevant
+files by requiring the changed module's *first* segment in the text. Every
+relative import spells only the last segment (`from .b import V` contains `.b`,
+never `pkg`), so that filter would have dropped exactly the dependents the fix
+adds — the graph would have stayed wrong while starting to look right. It now
+keys on last segments with identifier boundaries (a one-letter module name must
+not match every word in the file, or the walk pays full parse cost again).
+
+**Measured on this repo**, `impact_graph` for `src/codingdude/tools.py`:
+27 → 54 dependents (28 src-side, where only the two absolute importers
+appeared), 0.43s → 0.36s (median of three warm runs at each commit, same
+probe); `src/codingdude/impact.py`: 1 → 2 (`server.py` appears). A cold first
+run measures ~2.6s on both sides, so the wall-clock delta is a cache artefact
+of the probe, not a property of the change — the dependents are the finding.
+
+**Verification.** RED at `8799569` with the final tests copied into a worktree
+and only the rule added, so every failure is a walker or a resolver, not a
+missing helper: `19 failed, 29 passed` — 14 in `tests/test_skip_rule.py`
+(one decoy assertion per migrated walker, the SKIP*-set guard, and the
+artifact/`keep` behaviour) and all 5 new impact tests. GREEN after: 33 passed
+in `tests/test_skip_rule.py`, 16 in `tests/test_impact.py`, full suite 1563
+passed / 1 skipped, ruff and mypy clean. One walker test was added after that
+run and red-proved on its own: at `8799569` the nav/generic walkers answered
+`find_definition` with `.venv-harness/...`, `.venv-verify/...` and
+`venv/...` copies of the decoy definition.
+
+### #365: the premise, not the code
+
+The ticket read "`evaluate_work` runs an `Agent` in the server process", inferred
+from a grep for `Engine(` that found the evaluator absent from the four engine
+construction sites. The inference is wrong: `WorkEvaluator` is constructed in
+`plugins.build_all` (`src/codingdude/plugins/__init__.py:289`), `build_all` is
+called by `Engine.__init__` (`src/codingdude/engine.py:986`), and `server.py`
+contains no agent construction, no `build_all`, and no tracing setup at all. An
+evaluator pass therefore runs inside the caller's process — worker, CLI or
+review mode — where the caller's own entry point already configured tracing:
+`Engine.run` (`src/codingdude/engine.py:548`) for a worker or CLI run,
+`Engine.review` (`src/codingdude/engine.py:297`) for review mode. Those two
+lines are the only `configure_tracing` call sites in `src/` besides its own
+definition, which is why the evaluator needs neither a third one nor a
+subprocess. Its spans export under that run's session id like any other
+agent. No ADR-0002 boundary is crossed and no second configuration site is
+needed. The durable
+outcome is the docstring correction in `tracing.py` naming the evaluator
+explicitly, so the next reader does not re-derive the same false negative.
+
+
+

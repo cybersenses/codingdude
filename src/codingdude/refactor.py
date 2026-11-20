@@ -29,7 +29,7 @@ from pydantic_ai.toolsets import FunctionToolset
 
 from codingdude.pyparse import parse_python
 
-from .tools import SKIP_DIRS
+from .tools import skip_parts
 
 SOURCE_EXTENSIONS = {'.py', '.js', '.jsx', '.mjs', '.ts', '.tsx'}
 JS_EXTENSIONS = {'.js', '.jsx', '.mjs', '.ts', '.tsx'}
@@ -40,7 +40,7 @@ def _iter_source(workdir: Path):
     for f in sorted(root.rglob('*')):
         if not f.is_file() or f.suffix not in SOURCE_EXTENSIONS:
             continue
-        if any(part in SKIP_DIRS for part in f.relative_to(root).parts):
+        if skip_parts(f.relative_to(root)):
             continue
         yield f
 

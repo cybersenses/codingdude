@@ -45,7 +45,48 @@ def _module_name(rel: str) -> str:
     return '.'.join(parts)
 
 
-def _py_imports_of(text: str) -> set[str]:
+def _package_of(rel: str) -> str:
+    """The package a file's relative imports resolve against.
+
+    'src/pkg/b.py' -> 'pkg'; 'src/pkg/sub/deep.py' -> 'pkg.sub';
+    'src/pkg/__init__.py' -> 'pkg' (a package's own module name *is* its
+    package, so `from . import x` there means `pkg.x`).
+
+    A module the top-level-dir rule leaves bare ('src/mod.py' -> 'mod') has
+    package '' — and a level-1 relative import in it resolves to its bare
+    name, which is what :func:`_module_name` also yields. The two agree on
+    purpose: this repo's `src/` layout and a flat layout both produce edges.
+    """
+    if Path(rel).stem == '__init__':
+        return _module_name(rel)
+    name = _module_name(rel)
+    return name.rpartition('.')[0] if '.' in name else ''
+
+
+def _relative_base(package: str, level: int) -> str | None:
+    """The package `level` dots up from `package`; None if that leaves the root.
+
+    `level` 1 is the importing module's own package, 2 its parent, and so on.
+    Climbing past the root is an ImportError at runtime, not an edge — the
+    graph must not invent one.
+    """
+    parts = package.split('.') if package else []
+    drop = level - 1
+    if drop > len(parts):
+        return None
+    return '.'.join(parts[: len(parts) - drop] if drop else parts)
+
+
+def _py_imports_of(text: str, package: str = '') -> set[str]:
+    """Absolute dotted module names this Python source imports.
+
+    `package` is the importing file's own package (:func:`_package_of`), which
+    is what makes a relative import comparable at all: `from .tools import X`
+    in `pkg/a.py` imports `pkg.tools`, and dropping the level (`node.level`)
+    yields a bare `'tools'` that never equals `_module_name('src/pkg/tools.py')`
+    — the #373 defect, which left 49 of this repo's 80 modules with no
+    intra-package edges at all.
+    """
     try:
         tree = parse_python(text)
     except SyntaxError:
@@ -54,6 +95,20 @@ def _py_imports_of(text: str) -> set[str]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             mods.update(a.name for a in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level:
+            base = _relative_base(package, node.level)
+            if base is None:
+                continue
+            if node.module:
+                mods.add(f'{base}.{node.module}' if base else node.module)
+            else:
+                # `from . import x`: Python imports the submodule `pkg.x` when
+                # one exists, falling back to an attribute of `pkg`. The graph
+                # asks what is imported, so the submodule spelling is the one
+                # that can match a changed file.
+                mods.update(
+                    f'{base}.{a.name}' if base else a.name for a in node.names
+                )
         elif isinstance(node, ast.ImportFrom) and node.module:
             mods.add(node.module)
     return mods
@@ -84,10 +139,12 @@ def _source_files(workdir: Path, suffixes: set[str]) -> Iterator[Path]:
     subtree outright. Order is left as the filesystem gives it — the result is
     sorted where it is returned, so walk order cannot leak.
 
-    The skip test is tools.skip_dir, not SKIP_DIRS: it is the canonical rule for
-    workdir walkers and also covers the .venv-* side venvs and plain `venv`
-    (R75/#255). Using SKIP_DIRS alone walked 24736 of this repo's 25122 source
-    files out of .venv-harness/.venv-verify — 98% of the cost this fix targets.
+    The skip test is `tools.skip_dir`, the name-level half of the rule — this
+    walker prunes directories, so the parts-aware half (`tools.skip_parts`,
+    used by the rglob walkers) would be the wrong shape here. Either way the
+    answer covers SKIP_DIRS, the .venv-* side venvs and plain `venv`
+    (R75/#255); SKIP_DIRS alone walked 24736 of this repo's 25122 source files
+    out of .venv-harness/.venv-verify — 98% of the cost this fix targets.
     """
     for root, dirnames, filenames in os.walk(workdir):
         dirnames[:] = [d for d in dirnames if not skip_dir(d)]
@@ -113,18 +170,36 @@ def impact_graph(workdir: Path, changed: list[str]) -> dict:
     dependents_of: dict[str, set[str]] = {c: set() for c in changed}
 
     # Only files in a changed file's own language can name it, so neither
-    # language pays for the other's tree. A dependent must also spell the
-    # module out in its own source, and that is a *necessary* condition: any
-    # AST import of `pkg.mod` contains the literal text. Checking it first
-    # keeps ast.parse off the ~25k files that cannot possibly answer —
-    # 61s -> 6s on this repo, with identical dependents.
+    # language pays for the other's tree.
     suffixes: set[str] = set()
     if py_changed:
         suffixes.add('.py')
     if js_changed:
         suffixes.update(SOURCE_EXTS - {'.py'})
-    py_roots = {mod.split('.')[0] for _, mod in py_changed}
+    py_tails = {mod.rsplit('.', 1)[-1] for _, mod in py_changed}
     js_words = {stem.rsplit('/', 1)[-1] for _, stems in js_changed for stem in stems}
+
+    # A dependent must spell the changed module out in its own source, and one
+    # segment of that name is enough: every import the AST scan can match
+    # contains the module's LAST segment as an identifier (`from .b import V`,
+    # `from pkg.b import V`, `import pkg.b`, `from . import b`). Checking that
+    # first keeps ast.parse off the files that cannot possibly answer —
+    # 61s -> 6s on this repo, with identical dependents.
+    #
+    # The last segment, not the first (#373): resolving relative imports means
+    # `from .b import V` now *is* an edge on `pkg.b`, and its text contains
+    # `.b`, never `pkg`. Filtering on `pkg` would have silently dropped the
+    # very dependents the fix adds. Word boundaries, not a bare substring: a
+    # one-letter module name must not match every word in the file, or the
+    # filter stops filtering and the walk pays full parse cost again.
+    py_prefilter = (
+        re.compile(
+            r'(?<!\w)(?:'
+            + '|'.join(re.escape(t) for t in sorted(py_tails))
+            + r')(?!\w)'
+        )
+        if py_tails else None
+    )
 
     for f in _source_files(workdir, suffixes):
         try:
@@ -138,9 +213,9 @@ def impact_graph(workdir: Path, changed: list[str]) -> dict:
         except OSError:
             continue
         if f.suffix == '.py':
-            if not any(root in text for root in py_roots):
+            if py_prefilter is not None and not py_prefilter.search(text):
                 continue
-            mods = _py_imports_of(text)
+            mods = _py_imports_of(text, _package_of(rel))
             for c, mod in py_changed:
                 if mod in mods:
                     dependents_of[c].add(rel)

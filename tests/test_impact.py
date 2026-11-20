@@ -160,3 +160,72 @@ def test_impact_resolves_python_and_javascript_changes_together(tmp_path: Path) 
     assert by_path['core.py'] == ['user.py']
     assert by_path['util.js'] == ['app.js']
     assert out['orphans'] == []
+
+
+# --- #373: relative imports are dependencies too ---------------------------
+
+
+def test_package_of_a_module_and_of_a_package() -> None:
+    assert impact._package_of('src/pkg/b.py') == 'pkg'
+    assert impact._package_of('src/pkg/__init__.py') == 'pkg'
+    assert impact._package_of('src/pkg/sub/deep.py') == 'pkg.sub'
+    assert impact._package_of('src/mod.py') == ''
+
+
+def test_py_imports_resolve_relative_levels() -> None:
+    """A level is resolved against the importing file's own package, so the
+    result is the same dotted name an absolute import would have produced."""
+    imports_of = impact._py_imports_of
+    assert imports_of('from .b import VALUE', 'pkg') == {'pkg.b'}
+    assert imports_of('from . import b', 'pkg') == {'pkg.b'}
+    assert imports_of('from ..x import y', 'pkg.sub') == {'pkg.x'}
+    assert imports_of('from pkg.b import VALUE', 'pkg') == {'pkg.b'}
+    assert imports_of('import pkg.b', 'pkg') == {'pkg.b'}
+
+
+def test_py_imports_ignore_a_level_that_climbs_past_the_root() -> None:
+    """`from ...x import y` in pkg/ has no parent package: an ImportError, not
+    an edge. Inventing one would report a dependency that cannot exist."""
+    assert impact._py_imports_of('from ...x import y', 'pkg') == set()
+
+
+def test_relative_import_is_the_same_edge_as_an_absolute_one(tmp_path: Path) -> None:
+    """#373: `from .b import VALUE` is an edge on pkg.b, exactly like
+    `from pkg.b import VALUE`.
+
+    Dropping ast.ImportFrom.level resolved the relative form to a bare 'b'
+    that never matched _module_name(), so most intra-package edges were
+    invisible: on this repo 49 of 80 modules use relative imports and only 16
+    carry an absolute sibling import, so the graph under-reported dependents
+    and a change looked safer than it was.
+
+    The relative files are also the regression test for #371's text
+    pre-filter: neither spells `pkg` anywhere, so a filter keyed on the first
+    dotted segment would drop both and leave the graph wrong while starting to
+    look right. They only survive because it keys on the last one.
+    """
+    repo = _repo(tmp_path)
+    pkg = repo / 'src' / 'pkg'
+    pkg.mkdir(parents=True)
+    (pkg / 'b.py').write_text('VALUE = 1\n')
+    (pkg / 'rel_from.py').write_text('from .b import VALUE\n')
+    (pkg / 'rel_module.py').write_text('from . import b\n')
+    (pkg / 'abs_from.py').write_text('from pkg.b import VALUE\n')
+    out = impact_graph(repo, ['src/pkg/b.py'])
+    assert out['edges'][0]['dependents'] == [
+        'src/pkg/abs_from.py',
+        'src/pkg/rel_from.py',
+        'src/pkg/rel_module.py',
+    ]
+
+
+def test_relative_import_resolves_against_the_nearest_parent(tmp_path: Path) -> None:
+    """`from ..x import y` inside pkg/sub is an edge on pkg.x, not on sub.x."""
+    repo = _repo(tmp_path)
+    pkg = repo / 'src' / 'pkg'
+    (pkg / 'sub').mkdir(parents=True)
+    (pkg / 'x.py').write_text('VALUE = 1\n')
+    (pkg / 'sub' / 'deep.py').write_text('from ..x import y\n')
+    out = impact_graph(repo, ['src/pkg/x.py'])
+    assert out['edges'][0]['dependents'] == ['src/pkg/sub/deep.py']
+

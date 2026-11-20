@@ -24,9 +24,12 @@ from pathlib import Path
 
 from pydantic_ai.toolsets import FunctionToolset
 
-from .tools import SKIP_DIRS
+from .tools import skip_parts
 
-SKIP_NAMES = {'.git', '.venv', 'node_modules', '__pycache__', '.mypy_cache', '.pytest_cache', 'dist', '.next', 'build'}
+# Built bundles: the generic tree-sitter scan reads every registered language,
+# so `dist/`, `.next/` and `build/` are compiled output rather than source —
+# an extra on top of the shared rule (#374), not a private copy of it.
+_BUILD_EXTRAS = frozenset({'dist', '.next', 'build'})
 
 
 def _iter_source_files(workdir: Path, extensions: set[str], path: str = '.'):
@@ -47,7 +50,7 @@ def _iter_source_files(workdir: Path, extensions: set[str], path: str = '.'):
     for f in sorted(target.rglob('*')):
         if not f.is_file() or f.suffix not in extensions:
             continue
-        if any(part in SKIP_DIRS for part in f.relative_to(root).parts):
+        if skip_parts(f.relative_to(root)):
             continue
         yield f
 
@@ -138,7 +141,7 @@ def _all_files(root: Path, path: str = '.'):
     for f in sorted(target.rglob('*')):
         if not f.is_file():
             continue
-        if any(part in SKIP_NAMES for part in f.relative_to(resolved_root).parts):
+        if skip_parts(f.relative_to(resolved_root), _BUILD_EXTRAS):
             continue
         yield f
 

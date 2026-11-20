@@ -28,14 +28,15 @@ from pathlib import Path
 
 from pydantic_ai.toolsets import FunctionToolset
 
-from .tools import SKIP_DIRS
+from .tools import skip_parts
 
 EMBED_EXTENSIONS = {'.py', '.md', '.txt', '.toml', '.json', '.js', '.ts', '.jsx', '.tsx'}
 MAX_FILE_CHARS = 20_000
 # `reference/` is curated documentation with its own search seam
 # (ReferenceStore); indexing it here lets long prose documents crowd real
-# code out of semantic results.
-EMBED_SKIP_DIRS = SKIP_DIRS | {'reference'}
+# code out of semantic results. Everything else the index skips is the shared
+# walker rule (tools.skip_parts), so a side venv cannot be sliced in here.
+EMBED_EXTRA = frozenset({'reference'})
 
 
 class FakeEmbedder:
@@ -84,7 +85,7 @@ class SemanticIndex:
         for f in sorted(workdir.rglob('*')):
             if not f.is_file() or f.suffix not in EMBED_EXTENSIONS:
                 continue
-            if any(part in EMBED_SKIP_DIRS for part in f.relative_to(workdir).parts):
+            if skip_parts(f.relative_to(workdir), EMBED_EXTRA):
                 continue
             content = f.read_text(encoding='utf-8', errors='replace')[:MAX_FILE_CHARS]
             digest = hashlib.sha256(content.encode()).hexdigest()
