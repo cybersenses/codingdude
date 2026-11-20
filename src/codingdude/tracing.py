@@ -45,6 +45,14 @@ that does execute (interactive worker, headless CLI, review mode) inherits the
 call. The one exception is `evals.replay`, which opts out explicitly: it drives
 a scripted model, so its token counts are simulated and must not enter a store
 that is read as real spend (#361).
+
+The evaluator (#296 `evaluate_work`) is *not* a third entry point to add: its
+`WorkEvaluator` is constructed in `plugins.build_all`, and only an `Engine`
+builds plugins, so an evaluator pass runs inside the caller's own process —
+worker, CLI or review mode — after `Engine.run` has configured tracing. Its
+agent spans therefore export under that run's session id already; #365 was
+filed on the reading that the evaluator ran server-side, which no code path
+does (server.py constructs no agent, builds no plugins and sets up no tracing).
 """
 from __future__ import annotations
 

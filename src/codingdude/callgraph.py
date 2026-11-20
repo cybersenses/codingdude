@@ -27,7 +27,7 @@ from pathlib import Path
 
 from codingdude.pyparse import parse_python
 
-from .tools import SKIP_DIRS
+from .tools import skip_parts
 
 PY = '.py'
 JS_EXTENSIONS = {'.js', '.jsx', '.mjs', '.ts', '.tsx'}
@@ -169,7 +169,7 @@ def _iter_source_files(root: Path, max_files: int):
     for f in sorted(root.rglob('*')):
         if not f.is_file() or f.suffix not in _SOURCE_EXTENSIONS:
             continue
-        if any(part in SKIP_DIRS for part in f.relative_to(root).parts):
+        if skip_parts(f.relative_to(root)):
             continue
         yield f
         count += 1

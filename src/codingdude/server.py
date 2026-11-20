@@ -1059,12 +1059,13 @@ def create_app(
         if not workdir:
             raise HTTPException(status_code=404, detail='no such session')
         root = Path(workdir)
-        # .venv* (not just .venv): side venvs like .venv-verify hold a full
-        # site-packages tree and made this walk take ~38s (#255).
-        skip = {'.git', '.venv', 'node_modules', '__pycache__', '.mypy_cache', '.pytest_cache'}
+        # The shared rule (#374), not a local copy: it covers `venv` as well as
+        # the `.venv*` side venvs this handler used to special-case by hand.
+        from .tools import ARTIFACT_KEEP, skip_parts
+
         out = []
         for p in sorted(root.rglob('*')):
-            if any(part in skip or part.startswith('.venv') for part in p.relative_to(root).parts):
+            if skip_parts(p.relative_to(root), keep=ARTIFACT_KEEP):
                 continue
             out.append(
                 ('d ' if p.is_dir() else '  ') + str(p.relative_to(root)).replace('\\', '/')
@@ -1080,10 +1081,13 @@ def create_app(
         if not workdir:
             raise HTTPException(status_code=404, detail='no such session')
         root = Path(workdir)
-        # .venv* (not just .venv): side venvs like .venv-verify hold a full
-        # site-packages tree — the Explorer's tree fetch took ~38s until
-        # they were skipped (#255).
-        skip = {'.git', '.venv', 'node_modules', '__pycache__', '.mypy_cache', '.pytest_cache', 'dist', '.next'}
+        # The shared rule (#374) plus build output: `skip_dir` covers SKIP_DIRS,
+        # the `.venv*` side venvs and plain `venv`, which this handler used to
+        # special-case by prefix while missing `venv` entirely (#255: those
+        # site-packages trees made the tree fetch take ~38s).
+        from .tools import ARTIFACT_KEEP, skip_dir
+
+        tree_extras = {'dist', '.next'}
 
         def build(directory: Path, depth: int) -> list[dict]:
             if depth > 8:
@@ -1094,7 +1098,7 @@ def create_app(
             except OSError:
                 return []
             for entry in entries:
-                if entry.name in skip or entry.name.startswith('.venv'):
+                if (skip_dir(entry.name) and entry.name not in ARTIFACT_KEEP) or entry.name in tree_extras:
                     continue
                 rel = entry.relative_to(root).as_posix()
                 if entry.is_dir():
@@ -1308,14 +1312,15 @@ def create_app(
                 break
         root = Path(workdir)
         exts = {'.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg'}
-        # .venv* prefix: side venvs (.venv-verify) otherwise add thousands of
-        # files to every renders scan (#255).
-        skip = {'.git', '.venv', 'node_modules', '__pycache__', '.mypy_cache', '.pytest_cache'}
+        # An artifact scan: the shared rule (#374) with `.scratch` kept, since
+        # that is where a run writes its screenshots.
+        from .tools import ARTIFACT_KEEP, skip_parts
+
         rendered: list[tuple[int, dict]] = []
         for p in sorted(root.rglob('*')):
             if not p.is_file() or p.suffix.lower() not in exts:
                 continue
-            if any(part in skip or part.startswith('.venv') for part in p.relative_to(root).parts):
+            if skip_parts(p.relative_to(root), keep=ARTIFACT_KEEP):
                 continue
             st = p.stat()
             rendered.append((

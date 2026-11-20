@@ -4,6 +4,44 @@
 
 ### Fixed
 
+- **Ten walkers were half a rule away from the truth (#374)**: `tools.skip_dir`
+  is the shared answer to "is this directory outside the project?" — it covers
+  `SKIP_DIRS` *and* the `.venv-*` side venvs *and* plain `venv`. Ten walkers
+  asked the same question with `any(part in SKIP_DIRS ...)`, which holds
+  neither, so third-party copies were read as project source: on this repo
+  24,736 of 25,122 walked files. The damage is wrong answers, not just cost — a
+  site-packages copy counts as a dependent of `tools.py`, its functions as
+  project definitions, its imports as call-graph edges, its `.py` files as the
+  language mix, and a newer file there reported the codegraph index stale. New
+  `tools.skip_parts(rel, extra=..., keep=...)` is the parts-aware twin, and
+  eighteen call sites across eleven modules were migrated: the seven modules the
+  ticket listed (including *both* deadcode walkers — the second one had its own
+  private set), `delegation._iter_target_files`, the two private bare-name
+  copies in `onboarding.detect_conventions` and `codegraph_boot.index_is_stale`,
+  the two server scans that special-cased the `.venv*` prefix by hand while
+  still missing plain `venv`, and the Explorer tree fetch. A caller needing an
+  extra subtree passes `extra=`; an *artifact* scan (renders, session files)
+  passes `keep=ARTIFACT_KEEP` because a screenshot lands in `.scratch`. Each
+  migrated walker has its own side-venv-decoy test in `tests/test_skip_rule.py`
+  (33 tests), and a guard test fails if any module outside `tools.py` defines a
+  SKIP* set again — the fork, not the individual site, is what the defect was.
+- **The impact graph now sees relative imports (#373)**: `_py_imports_of` read
+  `node.module` and dropped `node.level`, so `from .tools import X` resolved to
+  `tools` and never matched `_module_name`'s `codingdude.tools`. Intra-package
+  edges were therefore invisible whenever the package prefix was omitted — the
+  house style here: 49 of 80 modules import relatively, only 16 carry an
+  absolute sibling import. Resolution now takes the importing file's package
+  (`_package_of`), walks `level` dots out (`_relative_base`, `None` when that
+  climbs past the root, where the import is an ImportError rather than an edge)
+  and treats `from . import x` as the submodule import Python performs. #371's
+  text pre-filter moved with it: it keyed on the module's first dotted segment,
+  which a relative import never spells (`from .b import V` contains `.b`, never
+  `pkg`), so it would have silently dropped every dependent the fix adds — it
+  now keys on last segments with identifier boundaries. Measured on this repo,
+  `src/codingdude/tools.py`: 27 → 54 dependents (2 → 28 src-side), 0.62s → 0.37s
+  median of three warm runs — the base side probed in a worktree at `8799569`,
+  so the corpus and disk cache differ. The dependents are the finding; the
+  wall clock tracks machine state, not this change.
 - **The Diff panel loads again (#371)**: `GET /sessions/{id}/diff` never
   returned, so the panel sat on "loading…" for the life of a session — one of
   21 panels `tools/ui_smoke.py` photographs without content. The 30s bound on
@@ -11,7 +49,7 @@
   workdir on every call, including when nothing had changed. On this repo that
   was 104,435 directory entries per poll, and a session with a clean tree paid
   ~62s to prove the empty answer. Three cuts: an unchanged tree now returns
-  before the walk; `os.walk` prunes with `tools.skip_dir` — the canonical
+  before the walk; `os.walk` prunes with `tools.skip_dir` — the shared
   walker rule: `SKIP_DIRS` plus the `.venv-*` side venvs and plain `venv` —
   instead of walking into them and discarding every file (24,736 of this
   repo's 25,122 walked files were side-venv files); and a file is only

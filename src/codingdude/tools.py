@@ -55,11 +55,49 @@ SECRET_MARKERS = ('KEY', 'TOKEN', 'SECRET', 'PASSWORD', 'CREDENTIAL')
 
 
 def skip_dir(name: str) -> bool:
-    """Canonical skip rule for workdir walkers: SKIP_DIRS, any .venv-prefixed
-    sibling (.venv-verify & friends — the R75/#255 side-venv class), and
-    plain venv dirs. .scratch is the harness's own scratch area (probes,
-    restart logs) — never project source, so walkers skip it wholesale."""
+    """Is this one directory *name* outside the project's source?
+
+    SKIP_DIRS, any .venv-prefixed sibling (.venv-verify & friends — the
+    R75/#255 side-venv class), and plain venv dirs. .scratch is the harness's
+    own scratch area (probes, restart logs) — never project source, so walkers
+    skip it wholesale.
+
+    This is the rule for a single name, so it fits a directory-pruning walk
+    (`os.walk` + `dirnames[:]`, see impact._source_files). A walker that
+    collects paths first and filters afterwards wants :func:`skip_parts`.
+    """
     return name in SKIP_DIRS or name.startswith('.venv') or name in _PLAIN_VENV_DIRS
+
+
+#: The one shared-set entry artifact scans must NOT skip: screenshots and
+#: renders a run produces are routinely written into `.scratch`, and a scan
+#: whose whole purpose is to surface a fresh image must be able to see it.
+#: Source walkers keep skipping it — an output file is not project source.
+ARTIFACT_KEEP = frozenset({'.scratch'})
+
+
+def skip_parts(
+    rel: Path,
+    extra: frozenset[str] | set[str] = frozenset(),
+    keep: frozenset[str] = frozenset(),
+) -> bool:
+    """Is any component of a *relative path* outside the project's source?
+
+    The parts-aware twin of :func:`skip_dir`, for walkers that rglob the tree
+    and then decide per file (`skip_parts(f.relative_to(root))`). Filtering
+    those with bare `part in SKIP_DIRS` was the #374 defect: SKIP_DIRS holds
+    neither the .venv-* side venvs nor plain `venv`, so ~24.7k files of
+    third-party copies were parsed as project source and reported as
+    dependents, definitions and dead code.
+
+    `extra` adds caller-specific subtrees on top of the shared rule
+    (semantic's `reference/`, a build output dir) without forking the rule
+    itself; `keep` removes one shared-set entry for scans that look for
+    *output* rather than source (:data:`ARTIFACT_KEEP`).
+    """
+    return any(
+        (skip_dir(part) and part not in keep) or part in extra for part in rel.parts
+    )
 
 
 def _git_bash_exe() -> str | None:
@@ -518,9 +556,7 @@ def build_toolset(
         results: list[str] = []
         files = [target] if target.is_file() else sorted(target.rglob('*'))
         for f in files:
-            if not f.is_file() or any(
-                part in SKIP_DIRS for part in f.relative_to(workdir).parts
-            ):
+            if not f.is_file() or skip_parts(f.relative_to(workdir)):
                 continue
             try:
                 data = f.read_text(encoding='utf-8', errors='replace')[:MAX_FILE_BYTES]
@@ -1053,7 +1089,6 @@ def _pid(raw: str) -> int:
 
 
 IMAGE_SUFFIXES = {'.png', '.jpg', '.jpeg', '.webp', '.gif'}
-_RENDER_SCAN_SKIP = {'.git', '.venv', 'node_modules', '__pycache__'}
 
 
 def _register_new_renders(workdir: Path, started: float, on_render: Callable[[str], None]) -> None:
@@ -1062,6 +1097,10 @@ def _register_new_renders(workdir: Path, started: float, on_render: Callable[[st
     A render-producing command (screenshot, pixel gate) must surface its
     output; scanning for fresh images after the command is the cheapest
     reliable hook. Failures here never fail the command itself.
+
+    An *artifact* scan, not a source walk: a side venv or node_modules tree is
+    still noise, but `.scratch` is where the screenshot usually lands, so the
+    shared rule runs with `keep=ARTIFACT_KEEP` (#374).
     """
     import logging
 
@@ -1070,7 +1109,7 @@ def _register_new_renders(workdir: Path, started: float, on_render: Callable[[st
         for p in workdir.rglob('*'):
             if not p.is_file() or p.suffix.lower() not in IMAGE_SUFFIXES:
                 continue
-            if any(part in _RENDER_SCAN_SKIP for part in p.parts):
+            if skip_parts(p.relative_to(workdir), keep=ARTIFACT_KEEP):
                 continue
             if p.stat().st_mtime >= started:
                 on_render(p.relative_to(workdir).as_posix())

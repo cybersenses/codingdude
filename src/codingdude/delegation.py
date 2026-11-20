@@ -35,7 +35,7 @@ from pathlib import Path
 
 from pydantic_ai.usage import UsageLimits
 
-from .ast_tools import SKIP_DIRS
+from .tools import skip_parts
 
 _TOKEN_RE = re.compile(r'[A-Za-z_][A-Za-z0-9_]{3,}')
 _SUFFIXES = {'.py', '.md', '.ts', '.tsx', '.js', '.mjs'}
@@ -74,7 +74,7 @@ def _iter_target_files(workdir: Path):
         if not path.is_file() or path.suffix not in _SUFFIXES:
             continue
         rel = path.relative_to(workdir)
-        if any(part in SKIP_DIRS for part in rel.parts):
+        if skip_parts(rel):
             continue
         if count >= _MAX_FILES:
             return

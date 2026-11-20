@@ -20,7 +20,7 @@ from pathlib import Path
 from pydantic_ai import ModelRetry
 from pydantic_ai.toolsets import FunctionToolset
 
-from .tools import SKIP_DIRS
+from .tools import skip_parts
 
 MAX_RESULTS = 50
 
@@ -46,7 +46,7 @@ def _python_files(workdir: Path, path: str = "."):
         yield target
         return
     for f in sorted(target.rglob('*.py')):
-        if any(part in SKIP_DIRS for part in f.relative_to(root).parts):
+        if skip_parts(f.relative_to(root)):
             continue
         yield f
 
@@ -108,7 +108,7 @@ def build_ast_toolset(workdir: Path) -> FunctionToolset:
         for f in sorted(target.rglob('*')):
             if f.suffix.lower() not in NAV_SUFFIXES:
                 continue
-            if any(part in SKIP_DIRS for part in f.relative_to(root).parts):
+            if skip_parts(f.relative_to(root)):
                 continue
             yield f
 
@@ -131,7 +131,7 @@ def build_ast_toolset(workdir: Path) -> FunctionToolset:
                 or f.suffix.lower() == '.py'
             ):
                 continue
-            if any(part in SKIP_DIRS for part in f.relative_to(root).parts):
+            if skip_parts(f.relative_to(root)):
                 continue
             yield f
 
