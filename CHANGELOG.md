@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Added
+
+- **Human-in-the-loop repo map, foundation (#375, R103)**: the map comes from
+  floorplan, a node skill that draws a repo map and never calls a model, so the
+  integration is a process boundary rather than a re-implementation.
+  `src/codingdude/floorplan.py` is that whole boundary at this stage: locate
+  the skill (explicit path, then `CODINGDUDE_FLOORPLAN_HOME`, then a vendored
+  copy), run its scanner and builder with `--json --unattended` under a
+  timeout, and hand back their receipts. A missing skill, a missing node and a
+  timeout are all readable reasons, never an escaping exception: the map is an
+  aid, never a precondition for a run. Two shapes were measured rather than
+  assumed - the `--json` receipt carries `counts` plus repo and skip lists,
+  while the `scan.json` it writes carries the graph - so sizes come from the
+  graph and fall back to the receipt. Nineteen tests; the integration one
+  drives the real scanner over a fixture repo and is skipped when floorplan is
+  not installed.
+
 ### Fixed
 
 - **Ten walkers were half a rule away from the truth (#374)**: `tools.skip_dir`

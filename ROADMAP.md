@@ -1856,3 +1856,42 @@ is squash-merged, and this repo has already paid for that lesson once (R99 →
 
 **Impact.** None on code or gates: no tool, no doc move, no `gates.bat`/`ci.yml` line, no product surface. The retired ledger stays where it was, gitignored; this item exists so the root cause and its closure are durable instead of carried in memory.
 
+## R103 — Human-in-the-loop repo map: floorplan behind a thin adapter (transparency for the cowork loop)
+**Status:** open
+**Source:** user decision — adopt `haydenschmitty/floorplan` as the HITL map, per the comparison against `tt-a1i/archify` and `Egonex-AI/Understand-Anything` (2026-11-20).
+
+## Why
+The cowork loop needs a surface the human can read without reading the diff. A rendered architecture map (hosts → nodes → files → routes, plus "what changed recently and why") gives the user transparency into what the agent did, and gives the agent a cheaper way to orient than re-deriving structure per turn.
+
+## Probe evidence (measured 2026-11-20, this repo)
+- clone in .scratch\floorplan-probe, checkout HEAD 94f81b4 = v0.11.0 (2026-11-16), MIT, **zero npm deps**.
+- its scanner with --json --unattended: exit 0, **2.1 s**, 621 files / 848 import edges / 88 routes / 50 external packages / 60 hosts, a 537,456-byte scan.json; **0** of the 621 paths are under .venv, node_modules or .git; repo `git status` empty afterwards.
+- its builder with --json --unattended: exit 0, 1.0 s, ok=true, 0 errors, 5 warnings, a 2,611,097-byte index.html and a 445,351-byte graph.json; 357 files with 109 unassigned (30.5%), the unassigned share being my hand-written architecture input's fault, reported per field as a machine receipt rather than an opinion.
+- its Health panel reports 1 high finding, "unprotected-endpoint". **False positive**: 87 routed functions, 82 carry `Depends(authorize)`; the 5 without are login, auth_local, auth_check, run_events (a websocket) and health (public by design). Its heuristic cannot see FastAPI dependency injection.
+- node footprint of the skill: **56 files / 2,987,626 B (2.9 MB)**, dominated by a 1.6 MB elk bundle, a 188 KB viewer document, and two library modules of 178 KB and 139 KB. Licences: MIT (project) + EPL-2.0 (elkjs, which ships its own licence file) + OFL (two fonts).
+
+## Constraints found in our code
+- The artifact seam is `emit_html` on `frontend/src/panels/dock/Artifacts.jsx`: the panel renders `<iframe sandbox="" srcDoc={...}>`. `sandbox=""` **blocks all scripts**, so the map's JS would never draw. Widening it for every html artifact would change the security posture of an already-shipped surface; the map needs its own kind.
+- The built map is one 2.6 MB document (16 inline script tags, 2 style tags, no external asset references) plus the graph and three helper scripts it carries for its own server.
+
+## Design (decisions)
+1. **Subprocess behind an adapter**, not a re-implementation: `src/codingdude/floorplan.py` owns locate, run, validate and read. No node logic in Python. (Named after the tool because the existing `src/codingdude/repo_map.py` is a different thing: the budget-sized text map injected at session start.)
+2. **The engine is the model floorplan expects.** floorplan never calls a model; a model writes three JSON inputs (the architecture document, per-node description files, and a recent-work card file). Our engine authors them from facts it already computes (structure, routes, pyproject, docstrings), so no analysis is duplicated.
+3. **New artifact kind map**, rendered in an iframe with sandbox="allow-scripts" and no allow-same-origin: an opaque origin, so the map cannot reach our DOM, cookies or API while its own inlined JS still draws. The html kind keeps sandbox="" and a test pins that.
+4. **Its query CLI becomes a read-only agent tool** (verb-based: overview, find, show, path). This is the half that makes the map useful to the agent, not only to the human.
+5. **No model calls in floorplan's loop.** --unattended everywhere; nothing in the integration may reach a provider.
+6. **Health findings are advisory, never verdicts** - the false positive above is the proof. They reach the agent as prompts to arbitrate, never the user as a fact.
+
+## Open decision (the user's call, not guessed)
+- **Vendoring.** The skill is 56 files / 2.9 MB: MIT (project) + EPL-2.0 (the elk bundle) + OFL (fonts). Options: (a) vendor it into a vendor/floorplan directory, pinned to 94f81b4 with a checksum file and the licences; (b) resolve from a configurable path and fail soft when absent. Until decided, the adapter takes a path and degrades with a readable message.
+
+## Scope boundary
+- **In:** the three JSON inputs authored by the engine, scan and build execution, the map artifact kind, the query tool.
+- **Out:** floorplan's Ask bar, flows and blueprint editing (its skill expects Claude Code or Codex CLI - re-pointing those at our engine is a later item), and its refresh orchestration.
+- Node becomes a **runtime** dependency (v22 here; floorplan wants >= 18). It is already a build-time dependency for the frontend.
+
+## Risks
+- Young project (v0.11.0, ~53 open issues): pin the commit, never its main branch.
+- Its scanner is heuristic - the false positive above is the proof. Any generated verdict needs arbitration before it reaches the user as fact.
+- The built map document is 2.6 MB; check the artifact size cap before this becomes a per-turn emission.
+
