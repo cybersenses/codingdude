@@ -2084,10 +2084,11 @@ not match every word in the file, or the walk pays full parse cost again).
 
 **Measured on this repo**, `impact_graph` for `src/codingdude/tools.py`:
 27 → 54 dependents (28 src-side, where only the two absolute importers
-appeared), 0.43s → 0.36s (median of three warm runs at each commit, same
-probe); `src/codingdude/impact.py`: 1 → 2 (`server.py` appears). A cold first
-run measures ~2.6s on both sides, so the wall-clock delta is a cache artefact
-of the probe, not a property of the change — the dependents are the finding.
+appeared), 0.62s → 0.37s (median of three warm runs, the base side probed in a
+worktree at `8799569` so corpus and disk cache differ; the earlier 0.43s figure
+did not reproduce on re-measurement);
+`src/codingdude/impact.py`: 1 → 2 (`server.py` appears). The wall clock tracks
+machine state, not the change — the dependents are the finding.
 
 **Verification.** RED at `8799569` with the final tests copied into a worktree
 and only the rule added, so every failure is a walker or a resolver, not a

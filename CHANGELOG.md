@@ -38,8 +38,10 @@
   which a relative import never spells (`from .b import V` contains `.b`, never
   `pkg`), so it would have silently dropped every dependent the fix adds — it
   now keys on last segments with identifier boundaries. Measured on this repo,
-  `src/codingdude/tools.py`: 27 → 54 dependents, 0.43s → 0.36s (median of three
-  warm runs each, same probe at both commits).
+  `src/codingdude/tools.py`: 27 → 54 dependents (2 → 28 src-side), 0.62s → 0.37s
+  median of three warm runs — the base side probed in a worktree at `8799569`,
+  so the corpus and disk cache differ. The dependents are the finding; the
+  wall clock tracks machine state, not this change.
 - **The Diff panel loads again (#371)**: `GET /sessions/{id}/diff` never
   returned, so the panel sat on "loading…" for the life of a session — one of
   21 panels `tools/ui_smoke.py` photographs without content. The 30s bound on
