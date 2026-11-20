@@ -1608,7 +1608,7 @@ Re-rendering or redesigning the graphics; the product page itself; changing the 
 A per-image verdict table (image → looked at Y/N → findings) committed beside the images, plus the recorded decision on the vision path and on renderer availability. "Looked at" means a model or a human described the image — an arithmetic contrast figure does not count and must not be recorded as sight.
 
 ## R98 — UI defects found by the first visual pass
-**Status:** open
+**Status:** done
 
 Audience: agent + human
 
@@ -1631,10 +1631,60 @@ The visual gate finally ran (R97, 2026-11-16) and it found real defects in eight
 
 Each finding either fixed or explicitly waived with a reason. The dead-code legend colouring is a bug (state says one thing, pixels another) and should be treated as such, not as polish.
 
-**Also recorded here (undecided, needs a call)**
+**Verdicts (2026-11-20, HEAD `10fd463` plus the fix below)**
 
-- Capture: the visual gate reads existing PNGs. Installing Playwright would let `ss-verify` capture live UI itself. Not required to review images, required to review screens.
-- Tracked home: `docs/Screenshots/*.png` - 12 files, about 800 KB, still untracked, one `git clean -fdx` from deletion, and in tension with R74's binary-purge policy.
+Measured, not re-read: `tools/ui_smoke.py --shots` walks every panel and writes
+one screenshot each; four Playwright probes (`.scratch/probe355*.py`) open a
+file, pick a control-flow function and read back computed styles and box
+geometry; the vision model judged every changed surface.
+
+- Usage/costs - not present. Vision pass on the live Cost panel: all four labels
+  padded, the model table fully visible, tab glyphs spaced. A DOM sweep of the
+  panel found 0 elements clipping content with neither ellipsis nor scroll.
+- Diff `-`/`+` alignment - not present. Each row is one `whitespace-pre` line
+  whose marker is its own first character: there is no separate gutter column to
+  drift. Rendered on the shipped stylesheet the markers share column 0 and the
+  context line sits one space in, which is correct.
+- Editor - not present. Vision pass with a file open: no stray dividers, no
+  orphan gutter glyph. The breadcrumb measures 10.61:1 (rgb(254,165,114) on
+  rgb(6,3,1)) against AA's 4.5:1, so "near-unreadable" was a misread.
+- Repo map arrow short of `add` - waived. The edge exists in the generated
+  graph; the shortfall is Mermaid's own edge-endpoint geometry, outside this
+  panel's markup.
+- Dead-code map colouring - fixed, and its stated cause was wrong. The grey
+  nodes are the call graph above, which is grey by design (dashed gold =
+  orphan, and each carries a warning glyph); a picked function renders
+  `fill: rgb(34,197,94)`. The defect was the hint's placement: it read as a
+  legend for a graph it does not describe. It now names the picker, and a
+  vision pass confirms the sentence, its position under the picker, and that
+  nothing is clipped.
+- Dead-code map, remaining three - not present or waived. "Review changes"
+  measures top 4, bottom 23 inside a 28px strip, so it cannot clip; the picker
+  computes rgb(15,12,9) on rgb(245,241,238), so it is themed; the dashed borders
+  are the deliberate orphan class.
+- Trace - not present. Live pass: long checkpoints wrap.
+- Waterfall - not present. The layout those findings belong to is gone (no tab
+  count badge, no in-panel "Review changes"); a DOM sweep found 0 clipped
+  elements and labels ellipsize through `truncate`.
+- Roadmap - not present. Vision pass on the live panel: every visible row
+  carries a right-aligned status control.
+
+Two premises below were wrong when this item was written:
+
+- Playwright is installed (the python package with browsers, plus the frontend's
+  own), so capture exists today: `tools/ui_smoke.py --shots <dir>` photographs
+  the running app, one file per panel.
+- The screenshots are tracked, not untracked: `git ls-files docs/Screenshots`
+  lists 12 files, added in `db4a652`.
+
+A green UI walk does not make a change to a data panel correct, so the copy fix
+was verified by looking at the changed panel, not by the gate passing.
+
+**Found while verifying (own ticket)** - `/sessions/{id}/diff` never returns: no
+response after more than 180 seconds, so the Diff panel stays on "loading..." and
+the live diff could not be photographed for the verdict above. The handler
+(`src/codingdude/server.py:1024`) runs `git diff HEAD` under a 30s cap and then
+`summarize()` plus `impact_graph()` with none.
 
 ## R99 — Trace viewer: verify the documented collector instead of asserting it
 **Status:** done
