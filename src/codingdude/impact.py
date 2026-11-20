@@ -23,7 +23,9 @@ this, what else breaks" as a Mermaid flowchart.
 from __future__ import annotations
 
 import ast
+import os
 import re
+from collections.abc import Iterator
 from pathlib import Path
 
 from codingdude.pyparse import parse_python
@@ -31,6 +33,7 @@ from codingdude.pyparse import parse_python
 from .tools import SKIP_DIRS
 
 SOURCE_EXTS = {'.py', '.js', '.jsx', '.ts', '.tsx'}
+_SKIP = frozenset(SKIP_DIRS)
 
 
 def _module_name(rel: str) -> str:
@@ -73,34 +76,73 @@ def _js_stems(rel: str) -> set[str]:
     return {f'./{p.as_posix()}', f'./{p.parts[-1]}'}
 
 
+def _source_files(workdir: Path, suffixes: set[str]) -> Iterator[Path]:
+    """Every file under workdir with one of `suffixes`, minus SKIP_DIRS.
+
+    os.walk rather than rglob: rglob descends into .venv/node_modules/.git and
+    hands back every entry, so the caller pays for ~30k directory entries and
+    stat() calls it then discards (#371). Pruning dirnames in place skips the
+    subtree outright. Order is left as the filesystem gives it — the result is
+    sorted where it is returned, so walk order cannot leak.
+    """
+    for root, dirnames, filenames in os.walk(workdir):
+        dirnames[:] = [d for d in dirnames if d not in _SKIP]
+        for name in filenames:
+            path = Path(root) / name
+            if path.suffix in suffixes:
+                yield path
+
+
 def impact_graph(workdir: Path, changed: list[str]) -> dict:
     """{'edges': [{path, dependents:[...]}], 'orphans': changed with none}."""
     workdir = Path(workdir)
+    # Nothing changed has a known answer. Returning before the walk matters:
+    # the Diff panel polls this every 2s, and on a repo carrying a venv the
+    # walk cost ~62s to prove the empty result (#371).
+    if not changed:
+        return {'edges': [], 'orphans': []}
+
     changed_set = set(changed)
     py_changed = [(c, _module_name(c)) for c in changed if c.endswith('.py')]
     js_changed = [(c, _js_stems(c)) for c in changed if c not in {x for x, _ in py_changed}]
 
     dependents_of: dict[str, set[str]] = {c: set() for c in changed}
 
-    for f in sorted(workdir.rglob('*')):
-        if not f.is_file() or f.suffix not in SOURCE_EXTS:
-            continue
+    # Only files in a changed file's own language can name it, so neither
+    # language pays for the other's tree. A dependent must also spell the
+    # module out in its own source, and that is a *necessary* condition: any
+    # AST import of `pkg.mod` contains the literal text. Checking it first
+    # keeps ast.parse off the ~25k files that cannot possibly answer —
+    # 61s -> 6s on this repo, with identical dependents.
+    suffixes: set[str] = set()
+    if py_changed:
+        suffixes.add('.py')
+    if js_changed:
+        suffixes.update(SOURCE_EXTS - {'.py'})
+    py_roots = {mod.split('.')[0] for _, mod in py_changed}
+    js_words = {stem.rsplit('/', 1)[-1] for _, stems in js_changed for stem in stems}
+
+    for f in _source_files(workdir, suffixes):
         try:
             rel = f.relative_to(workdir).as_posix()
         except ValueError:
             continue
-        if rel in changed_set or any(part in SKIP_DIRS for part in f.relative_to(workdir).parts):
+        if rel in changed_set:
             continue
         try:
             text = f.read_text(encoding='utf-8', errors='replace')
         except OSError:
             continue
         if f.suffix == '.py':
+            if not any(root in text for root in py_roots):
+                continue
             mods = _py_imports_of(text)
             for c, mod in py_changed:
                 if mod in mods:
                     dependents_of[c].add(rel)
         else:
+            if not any(word in text for word in js_words):
+                continue
             targets = _js_targets_of(text)
             for c, stems in js_changed:
                 if targets & stems:

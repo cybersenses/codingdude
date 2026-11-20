@@ -296,3 +296,50 @@ def test_structure_endpoint(server, tmp_path):
     m = next(f for f in files if f['path'] == 'src/m.py')
     assert any(s['kind'] == 'class' and s['name'] == 'A' for s in m['symbols'])
     assert any(s['kind'] == 'function' and s['name'] == 'top' for s in m['symbols'])
+
+
+def test_session_diff_payload_shape(server, tmp_path):
+    """#371: the Diff panel polls this; the shape it binds must not drift.
+
+    `sessionTopics.ts` maps `diff` -> `diff`, `summary` -> `diffSummary`,
+    `impact` -> `impact`, so all three keys are contract, not decoration.
+    A workdir with no HEAD resolves to "nothing changed" rather than failing.
+    """
+    app, base = server
+    workdir = tmp_path / 'proj'
+    workdir.mkdir()
+    (workdir / 'core.py').write_text('def f():\n    pass\n', encoding='utf-8')
+    (workdir / 'user.py').write_text('import core\n', encoding='utf-8')
+    sid = make_session(base, workdir)
+    r = httpx.get(f'{base}/sessions/{sid}/diff', headers=auth(), timeout=30)
+    assert r.status_code == 200
+    body = r.json()
+    assert set(body) == {'diff', 'summary', 'impact'}
+    assert body['impact'] == {'edges': [], 'orphans': []}
+    assert body['summary'] == []
+
+
+def test_session_diff_labels_a_git_timeout(server, tmp_path, monkeypatch):
+    """#371: a hung `git diff` must reach the panel as an error, not a hang.
+
+    The panel renders a failed fetch through PollErrorBanner; an unhandled
+    TimeoutExpired was a 500 traceback carrying no readable message.
+    """
+    import subprocess as sp  # nosec B404 - test fixture, fixed argv, no shell
+
+    app, base = server
+    workdir = tmp_path / 'proj'
+    workdir.mkdir()
+    sid = make_session(base, workdir)
+
+    real_run = sp.run
+
+    def fake_run(cmd, *args, **kwargs):
+        if list(cmd[:2]) == ['git', 'diff']:
+            raise sp.TimeoutExpired(cmd=cmd, timeout=kwargs.get('timeout', 30))
+        return real_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(sp, 'run', fake_run)
+    r = httpx.get(f'{base}/sessions/{sid}/diff', headers=auth(), timeout=30)
+    assert r.status_code == 504
+    assert 'timed out' in r.json()['detail']

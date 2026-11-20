@@ -1028,9 +1028,17 @@ def create_app(
             raise HTTPException(status_code=404, detail='no such session')
         import subprocess
 
-        result = subprocess.run(
-            ['git', 'diff', 'HEAD'], cwd=workdir, capture_output=True, text=True, timeout=30
-        )
+        # #371: a hung git must reach the panel as a message, not a 500
+        # traceback — the panel renders a failed fetch through PollErrorBanner.
+        try:
+            result = subprocess.run(  # nosec B603 B607 - fixed argv, no shell
+                ['git', 'diff', 'HEAD'],
+                cwd=workdir, capture_output=True, text=True, timeout=30,
+            )
+        except subprocess.TimeoutExpired:
+            raise HTTPException(
+                status_code=504, detail='git diff timed out after 30s'
+            ) from None
         # #85: symbol-level "what changed" beside the raw diff.
         from .changesummary import changed_files, summarize
         from .impact import impact_graph

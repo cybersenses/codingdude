@@ -18,6 +18,9 @@
 import subprocess
 from pathlib import Path
 
+import pytest
+
+from codingdude import impact
 from codingdude.impact import _js_stems, _module_name, impact_graph
 
 
@@ -72,3 +75,67 @@ def test_impact_skips_changed_files_as_dependents_and_ignores_dirs(tmp_path: Pat
     by_path = {e['path']: e for e in out['edges']}
     assert by_path['a.py']['dependents'] == []  # b.py is itself changed, excluded
     assert 'b.py' in out['orphans']
+
+
+def test_impact_without_changes_returns_before_walking_the_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#371: nothing changed has a known answer, so no walk is warranted.
+
+    The Diff panel polls this endpoint every 2s. On a repo carrying a venv the
+    walk cost ~62s to prove the empty result, which is why the panel never left
+    'loading...'.
+    """
+
+    def explode(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError('impact_graph walked the tree with nothing changed')
+
+    monkeypatch.setattr(impact, '_source_files', explode)
+    assert impact_graph(tmp_path, []) == {'edges': [], 'orphans': []}
+
+
+def test_impact_ignores_a_file_that_only_mentions_the_module_name(tmp_path: Path) -> None:
+    """The cheap text pre-filter is a necessary condition, never a match.
+
+    'core' appears here only in a comment and a string literal, so this file
+    cannot be a dependent even though it survives the filter.
+    """
+    repo = _repo(tmp_path)
+    (repo / 'core.py').write_text('def f():\n    pass\n')
+    (repo / 'chatty.py').write_text('# core is great\nNOTE = "core"\n')
+    out = impact_graph(repo, ['core.py'])
+    assert out['edges'][0]['dependents'] == []
+    assert out['orphans'] == ['core.py']
+
+
+def test_impact_ignores_dependents_inside_skipped_directories(tmp_path: Path) -> None:
+    """A vendored copy under node_modules is not a dependent of this repo."""
+    repo = _repo(tmp_path)
+    (repo / 'util.js').write_text('export const x = 1\n')
+    vendored = repo / 'node_modules' / 'pkg'
+    vendored.mkdir(parents=True)
+    (vendored / 'uses.js').write_text("import { x } from './util'\n")
+    out = impact_graph(repo, ['util.js'])
+    assert out['edges'][0]['dependents'] == []
+
+
+def test_impact_finds_javascript_dependents(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    (repo / 'util.js').write_text('export const x = 1\n')
+    (repo / 'app.js').write_text("import { x } from './util'\n")
+    out = impact_graph(repo, ['util.js'])
+    assert out['edges'][0]['dependents'] == ['app.js']
+
+
+def test_impact_resolves_python_and_javascript_changes_together(tmp_path: Path) -> None:
+    """Both languages in one call: neither may be filtered out by the other."""
+    repo = _repo(tmp_path)
+    (repo / 'core.py').write_text('def f():\n    pass\n')
+    (repo / 'user.py').write_text('import core\n')
+    (repo / 'util.js').write_text('export const x = 1\n')
+    (repo / 'app.js').write_text("import { x } from './util'\n")
+    out = impact_graph(repo, ['core.py', 'util.js'])
+    by_path = {e['path']: e['dependents'] for e in out['edges']}
+    assert by_path['core.py'] == ['user.py']
+    assert by_path['util.js'] == ['app.js']
+    assert out['orphans'] == []
