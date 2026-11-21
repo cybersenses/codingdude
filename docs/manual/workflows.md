@@ -103,7 +103,7 @@ review still exists as a failsafe.
 - **Graph panel with a file open** — call graph, test evidence (which tests
   reference the file, mutation kill rate), and for Python a control-flow
   graph that flags dead code.
-- **Graph panel without a file** — architecture map, project structure, and
+- **Graph panel without a file** — module map, project structure, and
   the **repo Q&A** box: ask "where is authentication enforced?" and get an
   answer with citations.
 - **Ask in chat** — "show me where sessions are authorised" opens the file
