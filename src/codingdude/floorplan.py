@@ -482,6 +482,17 @@ async def _run_script(
     return cap, node
 
 
+def export_temp(out_dir: str | Path) -> Path:
+    """The sidecar the export is written to before it is published (#381).
+
+    Named per process, so a second attempt cannot land on the first one's file
+    and nothing has to be cleared on the way in — the build lock already allows
+    one build per workdir. Named here rather than spelled out at the two places
+    that need it, so the writer and the test that proves the publish agree.
+    """
+    return Path(out_dir) / f'{EXPORT_NAME}.{os.getpid()}.tmp'
+
+
 async def _export_page(out_dir: Path, timeout: int = EXPORT_TIMEOUT) -> str:
     """Write `out_dir`'s exported copy. Returns why not, or '' on success (#381).
 
@@ -494,13 +505,17 @@ async def _export_page(out_dir: Path, timeout: int = EXPORT_TIMEOUT) -> str:
     newer than the build's page, so a partial one would be served as if it were
     a map. Publishing also keeps a rebuild's *previous* copy in place, which is
     older than the new page and therefore never served.
+
+    The temp name is this process's (`export_temp`), so there is nothing to
+    clear first: clearing a previous run's sidecar would be a cleanup step on
+    the way *in* that can fail on Windows (`PermissionError` on a file something
+    else holds open) and turn a build into an exception.
     """
     dest = out_dir / EXPORT_NAME
-    tmp = out_dir / f'{EXPORT_NAME}.tmp'
+    tmp = export_temp(out_dir)
     node = node_binary()
     if node is None:
         return NODE_MISSING
-    tmp.unlink(missing_ok=True)
     cap = await run_captured(
         [node, str(out_dir / EXPORT_SCRIPT), '--export', str(tmp),
          '--include', EXPORT_INCLUDE],

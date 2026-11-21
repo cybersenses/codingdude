@@ -1025,12 +1025,12 @@ async def test_the_pair_writes_the_copy_the_frame_serves(tmp_path, monkeypatch):
     assert recorder.scripts == ['scan.mjs', 'build.mjs', 'serve.mjs']
     _, export_argv = recorder.calls[2]
     map_dir = floorplan.map_dir(proj, cfg)
-    # The script writes a sibling `*.tmp` that we then publish: the served name
-    # never holds a half-written file.
+    # The script writes a sidecar that we then publish: the served name never
+    # holds a half-written file.
     assert export_argv[export_argv.index('--export') + 1] == str(
-        map_dir / f'{floorplan.EXPORT_NAME}.tmp')
+        floorplan.export_temp(map_dir))
     assert (map_dir / floorplan.EXPORT_NAME).is_file()
-    assert not (map_dir / f'{floorplan.EXPORT_NAME}.tmp').exists()
+    assert not floorplan.export_temp(map_dir).exists()
     # `health` is left out on purpose: floorplan's health scan is heuristic and
     # reports a HIGH finding on routes that do carry `Depends(authorize)`, so
     # showing it in our own panel would present a wrong verdict as ours.
@@ -1069,7 +1069,7 @@ async def test_a_failed_export_leaves_no_partial_copy_to_serve(tmp_path, monkeyp
     assert 'exported copy failed' in problem
     assert 'ENOSPC' in problem
     assert dest.read_text(encoding='utf-8') == '<html>older copy</html>'
-    assert not (out / f'{floorplan.EXPORT_NAME}.tmp').exists()
+    assert not floorplan.export_temp(out).exists()
     assert floorplan.map_frame_page(tmp_path) == page
 
 
