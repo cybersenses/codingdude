@@ -102,17 +102,25 @@
   floorplan's *own* export path writes (`serve.mjs --export`, the code its Export
   button takes): `meta.exported` set, `body.exported` hides the bar, no engine
   detection, no `/api/ask` fetch. `map_frame_page()` prefers that copy and falls
-  back to the built page when it is missing or older, so a rebuild whose copy
-  failed cannot leave the frame showing the previous build. `health` is
+  back to the built page when it is missing or not *provably* newer — a tie
+  resolves to the build page, because coarse filesystem timestamps are not
+  evidence the copy is current — so a rebuild whose copy failed, or whose copy
+  landed in the same clock tick, cannot leave the frame showing the previous
+  build while the panel says "built". `health` is
   deliberately left out of the copy: floorplan's health scan is heuristic and
   reports a HIGH "unprotected-endpoint" on routes that do carry
   `Depends(authorize)`, so the panel does not present a verdict we know to be
-  wrong as ours. Measured on this repo: the copy costs 0.20s, is 2,651,445 B
-  against the build's 2,565,620 B (it re-serialises flows, notes and recent
-  work), renders with 42 SVG layers, 0 console errors and no "Asking is
-  unavailable" text anywhere in the document. It is written to a per-call
+  wrong as ours. Measured on this repo: the copy costs 0.20s and is 2,651,445 B
+  against the build's 2,655,620 B (it re-serialises flows, notes and recent
+  work); rendered in the same browser at 1440x900, the Ask box is 700x127
+  `display:flex` in the build against 0x0 `display:none` in the copy, with its
+  input `disabled` in the former and enabled in the latter, 42 SVG layers and 0
+  console errors on both. The placeholder string is *not* the discriminator and
+  is not claimed as one: "Asking is unavailable" occurs twice in both files'
+  source, and a placeholder is not innerText. It is written to a per-call
   sidecar and published with a retried `os.replace` — the frame may be holding
-  the copy being replaced, and on Windows that refusal passes — so a failed
+  the copy being replaced, and on Windows that refusal passes — and an empty
+  copy is the same class of failure as a non-zero exit, so a failed or blank
   export cannot leave a truncated page that the frame would serve as newer than
   the build.
 

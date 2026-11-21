@@ -976,16 +976,22 @@ def _sidecars(out: Path) -> list[Path]:
 
 
 def _both_pages(tmp_path, *, export_newer: bool = True):
-    """A map dir holding both pages, with the export's age under control."""
+    """A map dir holding both pages, with the export's age under control.
+
+    The offset is explicit rather than "written second, so newer": Windows
+    filesystem timestamps come from a coarse clock tick, so two files written
+    back to back can share one, and a fixture that relied on that ordering would
+    be testing the clock rather than the comparison.
+    """
     out = tmp_path / 'mapdir'
     out.mkdir(parents=True)
     page = out / 'index.html'
     page.write_text('<html>build</html>', encoding='utf-8')
     export = out / floorplan.EXPORT_NAME
     export.write_text('<html>exported</html>', encoding='utf-8')
-    if not export_newer:
-        older = page.stat().st_mtime - 60
-        os.utime(export, (older, older))
+    page_ns = page.stat().st_mtime_ns
+    offset = 2_000_000_000 * (1 if export_newer else -1)
+    os.utime(export, ns=(page_ns + offset, page_ns + offset))
     return out, page, export
 
 
@@ -1013,6 +1019,26 @@ def test_the_frame_ignores_an_export_older_than_the_build(tmp_path, monkeypatch)
     """A rebuild that wrote the page but not its copy must not serve the copy:
     the frame would show the previous build while the panel said "built"."""
     out, page, _export = _both_pages(tmp_path, export_newer=False)
+    monkeypatch.setattr(floorplan, 'map_dir', lambda *a, **k: out)
+
+    assert floorplan.map_frame_page(tmp_path) == page
+
+
+def test_the_frame_prefers_the_build_page_when_the_copy_is_not_provably_newer(
+    tmp_path, monkeypatch,
+):
+    """A tie is not evidence the copy is current, so it must not serve it.
+
+    On a filesystem with coarse timestamps a rebuild's page and the *previous*
+    copy can carry the same mtime, and a tie resolved toward the copy is exactly
+    the state the comparison exists to prevent: the previous build on screen
+    while the panel says "built". Choosing the build page instead costs the dead
+    Ask bar, which is visible and honest; choosing the copy costs a map that is
+    not the one that was just built, which is neither.
+    """
+    out, page, export = _both_pages(tmp_path)
+    same = page.stat().st_mtime_ns
+    os.utime(export, ns=(same, same))
     monkeypatch.setattr(floorplan, 'map_dir', lambda *a, **k: out)
 
     assert floorplan.map_frame_page(tmp_path) == page
@@ -1078,6 +1104,32 @@ async def test_a_failed_export_leaves_no_partial_copy_to_serve(tmp_path, monkeyp
     assert dest.read_text(encoding='utf-8') == '<html>older copy</html>'
     assert _sidecars(out) == []
     assert floorplan.map_frame_page(tmp_path) == page
+
+
+async def test_an_empty_export_is_a_failure_not_a_blank_map(tmp_path, monkeypatch):
+    """A copy that exists but holds nothing is worse than the bar it removed.
+
+    `serve.mjs` exiting 0 is not proof it wrote a page: a zero-byte copy passes
+    an existence check and then renders an empty frame, where the build page at
+    least drew a map. Emptiness has to be the same class of failure as a
+    non-zero exit, and the served name must be left alone.
+    """
+    out = tmp_path / 'map'
+    out.mkdir()
+    monkeypatch.setattr(floorplan, 'map_dir', lambda *a, **k: out)
+
+    async def writes_nothing(argv, *, cwd=None, timeout=60, **kwargs):
+        Path(argv[argv.index('--export') + 1]).write_text('', encoding='utf-8')
+        return Captured(code=0, stdout='', stderr='')
+
+    monkeypatch.setattr(floorplan, 'run_captured', writes_nothing)
+    monkeypatch.setattr(floorplan, 'node_binary', lambda: Path('node'))
+
+    problem = await floorplan._export_page(out)
+
+    assert 'empty' in problem
+    assert not (out / floorplan.EXPORT_NAME).exists()
+    assert _sidecars(out) == []
 
 
 async def test_a_locked_copy_is_retried_rather_than_lost(tmp_path, monkeypatch):

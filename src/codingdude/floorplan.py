@@ -321,19 +321,25 @@ def map_frame_page(workdir: str | Path, home: str | Path | None = None) -> Path:
     sandboxed frame can run without dead controls — the copy whose Ask bar is
     hidden because nothing here answers it.
 
-    Falls back to the build's own page when the export is missing *or older*,
-    and the second half is the load-bearing one: a rebuild that wrote the page
-    but not its copy must not leave the frame showing the previous build while
-    the panel says "built".
+    Falls back to the build's own page when the export is missing, or when it is
+    not *provably* newer, and the second half carries the weight: a rebuild that
+    wrote the page but not its copy must not leave the frame showing the previous
+    build while the panel says "built". A tie is not proof of anything — coarse
+    filesystem timestamps give a rebuild's page and the previous copy the same
+    mtime — so a tie resolves to the build page. That costs the dead Ask bar,
+    which is visible and honest, rather than a map that is not the one just
+    built, which is neither.
     """
     page = map_page(workdir, home)
     export = page.with_name(EXPORT_NAME)
     try:
-        if export.is_file() and export.stat().st_mtime >= page.stat().st_mtime:
-            return export
+        page_mtime = page.stat().st_mtime_ns
+        export_mtime = export.stat().st_mtime_ns
     except OSError:
+        # Not an error to report: an entry that is not there is answered by the
+        # fallback, and `_map_state` reports the absence of the page itself.
         return page
-    return page
+    return export if export_mtime > page_mtime else page
 
 
 class MapLocked(RuntimeError):
@@ -536,6 +542,14 @@ async def _export_page(out_dir: Path, timeout: int = EXPORT_TIMEOUT) -> str:
         _discard(tmp)
         return ('the map was built, but its exported copy failed '
                 f'(exit {cap.code}): {cap.combined[:200]}')
+    if tmp.stat().st_size == 0:
+        # Exit 0 is not proof a page was written. An empty copy would pass the
+        # existence check above and render a blank frame, which is worse than
+        # the Ask bar it exists to remove, so emptiness is the same class of
+        # failure as a non-zero exit and the served name is left alone.
+        _discard(tmp)
+        return ('the map was built, but its exported copy came back empty '
+                f'(exit 0): {cap.combined[:200]}')
     try:
         _replace_with_retry(tmp, dest)
     except OSError as exc:

@@ -24,6 +24,7 @@ revalidate (a rebuild has to reach the frame without a hard refresh).
 """
 
 import asyncio
+import os
 import time
 from pathlib import Path
 
@@ -156,9 +157,15 @@ def test_the_route_serves_the_exported_copy_the_frame_needs(tmp_path):
     with client:
         session_id, proj = _session(client, tmp_path)
         page = _build_page(proj, tmp_path)
-        page.with_name(floorplan.EXPORT_NAME).write_text(
+        export = page.with_name(floorplan.EXPORT_NAME)
+        export.write_text(
             '<!doctype html><html><body>exported sentinel</body></html>',
             encoding='utf-8')
+        # "Written second" is not "newer", and the frame requires strictly
+        # newer: one filesystem clock tick covers both writes, so the order the
+        # route depends on is pinned rather than read off the clock.
+        newer = page.stat().st_mtime_ns + 2_000_000_000
+        os.utime(export, ns=(newer, newer))
         response = client.get(f'/sessions/{session_id}/map', headers=headers)
     assert response.status_code == 200
     assert 'exported sentinel' in response.text
