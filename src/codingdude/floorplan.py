@@ -53,12 +53,13 @@ import os
 import re
 import shutil
 import time
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .tools import run_captured
+from .tools import _replace_with_retry, run_captured
 
 #: Where a reader points us at a floorplan checkout, repo root or skills dir.
 ENV_VAR = 'CODINGDUDE_FLOORPLAN_HOME'
@@ -139,6 +140,10 @@ QUERY_MAX_CHARS = 20_000
 #: adapter never runs, so served as built it renders a permanently disabled
 #: control reading "Asking is unavailable" across the bottom of the diagram.
 EXPORT_NAME = 'index.export.html'
+
+#: What the sidecar is called. Same suffix `tools._atomic_write` uses (R24 #38),
+#: so "a file we are mid-way through" has one spelling in this codebase.
+EXPORT_TEMP_SUFFIX = '.codingdude-tmp'
 
 #: What travels in that copy. `health` is left out on purpose: floorplan's
 #: health scan is heuristic and flags a HIGH "unprotected-endpoint" on routes
@@ -483,14 +488,15 @@ async def _run_script(
 
 
 def export_temp(out_dir: str | Path) -> Path:
-    """The sidecar the export is written to before it is published (#381).
+    """A fresh sidecar path for the export to write before it is published (#381).
 
-    Named per process, so a second attempt cannot land on the first one's file
-    and nothing has to be cleared on the way in — the build lock already allows
-    one build per workdir. Named here rather than spelled out at the two places
-    that need it, so the writer and the test that proves the publish agree.
+    Unique per call, and shaped like the one `tools._atomic_write` uses (R24
+    #38): a uuid so no two writers — this build, a leftover from a killed one —
+    can collide on the name, and a suffix that is recognisably ours so litter
+    can be told from a copy. Nothing is cleared on the way in, because clearing
+    would be a step that can fail before the work starts (see `_export_page`).
     """
-    return Path(out_dir) / f'{EXPORT_NAME}.{os.getpid()}.tmp'
+    return Path(out_dir) / f'{EXPORT_NAME}.{uuid.uuid4().hex}{EXPORT_TEMP_SUFFIX}'
 
 
 async def _export_page(out_dir: Path, timeout: int = EXPORT_TIMEOUT) -> str:
@@ -500,16 +506,19 @@ async def _export_page(out_dir: Path, timeout: int = EXPORT_TIMEOUT) -> str:
     removes chrome the frame cannot use. A copy that could not be made is
     reported beside the build's own warnings and the build's page is served.
 
-    Written to a sibling `*.tmp` and published with `os.replace`, because a
-    half-written copy is worse than none: `map_frame_page()` serves whatever is
-    newer than the build's page, so a partial one would be served as if it were
-    a map. Publishing also keeps a rebuild's *previous* copy in place, which is
-    older than the new page and therefore never served.
+    Written to a fresh sidecar and published, because a half-written copy is
+    worse than none: `map_frame_page()` serves whatever is newer than the
+    build's page, so a partial one would be served as if it were a map.
+    Publishing also keeps a rebuild's *previous* copy in place, which is older
+    than the new page and therefore never served.
 
-    The temp name is this process's (`export_temp`), so there is nothing to
-    clear first: clearing a previous run's sidecar would be a cleanup step on
-    the way *in* that can fail on Windows (`PermissionError` on a file something
-    else holds open) and turn a build into an exception.
+    The temp name is a fresh one per call (`export_temp`), so there is nothing
+    to clear first: clearing a previous run's sidecar would be a cleanup step
+    on the way *in* that can fail on Windows (`PermissionError` on a file
+    something else holds open) and turn a build into an exception. Publishing
+    goes through `tools._replace_with_retry` for the matching reason on the way
+    *out*: the frame may be displaying the copy being replaced, and that lock
+    is transient (R24 #38).
     """
     dest = out_dir / EXPORT_NAME
     tmp = export_temp(out_dir)
@@ -528,7 +537,7 @@ async def _export_page(out_dir: Path, timeout: int = EXPORT_TIMEOUT) -> str:
         return ('the map was built, but its exported copy failed '
                 f'(exit {cap.code}): {cap.combined[:200]}')
     try:
-        os.replace(tmp, dest)
+        _replace_with_retry(tmp, dest)
     except OSError as exc:
         _discard(tmp)
         return f'the map was built, but its exported copy could not be published: {exc}'
@@ -540,7 +549,7 @@ def _discard(path: Path) -> None:
 
     Never raises: this runs on the way out of a failure, and a build that is
     otherwise complete must not be turned into an error by cleanup. The file is
-    a `*.tmp` nothing serves, so a removal that fails leaves only litter.
+    a sidecar nothing serves, so a removal that fails leaves only litter.
     """
     try:
         path.unlink(missing_ok=True)

@@ -970,6 +970,11 @@ async def test_the_query_tool_reads_a_real_built_map(tmp_path, monkeypatch):
 
 # --- #381: the exported copy the frame serves --------------------------------
 
+def _sidecars(out: Path) -> list[Path]:
+    """The half-written copies left in a map dir — none, once a build settled."""
+    return sorted(p for p in out.iterdir() if p.name.endswith(floorplan.EXPORT_TEMP_SUFFIX))
+
+
 def _both_pages(tmp_path, *, export_newer: bool = True):
     """A map dir holding both pages, with the export's age under control."""
     out = tmp_path / 'mapdir'
@@ -1026,11 +1031,13 @@ async def test_the_pair_writes_the_copy_the_frame_serves(tmp_path, monkeypatch):
     _, export_argv = recorder.calls[2]
     map_dir = floorplan.map_dir(proj, cfg)
     # The script writes a sidecar that we then publish: the served name never
-    # holds a half-written file.
-    assert export_argv[export_argv.index('--export') + 1] == str(
-        floorplan.export_temp(map_dir))
+    # holds a half-written file, and the sidecar is gone once it has.
+    sidecar = Path(export_argv[export_argv.index('--export') + 1])
+    assert sidecar.parent == map_dir
+    assert sidecar.name.startswith(floorplan.EXPORT_NAME)
+    assert sidecar.name.endswith(floorplan.EXPORT_TEMP_SUFFIX)
     assert (map_dir / floorplan.EXPORT_NAME).is_file()
-    assert not floorplan.export_temp(map_dir).exists()
+    assert _sidecars(map_dir) == []
     # `health` is left out on purpose: floorplan's health scan is heuristic and
     # reports a HIGH finding on routes that do carry `Depends(authorize)`, so
     # showing it in our own panel would present a wrong verdict as ours.
@@ -1069,8 +1076,77 @@ async def test_a_failed_export_leaves_no_partial_copy_to_serve(tmp_path, monkeyp
     assert 'exported copy failed' in problem
     assert 'ENOSPC' in problem
     assert dest.read_text(encoding='utf-8') == '<html>older copy</html>'
-    assert not floorplan.export_temp(out).exists()
+    assert _sidecars(out) == []
     assert floorplan.map_frame_page(tmp_path) == page
+
+
+async def test_a_locked_copy_is_retried_rather_than_lost(tmp_path, monkeypatch):
+    """A transient lock on the copy being replaced must not cost the frame its map.
+
+    The frame may be displaying the very file being replaced, and on Windows
+    that refusal passes (R24 #38 keeps `os.replace` under a retry for it). Give
+    up on the first refusal and the copy is lost while the newly built page is
+    newer — so the frame falls back to the build's page, dead Ask bar and all,
+    until the next build happens to win the race.
+    """
+    out = tmp_path / 'map'
+    out.mkdir()
+    (out / floorplan.EXPORT_NAME).write_text('<html>older</html>', encoding='utf-8')
+
+    async def writes(argv, *, cwd=None, timeout=60, **kwargs):
+        Path(argv[argv.index('--export') + 1]).write_text(
+            '<html>exported</html>', encoding='utf-8')
+        return Captured(code=0, stdout='', stderr='')
+
+    real_replace = os.replace
+    refusals = [1]
+
+    def flaky(src, dst):
+        if refusals[0]:
+            refusals[0] -= 1
+            raise PermissionError(32, 'The process cannot access the file')
+        real_replace(src, dst)
+
+    monkeypatch.setattr(floorplan, 'run_captured', writes)
+    monkeypatch.setattr(floorplan, 'node_binary', lambda: Path('node'))
+    monkeypatch.setattr(os, 'replace', flaky)
+
+    assert await floorplan._export_page(out) == ''
+    served = (out / floorplan.EXPORT_NAME).read_text(encoding='utf-8')
+    assert served == '<html>exported</html>'
+    assert refusals[0] == 0
+    assert _sidecars(out) == []
+
+
+async def test_a_copy_that_stays_locked_is_a_warning_not_an_exception(tmp_path, monkeypatch):
+    """A lock that never passes is reported, and the previous copy survives.
+
+    The retry buys time, it does not make a stuck file replaceable: after it
+    gives up, the failure has to come back as the sentence the build records
+    beside its own warnings, with the older copy still intact — not as a
+    PermissionError escaping the build.
+    """
+    out = tmp_path / 'map'
+    out.mkdir()
+    (out / floorplan.EXPORT_NAME).write_text('<html>older</html>', encoding='utf-8')
+
+    async def writes(argv, *, cwd=None, timeout=60, **kwargs):
+        Path(argv[argv.index('--export') + 1]).write_text(
+            '<html>exported</html>', encoding='utf-8')
+        return Captured(code=0, stdout='', stderr='')
+
+    def always_locked(src, dst):
+        raise PermissionError(32, 'The process cannot access the file')
+
+    monkeypatch.setattr(floorplan, 'run_captured', writes)
+    monkeypatch.setattr(floorplan, 'node_binary', lambda: Path('node'))
+    monkeypatch.setattr(os, 'replace', always_locked)
+
+    problem = await floorplan._export_page(out)
+
+    assert 'could not be published' in problem
+    assert (out / floorplan.EXPORT_NAME).read_text(encoding='utf-8') == '<html>older</html>'
+    assert _sidecars(out) == []
 
 
 async def test_a_failed_export_is_a_warning_and_the_build_page_is_served(tmp_path, monkeypatch):

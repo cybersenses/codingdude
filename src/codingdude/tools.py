@@ -351,6 +351,28 @@ def _read_verbatim(target: Path) -> str:
         return f.read()
 
 
+def _replace_with_retry(tmp: Path, target: Path) -> None:
+    """`os.replace`, retried briefly to absorb a transient lock (R24 #38).
+
+Split out of `_atomic_write` so a caller whose bytes are written by *another
+process* publishes under the same rule (#381): Windows refuses to replace a
+target some other handle holds without share-delete — an editor, an AV
+scanner, a browser that is displaying the file — and that refusal passes.
+Raises PermissionError naming the target when it does not pass.
+"""
+    last_exc: PermissionError | None = None
+    for attempt in range(3):
+        try:
+            os.replace(tmp, target)
+            return
+        except PermissionError as exc:
+            last_exc = exc
+            time.sleep(0.05 * (attempt + 1))
+    raise PermissionError(
+        f'{target} is locked by another process; write not applied.'
+    ) from last_exc
+
+
 def _atomic_write(target: Path, text: str) -> None:
     """Atomic text write: temp file in the same directory + os.replace (R12 #3).
 
@@ -359,27 +381,13 @@ target never collide on it (WinError 32 on Windows), and os.replace is
 retried briefly to absorb transient locks on the target (AV, open editors).
 Raises PermissionError naming the locked path if it stays locked.
 """
-    import os
-
     tmp = target.with_name(f'{target.name}.{uuid.uuid4().hex}.codingdude-tmp')
     try:
         with open(tmp, 'w', encoding='utf-8', newline='') as f:
             f.write(text)
             f.flush()
             os.fsync(f.fileno())
-        last_exc: PermissionError | None = None
-        for attempt in range(3):
-            try:
-                os.replace(tmp, target)
-                last_exc = None
-                break
-            except PermissionError as exc:
-                last_exc = exc
-                time.sleep(0.05 * (attempt + 1))
-        if last_exc is not None:
-            raise PermissionError(
-                f'{target} is locked by another process; write not applied.'
-            ) from last_exc
+        _replace_with_retry(tmp, target)
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
