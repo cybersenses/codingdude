@@ -64,6 +64,24 @@ function BuildReceipt({ build }) {
 }
 
 /**
+ * Why the last build did not start (#379), in its own slot.
+ *
+ * Kept apart from `error` on purpose: `error` is the transport/auth failure
+ * that means the panel cannot answer at all, and `load()` clears it the moment
+ * a request succeeds. A refused build (409 — another tab is building this
+ * project) is not that: the server's sentence is the useful one, and clearing
+ * it on the very next successful poll would erase it before it could be read.
+ */
+function Notice({ notice }) {
+  if (!notice) return null
+  return (
+    <p data-map="notice" className="whitespace-pre-wrap text-amber-400">
+      {notice}
+    </p>
+  )
+}
+
+/**
  * Presentational half: everything below the fetch, so the sandbox attribute is
  * assertable without a browser or a live server.
  */
@@ -74,6 +92,7 @@ export function MapView({
   onRefresh,
   onBuild,
   posting = false,
+  notice = '',
 }) {
   if (!state) {
     return (
@@ -96,6 +115,7 @@ export function MapView({
       <div data-map="empty" className="flex h-full flex-col gap-2 overflow-auto p-3 text-xs">
         <p className="opacity-80">{state.reason}</p>
         <BuildReceipt build={state.build} />
+        <Notice notice={notice} />
         <div className="flex gap-2">
           {canBuild ? (
             <button
@@ -136,7 +156,9 @@ export function MapView({
         </button>
       </div>
       {/* A built map can still carry warnings — the page drew, but an authored
-          path matched nothing. Shown above the frame so it is not lost. */}
+          path matched nothing. Shown above the frame so it is not lost. No
+          notice here: a refusal is cleared once a page exists, because that is
+          what the refusal was about. */}
       <div className="shrink-0 px-2 py-1 text-[11px]">
         <BuildReceipt build={state.build} />
       </div>
@@ -156,6 +178,7 @@ export function MapView({
 export function Map({ sessionId }) {
   const [state, setState] = useState(null)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
   const [nonce, setNonce] = useState(0)
   const [posting, setPosting] = useState(false)
 
@@ -165,6 +188,9 @@ export function Map({ sessionId }) {
       const next = await call(`/sessions/${sessionId}/map/state`)
       setState(next)
       setError('')
+      // A page existing settles whatever the last refusal was about, so the
+      // reason is not carried over a map that is now drawn.
+      if (next.built) setNotice('')
     } catch (e) {
       // The route answers 404 for an unknown session and 200 with `built:false`
       // for a project that simply has no map; anything thrown here is a real
@@ -195,6 +221,9 @@ export function Map({ sessionId }) {
   const build = useCallback(async () => {
     if (!sessionId || posting) return
     setPosting(true)
+    // A new attempt supersedes the previous reason: what is shown from here on
+    // is this build's answer, not the last one's.
+    setNotice('')
     try {
       const result = await call(`/sessions/${sessionId}/map/build`, { method: 'POST' })
       // The reply carries the panel's next state on both the settled (200) and
@@ -204,10 +233,11 @@ export function Map({ sessionId }) {
       if (result.ok) setNonce((n) => n + 1)
     } catch (e) {
       // 409 is another build already running for this project; anything else is
-      // transport. Either way the server's message is the useful one, and the
-      // poll above picks the state back up.
-      setError(String((e && e.message) || e))
-      load()
+      // transport. The server's message is the useful one either way, so it
+      // goes to `notice` — never to `error`, which `load()` below clears the
+      // instant it succeeds, erasing the sentence before it can be read.
+      await load()
+      setNotice(String((e && e.message) || e))
     } finally {
       setPosting(false)
     }
@@ -228,6 +258,7 @@ export function Map({ sessionId }) {
       onRefresh={refresh}
       onBuild={build}
       posting={posting}
+      notice={notice}
     />
   )
 }

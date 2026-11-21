@@ -2209,9 +2209,12 @@ panel polling `/map/state` — the surface it already has. `<map dir>/build.json
 exists for exactly that path: after a 202 the request is gone, so the finished
 build's outcome has to be on disk or the poll could only ever say "not built",
 which is what the reader already knew. Status is 200 whatever the build did,
-because the reason is the payload; a non-2xx would make the panel render an
-exception string instead of floorplan's own words. 409 only for the genuine
-conflict, 404 for an unknown session.
+because the reason is the payload; a non-2xx becomes an exception string
+(`frontend/src/api.ts:134` composes `status statusText: body`), so the panel
+would show a composed line where floorplan's own words belong. The 409 is the
+one exception, and it is handled rather than rendered as a dead end: its
+message goes to the panel's notice slot above a still-usable panel, and is
+cleared when a page exists. 404 for an unknown session.
 
 *One build at a time, and a lock that cannot wedge.* Two builds write the same
 output paths, so the second is refused (409) rather than queued behind a wait

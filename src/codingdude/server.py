@@ -882,8 +882,7 @@ def create_app(
         first sends the reader to a button that cannot work — and the directory
         is named either way, because "no map yet" alone sends them looking in
         the wrong place. Since decision #107 that place is the config home, not
-        the project (`floorplan writes into the scanned project` was true
-        before #107 and is corrected here, not dropped).
+        the project.
         """
         if not available:
             return (

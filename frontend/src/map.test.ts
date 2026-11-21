@@ -165,4 +165,25 @@ describe('Map panel', () => {
     expect(html).toContain('data-map="build-warnings"')
     expect(html).toContain('node gates matched no file')
   })
+
+  // #379 pre-push review: the build's failure message used to be written into
+  // the same slot as a transport error, and `load()` clears that slot as soon
+  // as a request succeeds — so a 409 ("a build is already running") was erased
+  // by the very poll that followed it. The message has its own slot now, and
+  // the panel keeps rendering underneath it.
+  it('reports a refused build without hiding the panel behind it', () => {
+    const html = render(ABSENT, 0, {
+      notice: '409 Conflict: a map build is already running for G:\\pydantic',
+    })
+    expect(html).toContain('data-map="notice"')
+    expect(html).toContain('a map build is already running')
+    // The action is still on screen underneath: a refusal is a sentence, not a
+    // terminal state. (The full-screen `error` path lives in `Map`, not here,
+    // so there is nothing in this render for it to collide with.)
+    expect(html).toContain('data-map="build"')
+  })
+
+  it('shows no notice when the last build had nothing to say', () => {
+    expect(render(ABSENT)).not.toContain('data-map="notice"')
+  })
 })
