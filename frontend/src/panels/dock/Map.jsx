@@ -37,6 +37,32 @@ export function mapSrc(sessionId) {
   return `/api/sessions/${sessionId}/map`
 }
 
+/** The build's own record, wherever the panel can show more than the frame. */
+function BuildReceipt({ build }) {
+  if (!build) return null
+  const warnings = build.warnings || []
+  if (!build.error && warnings.length === 0) return null
+  // #379: verbatim, never summarised. Each warning names a field of
+  // architecture.json that matched no included file, which is the only signal
+  // that the authored input is wrong; an error is floorplan's own words.
+  return (
+    <div className="space-y-1" data-map="receipt">
+      {build.error ? (
+        <p data-map="build-error" className="whitespace-pre-wrap text-red-400">
+          {build.error}
+        </p>
+      ) : null}
+      {warnings.length ? (
+        <ul data-map="build-warnings" className="list-disc space-y-0.5 pl-4 opacity-70">
+          {warnings.map((warning) => (
+            <li key={warning}>{warning}</li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  )
+}
+
 /**
  * Presentational half: everything below the fetch, so the sandbox attribute is
  * assertable without a browser or a live server.
@@ -47,8 +73,7 @@ export function MapView({
   nonce = 0,
   onRefresh,
   onBuild,
-  building = false,
-  buildError = '',
+  posting = false,
 }) {
   if (!state) {
     return (
@@ -57,6 +82,10 @@ export function MapView({
       </div>
     )
   }
+  // `running` is the server's answer, derived from the build lock: it is true
+  // both while this button waits and when another tab started the build, so one
+  // rule covers both and a stale "building" cannot outlive the build.
+  const building = posting || state.running === true
   if (!state.built) {
     // #379: "Check again" re-asked a question whose answer could not change;
     // building is the action that can. The button is absent rather than
@@ -64,13 +93,9 @@ export function MapView({
     // reads as "click me later", and the dependency needs installing first.
     const canBuild = state.available !== false
     return (
-      <div data-map="empty" className="flex h-full flex-col gap-2 p-3 text-xs">
+      <div data-map="empty" className="flex h-full flex-col gap-2 overflow-auto p-3 text-xs">
         <p className="opacity-80">{state.reason}</p>
-        {buildError ? (
-          <p data-map="build-error" className="whitespace-pre-wrap text-red-400">
-            {buildError}
-          </p>
-        ) : null}
+        <BuildReceipt build={state.build} />
         <div className="flex gap-2">
           {canBuild ? (
             <button
@@ -110,6 +135,11 @@ export function MapView({
           Refresh
         </button>
       </div>
+      {/* A built map can still carry warnings — the page drew, but an authored
+          path matched nothing. Shown above the frame so it is not lost. */}
+      <div className="shrink-0 px-2 py-1 text-[11px]">
+        <BuildReceipt build={state.build} />
+      </div>
       <iframe
         key={nonce}
         data-map="frame"
@@ -122,13 +152,12 @@ export function MapView({
   )
 }
 
-/** The panel body: one poll of the state, then the frame. */
+/** The panel body: poll the state, expose the build, then the frame. */
 export function Map({ sessionId }) {
   const [state, setState] = useState(null)
   const [error, setError] = useState('')
   const [nonce, setNonce] = useState(0)
-  const [building, setBuilding] = useState(false)
-  const [buildError, setBuildError] = useState('')
+  const [posting, setPosting] = useState(false)
 
   const load = useCallback(async () => {
     if (!sessionId) return
@@ -148,33 +177,41 @@ export function Map({ sessionId }) {
     load()
   }, [load])
 
+  // While a build runs the state is the only progress signal there is: the
+  // route answers 200 with the receipt when the pair settles inside its budget
+  // and 202 when it does not, and either way `running` (the build lock) turns
+  // false when it is over. So polling follows the lock, not the request.
+  useEffect(() => {
+    if (state?.running !== true) return undefined
+    const timer = setInterval(load, 2000)
+    return () => clearInterval(timer)
+  }, [state?.running, load])
+
   function refresh() {
     load()
     setNonce((n) => n + 1)
   }
 
-  // #379: the build settles inside the request (two bounded node calls), and
-  // its reply carries both the receipt and the panel's next state — so a
-  // success shows the frame without a second round trip, and a failure shows
-  // floorplan's own words instead of "build failed".
   const build = useCallback(async () => {
-    if (!sessionId || building) return
-    setBuilding(true)
-    setBuildError('')
+    if (!sessionId || posting) return
+    setPosting(true)
     try {
       const result = await call(`/sessions/${sessionId}/map/build`, { method: 'POST' })
+      // The reply carries the panel's next state on both the settled (200) and
+      // the still-running (202) answer; when it settled successfully the frame
+      // appears without a second round trip.
       if (result.state) setState(result.state)
       if (result.ok) setNonce((n) => n + 1)
-      else setBuildError(result.error || 'the build reported no reason')
     } catch (e) {
       // 409 is another build already running for this project; anything else is
-      // transport. Either way the server's message is the useful one.
-      setBuildError(String((e && e.message) || e))
+      // transport. Either way the server's message is the useful one, and the
+      // poll above picks the state back up.
+      setError(String((e && e.message) || e))
       load()
     } finally {
-      setBuilding(false)
+      setPosting(false)
     }
-  }, [sessionId, building, load])
+  }, [sessionId, posting, load])
 
   if (error) {
     return (
@@ -190,8 +227,7 @@ export function Map({ sessionId }) {
       nonce={nonce}
       onRefresh={refresh}
       onBuild={build}
-      building={building}
-      buildError={buildError}
+      posting={posting}
     />
   )
 }

@@ -55,6 +55,7 @@ import shutil
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .tools import run_captured
@@ -95,6 +96,17 @@ LOCK_STALE_AFTER = SCAN_TIMEOUT + BUILD_TIMEOUT + 60
 #: `map_query` tool (#378) reads it from there — requiring it here would reject
 #: every fresh copy.
 REQUIRED_SCRIPTS = ('scan.mjs', 'build.mjs')
+
+#: The one input `build.mjs` cannot do without — floorplan has no default. Named
+#: here so the missing-input answer and #376's author both use one spelling.
+ARCH_NAME = 'architecture.json'
+
+#: `<map dir>/build.json` — the last settled build (#379).
+#:
+#: The build route returns the receipt when the pair settles inside its budget
+#: and 202 when it does not; the file is what lets the polling reader say *why*
+#: a build failed either way.
+RECEIPT_NAME = 'build.json'
 
 
 @dataclass(frozen=True)
@@ -290,24 +302,14 @@ def build_lock(workdir: str | Path, home: str | Path | None = None):
         path.unlink(missing_ok=True)
 
 
-def check_available() -> tuple[bool, str]:
-    """(usable, detail) — `available()`'s verdict, with nothing spawned.
-
-    `/map/state` is polled, and availability is a presence question: is node on
-    PATH, and is there a copy to drive. Spawning `node --version` to learn the
-    same answer on every poll would make the panel pay for a question it is not
-    asking, so the version probe stays in `available()`.
-    """
-    if node_binary() is None:
-        return False, NODE_MISSING
-    home = floorplan_home()
-    if home is None:
-        return False, unavailable_reason()
-    return True, f'floorplan {home}'
-
-
 async def available(probe_timeout: int = PROBE_TIMEOUT) -> tuple[bool, str]:
-    """(usable, detail) — node answering, and a floorplan checkout to drive."""
+    """(usable, detail) — node answering, and a floorplan checkout to drive.
+
+    The only availability answer in the codebase: `/map/state` awaits this, so
+    the panel's `available`/`detail` and the adapter's own preconditions cannot
+    disagree. The probe is bounded, and a node that never answers is a reason
+    rather than a hang.
+    """
     node = node_binary()
     if node is None:
         return False, NODE_MISSING
@@ -525,21 +527,83 @@ class MapBuild:
     def summary(self) -> str:
         """What was mapped, and what did not match.
 
-        Every warning is printed verbatim, not counted: each one names a field
-        of `architecture.json` that matched no file, which is the only feedback
-        that stops a guessed input from shipping (#376).
+        Every warning is printed verbatim on both paths, not counted and not
+        dropped when the build failed: each one names a field of
+        `architecture.json` that matched no file, and a failure is exactly when
+        a reader needs to know which field was wrong (#376).
         """
         if not self.ok:
-            return f'map build failed: {self.error}'
-        counts = self.counts
-        head = (
-            f'map built: {counts.get("files", 0)} files, '
-            f'{counts.get("edges", 0)} edges, {counts.get("routes", 0)} routes, '
-            f'{counts.get("externals", 0)} external packages'
-        )
-        if self.page is not None:
-            head = f'{head} · {self.page}'
+            head = f'map build failed: {self.error}'
+        else:
+            counts = self.counts
+            head = (
+                f'map built: {counts.get("files", 0)} files, '
+                f'{counts.get("edges", 0)} edges, '
+                f'{counts.get("routes", 0)} routes, '
+                f'{counts.get("externals", 0)} external packages'
+            )
+            if self.page is not None:
+                head = f'{head} · {self.page}'
         return '\n'.join([head, *self.warnings])
+
+    def as_dict(self) -> dict:
+        """The receipt as a reader sees it — the POST body and `build.json`."""
+        return {
+            'ok': self.ok,
+            'error': self.error,
+            'warnings': list(self.warnings),
+            'counts': dict(self.counts),
+            'files': dict(self.files),
+            'page': str(self.page) if self.page is not None else None,
+        }
+
+    def write(self, path: Path) -> None:
+        """Record this attempt beside the map, for the reader that polls (#379).
+
+        The route returns the receipt when the pair settles inside its budget,
+        and 202 when it does not; without this file the second path could say
+        "built" or "not built" but never *why* it failed, which is the only
+        actionable part. Written on failure too.
+        """
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {**self.as_dict(), 'at': datetime.now(UTC).isoformat()}
+        path.write_text(json.dumps(payload, indent=2), encoding='utf-8')
+
+
+async def _build_pair(
+    workdir: Path, out_dir: Path, home: str | Path | None,
+    arch: str | Path | None,
+) -> MapBuild:
+    """The scan+build pair itself, with the lock already held (#379)."""
+    usable, detail = await available()
+    if not usable:
+        return MapBuild(ok=False, error=detail)
+    arch_path = Path(arch) if arch is not None else out_dir / ARCH_NAME
+    if not arch_path.is_file():
+        return MapBuild(ok=False, error=(
+            f'cannot build the map: floorplan reads {arch_path} and nothing '
+            'has authored it yet (#376). The map is an aid — everything '
+            'else works without it.'
+        ))
+    scanned = await scan(workdir, out_dir, home=home)
+    if not scanned.ok:
+        return MapBuild(ok=False, error=scanned.error)
+    built = await build(
+        workdir, out_dir, home=home, arch=arch_path,
+        scan_path=scanned.scan_path,
+    )
+    return MapBuild(
+        ok=built.ok,
+        error=built.error,
+        warnings=built.warnings,
+        counts={
+            'files': scanned.files, 'edges': scanned.edges,
+            'routes': scanned.routes, 'externals': scanned.externals,
+            'hosts': scanned.hosts,
+        },
+        files=built.files,
+        page=built.index_html if built.ok else None,
+    )
 
 
 async def build_map(
@@ -552,42 +616,33 @@ async def build_map(
     or a sentence back to the agent is the caller's decision, and neither is a
     failure of this function.
 
-    The architecture file is checked first, by name, before the scan is spent.
-    #376 authors it; until something does, floorplan's own answer ("No
-    architecture file at ...") costs a scan to say what is already known.
+    The architecture file is checked by name before the scan is spent. #376
+    authors it; until something does, floorplan's own answer ("No architecture
+    file at ...") would cost a scan to say what is already known. Every settled
+    attempt is recorded at `<map dir>/build.json`, because the caller may stop
+    waiting long before this returns.
     """
     workdir = Path(workdir)
     with build_lock(workdir, home):
-        usable, detail = check_available()
-        if not usable:
-            return MapBuild(ok=False, error=detail)
         out_dir = map_dir(workdir, home)
-        arch_path = Path(arch) if arch is not None else out_dir / 'architecture.json'
-        if not arch_path.is_file():
-            return MapBuild(ok=False, error=(
-                f'cannot build the map: floorplan reads {arch_path} and nothing '
-                'has authored it yet (#376). The map is an aid — everything '
-                'else works without it.'
-            ))
-        scanned = await scan(workdir, out_dir, home=home)
-        if not scanned.ok:
-            return MapBuild(ok=False, error=scanned.error)
-        built = await build(
-            workdir, out_dir, home=home, arch=arch_path,
-            scan_path=scanned.scan_path,
-        )
-        return MapBuild(
-            ok=built.ok,
-            error=built.error,
-            warnings=built.warnings,
-            counts={
-                'files': scanned.files, 'edges': scanned.edges,
-                'routes': scanned.routes, 'externals': scanned.externals,
-                'hosts': scanned.hosts,
-            },
-            files=built.files,
-            page=built.index_html if built.ok else None,
-        )
+        outcome = await _build_pair(workdir, out_dir, home, arch)
+        outcome.write(out_dir / RECEIPT_NAME)
+        return outcome
+
+
+def read_receipt(workdir: str | Path, home: str | Path | None = None) -> dict | None:
+    """The last settled build for this workdir, or None (#379).
+
+    Read from disk rather than remembered, because the build that wrote it may
+    have outlived the request that asked for it: after a 202 the only surviving
+    record of what happened is this file.
+    """
+    try:
+        text = (map_dir(workdir, home) / RECEIPT_NAME).read_text(encoding='utf-8')
+        payload = json.loads(text)
+    except (OSError, ValueError):
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def build_floorplan_toolset(workdir: Path):

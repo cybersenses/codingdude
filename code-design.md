@@ -2199,15 +2199,19 @@ changed is the map worth reading:
   never rendered as "no map yet", which would send the reader to a button that
   cannot work.
 
-*Settled, not 202-and-poll.* The pair is two bounded subprocess calls (measured
-2.1 s scan + 1.0 s build on this repo at 621 files; pinned at `SCAN_TIMEOUT` 120 s
-plus `BUILD_TIMEOUT` 180 s) and both are awaited, so the request holds no thread
-and the loop keeps serving other calls. The receipt comes back **in the reply**
-because that is where the failure reason lives: a polled status route would have
-to keep a second copy of it on disk — one more file to go stale — to say the same
-thing. Status is 200 whatever the build did, because the reason is the payload;
-a non-2xx would make the panel render an exception string instead of floorplan's
-own words. 409 only for the genuine conflict, 404 for an unknown session.
+*A bounded wait, then 202.* The pair is two bounded subprocess calls (measured
+2.1 s scan + 1.0 s build on this repo at 621 files, against `SCAN_TIMEOUT` 120 s
+plus `BUILD_TIMEOUT` 180 s), so the ordinary answer is the receipt itself. The
+route still refuses to hold a request open for minutes on a large tree: it waits
+`MAP_SETTLE_BUDGET_S` (20 s) and answers **202** with `started` and the current
+state if the pair is still running, leaving the build on a tracked task and the
+panel polling `/map/state` — the surface it already has. `<map dir>/build.json`
+exists for exactly that path: after a 202 the request is gone, so the finished
+build's outcome has to be on disk or the poll could only ever say "not built",
+which is what the reader already knew. Status is 200 whatever the build did,
+because the reason is the payload; a non-2xx would make the panel render an
+exception string instead of floorplan's own words. 409 only for the genuine
+conflict, 404 for an unknown session.
 
 *One build at a time, and a lock that cannot wedge.* Two builds write the same
 output paths, so the second is refused (409) rather than queued behind a wait
@@ -2220,12 +2224,13 @@ is always safe. That is the wedge class #368 removed, applied before it could
 appear here. The tool turns the conflict into a sentence rather than an exception —
 the agent may simply have raced the panel's button.
 
-*Availability without a spawn.* `check_available()` answers "is node on PATH and
-is there a copy to drive" with presence checks only; the `node --version` probe
-stays in `available()` for a caller that wants the version. The state route is
-polled, so a spawn per poll would make the panel pay for a question it is not
-asking. The missing-node message is one constant (`NODE_MISSING`), not the four
-copies it had grown into, and a test asserts it appears exactly once.
+*One availability answer.* `available()` answers "is node on PATH and is there a
+copy to drive", bounded, and `/map/state` awaits it — so the panel's view and the
+adapter's precondition cannot drift into two answers. It was briefly split into a
+spawn-free twin for the polled route and that was the wrong trade: two functions
+answering one question is the drift, and one bounded probe per panel open is not
+worth a second name. The missing-node message is one constant (`NODE_MISSING`),
+not the four copies it had grown into, and a test asserts it appears exactly once.
 
 *Honest degradation.* `build_map` checks for `<map dir>/architecture.json` **by
 name, before the scan** and says "#376 has not authored it yet". Letting
@@ -2237,11 +2242,12 @@ must not re-run the layout) and is deliberately absent from `DEFAULT_PRESET`:
 reachable from the sidebar and the palette like graph/planning/notes, and 2.6 MB
 is not first-boot work.
 
-**Evidence.** `tests/test_floorplan.py` 43 passed (including a real-node run
-against the vendored copy); `tests/test_map_panel.py` 12 passed;
-`frontend/src/map.test.ts` 9 passed; `frontend/src/workspace/catalogue.test.ts`
+**Evidence.** `tests/test_floorplan.py` 47 passed (including a real-node run
+against the vendored copy); `tests/test_map_panel.py` 14 passed;
+`frontend/src/map.test.ts` 11 passed; `frontend/src/workspace/catalogue.test.ts`
 21 passed (its `REGISTERED` list is the guard that a catalogue entry without a
 component cannot ship).
+
 
 
 

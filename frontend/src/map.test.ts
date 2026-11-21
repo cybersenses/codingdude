@@ -48,6 +48,7 @@ const ABSENT = {
   available: true,
   detail: 'node v22.23.2 · floorplan C:/floorplan',
   running: false,
+  build: null,
 }
 
 // #379: nothing could build this map, so the reason is a dependency, not a
@@ -57,6 +58,16 @@ const UNBUILDABLE = {
   available: false,
   detail: 'node is not on PATH - floorplan needs Node 18 or newer',
   reason: 'no map, and there is nothing to build it with: node is not on PATH',
+}
+
+const FAILED = {
+  ...ABSENT,
+  build: {
+    ok: false,
+    error: 'floorplan build failed (exit 1): no node nodes',
+    warnings: ['node "gates" path "src/x.py" matches no included file'],
+    counts: {},
+  },
 }
 
 function render(state, nonce = 0, extra = {}) {
@@ -119,16 +130,39 @@ describe('Map panel', () => {
   })
 
   it('disables the build while it is running so it cannot be started twice', () => {
-    const html = render(ABSENT, 0, { building: true })
-    expect(html).toContain('data-map="build"')
-    expect(html).toContain('disabled=""')
-    expect(html).toContain('building')
+    // `posting` covers the request in flight; `running` covers a build another
+    // tab started. Either way the button is not clickable.
+    const notPosting = render(ABSENT, 0, { posting: true })
+    expect(notPosting).toContain('disabled=""')
+    expect(notPosting).toContain('building')
+
+    const runningElsewhere = render({ ...ABSENT, running: true })
+    expect(runningElsewhere).toContain('disabled=""')
   })
 
-  it('shows the build failure verbatim rather than a generic message', () => {
-    const html = render(ABSENT, 0, {
-      buildError: 'floorplan build failed (exit 1): no node nodes',
-    })
+  it('shows the failing build receipt verbatim rather than a generic message', () => {
+    const html = render(FAILED)
     expect(html).toContain('floorplan build failed (exit 1): no node nodes')
+  })
+
+  it('shows the build warnings, which are the only signal that an input was wrong', () => {
+    const html = render(FAILED)
+    expect(html).toContain('data-map="build-warnings"')
+    // React escapes the quotes in the warning; the text is what matters.
+    expect(html).toContain('path &quot;src/x.py&quot; matches no included file')
+  })
+
+  it('keeps the warnings visible on a built map, where the page still drew', () => {
+    const html = render({
+      ...ABSENT,
+      built: true,
+      reason: '',
+      path: '/maps/proj-1a2b3c4d/index.html',
+      bytes: 2048,
+      build: { ok: true, error: '', warnings: ['node gates matched no file'] },
+    })
+    expect(html).toContain('data-map="frame"')
+    expect(html).toContain('data-map="build-warnings"')
+    expect(html).toContain('node gates matched no file')
   })
 })

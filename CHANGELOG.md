@@ -47,21 +47,24 @@
   say "not built" — `scan`, `build` and `available()` had no production caller at
   all, so its one action, *Check again*, re-asked a question whose answer could
   not change. `POST /sessions/{id}/map/build` now runs the scan and the build into
-  the map dir and settles with the receipt, the empty state gains a **Build map**
-  button, and `map_build` gives the agent the same call so it can refresh the map
-  before pointing a human at it. The reply is settled rather than polled: both
-  calls are already bounded (2.1 s + 1.0 s measured on this repo at 621 files) and
-  a second status file to hold the receipt would be one more thing to go stale.
-  Status is 200 whatever the build did, because the reason *is* the payload — a
-  non-2xx would make the panel render an exception instead of floorplan's own
-  words. One build at a time per project (`<map dir>/build.lock`, 409 on
-  conflict), and a lock older than both timeouts is taken over rather than
+  the map dir, the empty state gains a **Build map** button that shows the receipt
+  verbatim, and `map_build` gives the agent the same call so it can refresh the map
+  before pointing a human at it. The route waits 20 s and then answers 202 rather
+  than holding a request open for minutes on a large tree — the pair settles well
+  inside that here (2.1 s + 1.0 s at 621 files), and when it does not, the build
+  carries on while the panel polls `/map/state`, recording its outcome at
+  `<map dir>/build.json` so a failure that finished after the request can still be
+  explained. Status is 200 whatever the build did, because the reason *is* the
+  payload — a non-2xx would make the panel render an exception instead of
+  floorplan's own words. One build at a time per project (`<map dir>/build.lock`,
+  409 on conflict), and a lock older than both timeouts is taken over rather than
   honoured, because a lock nobody releases would refuse every later build for
-  ever. `/map/state` also reports `available`, `detail` and `running` now, so
-  "node is not on PATH" is never rendered as "no map yet — expected `<path>`";
-  that check is a presence test (`check_available()`), not the `node --version`
-  probe, since the route is polled. The four copies of the missing-node message
-  collapsed into one constant, and a test asserts it appears exactly once.
+  ever. `/map/state` also reports `available`, `detail`, `running` and `build` now,
+  so "node is not on PATH" is never rendered as "no map yet — expected `<path>`",
+  and `available()` is the single answer to that question — the state route awaits
+  it, so the panel and the adapter cannot disagree. Build warnings reach the page
+  on both outcomes: each one names a field of `<map dir>/architecture.json` that
+  matched no file, which is the only signal that the authored input is wrong.
 
 ### Fixed
 

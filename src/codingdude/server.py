@@ -66,6 +66,17 @@ _STARTED_AT = datetime.now(UTC).isoformat()
 # auto-reconnect replays the terminal and settles (frontend hardening rides
 # on this); short enough not to leak channels all session.
 _TERMINAL_REPLAY_GRACE_S = 300
+
+# How long the map-build route waits for the scan+build pair before answering
+# 202 (#379). Measured 2.1 s + 1.0 s on this repo at 621 files, so every
+# ordinary checkout gets its receipt inline; a tree big enough to outlast this
+# gets a 202 and the panel polls /map/state, which it already does.
+MAP_SETTLE_BUDGET_S = 20
+
+# Background map builds, held until they finish (#379): an unreferenced task is
+# eligible for garbage collection, and a build that vanished after its 202 would
+# leave the panel polling a lock with nothing behind it.
+_map_builds: set[asyncio.Task] = set()
 # #148 janitor: independent watchdog over spawned workers. Interval between
 # sweeps; boot timeout = how long a live worker may stay without connecting
 # its WebSocket before we conclude it never booted (silent spawn failure).
@@ -886,31 +897,39 @@ def create_app(
             'Build one with the button below, or ask the agent to build it.'
         )
 
-    def _map_state(workdir: str, home: Path) -> dict:
+    async def _map_state(workdir: str, home: Path) -> dict:
         """The Map panel's one answer: is there a page, and can there be (#377, #379).
 
-        One definition because two routes return it — `/map/state`, and the
-        build's settled reply, which hands the panel its next state so the panel
-        does not have to ask twice for what the build already knows.
+        One definition because three readers use it — `/map/state`, the build's
+        settled reply, and its 202, which hands the panel the state to poll.
 
         `running` is asked of the lock rather than remembered, so a request that
         died mid-build cannot leave the panel showing a build that is not there.
+        `build` is the last settled receipt from disk, which is what lets the
+        panel explain a failure that finished after the request had answered.
         """
-        from .floorplan import check_available, lock_path, lock_stale, map_page
+        from .floorplan import (
+            available,
+            lock_path,
+            lock_stale,
+            map_page,
+            read_receipt,
+        )
 
-        available, detail = check_available()
+        usable, detail = await available()
         page = map_page(workdir, home)
         running = lock_path(workdir, home).exists() and not lock_stale(workdir, home)
         state = {
-            'available': available,
+            'available': usable,
             'detail': detail,
             'running': running,
+            'build': read_receipt(workdir, home),
         }
         if not page.is_file():
             return {
                 **state,
                 'built': False,
-                'reason': _map_absent_reason(workdir, home, available, detail),
+                'reason': _map_absent_reason(workdir, home, usable, detail),
                 'path': None,
                 'bytes': 0,
                 'built_at': None,
@@ -926,7 +945,7 @@ def create_app(
         }
 
     @app.get('/sessions/{session_id}/map/state')
-    def session_map_state(session_id: str, _: None = Depends(authorize)) -> dict:
+    async def session_map_state(session_id: str, _: None = Depends(authorize)) -> dict:
         """Whether this project has a built map, and whether it could build one.
 
         The panel asks this before setting an iframe src: a sandboxed frame
@@ -936,47 +955,53 @@ def create_app(
         workdir = db.session_workdir(session_id)
         if not workdir:
             raise HTTPException(status_code=404, detail='no such session')
-        return _map_state(workdir, home)
+        return await _map_state(workdir, home)
 
     @app.post('/sessions/{session_id}/map/build')
     async def session_map_build(
         session_id: str, response: Response, _: None = Depends(authorize),
     ) -> dict:
-        """Scan then build this project's map, and settle with the receipt (#379).
+        """Scan then build this project's map, waiting a bounded time for it (#379).
 
-        Settled, not started: the pair is two bounded subprocess calls (2.1 s
-        scan + 1.0 s build measured on this repo at 621 files, pinned at
-        `SCAN_TIMEOUT` + `BUILD_TIMEOUT`), both awaited while the loop keeps
-        serving. The receipt comes back in the reply because that is where the
-        failure reason lives; a polled status route would need a second copy of
-        it on disk to say the same thing.
+        The pair settles inside `MAP_SETTLE_BUDGET_S` for every ordinary
+        checkout (2.1 s scan + 1.0 s build measured on this repo at 621 files,
+        against `SCAN_TIMEOUT` 120 s plus `BUILD_TIMEOUT` 180 s), so the normal
+        answer is the receipt itself. A tree big enough to outlast the budget
+        gets 202 and the panel polls `/map/state` — the surface it already has —
+        while the build runs on; `<map dir>/build.json` is what lets that poll
+        report the outcome, because the request is no longer there to carry it.
 
-        Status is 200 whatever the build did — the reason is the payload, and a
+        Status is 200 whatever the build did: the reason is the payload, and a
         non-2xx would make the panel render an exception string instead of
-        floorplan's own words. 409 when a build for this project is already
-        running (two builds write the same paths), 404 for an unknown session.
+        floorplan's own words. 202 while it runs, 409 when a build for this
+        project is already running (two builds write the same paths), 404 for an
+        unknown session.
         """
         workdir = db.session_workdir(session_id)
         if not workdir:
             raise HTTPException(status_code=404, detail='no such session')
         from .floorplan import MapLocked, build_map
 
-        try:
-            outcome = await build_map(workdir, home)
-        except MapLocked as exc:
+        # Held in a set until it finishes: an unreferenced task can be
+        # garbage-collected mid-flight, and a build that vanishes at 202 would
+        # leave the panel polling a lock with nothing behind it.
+        task = asyncio.create_task(build_map(workdir, home))
+        _map_builds.add(task)
+        task.add_done_callback(_map_builds.discard)
+        done, pending = await asyncio.wait({task}, timeout=MAP_SETTLE_BUDGET_S)
+        if pending:
+            response.status_code = 202
+            return {'started': True, 'state': await _map_state(workdir, home)}
+        failure = task.exception()
+        if isinstance(failure, MapLocked):
             response.status_code = 409
-            return {'detail': str(exc)}
-        return {
-            'ok': outcome.ok,
-            'error': outcome.error,
-            'warnings': list(outcome.warnings),
-            'counts': outcome.counts,
-            'files': outcome.files,
-            'state': _map_state(workdir, home),
-        }
+            return {'detail': str(failure)}
+        if failure is not None:
+            raise failure
+        return {**task.result().as_dict(), 'state': await _map_state(workdir, home)}
 
     @app.get('/sessions/{session_id}/map')
-    def session_map(session_id: str, _: None = Depends(authorize)) -> FileResponse:
+    async def session_map(session_id: str, _: None = Depends(authorize)) -> FileResponse:
         """The built map itself (#377), served as a file rather than a payload.
 
         It is one self-contained page (2.6 MB, ELK and the fonts inlined, so it
@@ -987,14 +1012,14 @@ def create_app(
         workdir = db.session_workdir(session_id)
         if not workdir:
             raise HTTPException(status_code=404, detail='no such session')
-        from .floorplan import check_available, map_page
+        from .floorplan import available, map_page
 
         page = map_page(workdir, home)
         if not page.is_file():
-            available, detail = check_available()
+            usable, detail = await available()
             raise HTTPException(
                 status_code=404,
-                detail=_map_absent_reason(workdir, home, available, detail))
+                detail=_map_absent_reason(workdir, home, usable, detail))
         return FileResponse(
             page, media_type='text/html', headers={'cache-control': 'no-cache'}
         )

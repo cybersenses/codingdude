@@ -22,6 +22,7 @@ The integration test runs the real thing, skipped only when the vendored copy
 or node is genuinely absent.
 """
 
+import asyncio
 import json
 import os
 import shutil
@@ -398,44 +399,35 @@ def test_same_named_projects_in_different_places_get_different_map_dirs(tmp_path
     assert floorplan.map_dir(one, home).name.startswith('proj-')
 
 
-# --- #379: availability without a spawn -------------------------------------
+# --- #379: availability, and where its one answer lives ---------------------
 
-def test_check_available_costs_no_subprocess(tmp_path, monkeypatch):
-    """`/map/state` is polled, so its availability answer must not spawn.
-
-    Presence answers both halves of the question a polled route asks: node on
-    PATH, and a copy of floorplan to drive. The `node --version` probe stays in
-    `available()`, for a caller that wants the version rather than a verdict.
-    """
-    spawned = []
-
-    async def refuse(argv, **kwargs):
-        spawned.append(argv)
-        raise AssertionError('check_available spawned a subprocess')
-
-    monkeypatch.setattr(floorplan, 'run_captured', refuse)
-    monkeypatch.setattr(floorplan, 'node_binary', lambda: 'node')
-    monkeypatch.setattr(floorplan, 'floorplan_home', lambda *a, **k: tmp_path / 'fp')
-    ok, detail = floorplan.check_available()
-    assert ok is True
-    assert str(tmp_path / 'fp') in detail
-    assert spawned == []
-
-
-def test_check_available_names_the_missing_dependency(monkeypatch):
+def test_availability_is_the_one_answer_and_it_names_the_missing_dependency(monkeypatch):
     monkeypatch.setattr(floorplan, 'node_binary', lambda: None)
-    ok, detail = floorplan.check_available()
+    ok, detail = asyncio.run(floorplan.available())
     assert ok is False
     assert 'node' in detail.lower()
     assert detail == floorplan.NODE_MISSING
 
 
-def test_check_available_names_the_missing_copy(monkeypatch):
+def test_availability_names_the_missing_copy(tmp_path, monkeypatch):
+    async def node_answers(argv, **kwargs):
+        return Captured(code=0, stdout='v22.0.0\n', stderr='')
+
     monkeypatch.setattr(floorplan, 'node_binary', lambda: 'node')
+    monkeypatch.setattr(floorplan, 'run_captured', node_answers)
     monkeypatch.setattr(floorplan, 'floorplan_home', lambda *a, **k: None)
-    ok, detail = floorplan.check_available()
+    ok, detail = asyncio.run(floorplan.available())
     assert ok is False
     assert detail == floorplan.unavailable_reason()
+
+
+def test_there_is_exactly_one_availability_function():
+    """The state route used to ask a second, cheaper copy of this question, and
+    two answers to "can we build" is how they drift apart. One name, awaited by
+    the panel's route and by `build_map` alike."""
+    src = Path(floorplan.__file__).read_text(encoding='utf-8')
+    assert src.count('async def available(') == 1
+    assert 'def check_available(' not in src
 
 
 def test_the_missing_node_message_has_one_source():
@@ -527,6 +519,10 @@ class _PairRecorder:
 
     async def __call__(self, argv, *, cwd=None, timeout=60, **kwargs):
         name = Path(argv[1]).name
+        if name == '--version':
+            # `available()` probes node before anything else; answering here
+            # keeps the probe out of `calls`, which asserts the script order.
+            return Captured(code=0, stdout='v22.0.0\n', stderr='')
         self.calls.append((name, list(argv)))
         if name != 'scan.mjs':
             return Captured(code=self._build_code, stdout=self._build, stderr='')
@@ -636,6 +632,63 @@ async def test_build_map_without_node_returns_the_reason(tmp_path, monkeypatch):
     assert outcome.ok is False
     assert outcome.error == floorplan.NODE_MISSING
     assert recorder.calls == []
+
+
+async def test_build_map_records_the_attempt_beside_the_map(tmp_path, monkeypatch):
+    """The route answers 202 when the pair outlasts its budget, so the receipt
+    has to exist on disk: the request is gone by the time the build finishes."""
+    recorder = _PairRecorder(graph=_graph(files=621, routes=88))
+    proj, cfg = _wired(tmp_path, monkeypatch, recorder)
+    map_dir = floorplan.map_dir(proj, cfg)
+    map_dir.mkdir(parents=True)
+    (map_dir / floorplan.ARCH_NAME).write_text('{}', encoding='utf-8')
+
+    await floorplan.build_map(proj, home=cfg)
+
+    receipt = floorplan.read_receipt(proj, cfg)
+    assert receipt is not None
+    assert receipt['ok'] is True
+    assert receipt['counts']['files'] == 621
+    assert receipt['at']
+
+
+async def test_the_receipt_keeps_a_failure_reason_and_its_warnings(tmp_path, monkeypatch):
+    warnings = ['node "gates" path "src/x.py" matches no included file']
+    recorder = _PairRecorder(
+        scan_code=1, scan_error='no files at all',
+        build_stdout=_build_receipt(warnings=warnings))
+    proj, cfg = _wired(tmp_path, monkeypatch, recorder)
+    map_dir = floorplan.map_dir(proj, cfg)
+    map_dir.mkdir(parents=True)
+    (map_dir / floorplan.ARCH_NAME).write_text('{}', encoding='utf-8')
+
+    outcome = await floorplan.build_map(proj, home=cfg)
+
+    receipt = floorplan.read_receipt(proj, cfg)
+    assert outcome.ok is False
+    assert receipt['ok'] is False
+    assert 'no files at all' in receipt['error']
+
+
+def test_no_receipt_reads_as_none(tmp_path):
+    assert floorplan.read_receipt(tmp_path / 'nothing-here') is None
+
+
+async def test_a_failed_build_still_reports_its_warnings(tmp_path, monkeypatch):
+    """A build can fail *and* carry warnings, and the warnings name the field
+    that is wrong — dropping them on the failure path hides the fix."""
+    warnings = ['node "gates" path "src/x.py" matches no included file']
+    recorder = _PairRecorder(
+        build_stdout=_build_receipt(ok=False, errors=['boom'], warnings=warnings))
+    proj, cfg = _wired(tmp_path, monkeypatch, recorder)
+    map_dir = floorplan.map_dir(proj, cfg)
+    map_dir.mkdir(parents=True)
+    (map_dir / floorplan.ARCH_NAME).write_text('{}', encoding='utf-8')
+
+    outcome = await floorplan.build_map(proj, home=cfg)
+
+    assert outcome.ok is False
+    assert warnings[0] in outcome.summary()
 
 
 # --- #379: the agent-side trigger -------------------------------------------

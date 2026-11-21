@@ -23,6 +23,8 @@ contract the panel depends on — `built` or a reason, and bytes that must
 revalidate (a rebuild has to reach the frame without a hard refresh).
 """
 
+import asyncio
+import time
 from pathlib import Path
 
 import pytest
@@ -45,11 +47,17 @@ def _isolated_home(home):
 def _floorplan_present(monkeypatch):
     """Both halves of availability, pinned (#379).
 
-    `/map/state` now answers "can this be built at all", and that is a presence
-    check — so it must be asked of the fixture rather than of the machine, or
-    the empty-state assertion changes shape on a host without node.
+    `/map/state` now answers "can this be built at all", and that is `available()`
+    — so the node probe is stubbed here rather than being asked of the machine,
+    or the empty-state assertion changes shape on a host without node.
     """
+    from codingdude.tools import Captured
+
+    async def version(argv, **kwargs):
+        return Captured(code=0, stdout='v22.0.0\n', stderr='')
+
     monkeypatch.setattr(floorplan, 'node_binary', lambda: 'node')
+    monkeypatch.setattr(floorplan, 'run_captured', version)
     monkeypatch.setattr(floorplan, 'floorplan_home', lambda *a, **k: Path('C:/floorplan'))
 
 
@@ -260,3 +268,82 @@ def test_state_reports_availability_so_the_panel_can_offer_the_button(tmp_path):
     assert state['detail']
     # Nothing is reported as running when nothing is.
     assert state['running'] is False
+    # No build has been attempted, so there is no receipt to render.
+    assert state['build'] is None
+
+
+def _slow_build(monkeypatch, tmp_path, *, ok, error='', warnings=(), delay=0.4):
+    """A build that outlasts the route's settle budget, as a big tree would.
+
+    It takes the real lock and writes the real receipt, because those are the
+    two things the 202 path depends on: the poll reads the lock for `running`
+    and the receipt for the outcome.
+    """
+    project = tmp_path / 'proj'
+
+    async def fake(workdir, home=None, **kwargs):
+        with floorplan.build_lock(workdir, home):
+            outcome = floorplan.MapBuild(
+                ok=False, error=error, warnings=tuple(warnings))
+            await asyncio.sleep(delay)
+            if ok:
+                outcome = floorplan.MapBuild(
+                    ok=True, counts={'files': 621}, page=_build_page(project, tmp_path))
+            outcome.write(floorplan.map_dir(workdir, home) / floorplan.RECEIPT_NAME)
+            return outcome
+
+    monkeypatch.setattr(floorplan, 'build_map', fake)
+    return project
+
+
+def test_a_build_that_outlasts_the_budget_answers_202_and_the_panel_polls(
+    tmp_path, monkeypatch,
+):
+    """The request must not be held open for a tree big enough to take minutes.
+    The build carries on, and `/map/state` — the surface the panel already has —
+    reports it finished."""
+    monkeypatch.setattr('codingdude.server.MAP_SETTLE_BUDGET_S', 0.01)
+    _slow_build(monkeypatch, tmp_path, ok=True)
+    client, headers = _app(tmp_path)
+    with client:
+        session_id, _ = _session(client, tmp_path)
+        response = client.post(f'/sessions/{session_id}/map/build', headers=headers)
+        assert response.status_code == 202, response.text
+        body = response.json()
+        assert body['started'] is True
+        assert body['state']['running'] is True
+        # The panel polls while the lock is held; the build finishes on its own.
+        deadline = time.time() + 10
+        state = body['state']
+        while time.time() < deadline and not state['built']:
+            time.sleep(0.1)
+            state = client.get(
+                f'/sessions/{session_id}/map/state', headers=headers).json()
+    assert state['built'] is True
+    assert state['running'] is False
+
+
+def test_a_failure_that_finished_after_the_202_is_still_explained(
+    tmp_path, monkeypatch,
+):
+    """Without the receipt on disk the poll could only say "not built" — the one
+    thing the reader already knew. The reason has to survive the request."""
+    monkeypatch.setattr('codingdude.server.MAP_SETTLE_BUDGET_S', 0.01)
+    _slow_build(monkeypatch, tmp_path, ok=False,
+                error='floorplan build failed (exit 1): no node nodes',
+                warnings=['node "gates" path "src/x.py" matches no included file'])
+    client, headers = _app(tmp_path)
+    with client:
+        session_id, _ = _session(client, tmp_path)
+        response = client.post(f'/sessions/{session_id}/map/build', headers=headers)
+        assert response.status_code == 202, response.text
+        deadline = time.time() + 10
+        state = response.json()['state']
+        while time.time() < deadline and state['build'] is None:
+            time.sleep(0.1)
+            state = client.get(
+                f'/sessions/{session_id}/map/state', headers=headers).json()
+    assert state['built'] is False
+    assert 'no node nodes' in state['build']['error']
+    assert state['build']['warnings'] == [
+        'node "gates" path "src/x.py" matches no included file']
