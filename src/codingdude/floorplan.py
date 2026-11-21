@@ -489,26 +489,48 @@ async def _export_page(out_dir: Path, timeout: int = EXPORT_TIMEOUT) -> str:
     removes chrome the frame cannot use. A copy that could not be made is
     reported beside the build's own warnings and the build's page is served.
 
-    The destination is unlinked first, so "the file exists" means this call
-    wrote it — otherwise a previous build's copy would pass for a fresh one.
+    Written to a sibling `*.tmp` and published with `os.replace`, because a
+    half-written copy is worse than none: `map_frame_page()` serves whatever is
+    newer than the build's page, so a partial one would be served as if it were
+    a map. Publishing also keeps a rebuild's *previous* copy in place, which is
+    older than the new page and therefore never served.
     """
     dest = out_dir / EXPORT_NAME
+    tmp = out_dir / f'{EXPORT_NAME}.tmp'
     node = node_binary()
     if node is None:
         return NODE_MISSING
-    # Removed before the spawn, not after: "the file exists" then means this
-    # call wrote it, so a previous build's copy cannot pass for a fresh one.
-    dest.unlink(missing_ok=True)
+    tmp.unlink(missing_ok=True)
     cap = await run_captured(
-        [node, str(out_dir / EXPORT_SCRIPT), '--export', str(dest),
+        [node, str(out_dir / EXPORT_SCRIPT), '--export', str(tmp),
          '--include', EXPORT_INCLUDE],
         cwd=out_dir, timeout=timeout)
     if cap is None:
+        _discard(tmp)
         return f'the map was built, but its exported copy timed out after {timeout}s'
-    if cap.code != 0 or not dest.is_file():
+    if cap.code != 0 or not tmp.is_file():
+        _discard(tmp)
         return ('the map was built, but its exported copy failed '
                 f'(exit {cap.code}): {cap.combined[:200]}')
+    try:
+        os.replace(tmp, dest)
+    except OSError as exc:
+        _discard(tmp)
+        return f'the map was built, but its exported copy could not be published: {exc}'
     return ''
+
+
+def _discard(path: Path) -> None:
+    """Remove a copy that must not survive a failed export.
+
+    Never raises: this runs on the way out of a failure, and a build that is
+    otherwise complete must not be turned into an error by cleanup. The file is
+    a `*.tmp` nothing serves, so a removal that fails leaves only litter.
+    """
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        return
 
 
 async def scan(

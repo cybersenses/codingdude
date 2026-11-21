@@ -1024,13 +1024,53 @@ async def test_the_pair_writes_the_copy_the_frame_serves(tmp_path, monkeypatch):
     assert outcome.ok is True, outcome.error
     assert recorder.scripts == ['scan.mjs', 'build.mjs', 'serve.mjs']
     _, export_argv = recorder.calls[2]
+    map_dir = floorplan.map_dir(proj, cfg)
+    # The script writes a sibling `*.tmp` that we then publish: the served name
+    # never holds a half-written file.
     assert export_argv[export_argv.index('--export') + 1] == str(
-        floorplan.map_dir(proj, cfg) / floorplan.EXPORT_NAME)
+        map_dir / f'{floorplan.EXPORT_NAME}.tmp')
+    assert (map_dir / floorplan.EXPORT_NAME).is_file()
+    assert not (map_dir / f'{floorplan.EXPORT_NAME}.tmp').exists()
     # `health` is left out on purpose: floorplan's health scan is heuristic and
     # reports a HIGH finding on routes that do carry `Depends(authorize)`, so
     # showing it in our own panel would present a wrong verdict as ours.
     assert export_argv[export_argv.index('--include') + 1] == 'flows,notes,recent'
-    assert outcome.page == floorplan.map_dir(proj, cfg) / floorplan.EXPORT_NAME
+    assert outcome.page == map_dir / floorplan.EXPORT_NAME
+
+
+async def test_a_failed_export_leaves_no_partial_copy_to_serve(tmp_path, monkeypatch):
+    """A copy half-written before the failure must not become the map.
+
+    `map_frame_page()` serves whatever is newer than the build's page, so the
+    failure mode this pins is a truncated file inheriting that freshness: the
+    previous copy has to survive untouched, and the partial one has to be gone.
+    """
+    out = tmp_path / 'map'
+    out.mkdir()
+    dest = out / floorplan.EXPORT_NAME
+    dest.write_text('<html>older copy</html>', encoding='utf-8')
+    page = out / 'index.html'
+    page.write_text('<html>built</html>', encoding='utf-8')
+    monkeypatch.setattr(floorplan, 'map_dir', lambda *a, **k: out)
+    # The rebuild wrote a newer page, so an older copy is correctly ignored.
+    newer = page.stat().st_mtime + 60
+    os.utime(page, (newer, newer))
+
+    async def half_writes(argv, *, cwd=None, timeout=60, **kwargs):
+        Path(argv[argv.index('--export') + 1]).write_text(
+            '<html>truncated', encoding='utf-8')
+        return Captured(code=1, stdout='', stderr='ENOSPC: no space left')
+
+    monkeypatch.setattr(floorplan, 'run_captured', half_writes)
+    monkeypatch.setattr(floorplan, 'node_binary', lambda: Path('node'))
+
+    problem = await floorplan._export_page(out)
+
+    assert 'exported copy failed' in problem
+    assert 'ENOSPC' in problem
+    assert dest.read_text(encoding='utf-8') == '<html>older copy</html>'
+    assert not (out / f'{floorplan.EXPORT_NAME}.tmp').exists()
+    assert floorplan.map_frame_page(tmp_path) == page
 
 
 async def test_a_failed_export_is_a_warning_and_the_build_page_is_served(tmp_path, monkeypatch):

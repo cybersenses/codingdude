@@ -107,9 +107,12 @@
   deliberately left out of the copy: floorplan's health scan is heuristic and
   reports a HIGH "unprotected-endpoint" on routes that do carry
   `Depends(authorize)`, so the panel does not present a verdict we know to be
-  wrong as ours. Measured on this repo: the copy costs 0.20s, is 4 KB smaller,
-  renders with 42 SVG layers, 0 console errors and no "Asking is unavailable"
-  text anywhere in the document.
+  wrong as ours. Measured on this repo: the copy costs 0.20s, is 2,651,445 B
+  against the build's 2,565,620 B (it re-serialises flows, notes and recent
+  work), renders with 42 SVG layers, 0 console errors and no "Asking is
+  unavailable" text anywhere in the document. It is written to a sibling
+  `*.tmp` and published, so a failed export cannot leave a truncated page that
+  the frame would serve as newer than the build.
 
 - **A panel could construct a React component instead of a Map (#380)**: the
   Graph panel's structure list calls `new Map()`, and the map panel's component
