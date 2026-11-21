@@ -94,6 +94,23 @@
 
 ### Fixed
 
+- **The map panel showed a control that could never work (#381)**: floorplan's
+  page carries an Ask bar that shells out to a `claude` or `codex` CLI, and these
+  runs one neither — so the frame drew a permanently disabled strip reading
+  "Asking is unavailable" across the bottom of the diagram, and every Ask
+  affordance in its context menus led nowhere. The panel now serves the copy
+  floorplan's *own* export path writes (`serve.mjs --export`, the code its Export
+  button takes): `meta.exported` set, `body.exported` hides the bar, no engine
+  detection, no `/api/ask` fetch. `map_frame_page()` prefers that copy and falls
+  back to the built page when it is missing or older, so a rebuild whose copy
+  failed cannot leave the frame showing the previous build. `health` is
+  deliberately left out of the copy: floorplan's health scan is heuristic and
+  reports a HIGH "unprotected-endpoint" on routes that do carry
+  `Depends(authorize)`, so the panel does not present a verdict we know to be
+  wrong as ours. Measured on this repo: the copy costs 0.20s, is 4 KB smaller,
+  renders with 42 SVG layers, 0 console errors and no "Asking is unavailable"
+  text anywhere in the document.
+
 - **A panel could construct a React component instead of a Map (#380)**: the
   Graph panel's structure list calls `new Map()`, and the map panel's component
   was imported into the same file as `Map`, so that line constructed the

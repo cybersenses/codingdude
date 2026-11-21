@@ -144,6 +144,27 @@ def test_the_page_is_served_as_html_that_must_revalidate(tmp_path):
     assert 'map sentinel' in response.text
 
 
+def test_the_route_serves_the_exported_copy_the_frame_needs(tmp_path):
+    """#381: the frame is given the exported page.
+
+    Unexported, floorplan draws an Ask bar that shells out to a Claude Code or
+    Codex CLI this adapter never runs, so the panel showed a permanently
+    disabled control reading "Asking is unavailable". The exported copy is
+    upstream's own switch for exactly that case.
+    """
+    client, headers = _app(tmp_path)
+    with client:
+        session_id, proj = _session(client, tmp_path)
+        page = _build_page(proj, tmp_path)
+        page.with_name(floorplan.EXPORT_NAME).write_text(
+            '<!doctype html><html><body>exported sentinel</body></html>',
+            encoding='utf-8')
+        response = client.get(f'/sessions/{session_id}/map', headers=headers)
+    assert response.status_code == 200
+    assert 'exported sentinel' in response.text
+    assert 'map sentinel' not in response.text
+
+
 def test_the_page_404s_with_the_reason_when_nothing_is_built(tmp_path):
     client, headers = _app(tmp_path)
     with client:

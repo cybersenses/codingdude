@@ -517,7 +517,8 @@ class _PairRecorder:
     def __init__(self, *, scan_stdout: str | None = None,
                  build_stdout: str | None = None, scan_code: int = 0,
                  build_code: int = 0, graph: dict | None = None,
-                 scan_error: str = ''):
+                 scan_error: str = '', serve_code: int = 0,
+                 serve_stdout: str = 'Exported the map'):
         self.calls: list[tuple[str, list[str]]] = []
         self._scan = _scan_receipt() if scan_stdout is None else scan_stdout
         self._build = _build_receipt() if build_stdout is None else build_stdout
@@ -525,6 +526,8 @@ class _PairRecorder:
         self._build_code = build_code
         self._graph = graph
         self._scan_error = scan_error
+        self._serve_code = serve_code
+        self._serve_stdout = serve_stdout
 
     async def __call__(self, argv, *, cwd=None, timeout=60, **kwargs):
         name = Path(argv[1]).name
@@ -533,6 +536,15 @@ class _PairRecorder:
             # keeps the probe out of `calls`, which asserts the script order.
             return Captured(code=0, stdout='v22.0.0\n', stderr='')
         self.calls.append((name, list(argv)))
+        if name == floorplan.EXPORT_SCRIPT:
+            # #381: the exported copy is a real file the builder's own server
+            # writes, so the fake writes one too and the fallback path is the
+            # only thing a failure changes.
+            if self._serve_code == 0:
+                dest = Path(argv[argv.index('--export') + 1])
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_text('<html>exported</html>', encoding='utf-8')
+            return Captured(code=self._serve_code, stdout=self._serve_stdout, stderr='')
         if name != 'scan.mjs':
             return Captured(code=self._build_code, stdout=self._build, stderr='')
         if self._graph is not None:
@@ -568,7 +580,8 @@ async def test_build_map_authors_the_inputs_from_the_scan_before_it_builds(tmp_p
     outcome = await floorplan.build_map(proj, home=cfg)
 
     assert outcome.ok is True, outcome.error
-    assert recorder.scripts == ['scan.mjs', 'build.mjs']
+    # Scan, build, then the copy the frame serves (#381).
+    assert recorder.scripts == ['scan.mjs', 'build.mjs', 'serve.mjs']
     authored = floorplan.map_dir(proj, cfg) / 'architecture.json'
     assert authored.is_file()
     nodes = json.loads(authored.read_text(encoding='utf-8'))['nodes']
@@ -600,7 +613,7 @@ async def test_build_map_scans_then_builds_into_the_map_dir(tmp_path, monkeypatc
     outcome = await floorplan.build_map(proj, home=cfg)
 
     assert outcome.ok is True, outcome.error
-    assert recorder.scripts == ['scan.mjs', 'build.mjs']
+    assert recorder.scripts == ['scan.mjs', 'build.mjs', 'serve.mjs']
     _, build_argv = recorder.calls[1]
     assert build_argv[build_argv.index('--out') + 1] == str(map_dir)
     assert build_argv[build_argv.index('--arch') + 1] == str(map_dir / 'architecture.json')
@@ -739,7 +752,7 @@ async def test_the_map_build_tool_returns_the_summary(home, tmp_path, monkeypatc
     text = await _map_tool(proj)()
 
     assert '621 files' in text
-    assert recorder.scripts == ['scan.mjs', 'build.mjs']
+    assert recorder.scripts == ['scan.mjs', 'build.mjs', 'serve.mjs']
 
 
 async def test_the_map_build_tool_degrades_to_the_reason(home, tmp_path, monkeypatch):
@@ -953,3 +966,82 @@ async def test_the_query_tool_reads_a_real_built_map(tmp_path, monkeypatch):
     assert json.loads(shown.text)['id'] == 'n:src'
     chained = await floorplan.query_map(repo, 'path', 'n:src f:src/demo/core.py', home=home)
     assert json.loads(chained.text) is not None
+
+
+# --- #381: the exported copy the frame serves --------------------------------
+
+def _both_pages(tmp_path, *, export_newer: bool = True):
+    """A map dir holding both pages, with the export's age under control."""
+    out = tmp_path / 'mapdir'
+    out.mkdir(parents=True)
+    page = out / 'index.html'
+    page.write_text('<html>build</html>', encoding='utf-8')
+    export = out / floorplan.EXPORT_NAME
+    export.write_text('<html>exported</html>', encoding='utf-8')
+    if not export_newer:
+        older = page.stat().st_mtime - 60
+        os.utime(export, (older, older))
+    return out, page, export
+
+
+def test_the_frame_serves_the_exported_copy_when_it_is_current(tmp_path, monkeypatch):
+    """#381: the exported copy is the one without the Ask bar, so it is the one
+    the sandboxed frame gets; `map_page()` stays the build's own page."""
+    out, _page, export = _both_pages(tmp_path)
+    monkeypatch.setattr(floorplan, 'map_dir', lambda *a, **k: out)
+
+    assert floorplan.map_frame_page(tmp_path) == export
+
+
+def test_the_frame_falls_back_to_the_build_page_without_an_export(tmp_path, monkeypatch):
+    """A map built before this change, or whose export failed, still opens."""
+    out = tmp_path / 'mapdir'
+    out.mkdir()
+    page = out / 'index.html'
+    page.write_text('<html>build</html>', encoding='utf-8')
+    monkeypatch.setattr(floorplan, 'map_dir', lambda *a, **k: out)
+
+    assert floorplan.map_frame_page(tmp_path) == page
+
+
+def test_the_frame_ignores_an_export_older_than_the_build(tmp_path, monkeypatch):
+    """A rebuild that wrote the page but not its copy must not serve the copy:
+    the frame would show the previous build while the panel said "built"."""
+    out, page, _export = _both_pages(tmp_path, export_newer=False)
+    monkeypatch.setattr(floorplan, 'map_dir', lambda *a, **k: out)
+
+    assert floorplan.map_frame_page(tmp_path) == page
+
+
+async def test_the_pair_writes_the_copy_the_frame_serves(tmp_path, monkeypatch):
+    """#381: the copy is made by floorplan's own `serve.mjs --export`, which is
+    the same path its Export button takes — not a second implementation of it."""
+    recorder = _PairRecorder(graph=_graph(files=3))
+    proj, cfg = _wired(tmp_path, monkeypatch, recorder)
+
+    outcome = await floorplan.build_map(proj, home=cfg)
+
+    assert outcome.ok is True, outcome.error
+    assert recorder.scripts == ['scan.mjs', 'build.mjs', 'serve.mjs']
+    _, export_argv = recorder.calls[2]
+    assert export_argv[export_argv.index('--export') + 1] == str(
+        floorplan.map_dir(proj, cfg) / floorplan.EXPORT_NAME)
+    # `health` is left out on purpose: floorplan's health scan is heuristic and
+    # reports a HIGH finding on routes that do carry `Depends(authorize)`, so
+    # showing it in our own panel would present a wrong verdict as ours.
+    assert export_argv[export_argv.index('--include') + 1] == 'flows,notes,recent'
+    assert outcome.page == floorplan.map_dir(proj, cfg) / floorplan.EXPORT_NAME
+
+
+async def test_a_failed_export_is_a_warning_and_the_build_page_is_served(tmp_path, monkeypatch):
+    """The map is drawn either way: a copy that could not be made is a note
+    beside the build's own warnings, never a failed build."""
+    recorder = _PairRecorder(graph=_graph(files=7), serve_code=1,
+                             serve_stdout="Couldn't export the map: no index.html")
+    proj, cfg = _wired(tmp_path, monkeypatch, recorder)
+
+    outcome = await floorplan.build_map(proj, home=cfg)
+
+    assert outcome.ok is True
+    assert outcome.page == floorplan.map_page(proj, cfg)
+    assert any('exported copy' in warning for warning in outcome.warnings)

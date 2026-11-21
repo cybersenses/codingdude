@@ -128,6 +128,32 @@ QUERY_VERBS = ('overview', 'find', 'show', 'path')
 QUERY_MAX_CHARS = 20_000
 
 
+# --- #381: the exported copy the frame serves -------------------------------
+
+#: `<map dir>/index.export.html` — floorplan's own *exported* copy of the map.
+#:
+#: `serve.mjs --export` re-serialises the built page with `meta.exported` set,
+#: which is upstream's switch for "no Ask bar, no requests for Claude or Codex,
+#: no links into this computer" (`serve.mjs:52-80`). The frame needs exactly
+#: that: floorplan's Ask bar shells out to a `claude` or `codex` CLI this
+#: adapter never runs, so served as built it renders a permanently disabled
+#: control reading "Asking is unavailable" across the bottom of the diagram.
+EXPORT_NAME = 'index.export.html'
+
+#: What travels in that copy. `health` is left out on purpose: floorplan's
+#: health scan is heuristic and flags a HIGH "unprotected-endpoint" on routes
+#: that do carry `Depends(authorize)` (see this module's docstring), so showing
+#: it in our own panel would present a verdict we know to be wrong as ours.
+EXPORT_INCLUDE = 'flows,notes,recent'
+
+#: `build.mjs` generates `serve.mjs` into the map dir (beside `query.mjs`), and
+#: `--export` is the path through it that writes the copy and exits without
+#: starting a server — the same code its Export button takes, so there is no
+#: second implementation of the transform to keep in step.
+EXPORT_SCRIPT = 'serve.mjs'
+EXPORT_TIMEOUT = 60
+
+
 @dataclass(frozen=True)
 class ScanResult:
     """What floorplan's scan receipt said (floorplan/scan-result@1)."""
@@ -283,6 +309,28 @@ def map_graph(workdir: str | Path, home: str | Path | None = None) -> Path:
     return map_dir(workdir, home) / 'graph.json'
 
 
+def map_frame_page(workdir: str | Path, home: str | Path | None = None) -> Path:
+    """The page the Map panel serves: the exported copy when it is current (#381).
+
+    `map_page()` is what the builder wrote; this is the projection of it a
+    sandboxed frame can run without dead controls — the copy whose Ask bar is
+    hidden because nothing here answers it.
+
+    Falls back to the build's own page when the export is missing *or older*,
+    and the second half is the load-bearing one: a rebuild that wrote the page
+    but not its copy must not leave the frame showing the previous build while
+    the panel says "built".
+    """
+    page = map_page(workdir, home)
+    export = page.with_name(EXPORT_NAME)
+    try:
+        if export.is_file() and export.stat().st_mtime >= page.stat().st_mtime:
+            return export
+    except OSError:
+        return page
+    return page
+
+
 class MapLocked(RuntimeError):
     """A build for this workdir is already running (#379).
 
@@ -432,6 +480,35 @@ async def _run_script(
     cap = await run_captured(
         [node, str(home / 'scripts' / script), *argv], cwd=workdir, timeout=timeout)
     return cap, node
+
+
+async def _export_page(out_dir: Path, timeout: int = EXPORT_TIMEOUT) -> str:
+    """Write `out_dir`'s exported copy. Returns why not, or '' on success (#381).
+
+    A note, never a failed build: the map is drawn either way, and the copy only
+    removes chrome the frame cannot use. A copy that could not be made is
+    reported beside the build's own warnings and the build's page is served.
+
+    The destination is unlinked first, so "the file exists" means this call
+    wrote it — otherwise a previous build's copy would pass for a fresh one.
+    """
+    dest = out_dir / EXPORT_NAME
+    node = node_binary()
+    if node is None:
+        return NODE_MISSING
+    # Removed before the spawn, not after: "the file exists" then means this
+    # call wrote it, so a previous build's copy cannot pass for a fresh one.
+    dest.unlink(missing_ok=True)
+    cap = await run_captured(
+        [node, str(out_dir / EXPORT_SCRIPT), '--export', str(dest),
+         '--include', EXPORT_INCLUDE],
+        cwd=out_dir, timeout=timeout)
+    if cap is None:
+        return f'the map was built, but its exported copy timed out after {timeout}s'
+    if cap.code != 0 or not dest.is_file():
+        return ('the map was built, but its exported copy failed '
+                f'(exit {cap.code}): {cap.combined[:200]}')
+    return ''
 
 
 async def scan(
@@ -645,15 +722,26 @@ async def _build_pair(
         workdir, out_dir, home=home, arch=arch_path,
         scan_path=scanned.scan_path,
     )
+    page = built.index_html
+    warnings = (*notes, *built.warnings)
+    if built.ok:
+        # The copy the frame serves (#381). Last, because it is a projection of
+        # a page that has to exist first; and a note rather than a failure,
+        # because a map without it is still a map.
+        problem = await _export_page(out_dir)
+        if problem:
+            warnings = (*warnings, problem)
+        else:
+            page = out_dir / EXPORT_NAME
     return MapBuild(
         ok=built.ok,
         error=built.error,
         # Authored notes first: a reader asking "why is nothing highlighted"
         # should not have to scroll past the builder's own warnings to find out.
-        warnings=(*notes, *built.warnings),
+        warnings=warnings,
         counts=counts,
         files=built.files,
-        page=built.index_html if built.ok else None,
+        page=page if built.ok else None,
     )
 
 

@@ -911,12 +911,12 @@ def create_app(
             available,
             lock_path,
             lock_stale,
-            map_page,
+            map_frame_page,
             read_receipt,
         )
 
         usable, detail = await available()
-        page = map_page(workdir, home)
+        page = map_frame_page(workdir, home)
         running = lock_path(workdir, home).exists() and not lock_stale(workdir, home)
         state = {
             'available': usable,
@@ -1011,9 +1011,9 @@ def create_app(
         workdir = db.session_workdir(session_id)
         if not workdir:
             raise HTTPException(status_code=404, detail='no such session')
-        from .floorplan import available, map_page
+        from .floorplan import available, map_frame_page
 
-        page = map_page(workdir, home)
+        page = map_frame_page(workdir, home)
         if not page.is_file():
             usable, detail = await available()
             raise HTTPException(
