@@ -53,12 +53,13 @@ import os
 import re
 import shutil
 import time
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .tools import run_captured
+from .tools import ATOMIC_TEMP_SUFFIX, _replace_with_retry, run_captured
 
 #: Where a reader points us at a floorplan checkout, repo root or skills dir.
 ENV_VAR = 'CODINGDUDE_FLOORPLAN_HOME'
@@ -126,6 +127,32 @@ QUERY_VERBS = ('overview', 'find', 'show', 'path')
 #: `show` on a large node prints a lot; this is the tool-output discipline the
 #: other tools follow, announced rather than silent when it bites.
 QUERY_MAX_CHARS = 20_000
+
+
+# --- #381: the exported copy the frame serves -------------------------------
+
+#: `<map dir>/index.export.html` — floorplan's own *exported* copy of the map.
+#:
+#: `serve.mjs --export` re-serialises the built page with `meta.exported` set,
+#: which is upstream's switch for "no Ask bar, no requests for Claude or Codex,
+#: no links into this computer" (`serve.mjs:52-80`). The frame needs exactly
+#: that: floorplan's Ask bar shells out to a `claude` or `codex` CLI this
+#: adapter never runs, so served as built it renders a permanently disabled
+#: control reading "Asking is unavailable" across the bottom of the diagram.
+EXPORT_NAME = 'index.export.html'
+
+#: What travels in that copy. `health` is left out on purpose: floorplan's
+#: health scan is heuristic and flags a HIGH "unprotected-endpoint" on routes
+#: that do carry `Depends(authorize)` (see this module's docstring), so showing
+#: it in our own panel would present a verdict we know to be wrong as ours.
+EXPORT_INCLUDE = 'flows,notes,recent'
+
+#: `build.mjs` generates `serve.mjs` into the map dir (beside `query.mjs`), and
+#: `--export` is the path through it that writes the copy and exits without
+#: starting a server — the same code its Export button takes, so there is no
+#: second implementation of the transform to keep in step.
+EXPORT_SCRIPT = 'serve.mjs'
+EXPORT_TIMEOUT = 60
 
 
 @dataclass(frozen=True)
@@ -265,11 +292,12 @@ def map_dir(workdir: str | Path, home: str | Path | None = None) -> Path:
 
 
 def map_page(workdir: str | Path, home: str | Path | None = None) -> Path:
-    """`<map dir>/index.html` — where a build puts the map (#377).
+    """`<map dir>/index.html` — the page a build writes (#377).
 
-    One definition, because three places depend on the layout: the build itself,
-    the server route that serves the page to the Map panel, and the query tool
-    that reads the graph written beside it.
+    One definition, because two places depend on the layout: the build that
+    writes it, and `map_frame_page()` (#381), which falls back to it when the
+    exported copy beside it is not provably current. `map_graph()` names the
+    sibling the query tool reads.
     """
     return map_dir(workdir, home) / 'index.html'
 
@@ -281,6 +309,34 @@ def map_graph(workdir: str | Path, home: str | Path | None = None) -> Path:
     so #378 reads one directory rather than re-deriving the layout.
     """
     return map_dir(workdir, home) / 'graph.json'
+
+
+def map_frame_page(workdir: str | Path, home: str | Path | None = None) -> Path:
+    """The page the Map panel serves: the exported copy when it is current (#381).
+
+    `map_page()` is what the builder wrote; this is the projection of it a
+    sandboxed frame can run without dead controls — the copy whose Ask bar is
+    hidden because nothing here answers it.
+
+    Falls back to the build's own page when the export is missing, or when it is
+    not *provably* newer, and the second half carries the weight: a rebuild that
+    wrote the page but not its copy must not leave the frame showing the previous
+    build while the panel says "built". A tie is not proof of anything — coarse
+    filesystem timestamps give a rebuild's page and the previous copy the same
+    mtime — so a tie resolves to the build page. That costs the dead Ask bar,
+    which is visible and honest, rather than a map that is not the one just
+    built, which is neither.
+    """
+    page = map_page(workdir, home)
+    export = page.with_name(EXPORT_NAME)
+    try:
+        page_mtime = page.stat().st_mtime_ns
+        export_mtime = export.stat().st_mtime_ns
+    except OSError:
+        # Not an error to report: an entry that is not there is answered by the
+        # fallback, and `_map_state` reports the absence of the page itself.
+        return page
+    return export if export_mtime > page_mtime else page
 
 
 class MapLocked(RuntimeError):
@@ -432,6 +488,86 @@ async def _run_script(
     cap = await run_captured(
         [node, str(home / 'scripts' / script), *argv], cwd=workdir, timeout=timeout)
     return cap, node
+
+
+def export_temp(out_dir: str | Path) -> Path:
+    """A fresh sidecar path for the export to write before it is published (#381).
+
+    Unique per call, and named the way `tools._atomic_write` names its own
+    sidecar (R24 #38): a uuid so no two writers — this build, a leftover from a
+    killed one — can collide on the name, and `tools.ATOMIC_TEMP_SUFFIX`, the
+    suffix that layer owns, so "a file we are mid-way through" has exactly one
+    spelling in this codebase. Nothing is cleared on the way in, because
+    clearing would be a step that can fail before the work starts (see
+    `_export_page`).
+    """
+    return Path(out_dir) / f'{EXPORT_NAME}.{uuid.uuid4().hex}{ATOMIC_TEMP_SUFFIX}'
+
+
+async def _export_page(out_dir: Path, timeout: int = EXPORT_TIMEOUT) -> str:
+    """Write `out_dir`'s exported copy. Returns why not, or '' on success (#381).
+
+    A note, never a failed build: the map is drawn either way, and the copy only
+    removes chrome the frame cannot use. A copy that could not be made is
+    reported beside the build's own warnings and the build's page is served.
+
+    Written to a fresh sidecar and published, because a half-written copy is
+    worse than none: `map_frame_page()` serves whatever is newer than the
+    build's page, so a partial one would be served as if it were a map.
+    Publishing also keeps a rebuild's *previous* copy in place, which is older
+    than the new page and therefore never served.
+
+    The temp name is a fresh one per call (`export_temp`), so there is nothing
+    to clear first: clearing a previous run's sidecar would be a cleanup step
+    on the way *in* that can fail on Windows (`PermissionError` on a file
+    something else holds open) and turn a build into an exception. Publishing
+    goes through `tools._replace_with_retry` for the matching reason on the way
+    *out*: the frame may be displaying the copy being replaced, and that lock
+    is transient (R24 #38).
+    """
+    dest = out_dir / EXPORT_NAME
+    tmp = export_temp(out_dir)
+    node = node_binary()
+    if node is None:
+        return NODE_MISSING
+    cap = await run_captured(
+        [node, str(out_dir / EXPORT_SCRIPT), '--export', str(tmp),
+         '--include', EXPORT_INCLUDE],
+        cwd=out_dir, timeout=timeout)
+    if cap is None:
+        _discard(tmp)
+        return f'the map was built, but its exported copy timed out after {timeout}s'
+    if cap.code != 0 or not tmp.is_file():
+        _discard(tmp)
+        return ('the map was built, but its exported copy failed '
+                f'(exit {cap.code}): {cap.combined[:200]}')
+    if tmp.stat().st_size == 0:
+        # Exit 0 is not proof a page was written. An empty copy would pass the
+        # existence check above and render a blank frame, which is worse than
+        # the Ask bar it exists to remove, so emptiness is the same class of
+        # failure as a non-zero exit and the served name is left alone.
+        _discard(tmp)
+        return ('the map was built, but its exported copy came back empty '
+                f'(exit 0): {cap.combined[:200]}')
+    try:
+        _replace_with_retry(tmp, dest)
+    except OSError as exc:
+        _discard(tmp)
+        return f'the map was built, but its exported copy could not be published: {exc}'
+    return ''
+
+
+def _discard(path: Path) -> None:
+    """Remove a copy that must not survive a failed export.
+
+    Never raises: this runs on the way out of a failure, and a build that is
+    otherwise complete must not be turned into an error by cleanup. The file is
+    a sidecar nothing serves, so a removal that fails leaves only litter.
+    """
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        return
 
 
 async def scan(
@@ -645,15 +781,32 @@ async def _build_pair(
         workdir, out_dir, home=home, arch=arch_path,
         scan_path=scanned.scan_path,
     )
+    page = built.index_html
+    warnings = (*notes, *built.warnings)
+    if built.ok:
+        # The copy the frame serves (#381). Last, because it is a projection of
+        # a page that has to exist first; and a note rather than a failure,
+        # because a map without it is still a map.
+        #
+        # This names what the build *published*, which is not the same question
+        # as what the route serves: `map_frame_page()` resolves per request and
+        # requires the copy to be strictly newer, so a copy that tied on the
+        # filesystem clock would leave the build page on screen while this field
+        # still named the copy. Publishing is a fact; serving is a comparison.
+        problem = await _export_page(out_dir)
+        if problem:
+            warnings = (*warnings, problem)
+        else:
+            page = out_dir / EXPORT_NAME
     return MapBuild(
         ok=built.ok,
         error=built.error,
         # Authored notes first: a reader asking "why is nothing highlighted"
         # should not have to scroll past the builder's own warnings to find out.
-        warnings=(*notes, *built.warnings),
+        warnings=warnings,
         counts=counts,
         files=built.files,
-        page=built.index_html if built.ok else None,
+        page=page if built.ok else None,
     )
 
 

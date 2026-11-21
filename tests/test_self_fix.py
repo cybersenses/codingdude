@@ -188,6 +188,14 @@ def test_l5_rewind_survives_identical_created_at(home, tmp_path, monkeypatch):
     import codingdude.checkpoints as checkpoints
 
     monkeypatch.setattr(checkpoints, '_now', lambda: 1_000_000.0)
+    # The id clock is pinned too: `begin()` stamps its id with
+    # `time.strftime(...)`, and the assertion below ("name order is the
+    # opposite of creation order") only holds while both ids land in the same
+    # wall-clock second. On a loaded machine they need not — the full suite
+    # caught this as a red run whose isolated re-run passed (mechanism:
+    # .scratch/repro_l5_second_boundary.py, a 1.1s stall between the two
+    # `begin()` calls turns `cp2 < cp1` into False).
+    monkeypatch.setattr(checkpoints.time, 'strftime', lambda fmt: '20260101-000000')
     # cp1, cp2, then the safety checkpoint rewind_to creates internally.
     suffixes = ['bbbbbbbb', 'aaaaaaaa', 'cccccccc', 'dddddddd']
 

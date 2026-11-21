@@ -32,7 +32,7 @@ from pathlib import Path
 import pytest
 
 from codingdude import floorplan
-from codingdude.tools import Captured
+from codingdude.tools import ATOMIC_TEMP_SUFFIX, Captured
 
 
 def _copy_tree(root: Path) -> Path:
@@ -517,7 +517,8 @@ class _PairRecorder:
     def __init__(self, *, scan_stdout: str | None = None,
                  build_stdout: str | None = None, scan_code: int = 0,
                  build_code: int = 0, graph: dict | None = None,
-                 scan_error: str = ''):
+                 scan_error: str = '', serve_code: int = 0,
+                 serve_stdout: str = 'Exported the map'):
         self.calls: list[tuple[str, list[str]]] = []
         self._scan = _scan_receipt() if scan_stdout is None else scan_stdout
         self._build = _build_receipt() if build_stdout is None else build_stdout
@@ -525,6 +526,8 @@ class _PairRecorder:
         self._build_code = build_code
         self._graph = graph
         self._scan_error = scan_error
+        self._serve_code = serve_code
+        self._serve_stdout = serve_stdout
 
     async def __call__(self, argv, *, cwd=None, timeout=60, **kwargs):
         name = Path(argv[1]).name
@@ -533,6 +536,15 @@ class _PairRecorder:
             # keeps the probe out of `calls`, which asserts the script order.
             return Captured(code=0, stdout='v22.0.0\n', stderr='')
         self.calls.append((name, list(argv)))
+        if name == floorplan.EXPORT_SCRIPT:
+            # #381: the exported copy is a real file the builder's own server
+            # writes, so the fake writes one too and the fallback path is the
+            # only thing a failure changes.
+            if self._serve_code == 0:
+                dest = Path(argv[argv.index('--export') + 1])
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_text('<html>exported</html>', encoding='utf-8')
+            return Captured(code=self._serve_code, stdout=self._serve_stdout, stderr='')
         if name != 'scan.mjs':
             return Captured(code=self._build_code, stdout=self._build, stderr='')
         if self._graph is not None:
@@ -568,7 +580,8 @@ async def test_build_map_authors_the_inputs_from_the_scan_before_it_builds(tmp_p
     outcome = await floorplan.build_map(proj, home=cfg)
 
     assert outcome.ok is True, outcome.error
-    assert recorder.scripts == ['scan.mjs', 'build.mjs']
+    # Scan, build, then the copy the frame serves (#381).
+    assert recorder.scripts == ['scan.mjs', 'build.mjs', 'serve.mjs']
     authored = floorplan.map_dir(proj, cfg) / 'architecture.json'
     assert authored.is_file()
     nodes = json.loads(authored.read_text(encoding='utf-8'))['nodes']
@@ -600,7 +613,7 @@ async def test_build_map_scans_then_builds_into_the_map_dir(tmp_path, monkeypatc
     outcome = await floorplan.build_map(proj, home=cfg)
 
     assert outcome.ok is True, outcome.error
-    assert recorder.scripts == ['scan.mjs', 'build.mjs']
+    assert recorder.scripts == ['scan.mjs', 'build.mjs', 'serve.mjs']
     _, build_argv = recorder.calls[1]
     assert build_argv[build_argv.index('--out') + 1] == str(map_dir)
     assert build_argv[build_argv.index('--arch') + 1] == str(map_dir / 'architecture.json')
@@ -739,7 +752,7 @@ async def test_the_map_build_tool_returns_the_summary(home, tmp_path, monkeypatc
     text = await _map_tool(proj)()
 
     assert '621 files' in text
-    assert recorder.scripts == ['scan.mjs', 'build.mjs']
+    assert recorder.scripts == ['scan.mjs', 'build.mjs', 'serve.mjs']
 
 
 async def test_the_map_build_tool_degrades_to_the_reason(home, tmp_path, monkeypatch):
@@ -953,3 +966,250 @@ async def test_the_query_tool_reads_a_real_built_map(tmp_path, monkeypatch):
     assert json.loads(shown.text)['id'] == 'n:src'
     chained = await floorplan.query_map(repo, 'path', 'n:src f:src/demo/core.py', home=home)
     assert json.loads(chained.text) is not None
+
+
+# --- #381: the exported copy the frame serves --------------------------------
+
+def _sidecars(out: Path) -> list[Path]:
+    """The half-written copies left in a map dir — none, once a build settled."""
+    return sorted(p for p in out.iterdir() if p.name.endswith(ATOMIC_TEMP_SUFFIX))
+
+
+def _both_pages(tmp_path, *, export_newer: bool = True):
+    """A map dir holding both pages, with the export's age under control.
+
+    The offset is explicit rather than "written second, so newer": Windows
+    filesystem timestamps come from a coarse clock tick, so two files written
+    back to back can share one, and a fixture that relied on that ordering would
+    be testing the clock rather than the comparison.
+    """
+    out = tmp_path / 'mapdir'
+    out.mkdir(parents=True)
+    page = out / 'index.html'
+    page.write_text('<html>build</html>', encoding='utf-8')
+    export = out / floorplan.EXPORT_NAME
+    export.write_text('<html>exported</html>', encoding='utf-8')
+    page_ns = page.stat().st_mtime_ns
+    offset = 2_000_000_000 * (1 if export_newer else -1)
+    os.utime(export, ns=(page_ns + offset, page_ns + offset))
+    return out, page, export
+
+
+def test_the_frame_serves_the_exported_copy_when_it_is_current(tmp_path, monkeypatch):
+    """#381: the exported copy is the one without the Ask bar, so it is the one
+    the sandboxed frame gets; `map_page()` stays the build's own page."""
+    out, _page, export = _both_pages(tmp_path)
+    monkeypatch.setattr(floorplan, 'map_dir', lambda *a, **k: out)
+
+    assert floorplan.map_frame_page(tmp_path) == export
+
+
+def test_the_frame_falls_back_to_the_build_page_without_an_export(tmp_path, monkeypatch):
+    """A map built before this change, or whose export failed, still opens."""
+    out = tmp_path / 'mapdir'
+    out.mkdir()
+    page = out / 'index.html'
+    page.write_text('<html>build</html>', encoding='utf-8')
+    monkeypatch.setattr(floorplan, 'map_dir', lambda *a, **k: out)
+
+    assert floorplan.map_frame_page(tmp_path) == page
+
+
+def test_the_frame_ignores_an_export_older_than_the_build(tmp_path, monkeypatch):
+    """A rebuild that wrote the page but not its copy must not serve the copy:
+    the frame would show the previous build while the panel said "built"."""
+    out, page, _export = _both_pages(tmp_path, export_newer=False)
+    monkeypatch.setattr(floorplan, 'map_dir', lambda *a, **k: out)
+
+    assert floorplan.map_frame_page(tmp_path) == page
+
+
+def test_the_frame_prefers_the_build_page_when_the_copy_is_not_provably_newer(
+    tmp_path, monkeypatch,
+):
+    """A tie is not evidence the copy is current, so it must not serve it.
+
+    On a filesystem with coarse timestamps a rebuild's page and the *previous*
+    copy can carry the same mtime, and a tie resolved toward the copy is exactly
+    the state the comparison exists to prevent: the previous build on screen
+    while the panel says "built". Choosing the build page instead costs the dead
+    Ask bar, which is visible and honest; choosing the copy costs a map that is
+    not the one that was just built, which is neither.
+    """
+    out, page, export = _both_pages(tmp_path)
+    same = page.stat().st_mtime_ns
+    os.utime(export, ns=(same, same))
+    monkeypatch.setattr(floorplan, 'map_dir', lambda *a, **k: out)
+
+    assert floorplan.map_frame_page(tmp_path) == page
+
+
+async def test_the_pair_writes_the_copy_the_frame_serves(tmp_path, monkeypatch):
+    """#381: the copy is made by floorplan's own `serve.mjs --export`, which is
+    the same path its Export button takes — not a second implementation of it."""
+    recorder = _PairRecorder(graph=_graph(files=3))
+    proj, cfg = _wired(tmp_path, monkeypatch, recorder)
+
+    outcome = await floorplan.build_map(proj, home=cfg)
+
+    assert outcome.ok is True, outcome.error
+    assert recorder.scripts == ['scan.mjs', 'build.mjs', 'serve.mjs']
+    _, export_argv = recorder.calls[2]
+    map_dir = floorplan.map_dir(proj, cfg)
+    # The script writes a sidecar that we then publish: the served name never
+    # holds a half-written file, and the sidecar is gone once it has.
+    sidecar = Path(export_argv[export_argv.index('--export') + 1])
+    assert sidecar.parent == map_dir
+    assert sidecar.name.startswith(floorplan.EXPORT_NAME)
+    assert sidecar.name.endswith(ATOMIC_TEMP_SUFFIX)
+    assert (map_dir / floorplan.EXPORT_NAME).is_file()
+    assert _sidecars(map_dir) == []
+    # `health` is left out on purpose: floorplan's health scan is heuristic and
+    # reports a HIGH finding on routes that do carry `Depends(authorize)`, so
+    # showing it in our own panel would present a wrong verdict as ours.
+    assert export_argv[export_argv.index('--include') + 1] == 'flows,notes,recent'
+    assert outcome.page == map_dir / floorplan.EXPORT_NAME
+
+
+async def test_a_failed_export_leaves_no_partial_copy_to_serve(tmp_path, monkeypatch):
+    """A copy half-written before the failure must not become the map.
+
+    `map_frame_page()` serves whatever is newer than the build's page, so the
+    failure mode this pins is a truncated file inheriting that freshness: the
+    previous copy has to survive untouched, and the partial one has to be gone.
+    """
+    out = tmp_path / 'map'
+    out.mkdir()
+    dest = out / floorplan.EXPORT_NAME
+    dest.write_text('<html>older copy</html>', encoding='utf-8')
+    page = out / 'index.html'
+    page.write_text('<html>built</html>', encoding='utf-8')
+    monkeypatch.setattr(floorplan, 'map_dir', lambda *a, **k: out)
+    # The rebuild wrote a newer page, so an older copy is correctly ignored.
+    newer = page.stat().st_mtime + 60
+    os.utime(page, (newer, newer))
+
+    async def half_writes(argv, *, cwd=None, timeout=60, **kwargs):
+        Path(argv[argv.index('--export') + 1]).write_text(
+            '<html>truncated', encoding='utf-8')
+        return Captured(code=1, stdout='', stderr='ENOSPC: no space left')
+
+    monkeypatch.setattr(floorplan, 'run_captured', half_writes)
+    monkeypatch.setattr(floorplan, 'node_binary', lambda: Path('node'))
+
+    problem = await floorplan._export_page(out)
+
+    assert 'exported copy failed' in problem
+    assert 'ENOSPC' in problem
+    assert dest.read_text(encoding='utf-8') == '<html>older copy</html>'
+    assert _sidecars(out) == []
+    assert floorplan.map_frame_page(tmp_path) == page
+
+
+async def test_an_empty_export_is_a_failure_not_a_blank_map(tmp_path, monkeypatch):
+    """A copy that exists but holds nothing is worse than the bar it removed.
+
+    `serve.mjs` exiting 0 is not proof it wrote a page: a zero-byte copy passes
+    an existence check and then renders an empty frame, where the build page at
+    least drew a map. Emptiness has to be the same class of failure as a
+    non-zero exit, and the served name must be left alone.
+    """
+    out = tmp_path / 'map'
+    out.mkdir()
+    monkeypatch.setattr(floorplan, 'map_dir', lambda *a, **k: out)
+
+    async def writes_nothing(argv, *, cwd=None, timeout=60, **kwargs):
+        Path(argv[argv.index('--export') + 1]).write_text('', encoding='utf-8')
+        return Captured(code=0, stdout='', stderr='')
+
+    monkeypatch.setattr(floorplan, 'run_captured', writes_nothing)
+    monkeypatch.setattr(floorplan, 'node_binary', lambda: Path('node'))
+
+    problem = await floorplan._export_page(out)
+
+    assert 'empty' in problem
+    assert not (out / floorplan.EXPORT_NAME).exists()
+    assert _sidecars(out) == []
+
+
+async def test_a_locked_copy_is_retried_rather_than_lost(tmp_path, monkeypatch):
+    """A transient lock on the copy being replaced must not cost the frame its map.
+
+    The frame may be displaying the very file being replaced, and on Windows
+    that refusal passes (R24 #38 keeps `os.replace` under a retry for it). Give
+    up on the first refusal and the copy is lost while the newly built page is
+    newer — so the frame falls back to the build's page, dead Ask bar and all,
+    until the next build happens to win the race.
+    """
+    out = tmp_path / 'map'
+    out.mkdir()
+    (out / floorplan.EXPORT_NAME).write_text('<html>older</html>', encoding='utf-8')
+
+    async def writes(argv, *, cwd=None, timeout=60, **kwargs):
+        Path(argv[argv.index('--export') + 1]).write_text(
+            '<html>exported</html>', encoding='utf-8')
+        return Captured(code=0, stdout='', stderr='')
+
+    real_replace = os.replace
+    refusals = [1]
+
+    def flaky(src, dst):
+        if refusals[0]:
+            refusals[0] -= 1
+            raise PermissionError(32, 'The process cannot access the file')
+        real_replace(src, dst)
+
+    monkeypatch.setattr(floorplan, 'run_captured', writes)
+    monkeypatch.setattr(floorplan, 'node_binary', lambda: Path('node'))
+    monkeypatch.setattr(os, 'replace', flaky)
+
+    assert await floorplan._export_page(out) == ''
+    served = (out / floorplan.EXPORT_NAME).read_text(encoding='utf-8')
+    assert served == '<html>exported</html>'
+    assert refusals[0] == 0
+    assert _sidecars(out) == []
+
+
+async def test_a_copy_that_stays_locked_is_a_warning_not_an_exception(tmp_path, monkeypatch):
+    """A lock that never passes is reported, and the previous copy survives.
+
+    The retry buys time, it does not make a stuck file replaceable: after it
+    gives up, the failure has to come back as the sentence the build records
+    beside its own warnings, with the older copy still intact — not as a
+    PermissionError escaping the build.
+    """
+    out = tmp_path / 'map'
+    out.mkdir()
+    (out / floorplan.EXPORT_NAME).write_text('<html>older</html>', encoding='utf-8')
+
+    async def writes(argv, *, cwd=None, timeout=60, **kwargs):
+        Path(argv[argv.index('--export') + 1]).write_text(
+            '<html>exported</html>', encoding='utf-8')
+        return Captured(code=0, stdout='', stderr='')
+
+    def always_locked(src, dst):
+        raise PermissionError(32, 'The process cannot access the file')
+
+    monkeypatch.setattr(floorplan, 'run_captured', writes)
+    monkeypatch.setattr(floorplan, 'node_binary', lambda: Path('node'))
+    monkeypatch.setattr(os, 'replace', always_locked)
+
+    problem = await floorplan._export_page(out)
+
+    assert 'could not be published' in problem
+    assert (out / floorplan.EXPORT_NAME).read_text(encoding='utf-8') == '<html>older</html>'
+    assert _sidecars(out) == []
+
+
+async def test_a_failed_export_is_a_warning_and_the_build_page_is_served(tmp_path, monkeypatch):
+    """The map is drawn either way: a copy that could not be made is a note
+    beside the build's own warnings, never a failed build."""
+    recorder = _PairRecorder(graph=_graph(files=7), serve_code=1,
+                             serve_stdout="Couldn't export the map: no index.html")
+    proj, cfg = _wired(tmp_path, monkeypatch, recorder)
+
+    outcome = await floorplan.build_map(proj, home=cfg)
+
+    assert outcome.ok is True
+    assert outcome.page == floorplan.map_page(proj, cfg)
+    assert any('exported copy' in warning for warning in outcome.warnings)

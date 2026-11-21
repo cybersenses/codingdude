@@ -2162,8 +2162,10 @@ They must never be merged. Merging means either the map is a blank rectangle
 absence of `allow-same-origin`, so "add same-origin so a fetch works" fails a
 test rather than quietly widening the boundary.
 
-**The page is served, not stored.** `GET /sessions/{id}/map` streams
-`<config home>/maps/<slug>-<hash8>/index.html` with `no-cache`; `/map/state` returns
+**The page is served, not stored.** `GET /sessions/{id}/map` streams the page
+`map_frame_page()` resolves — `<config home>/maps/<slug>-<hash8>/index.export.html`
+when that copy is current, else the build's own `index.html` (#381) — with
+`no-cache`; `/map/state` returns
 `{built, reason, path, bytes, built_at, available, detail, running}`. An artifact
 payload would be re-serialized on every artifacts poll (2.6 MB), and a sandboxed
 frame reports no load failure to its parent — hence the JSON state, which is what
@@ -2173,6 +2175,31 @@ single definition of where a build lands, shared by the adapter, the routes and 
 `map_build` tool. `_map_state()` is that answer written once: `/map/state` returns it
 and `POST /map/build` returns it again as the build's settled `state`, so a success
 draws the frame without a second round trip.
+
+**The frame is served floorplan's exported copy (#381).** The built page carries
+an Ask bar that shells out to a `claude` or `codex` CLI this adapter never runs,
+so inside the sandboxed frame it is a permanently disabled strip reading "Asking
+is unavailable" across the bottom of the diagram. Upstream already has the switch
+for that case: `serve.mjs --export` writes a copy with `meta.exported` set, which
+hides the bar, skips engine detection and never fetches `/api/ask`. So the pair
+runs that same path after a successful build, into
+`<map dir>/index.export.html`, and `map_frame_page()` is what both the route and
+`/map/state` read — there is no second implementation of the transform to keep in
+step with floorplan's Export button. It is a projection, not a replacement:
+`map_page()` stays the build's own page, and the fallback carries the weight — the
+copy is served only when it is *strictly* newer than the build's page, so a
+rebuild whose copy failed (or whose copy landed in the same filesystem clock tick,
+which is not evidence of anything) shows the build page, dead bar and all, rather
+than the previous build while the panel says "built". The copy is written to a
+per-call uuid sidecar and published with `tools._replace_with_retry` (R24 #38),
+because the frame may be holding the copy being replaced and that lock is
+transient; an empty copy is treated as the same class of failure as a non-zero
+exit, since exit 0 is not proof a page was written. Every failure is a warning
+beside the build's own, never a failed build: a map without the copy is still a
+map. `health` is excluded on purpose — floorplan's health scan is heuristic and
+flags a HIGH "unprotected-endpoint" on routes that do carry
+`Depends(authorize)`, and presenting a verdict we know to be wrong as ours is
+worse than omitting it.
 
 **Where that directory is (decision #107).** The map dir sits under the config
 home, keyed on the resolved workdir (`slug-sha256[:8]`), not in the project.

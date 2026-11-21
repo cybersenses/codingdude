@@ -58,9 +58,10 @@
   the map declares its own sandbox instead: `allow-scripts`, and deliberately
   not `allow-same-origin`, which leaves the frame on an opaque origin that
   cannot reach this app's DOM, storage or session cookie. The page is served by
-  `GET /sessions/{id}/map` from `<config home>/maps/<slug>-<hash8>/index.html`,
-  the derived-state home (decision #107) rather than the project's own tree, so
-  a build cannot dirty the repo it maps
+  `GET /sessions/{id}/map` from `<config home>/maps/<slug>-<hash8>/` - the
+  build's `index.html`, or the exported `<map dir>/index.export.html` beside it
+  once that copy is current (#381) - the derived-state home (decision #107) rather than
+  the project's own tree, so a build cannot dirty the repo it maps
   rather than carried as a payload - the artifacts endpoint is polled, so a
   payload route would re-serialize 2.6 MB continuously - with `no-cache` so a
   rebuild reaches the frame without a hard refresh, while `/map/state` answers
@@ -93,6 +94,36 @@
   matched no file, which is the only signal that the authored input is wrong.
 
 ### Fixed
+
+- **The map panel showed a control that could never work (#381)**: floorplan's
+  page carries an Ask bar that shells out to a `claude` or `codex` CLI, and these
+  runs one neither — so the frame drew a permanently disabled strip reading
+  "Asking is unavailable" across the bottom of the diagram, and every Ask
+  affordance in its context menus led nowhere. The panel now serves the copy
+  floorplan's *own* export path writes (`serve.mjs --export`, the code its Export
+  button takes): `meta.exported` set, `body.exported` hides the bar, no engine
+  detection, no `/api/ask` fetch. `map_frame_page()` prefers that copy and falls
+  back to the built page when it is missing or not *provably* newer — a tie
+  resolves to the build page, because coarse filesystem timestamps are not
+  evidence the copy is current — so a rebuild whose copy failed, or whose copy
+  landed in the same clock tick, cannot leave the frame showing the previous
+  build while the panel says "built". `health` is
+  deliberately left out of the copy: floorplan's health scan is heuristic and
+  reports a HIGH "unprotected-endpoint" on routes that do carry
+  `Depends(authorize)`, so the panel does not present a verdict we know to be
+  wrong as ours. Measured on this repo: the copy costs 0.20s and is 2,651,445 B
+  against the build's 2,655,620 B (it re-serialises flows, notes and recent
+  work); rendered in the same browser at 1440x900, the Ask box is 700x127
+  `display:flex` in the build against 0x0 `display:none` in the copy, with its
+  input `disabled` in the former and enabled in the latter, 42 SVG layers and 0
+  console errors on both. The placeholder string is *not* the discriminator and
+  is not claimed as one: "Asking is unavailable" occurs twice in both files'
+  source, and a placeholder is not innerText. It is written to a per-call
+  sidecar and published with a retried `os.replace` — the frame may be holding
+  the copy being replaced, and on Windows that refusal passes — and an empty
+  copy is the same class of failure as a non-zero exit, so a failed or blank
+  export cannot leave a truncated page that the frame would serve as newer than
+  the build.
 
 - **A panel could construct a React component instead of a Map (#380)**: the
   Graph panel's structure list calls `new Map()`, and the map panel's component
