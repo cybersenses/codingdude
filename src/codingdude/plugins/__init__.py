@@ -53,6 +53,7 @@ from codingdude.config import Config, ThinkingSetting
 from codingdude.db import Database
 from codingdude.deadcode import build_deadcode_toolset
 from codingdude.execution import ExecutionStore, build_execution_toolset
+from codingdude.floorplan import build_floorplan_toolset
 from codingdude.mcp_config import (
     load_merged_mcp_toolsets,
     merged_mcp_server_names,
@@ -213,6 +214,7 @@ async def build_all(ctx: PluginContext) -> list[AbstractToolset]:
     toolsets.append(build_archlint_toolset(ctx.workdir, ArchLint(db=ctx.db, workdir=str(ctx.workdir))))
     toolsets.append(build_deadcode_toolset(ctx.workdir))
     toolsets.append(build_repo_map_toolset(ctx.workdir))
+    toolsets.append(build_floorplan_toolset(ctx.workdir))
     toolsets.append(build_reveal_toolset(ctx.workdir))
     toolsets.append(build_knip_toolset(ctx.workdir))
     toolsets.append(build_ci_toolset(ctx.workdir))

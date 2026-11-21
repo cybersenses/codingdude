@@ -23,6 +23,8 @@ contract the panel depends on — `built` or a reason, and bytes that must
 revalidate (a rebuild has to reach the frame without a hard refresh).
 """
 
+from pathlib import Path
+
 import pytest
 
 from codingdude import floorplan
@@ -37,6 +39,18 @@ def _isolated_home(home):
     `~/.codingdude/maps` — silently, because the route only reports a path.
     """
     return home
+
+
+@pytest.fixture(autouse=True)
+def _floorplan_present(monkeypatch):
+    """Both halves of availability, pinned (#379).
+
+    `/map/state` now answers "can this be built at all", and that is a presence
+    check — so it must be asked of the fixture rather than of the machine, or
+    the empty-state assertion changes shape on a host without node.
+    """
+    monkeypatch.setattr(floorplan, 'node_binary', lambda: 'node')
+    monkeypatch.setattr(floorplan, 'floorplan_home', lambda *a, **k: Path('C:/floorplan'))
 
 
 def _app(tmp_path):
@@ -138,3 +152,111 @@ def test_an_unknown_session_404s_on_both_routes(tmp_path, route):
         response = client.get(route, headers=headers)
     assert response.status_code == 404
     assert response.json()['detail'] == 'no such session'
+
+
+# --- #379: the trigger ------------------------------------------------------
+
+def _fake_build(monkeypatch, tmp_path, *, ok=True, error='', warnings=()):
+    """Stand in for the scan+build pair; the pair has its own tests.
+
+    A success writes the page, because the point of these tests is the seam:
+    the route settles, and `/map/state` answers from what actually landed.
+    """
+    calls = []
+
+    async def fake(workdir, home=None, **kwargs):
+        calls.append((workdir, home))
+        page = None
+        if ok:
+            page = _build_page(Path(workdir), tmp_path)
+        return floorplan.MapBuild(ok=ok, error=error, warnings=tuple(warnings),
+                                 counts={'files': 621, 'edges': 848},
+                                 page=page)
+
+    monkeypatch.setattr(floorplan, 'build_map', fake)
+    return calls
+
+
+def test_the_build_route_settles_and_the_state_flips_to_built(tmp_path, monkeypatch):
+    calls = _fake_build(monkeypatch, tmp_path)
+    client, headers = _app(tmp_path)
+    with client:
+        session_id, proj = _session(client, tmp_path)
+        response = client.post(f'/sessions/{session_id}/map/build', headers=headers)
+        state = client.get(f'/sessions/{session_id}/map/state', headers=headers).json()
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body['ok'] is True
+    assert body['counts']['files'] == 621
+    # The settled state rides along, so the panel does not have to ask twice.
+    assert body['state']['built'] is True
+    assert state['built'] is True
+    assert len(calls) == 1
+    # Decision #107: the map dir, never the project.
+    assert calls[0][0] == str(proj)
+
+
+def test_the_build_route_returns_floorplans_own_words_on_failure(tmp_path, monkeypatch):
+    """A settled 200 carries the reason. A non-2xx would make the panel render
+    an exception string instead of the receipt that says what to fix."""
+    _fake_build(monkeypatch, tmp_path, ok=False,
+                error='floorplan build failed (exit 1): no node nodes',
+                warnings=['node "gates" path "x.py" matches no included file'])
+    client, headers = _app(tmp_path)
+    with client:
+        session_id, _ = _session(client, tmp_path)
+        response = client.post(f'/sessions/{session_id}/map/build', headers=headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert body['ok'] is False
+    assert 'no node nodes' in body['error']
+    assert body['warnings'] == ['node "gates" path "x.py" matches no included file']
+    assert body['state']['built'] is False
+
+
+def test_a_second_build_while_one_is_running_is_a_conflict(tmp_path, monkeypatch):
+    """Two builds write the same paths, so the second is refused rather than
+    queued. The lock is the adapter's, not the route's, so the tool is covered
+    by the same rule."""
+    client, headers = _app(tmp_path)
+    with client:
+        session_id, proj = _session(client, tmp_path)
+        with floorplan.build_lock(proj, _map_home(tmp_path)):
+            response = client.post(f'/sessions/{session_id}/map/build', headers=headers)
+    assert response.status_code == 409
+    assert 'already running' in response.json()['detail']
+
+
+def test_an_unknown_session_cannot_be_asked_to_build(tmp_path):
+    client, headers = _app(tmp_path)
+    with client:
+        response = client.post('/sessions/not-a-session/map/build', headers=headers)
+    assert response.status_code == 404
+    assert response.json()['detail'] == 'no such session'
+
+
+def test_state_says_why_it_cannot_build_instead_of_no_map_yet(tmp_path, monkeypatch):
+    """The panel's empty state must not offer to build what cannot be built,
+    and must not report a missing dependency as a missing map — the two need
+    different actions from different people."""
+    monkeypatch.setattr(floorplan, 'node_binary', lambda: None)
+    client, headers = _app(tmp_path)
+    with client:
+        session_id, _ = _session(client, tmp_path)
+        state = client.get(f'/sessions/{session_id}/map/state', headers=headers).json()
+    assert state['built'] is False
+    assert state['available'] is False
+    assert state['detail'] == floorplan.NODE_MISSING
+    assert floorplan.NODE_MISSING in state['reason']
+    assert 'no map has been built' not in state['reason']
+
+
+def test_state_reports_availability_so_the_panel_can_offer_the_button(tmp_path):
+    client, headers = _app(tmp_path)
+    with client:
+        session_id, _ = _session(client, tmp_path)
+        state = client.get(f'/sessions/{session_id}/map/state', headers=headers).json()
+    assert state['available'] is True
+    assert state['detail']
+    # Nothing is reported as running when nothing is.
+    assert state['running'] is False

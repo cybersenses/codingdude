@@ -43,6 +43,26 @@
   sidebar and the palette like graph/planning/notes, and a 2.6 MB page is not
   first-boot work.
 
+- **Something can finally build the map (#379, R103)**: the panel could only ever
+  say "not built" — `scan`, `build` and `available()` had no production caller at
+  all, so its one action, *Check again*, re-asked a question whose answer could
+  not change. `POST /sessions/{id}/map/build` now runs the scan and the build into
+  the map dir and settles with the receipt, the empty state gains a **Build map**
+  button, and `map_build` gives the agent the same call so it can refresh the map
+  before pointing a human at it. The reply is settled rather than polled: both
+  calls are already bounded (2.1 s + 1.0 s measured on this repo at 621 files) and
+  a second status file to hold the receipt would be one more thing to go stale.
+  Status is 200 whatever the build did, because the reason *is* the payload — a
+  non-2xx would make the panel render an exception instead of floorplan's own
+  words. One build at a time per project (`<map dir>/build.lock`, 409 on
+  conflict), and a lock older than both timeouts is taken over rather than
+  honoured, because a lock nobody releases would refuse every later build for
+  ever. `/map/state` also reports `available`, `detail` and `running` now, so
+  "node is not on PATH" is never rendered as "no map yet — expected `<path>`";
+  that check is a presence test (`check_available()`), not the `node --version`
+  probe, since the route is polled. The four copies of the missing-node message
+  collapsed into one constant, and a test asserts it appears exactly once.
+
 ### Fixed
 
 - **Ten walkers were half a rule away from the truth (#374)**: `tools.skip_dir`

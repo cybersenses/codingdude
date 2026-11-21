@@ -49,8 +49,11 @@ self-contained and moving it moves everything.
 
 import hashlib
 import json
+import os
 import re
 import shutil
+import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -70,6 +73,18 @@ MAPS_DIRNAME = 'maps'
 SCAN_TIMEOUT = 120
 BUILD_TIMEOUT = 180
 PROBE_TIMEOUT = 15
+
+#: Said once, because four call sites reported it: the dependency floorplan
+#: needs and the reader does not have. `tests/test_floorplan.py` asserts this
+#: string appears exactly once in this module.
+NODE_MISSING = (
+    'node is not on PATH — floorplan needs Node 18 or newer (https://nodejs.org)'
+)
+
+#: How old a build lock must be before it is presumed dead (#379). Both bounded
+#: runs plus a margin, so a lock older than the longest possible build cannot
+#: be live; honouring it would wedge the map until someone deleted a file.
+LOCK_STALE_AFTER = SCAN_TIMEOUT + BUILD_TIMEOUT + 60
 
 #: The scripts this adapter drives, and the only ones that must exist for the
 #: copy to count as usable: a half-copied payload is rejected once, at locate
@@ -141,8 +156,6 @@ def floorplan_home(explicit: str | Path | None = None) -> Path | None:
     without floorplan must degrade to "not available, here is why", not refuse
     to run.
     """
-    import os
-
     candidates: list[Path] = []
     if explicit is not None:
         candidates.append(Path(explicit))
@@ -225,11 +238,79 @@ def map_graph(workdir: str | Path, home: str | Path | None = None) -> Path:
     return map_dir(workdir, home) / 'graph.json'
 
 
+class MapLocked(RuntimeError):
+    """A build for this workdir is already running (#379).
+
+    A conflict rather than an error: two builds write the same output paths, so
+    the second is refused instead of queued behind a wait nobody can bound.
+    """
+
+
+def lock_path(workdir: str | Path, home: str | Path | None = None) -> Path:
+    """`<map dir>/build.lock` — one build per workdir at a time (#379)."""
+    return map_dir(workdir, home) / 'build.lock'
+
+
+def lock_stale(workdir: str | Path, home: str | Path | None = None) -> bool:
+    """True when a lock exists but is older than any live build could be.
+
+    Absent lock reads as not stale: `build_lock` creates first and asks second,
+    so this is only ever consulted about a lock that already existed.
+    """
+    try:
+        age = time.time() - lock_path(workdir, home).stat().st_mtime
+    except OSError:
+        return False
+    return age > LOCK_STALE_AFTER
+
+
+@contextmanager
+def build_lock(workdir: str | Path, home: str | Path | None = None):
+    """Hold this workdir's build lock, or raise `MapLocked` (#379).
+
+    `touch(exist_ok=False)` makes the check and the claim one operation, so two
+    simultaneous requests cannot both win. A stale lock is taken over rather
+    than honoured: a build that died between the touch and the unlink would
+    otherwise refuse every later build for ever, and the map is derived state —
+    rebuilding it is always safe.
+    """
+    path = lock_path(workdir, home)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.touch(exist_ok=False)
+    except FileExistsError:
+        if not lock_stale(workdir, home):
+            raise MapLocked(
+                f'a map build is already running for {Path(workdir).resolve()}'
+            ) from None
+        path.touch()
+    try:
+        yield path
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def check_available() -> tuple[bool, str]:
+    """(usable, detail) — `available()`'s verdict, with nothing spawned.
+
+    `/map/state` is polled, and availability is a presence question: is node on
+    PATH, and is there a copy to drive. Spawning `node --version` to learn the
+    same answer on every poll would make the panel pay for a question it is not
+    asking, so the version probe stays in `available()`.
+    """
+    if node_binary() is None:
+        return False, NODE_MISSING
+    home = floorplan_home()
+    if home is None:
+        return False, unavailable_reason()
+    return True, f'floorplan {home}'
+
+
 async def available(probe_timeout: int = PROBE_TIMEOUT) -> tuple[bool, str]:
     """(usable, detail) — node answering, and a floorplan checkout to drive."""
     node = node_binary()
     if node is None:
-        return False, 'node is not on PATH — floorplan needs Node 18 or newer (https://nodejs.org)'
+        return False, NODE_MISSING
     cap = await run_captured([node, '--version'], cwd=Path.cwd(), timeout=probe_timeout)
     if cap is None:
         return False, f'node did not answer --version within {probe_timeout}s'
@@ -337,8 +418,7 @@ async def scan(
     if node_binary() is None:
         return ScanResult(
             ok=False,
-            error='node is not on PATH — floorplan needs Node 18 or newer '
-                  '(https://nodejs.org)',
+            error=NODE_MISSING,
             scan_path=scan_path)
     cap, _ = await _run_script(
         resolved, 'scan.mjs',
@@ -386,8 +466,7 @@ async def build(
     if node_binary() is None:
         return BuildResult(
             ok=False, index_html=index_html, graph_json=graph_json,
-            error='node is not on PATH — floorplan needs Node 18 or newer '
-                  '(https://nodejs.org)')
+            error=NODE_MISSING)
     argv = [str(workdir), '--out', str(out_dir), '--json', '--unattended']
     arch_path = Path(arch) if arch is not None else out_dir / 'architecture.json'
     if arch_path.is_file():
@@ -423,3 +502,118 @@ async def build(
         detail = '; '.join(errors) or cap.combined[:400] or 'no errors reported'
         return replace(result, error=f'floorplan build failed (exit {cap.code}): {detail}')
     return result
+
+
+# --- #379: the trigger ------------------------------------------------------
+
+@dataclass(frozen=True)
+class MapBuild:
+    """One scan+build pair, as the route and the tool report it (#379).
+
+    Flat rather than nesting `ScanResult`/`BuildResult`: both callers want the
+    counts, the warnings verbatim and one reason, and neither has a use for the
+    intermediate objects once the pair has settled.
+    """
+
+    ok: bool
+    error: str = ''
+    warnings: tuple[str, ...] = ()
+    counts: dict = field(default_factory=dict)
+    files: dict = field(default_factory=dict)
+    page: Path | None = None
+
+    def summary(self) -> str:
+        """What was mapped, and what did not match.
+
+        Every warning is printed verbatim, not counted: each one names a field
+        of `architecture.json` that matched no file, which is the only feedback
+        that stops a guessed input from shipping (#376).
+        """
+        if not self.ok:
+            return f'map build failed: {self.error}'
+        counts = self.counts
+        head = (
+            f'map built: {counts.get("files", 0)} files, '
+            f'{counts.get("edges", 0)} edges, {counts.get("routes", 0)} routes, '
+            f'{counts.get("externals", 0)} external packages'
+        )
+        if self.page is not None:
+            head = f'{head} · {self.page}'
+        return '\n'.join([head, *self.warnings])
+
+
+async def build_map(
+    workdir: str | Path, home: str | Path | None = None,
+    arch: str | Path | None = None,
+) -> MapBuild:
+    """Scan then build this workdir's map, holding the build lock (#379).
+
+    Raises `MapLocked` when another build holds the lock: whether that is a 409
+    or a sentence back to the agent is the caller's decision, and neither is a
+    failure of this function.
+
+    The architecture file is checked first, by name, before the scan is spent.
+    #376 authors it; until something does, floorplan's own answer ("No
+    architecture file at ...") costs a scan to say what is already known.
+    """
+    workdir = Path(workdir)
+    with build_lock(workdir, home):
+        usable, detail = check_available()
+        if not usable:
+            return MapBuild(ok=False, error=detail)
+        out_dir = map_dir(workdir, home)
+        arch_path = Path(arch) if arch is not None else out_dir / 'architecture.json'
+        if not arch_path.is_file():
+            return MapBuild(ok=False, error=(
+                f'cannot build the map: floorplan reads {arch_path} and nothing '
+                'has authored it yet (#376). The map is an aid — everything '
+                'else works without it.'
+            ))
+        scanned = await scan(workdir, out_dir, home=home)
+        if not scanned.ok:
+            return MapBuild(ok=False, error=scanned.error)
+        built = await build(
+            workdir, out_dir, home=home, arch=arch_path,
+            scan_path=scanned.scan_path,
+        )
+        return MapBuild(
+            ok=built.ok,
+            error=built.error,
+            warnings=built.warnings,
+            counts={
+                'files': scanned.files, 'edges': scanned.edges,
+                'routes': scanned.routes, 'externals': scanned.externals,
+                'hosts': scanned.hosts,
+            },
+            files=built.files,
+            page=built.index_html if built.ok else None,
+        )
+
+
+def build_floorplan_toolset(workdir: Path):
+    """The `map_build` tool: refresh the map before pointing a human at it.
+
+    The panel's button is for the reader; this is for the turn that already
+    knows the map is stale, because a map built before the edit describes code
+    that no longer exists.
+    """
+    from pydantic_ai.toolsets import FunctionToolset
+
+    async def map_build() -> str:
+        """Build the architecture map for this project and report the receipt.
+
+        Runs floorplan's scan, then its builder, into this project's map
+        directory under the config home — nothing is written inside the
+        project. Returns file and route counts plus every warning verbatim; a
+        warning names a field of `architecture.json` that matched no file.
+        """
+        try:
+            outcome = await build_map(workdir)
+        except MapLocked as exc:
+            # A conflict is a sentence, not an exception: the agent may simply
+            # have raced the panel's button, and aborting its turn for that
+            # would cost more than waiting.
+            return f'not started: {exc}'
+        return outcome.summary()
+
+    return FunctionToolset([map_build])

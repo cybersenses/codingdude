@@ -2128,7 +2128,7 @@ written first with a path-resolved payload (`floorplan_home()`: explicit > env >
 `vendor/floorplan`), and resolving from a path while the copy is optional leaves
 a core surface whose only possible answer on a fresh install is "not available".
 So `vendor/floorplan` is a verbatim copy of upstream `skills/floorplan` at
-upstream commit 94f81b4 (54 files, 2,961,212 B) with
+upstream commit 94f81b4 (57 files, 2,969,661 B) with
 `vendor/floorplan/CHECKSUMS.sha256`, its licence files and
 `vendor/floorplan/VENDORED.md`. `tests/test_floorplan.py::test_the_vendored_copy_is_the_default_and_matches_its_checksums`
 proves both halves: with no argument and no env var the vendored copy is what
@@ -2164,13 +2164,15 @@ test rather than quietly widening the boundary.
 
 **The page is served, not stored.** `GET /sessions/{id}/map` streams
 `<config home>/maps/<slug>-<hash8>/index.html` with `no-cache`; `/map/state` returns
-`{built, reason, path, bytes, built_at}`. An artifact payload would be
-re-serialized on every artifacts poll (2.6 MB), and a sandboxed frame reports no
-load failure to its parent — hence the JSON state, which is what lets the panel
-say "no map yet, expected `<config home>/maps/<slug>-<hash8>/index.html`" instead
-of showing a blank rectangle. `floorplan.map_page()` / `map_graph()` are the single
-definition of where a build lands, shared by the adapter, the route and (later) the
-tool.
+`{built, reason, path, bytes, built_at, available, detail, running}`. An artifact
+payload would be re-serialized on every artifacts poll (2.6 MB), and a sandboxed
+frame reports no load failure to its parent — hence the JSON state, which is what
+lets the panel say "no map yet, expected `<config home>/maps/<slug>-<hash8>/index.html`"
+instead of showing a blank rectangle. `floorplan.map_page()` / `map_graph()` are the
+single definition of where a build lands, shared by the adapter, the routes and the
+`map_build` tool. `_map_state()` is that answer written once: `/map/state` returns it
+and `POST /map/build` returns it again as the build's settled `state`, so a success
+draws the frame without a second round trip.
 
 **Where that directory is (decision #107).** The map dir sits under the config
 home, keyed on the resolved workdir (`slug-sha256[:8]`), not in the project.
@@ -2184,14 +2186,60 @@ so the map dir is self-contained and moving it moves everything.
 `MAP_DIRNAME` was retired: `SKILL_DIRNAME` now names only the upstream packaging
 directory that checkout discovery probes.
 
+**The trigger (#379).** A panel that can only say "not built" is not a seam, it is
+a dead end: `scan`, `build` and `available()` had zero production callers, so the
+empty state's only action ("Check again") re-asked a question whose answer could
+not change. Three surfaces close it, and they exist because a map the agent just
+changed is the map worth reading:
+
+- `POST /sessions/{id}/map/build` — the human's button;
+- `map_build` (`floorplan.build_floorplan_toolset`) — the agent's, so it can
+  refresh *before* pointing a human at the map;
+- `/map/state`'s `available`/`detail`/`running` — so "node is not on PATH" is
+  never rendered as "no map yet", which would send the reader to a button that
+  cannot work.
+
+*Settled, not 202-and-poll.* The pair is two bounded subprocess calls (measured
+2.1 s scan + 1.0 s build on this repo at 621 files; pinned at `SCAN_TIMEOUT` 120 s
+plus `BUILD_TIMEOUT` 180 s) and both are awaited, so the request holds no thread
+and the loop keeps serving other calls. The receipt comes back **in the reply**
+because that is where the failure reason lives: a polled status route would have
+to keep a second copy of it on disk — one more file to go stale — to say the same
+thing. Status is 200 whatever the build did, because the reason is the payload;
+a non-2xx would make the panel render an exception string instead of floorplan's
+own words. 409 only for the genuine conflict, 404 for an unknown session.
+
+*One build at a time, and a lock that cannot wedge.* Two builds write the same
+output paths, so the second is refused (409) rather than queued behind a wait
+nobody can bound. `<map dir>/build.lock` is claimed with `touch(exist_ok=False)` —
+check and claim in one operation, so simultaneous requests cannot both win. A lock
+older than `LOCK_STALE_AFTER` (both timeouts plus a margin) is **taken over**, not
+honoured: a build that died between the touch and the unlink would otherwise
+refuse every later build for ever, and the map is derived state, so rebuilding it
+is always safe. That is the wedge class #368 removed, applied before it could
+appear here. The tool turns the conflict into a sentence rather than an exception —
+the agent may simply have raced the panel's button.
+
+*Availability without a spawn.* `check_available()` answers "is node on PATH and
+is there a copy to drive" with presence checks only; the `node --version` probe
+stays in `available()` for a caller that wants the version. The state route is
+polled, so a spawn per poll would make the panel pay for a question it is not
+asking. The missing-node message is one constant (`NODE_MISSING`), not the four
+copies it had grown into, and a test asserts it appears exactly once.
+
+*Honest degradation.* `build_map` checks for `<map dir>/architecture.json` **by
+name, before the scan** and says "#376 has not authored it yet". Letting
+`build.mjs` answer "No architecture file at ..." would spend a scan to say what
+we already know, and would report a missing input as a build failure.
+
 **Placement.** `map` is in `PANELS` with `renderer: 'always'` (switching tabs
 must not re-run the layout) and is deliberately absent from `DEFAULT_PRESET`:
 reachable from the sidebar and the palette like graph/planning/notes, and 2.6 MB
 is not first-boot work.
 
-**Evidence.** `tests/test_floorplan.py` 20 passed (including a real-node run
-against the vendored copy); `tests/test_map_panel.py` 6 passed;
-`frontend/src/map.test.ts` 5 passed; `frontend/src/workspace/catalogue.test.ts`
+**Evidence.** `tests/test_floorplan.py` 43 passed (including a real-node run
+against the vendored copy); `tests/test_map_panel.py` 12 passed;
+`frontend/src/map.test.ts` 9 passed; `frontend/src/workspace/catalogue.test.ts`
 21 passed (its `REGISTERED` list is the guard that a catalogue entry without a
 component cannot ship).
 

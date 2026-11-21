@@ -45,11 +45,30 @@ const ABSENT = {
   path: null,
   bytes: 0,
   built_at: null,
+  available: true,
+  detail: 'node v22.23.2 · floorplan C:/floorplan',
+  running: false,
 }
 
-function render(state, nonce = 0) {
+// #379: nothing could build this map, so the reason is a dependency, not a
+// missing page — a different person has to fix it.
+const UNBUILDABLE = {
+  ...ABSENT,
+  available: false,
+  detail: 'node is not on PATH - floorplan needs Node 18 or newer',
+  reason: 'no map, and there is nothing to build it with: node is not on PATH',
+}
+
+function render(state, nonce = 0, extra = {}) {
   return renderToString(
-    createElement(MapView, { sessionId: 's-1', state, nonce, onRefresh: () => {} }),
+    createElement(MapView, {
+      sessionId: 's-1',
+      state,
+      nonce,
+      onRefresh: () => {},
+      onBuild: () => {},
+      ...extra,
+    }),
   )
 }
 
@@ -78,5 +97,38 @@ describe('Map panel', () => {
 
   it('says it is still checking before the first reply', () => {
     expect(render(null)).toContain('checking for a map')
+  })
+
+  // #379: the empty state used to offer only "Check again", which re-asked a
+  // question whose answer could not change. Building is the action that can.
+  it('offers to build the map when it can be built', () => {
+    const html = render(ABSENT)
+    expect(html).toContain('data-map="build"')
+    expect(html).toContain('Check again')
+    // `disabled=""` is how React SSR renders the attribute; the Tailwind
+    // `disabled:` variant in the class list is not a disabled control.
+    expect(html).not.toContain('disabled=""')
+  })
+
+  it('does not offer a build when there is nothing to build with', () => {
+    // A disabled button here would still read as "click me later"; the
+    // dependency has to be installed, so the detail is what is shown.
+    const html = render(UNBUILDABLE)
+    expect(html).not.toContain('data-map="build"')
+    expect(html).toContain('node is not on PATH')
+  })
+
+  it('disables the build while it is running so it cannot be started twice', () => {
+    const html = render(ABSENT, 0, { building: true })
+    expect(html).toContain('data-map="build"')
+    expect(html).toContain('disabled=""')
+    expect(html).toContain('building')
+  })
+
+  it('shows the build failure verbatim rather than a generic message', () => {
+    const html = render(ABSENT, 0, {
+      buildError: 'floorplan build failed (exit 1): no node nodes',
+    })
+    expect(html).toContain('floorplan build failed (exit 1): no node nodes')
   })
 })

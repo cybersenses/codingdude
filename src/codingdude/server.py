@@ -860,25 +860,74 @@ def create_app(
 
         return StreamingResponse(sse(), media_type='text/event-stream')
 
-    def _map_absent_reason(workdir: str, home: Path) -> str:
-        """Why the Map panel has nothing to show (#377).
+    def _map_absent_reason(
+        workdir: str, home: Path, available: bool, detail: str,
+    ) -> str:
+        """Why the Map panel has nothing to show (#377, #379).
 
-        Names the directory it looked in, because "no map yet" alone sends the
-        reader looking in the wrong place — and since decision #107 that place
-        is the config home, not the project (`floorplan writes into the scanned
-        project` was true before #107 and is corrected here, not dropped).
+        Two different absences, because two different people have to act on
+        them: a map nobody has built yet (press the button), and a machine that
+        cannot build one at all (install node). Reporting the second as the
+        first sends the reader to a button that cannot work — and the directory
+        is named either way, because "no map yet" alone sends them looking in
+        the wrong place. Since decision #107 that place is the config home, not
+        the project (`floorplan writes into the scanned project` was true
+        before #107 and is corrected here, not dropped).
         """
+        if not available:
+            return (
+                f'there is no map to show, and nothing to build one with: {detail}'
+            )
         from .floorplan import map_page
 
         return (
             'no map has been built for this project yet: expected '
             f'{map_page(workdir, home)}. '
-            'Ask the agent to build the map.'
+            'Build one with the button below, or ask the agent to build it.'
         )
+
+    def _map_state(workdir: str, home: Path) -> dict:
+        """The Map panel's one answer: is there a page, and can there be (#377, #379).
+
+        One definition because two routes return it — `/map/state`, and the
+        build's settled reply, which hands the panel its next state so the panel
+        does not have to ask twice for what the build already knows.
+
+        `running` is asked of the lock rather than remembered, so a request that
+        died mid-build cannot leave the panel showing a build that is not there.
+        """
+        from .floorplan import check_available, lock_path, lock_stale, map_page
+
+        available, detail = check_available()
+        page = map_page(workdir, home)
+        running = lock_path(workdir, home).exists() and not lock_stale(workdir, home)
+        state = {
+            'available': available,
+            'detail': detail,
+            'running': running,
+        }
+        if not page.is_file():
+            return {
+                **state,
+                'built': False,
+                'reason': _map_absent_reason(workdir, home, available, detail),
+                'path': None,
+                'bytes': 0,
+                'built_at': None,
+            }
+        stat = page.stat()
+        return {
+            **state,
+            'built': True,
+            'reason': '',
+            'path': str(page),
+            'bytes': stat.st_size,
+            'built_at': datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat(),
+        }
 
     @app.get('/sessions/{session_id}/map/state')
     def session_map_state(session_id: str, _: None = Depends(authorize)) -> dict:
-        """Whether this project has a built map, and how big it is (#377).
+        """Whether this project has a built map, and whether it could build one.
 
         The panel asks this before setting an iframe src: a sandboxed frame
         reports no load failure to its parent, so without a JSON answer the
@@ -887,19 +936,43 @@ def create_app(
         workdir = db.session_workdir(session_id)
         if not workdir:
             raise HTTPException(status_code=404, detail='no such session')
-        from .floorplan import map_page
+        return _map_state(workdir, home)
 
-        page = map_page(workdir, home)
-        if not page.is_file():
-            return {'built': False, 'reason': _map_absent_reason(workdir, home),
-                    'path': None, 'bytes': 0, 'built_at': None}
-        stat = page.stat()
+    @app.post('/sessions/{session_id}/map/build')
+    async def session_map_build(
+        session_id: str, response: Response, _: None = Depends(authorize),
+    ) -> dict:
+        """Scan then build this project's map, and settle with the receipt (#379).
+
+        Settled, not started: the pair is two bounded subprocess calls (2.1 s
+        scan + 1.0 s build measured on this repo at 621 files, pinned at
+        `SCAN_TIMEOUT` + `BUILD_TIMEOUT`), both awaited while the loop keeps
+        serving. The receipt comes back in the reply because that is where the
+        failure reason lives; a polled status route would need a second copy of
+        it on disk to say the same thing.
+
+        Status is 200 whatever the build did — the reason is the payload, and a
+        non-2xx would make the panel render an exception string instead of
+        floorplan's own words. 409 when a build for this project is already
+        running (two builds write the same paths), 404 for an unknown session.
+        """
+        workdir = db.session_workdir(session_id)
+        if not workdir:
+            raise HTTPException(status_code=404, detail='no such session')
+        from .floorplan import MapLocked, build_map
+
+        try:
+            outcome = await build_map(workdir, home)
+        except MapLocked as exc:
+            response.status_code = 409
+            return {'detail': str(exc)}
         return {
-            'built': True,
-            'reason': '',
-            'path': str(page),
-            'bytes': stat.st_size,
-            'built_at': datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat(),
+            'ok': outcome.ok,
+            'error': outcome.error,
+            'warnings': list(outcome.warnings),
+            'counts': outcome.counts,
+            'files': outcome.files,
+            'state': _map_state(workdir, home),
         }
 
     @app.get('/sessions/{session_id}/map')
@@ -914,11 +987,14 @@ def create_app(
         workdir = db.session_workdir(session_id)
         if not workdir:
             raise HTTPException(status_code=404, detail='no such session')
-        from .floorplan import map_page
+        from .floorplan import check_available, map_page
 
         page = map_page(workdir, home)
         if not page.is_file():
-            raise HTTPException(status_code=404, detail=_map_absent_reason(workdir, home))
+            available, detail = check_available()
+            raise HTTPException(
+                status_code=404,
+                detail=_map_absent_reason(workdir, home, available, detail))
         return FileResponse(
             page, media_type='text/html', headers={'cache-control': 'no-cache'}
         )

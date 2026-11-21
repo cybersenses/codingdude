@@ -23,7 +23,9 @@ or node is genuinely absent.
 """
 
 import json
+import os
 import shutil
+import time
 from pathlib import Path
 
 import pytest
@@ -40,7 +42,10 @@ def _copy_tree(root: Path) -> Path:
     — the directory name is upstream's, not ours.
     """
     scripts = root / 'skills' / 'floorplan' / 'scripts'
-    scripts.mkdir(parents=True)
+    # Idempotent: `build_map` asks `floorplan_home()` twice (once to answer
+    # availability, once per script run), so a fixture that could only be built
+    # once would fail on the second question, not on the code under test.
+    scripts.mkdir(parents=True, exist_ok=True)
     for name in floorplan.REQUIRED_SCRIPTS:
         (scripts / name).write_text('// stub\n', encoding='utf-8')
     return root / 'skills' / 'floorplan'
@@ -391,3 +396,302 @@ def test_same_named_projects_in_different_places_get_different_map_dirs(tmp_path
 
     assert floorplan.map_dir(one, home) != floorplan.map_dir(two, home)
     assert floorplan.map_dir(one, home).name.startswith('proj-')
+
+
+# --- #379: availability without a spawn -------------------------------------
+
+def test_check_available_costs_no_subprocess(tmp_path, monkeypatch):
+    """`/map/state` is polled, so its availability answer must not spawn.
+
+    Presence answers both halves of the question a polled route asks: node on
+    PATH, and a copy of floorplan to drive. The `node --version` probe stays in
+    `available()`, for a caller that wants the version rather than a verdict.
+    """
+    spawned = []
+
+    async def refuse(argv, **kwargs):
+        spawned.append(argv)
+        raise AssertionError('check_available spawned a subprocess')
+
+    monkeypatch.setattr(floorplan, 'run_captured', refuse)
+    monkeypatch.setattr(floorplan, 'node_binary', lambda: 'node')
+    monkeypatch.setattr(floorplan, 'floorplan_home', lambda *a, **k: tmp_path / 'fp')
+    ok, detail = floorplan.check_available()
+    assert ok is True
+    assert str(tmp_path / 'fp') in detail
+    assert spawned == []
+
+
+def test_check_available_names_the_missing_dependency(monkeypatch):
+    monkeypatch.setattr(floorplan, 'node_binary', lambda: None)
+    ok, detail = floorplan.check_available()
+    assert ok is False
+    assert 'node' in detail.lower()
+    assert detail == floorplan.NODE_MISSING
+
+
+def test_check_available_names_the_missing_copy(monkeypatch):
+    monkeypatch.setattr(floorplan, 'node_binary', lambda: 'node')
+    monkeypatch.setattr(floorplan, 'floorplan_home', lambda *a, **k: None)
+    ok, detail = floorplan.check_available()
+    assert ok is False
+    assert detail == floorplan.unavailable_reason()
+
+
+def test_the_missing_node_message_has_one_source():
+    """It used to be spelled out at four call sites. One string now, so a
+    reader who greps the message finds every place that reports it."""
+    src = Path(floorplan.__file__).read_text(encoding='utf-8')
+    assert src.count('node is not on PATH') == 1
+
+
+# --- #379: one build at a time ----------------------------------------------
+
+def _proj(parent: Path, name: str = 'proj') -> Path:
+    proj = parent / name
+    proj.mkdir(parents=True)
+    return proj
+
+
+def test_a_second_build_for_the_same_project_is_refused(tmp_path):
+    proj, home = _proj(tmp_path), tmp_path / 'home'
+    with floorplan.build_lock(proj, home):
+        with pytest.raises(floorplan.MapLocked):
+            with floorplan.build_lock(proj, home):
+                pass
+
+
+def test_the_lock_is_released_even_when_the_build_raises(tmp_path):
+    """A lock leaked on the error path would refuse every later build."""
+    proj, home = _proj(tmp_path), tmp_path / 'home'
+    with pytest.raises(RuntimeError):
+        with floorplan.build_lock(proj, home):
+            raise RuntimeError('boom')
+    assert not floorplan.lock_path(proj, home).exists()
+    with floorplan.build_lock(proj, home):
+        pass
+
+
+def test_a_lock_left_behind_by_a_dead_build_is_taken_over(tmp_path):
+    """A lock with no staleness rule wedges the map for ever — the wedge class
+    #368 removed. Past the sum of both timeouts plus a margin, the next build
+    takes it rather than refusing until someone deletes a file by hand."""
+    proj, home = _proj(tmp_path), tmp_path / 'home'
+    path = floorplan.lock_path(proj, home)
+    path.parent.mkdir(parents=True)
+    path.touch()
+    old = time.time() - floorplan.LOCK_STALE_AFTER - 1
+    os.utime(path, (old, old))
+
+    assert floorplan.lock_stale(proj, home) is True
+    with floorplan.build_lock(proj, home):
+        assert path.exists()
+
+
+def test_a_fresh_lock_is_never_taken_over(tmp_path):
+    proj, home = _proj(tmp_path), tmp_path / 'home'
+    with floorplan.build_lock(proj, home):
+        assert floorplan.lock_stale(proj, home) is False
+
+
+def test_two_projects_never_share_a_lock(tmp_path):
+    home = tmp_path / 'home'
+    one, two = _proj(tmp_path, 'one'), _proj(tmp_path, 'two')
+    with floorplan.build_lock(one, home):
+        assert floorplan.lock_stale(two, home) is False
+        with floorplan.build_lock(two, home):
+            pass
+
+
+# --- #379: the scan+build pair ----------------------------------------------
+
+class _PairRecorder:
+    """Two receipts, one per script, because the pair is scan *then* build.
+
+    `graph` is still written for a scan: the adapter sizes the scan from the
+    artifact, not from the printed counts, so a fake that skipped it would test
+    the wrong source of truth (the bug the real-node probe caught).
+    """
+
+    def __init__(self, *, scan_stdout: str | None = None,
+                 build_stdout: str | None = None, scan_code: int = 0,
+                 build_code: int = 0, graph: dict | None = None,
+                 scan_error: str = ''):
+        self.calls: list[tuple[str, list[str]]] = []
+        self._scan = _scan_receipt() if scan_stdout is None else scan_stdout
+        self._build = _build_receipt() if build_stdout is None else build_stdout
+        self._scan_code = scan_code
+        self._build_code = build_code
+        self._graph = graph
+        self._scan_error = scan_error
+
+    async def __call__(self, argv, *, cwd=None, timeout=60, **kwargs):
+        name = Path(argv[1]).name
+        self.calls.append((name, list(argv)))
+        if name != 'scan.mjs':
+            return Captured(code=self._build_code, stdout=self._build, stderr='')
+        if self._graph is not None:
+            out = Path(argv[argv.index('--out') + 1])
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(json.dumps(self._graph), encoding='utf-8')
+        return Captured(code=self._scan_code, stdout=self._scan,
+                        stderr=self._scan_error)
+
+    @property
+    def scripts(self) -> list[str]:
+        return [name for name, _ in self.calls]
+
+
+def _wired(tmp_path, monkeypatch, recorder, cfg=None):
+    """A project, a config home, a fake floorplan copy and the fake node."""
+    proj = _proj(tmp_path)
+    cfg = tmp_path / 'home' if cfg is None else cfg
+    monkeypatch.setattr(floorplan, 'node_binary', lambda: 'node')
+    monkeypatch.setattr(floorplan, 'floorplan_home',
+                        lambda *a, **k: _copy_tree(tmp_path / 'fp'))
+    monkeypatch.setattr(floorplan, 'run_captured', recorder)
+    return proj, cfg
+
+
+async def test_build_map_names_the_architecture_file_nobody_authored(tmp_path, monkeypatch):
+    """#376 supplies it; until then the trigger must say so by name, rather
+    than spend a scan to let build.mjs answer 'No architecture file at ...'."""
+    recorder = _PairRecorder()
+    proj, cfg = _wired(tmp_path, monkeypatch, recorder)
+
+    outcome = await floorplan.build_map(proj, home=cfg)
+
+    assert outcome.ok is False
+    assert 'architecture.json' in outcome.error
+    assert '#376' in outcome.error
+    assert recorder.calls == []
+
+
+async def test_build_map_scans_then_builds_into_the_map_dir(tmp_path, monkeypatch):
+    recorder = _PairRecorder(
+        graph=_graph(files=621, edges=848, routes=88, externals=50, hosts=60))
+    proj, cfg = _wired(tmp_path, monkeypatch, recorder)
+    map_dir = floorplan.map_dir(proj, cfg)
+    map_dir.mkdir(parents=True)
+    (map_dir / 'architecture.json').write_text('{"nodes": []}', encoding='utf-8')
+
+    outcome = await floorplan.build_map(proj, home=cfg)
+
+    assert outcome.ok is True, outcome.error
+    assert recorder.scripts == ['scan.mjs', 'build.mjs']
+    _, build_argv = recorder.calls[1]
+    assert build_argv[build_argv.index('--out') + 1] == str(map_dir)
+    assert build_argv[build_argv.index('--arch') + 1] == str(map_dir / 'architecture.json')
+    assert build_argv[build_argv.index('--scan') + 1] == str(map_dir / 'scan.json')
+    # The summary is what the agent tool and the panel both read.
+    assert '621 files' in outcome.summary()
+    # Decision #107: the project itself gains nothing.
+    assert sorted(p.name for p in proj.iterdir()) == []
+
+
+async def test_build_map_reports_a_scan_failure_and_does_not_build(tmp_path, monkeypatch):
+    recorder = _PairRecorder(scan_code=1, scan_error='no files at all')
+    proj, cfg = _wired(tmp_path, monkeypatch, recorder)
+    floorplan.map_dir(proj, cfg).mkdir(parents=True)
+    (floorplan.map_dir(proj, cfg) / 'architecture.json').write_text('{}', encoding='utf-8')
+
+    outcome = await floorplan.build_map(proj, home=cfg)
+
+    assert outcome.ok is False
+    assert 'no files at all' in outcome.error
+    assert recorder.scripts == ['scan.mjs']
+
+
+async def test_build_map_keeps_the_builds_per_field_warnings(tmp_path, monkeypatch):
+    warnings = ['node "gates" path "src/codingdude/claim_check.py" matches no included file']
+    recorder = _PairRecorder(build_stdout=_build_receipt(warnings=warnings))
+    proj, cfg = _wired(tmp_path, monkeypatch, recorder)
+    floorplan.map_dir(proj, cfg).mkdir(parents=True)
+    (floorplan.map_dir(proj, cfg) / 'architecture.json').write_text('{}', encoding='utf-8')
+
+    outcome = await floorplan.build_map(proj, home=cfg)
+
+    assert outcome.warnings == tuple(warnings)
+    # A guessed path is the failure mode #376 must not ship: the warning has to
+    # reach the reader, not be counted and dropped.
+    assert warnings[0] in outcome.summary()
+
+
+async def test_build_map_refuses_a_second_concurrent_call(tmp_path, monkeypatch):
+    recorder = _PairRecorder()
+    proj, cfg = _wired(tmp_path, monkeypatch, recorder)
+    with floorplan.build_lock(proj, cfg):
+        with pytest.raises(floorplan.MapLocked):
+            await floorplan.build_map(proj, home=cfg)
+    assert recorder.calls == []
+
+
+async def test_build_map_without_node_returns_the_reason(tmp_path, monkeypatch):
+    recorder = _PairRecorder()
+    proj, cfg = _wired(tmp_path, monkeypatch, recorder)
+    monkeypatch.setattr(floorplan, 'node_binary', lambda: None)
+
+    outcome = await floorplan.build_map(proj, home=cfg)
+
+    assert outcome.ok is False
+    assert outcome.error == floorplan.NODE_MISSING
+    assert recorder.calls == []
+
+
+# --- #379: the agent-side trigger -------------------------------------------
+
+def _map_tool(proj: Path):
+    return floorplan.build_floorplan_toolset(proj).tools['map_build'].function
+
+
+async def test_the_map_build_tool_returns_the_summary(home, tmp_path, monkeypatch):
+    """The agent refreshes the map *before* pointing a human at it."""
+    recorder = _PairRecorder(graph=_graph(files=621, edges=848, routes=88))
+    proj, cfg = _wired(tmp_path, monkeypatch, recorder, cfg=home)
+    map_dir = floorplan.map_dir(proj, cfg)
+    map_dir.mkdir(parents=True)
+    (map_dir / 'architecture.json').write_text('{}', encoding='utf-8')
+
+    text = await _map_tool(proj)()
+
+    assert '621 files' in text
+    assert recorder.scripts == ['scan.mjs', 'build.mjs']
+
+
+async def test_the_map_build_tool_degrades_to_the_reason(home, tmp_path, monkeypatch):
+    recorder = _PairRecorder()
+    proj, cfg = _wired(tmp_path, monkeypatch, recorder, cfg=home)
+    monkeypatch.setattr(floorplan, 'node_binary', lambda: None)
+
+    text = await _map_tool(proj)()
+
+    assert floorplan.NODE_MISSING in text
+    assert recorder.calls == []
+
+
+async def test_the_map_build_tool_reports_a_concurrent_build_as_text(home, tmp_path, monkeypatch):
+    """A second build is a sentence, not a traceback: the agent may simply be
+    early, and a raised exception would abort its turn for a race."""
+    recorder = _PairRecorder()
+    proj, cfg = _wired(tmp_path, monkeypatch, recorder, cfg=home)
+    with floorplan.build_lock(proj, cfg):
+        text = await _map_tool(proj)()
+    assert 'already' in text.lower()
+    assert recorder.calls == []
+
+
+async def test_map_build_is_wired_into_build_all(home, tmp_path, monkeypatch):
+    """Upstream check: the tool reaches a real engine toolset, not just a test."""
+    from codingdude.config import Config
+    from codingdude.db import Database
+    from codingdude.plugins import PluginContext, build_all
+
+    monkeypatch.setattr('codingdude.mcp_config.ensure_default_mcp', lambda *_: None)
+    monkeypatch.setattr('codingdude.plugins.merged_mcp_server_names', lambda *_: [])
+    ctx = PluginContext(
+        workdir=tmp_path, config=Config.defaults(), db=Database.connect(home),
+        session_id='s379', home=home,
+    )
+    toolsets = await build_all(ctx)
+    names = {t.name for ts in toolsets for t in getattr(ts, 'tools', {}).values()}
+    assert 'map_build' in names

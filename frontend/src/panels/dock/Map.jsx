@@ -41,7 +41,15 @@ export function mapSrc(sessionId) {
  * Presentational half: everything below the fetch, so the sandbox attribute is
  * assertable without a browser or a live server.
  */
-export function MapView({ sessionId, state, nonce = 0, onRefresh }) {
+export function MapView({
+  sessionId,
+  state,
+  nonce = 0,
+  onRefresh,
+  onBuild,
+  building = false,
+  buildError = '',
+}) {
   if (!state) {
     return (
       <div data-map="checking" className="p-2 text-xs opacity-60">
@@ -50,17 +58,40 @@ export function MapView({ sessionId, state, nonce = 0, onRefresh }) {
     )
   }
   if (!state.built) {
+    // #379: "Check again" re-asked a question whose answer could not change;
+    // building is the action that can. The button is absent rather than
+    // disabled when there is nothing to build with — a disabled control still
+    // reads as "click me later", and the dependency needs installing first.
+    const canBuild = state.available !== false
     return (
       <div data-map="empty" className="flex h-full flex-col gap-2 p-3 text-xs">
         <p className="opacity-80">{state.reason}</p>
-        <button
-          type="button"
-          data-map="recheck"
-          onClick={onRefresh}
-          className="self-start rounded border border-white/20 px-2 py-1 hover:bg-white/10"
-        >
-          Check again
-        </button>
+        {buildError ? (
+          <p data-map="build-error" className="whitespace-pre-wrap text-red-400">
+            {buildError}
+          </p>
+        ) : null}
+        <div className="flex gap-2">
+          {canBuild ? (
+            <button
+              type="button"
+              data-map="build"
+              disabled={building}
+              onClick={onBuild}
+              className="self-start rounded border border-white/20 px-2 py-1 hover:bg-white/10 disabled:opacity-50"
+            >
+              {building ? 'building…' : 'Build map'}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            data-map="recheck"
+            onClick={onRefresh}
+            className="self-start rounded border border-white/20 px-2 py-1 hover:bg-white/10"
+          >
+            Check again
+          </button>
+        </div>
       </div>
     )
   }
@@ -96,6 +127,8 @@ export function Map({ sessionId }) {
   const [state, setState] = useState(null)
   const [error, setError] = useState('')
   const [nonce, setNonce] = useState(0)
+  const [building, setBuilding] = useState(false)
+  const [buildError, setBuildError] = useState('')
 
   const load = useCallback(async () => {
     if (!sessionId) return
@@ -120,6 +153,29 @@ export function Map({ sessionId }) {
     setNonce((n) => n + 1)
   }
 
+  // #379: the build settles inside the request (two bounded node calls), and
+  // its reply carries both the receipt and the panel's next state — so a
+  // success shows the frame without a second round trip, and a failure shows
+  // floorplan's own words instead of "build failed".
+  const build = useCallback(async () => {
+    if (!sessionId || building) return
+    setBuilding(true)
+    setBuildError('')
+    try {
+      const result = await call(`/sessions/${sessionId}/map/build`, { method: 'POST' })
+      if (result.state) setState(result.state)
+      if (result.ok) setNonce((n) => n + 1)
+      else setBuildError(result.error || 'the build reported no reason')
+    } catch (e) {
+      // 409 is another build already running for this project; anything else is
+      // transport. Either way the server's message is the useful one.
+      setBuildError(String((e && e.message) || e))
+      load()
+    } finally {
+      setBuilding(false)
+    }
+  }, [sessionId, building, load])
+
   if (error) {
     return (
       <div data-map="error" className="p-2 text-xs text-red-400">
@@ -127,5 +183,15 @@ export function Map({ sessionId }) {
       </div>
     )
   }
-  return <MapView sessionId={sessionId} state={state} nonce={nonce} onRefresh={refresh} />
+  return (
+    <MapView
+      sessionId={sessionId}
+      state={state}
+      nonce={nonce}
+      onRefresh={refresh}
+      onBuild={build}
+      building={building}
+      buildError={buildError}
+    />
+  )
 }
