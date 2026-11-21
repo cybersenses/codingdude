@@ -788,6 +788,12 @@ async def _build_pair(
         # The copy the frame serves (#381). Last, because it is a projection of
         # a page that has to exist first; and a note rather than a failure,
         # because a map without it is still a map.
+        #
+        # This names what the build *published*, which is not the same question
+        # as what the route serves: `map_frame_page()` resolves per request and
+        # requires the copy to be strictly newer, so a copy that tied on the
+        # filesystem clock would leave the build page on screen while this field
+        # still named the copy. Publishing is a fact; serving is a comparison.
         problem = await _export_page(out_dir)
         if problem:
             warnings = (*warnings, problem)
