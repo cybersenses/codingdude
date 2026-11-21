@@ -106,10 +106,19 @@ class _Recorder:
 
 
 def _graph(files: int = 3, edges: int = 2, routes: int = 1,
-           externals: int = 5, hosts: int = 2) -> dict:
-    """The scan.json shape: the graph itself, indexed by these five lists."""
+           externals: int = 5, hosts: int = 2,
+           category: str = 'code') -> dict:
+    """The scan.json shape: the graph itself, indexed by these five lists.
+
+    `category` matters now that the pair authors its own inputs (#376): the
+    author derives every glob from the files the scan says are on the board, so
+    an entry without one is a file the map never shows.
+    """
     return {
-        'files': [{'path': f'src/a{i}.py'} for i in range(files)],
+        'files': [
+            {'path': f'src/a{i}.py', 'category': category, 'lang': 'python', 'loc': 1}
+            for i in range(files)
+        ],
         'edges': [{} for _ in range(edges)],
         'routes': [{} for _ in range(routes)],
         'externals': [{} for _ in range(externals)],
@@ -549,18 +558,35 @@ def _wired(tmp_path, monkeypatch, recorder, cfg=None):
     return proj, cfg
 
 
-async def test_build_map_names_the_architecture_file_nobody_authored(tmp_path, monkeypatch):
-    """#376 supplies it; until then the trigger must say so by name, rather
-    than spend a scan to let build.mjs answer 'No architecture file at ...'."""
-    recorder = _PairRecorder()
+async def test_build_map_authors_the_inputs_from_the_scan_before_it_builds(tmp_path, monkeypatch):
+    """#376: floorplan cannot derive what a part of the codebase is for, so the
+    pair authors the three inputs from the scan it just took — no preparation
+    step, and no guessed path (the scan is what the globs are derived from)."""
+    recorder = _PairRecorder(graph=_graph(files=3))
+    proj, cfg = _wired(tmp_path, monkeypatch, recorder)
+
+    outcome = await floorplan.build_map(proj, home=cfg)
+
+    assert outcome.ok is True, outcome.error
+    assert recorder.scripts == ['scan.mjs', 'build.mjs']
+    authored = floorplan.map_dir(proj, cfg) / 'architecture.json'
+    assert authored.is_file()
+    nodes = json.loads(authored.read_text(encoding='utf-8'))['nodes']
+    assert [node['id'] for node in nodes] == ['src']
+
+
+async def test_build_map_refuses_to_build_inputs_it_could_not_author(tmp_path, monkeypatch):
+    """The author is a gate, not a courtesy: a scan with nothing to map stops
+    the pair before floorplan is asked to draw an empty board."""
+    recorder = _PairRecorder(graph=_graph(files=3, category='docs'))
     proj, cfg = _wired(tmp_path, monkeypatch, recorder)
 
     outcome = await floorplan.build_map(proj, home=cfg)
 
     assert outcome.ok is False
-    assert 'architecture.json' in outcome.error
-    assert '#376' in outcome.error
-    assert recorder.calls == []
+    assert 'no code files' in outcome.error
+    # The build was never spent on a file the author refused to write.
+    assert recorder.scripts == ['scan.mjs']
 
 
 async def test_build_map_scans_then_builds_into_the_map_dir(tmp_path, monkeypatch):
@@ -600,8 +626,12 @@ async def test_build_map_reports_a_scan_failure_and_does_not_build(tmp_path, mon
 
 async def test_build_map_keeps_the_builds_per_field_warnings(tmp_path, monkeypatch):
     warnings = ['node "gates" path "src/codingdude/claim_check.py" matches no included file']
-    recorder = _PairRecorder(build_stdout=_build_receipt(warnings=warnings))
+    recorder = _PairRecorder(graph=_graph(files=3),
+                             build_stdout=_build_receipt(warnings=warnings))
     proj, cfg = _wired(tmp_path, monkeypatch, recorder)
+    # This test is about the *builder's* warnings; the author's own best-effort
+    # note about the tree is asserted in test_floorplan_inputs.py.
+    monkeypatch.setattr('codingdude.floorplan_inputs.git_changes', lambda root: ({}, ''))
     floorplan.map_dir(proj, cfg).mkdir(parents=True)
     (floorplan.map_dir(proj, cfg) / 'architecture.json').write_text('{}', encoding='utf-8')
 
@@ -679,6 +709,7 @@ async def test_a_failed_build_still_reports_its_warnings(tmp_path, monkeypatch):
     that is wrong — dropping them on the failure path hides the fix."""
     warnings = ['node "gates" path "src/x.py" matches no included file']
     recorder = _PairRecorder(
+        graph=_graph(files=3),
         build_stdout=_build_receipt(ok=False, errors=['boom'], warnings=warnings))
     proj, cfg = _wired(tmp_path, monkeypatch, recorder)
     map_dir = floorplan.map_dir(proj, cfg)
@@ -734,7 +765,7 @@ async def test_the_map_build_tool_reports_a_concurrent_build_as_text(home, tmp_p
 
 
 async def test_map_build_is_wired_into_build_all(home, tmp_path, monkeypatch):
-    """Upstream check: the tool reaches a real engine toolset, not just a test."""
+    """Upstream check: the tools reach a real engine toolset, not just a test."""
     from codingdude.config import Config
     from codingdude.db import Database
     from codingdude.plugins import PluginContext, build_all
@@ -747,4 +778,178 @@ async def test_map_build_is_wired_into_build_all(home, tmp_path, monkeypatch):
     )
     toolsets = await build_all(ctx)
     names = {t.name for ts in toolsets for t in getattr(ts, 'tools', {}).values()}
-    assert 'map_build' in names
+    assert {'map_build', 'map_query'} <= names
+
+
+# --- #378: querying the built map -------------------------------------------
+
+class _QueryRecorder:
+    """The fake `node` for a graph query: records argv, returns one answer."""
+
+    def __init__(self, stdout: str = '{"ok": true}', code: int = 0):
+        self.calls: list[list[str]] = []
+        self._stdout = stdout
+        self._code = code
+
+    async def __call__(self, argv, *, cwd=None, timeout=60, **kwargs):
+        self.calls.append(list(argv))
+        return Captured(code=self._code, stdout=self._stdout, stderr='')
+
+    @property
+    def scripts(self) -> list[str]:
+        return [Path(argv[1]).name for argv in self.calls]
+
+    @property
+    def args(self) -> list[list[str]]:
+        return [argv[2:] for argv in self.calls]
+
+
+def _built_map(tmp_path, monkeypatch, recorder, *, cli: bool = True):
+    """A project whose map dir holds a graph, and a fake node to query it."""
+    proj, cfg = _wired(tmp_path, monkeypatch, recorder)
+    target = floorplan.map_dir(proj, cfg)
+    target.mkdir(parents=True, exist_ok=True)
+    (target / floorplan.GRAPH_NAME).write_text('{}', encoding='utf-8')
+    if cli:
+        (target / floorplan.QUERY_CLI).write_text('// generated\n', encoding='utf-8')
+    return proj, cfg, target
+
+
+async def test_the_query_tool_passes_each_verb_to_the_generated_cli(tmp_path, monkeypatch):
+    recorder = _QueryRecorder('{"nodes": []}')
+    proj, cfg, _ = _built_map(tmp_path, monkeypatch, recorder)
+
+    for verb, text, kind in (
+        ('overview', '', ''),
+        ('find', 'session store', 'file'),
+        ('show', 'src.codingdude', ''),
+        ('path', 'a b', ''),
+    ):
+        result = await floorplan.query_map(proj, verb, text, kind, home=cfg)
+        assert result.ok is True, result.text
+
+    assert recorder.scripts == ['query.mjs'] * 4
+    assert recorder.args == [
+        ['overview'],
+        ['find', 'session store', '--kind', 'file'],
+        ['show', 'src.codingdude'],
+        ['path', 'a', 'b'],
+    ]
+
+
+async def test_an_unknown_verb_costs_no_subprocess(tmp_path, monkeypatch):
+    """A typo is answered from the module's own list, so a wrong verb cannot
+    spend a thirty-second subprocess to say what is already known."""
+    recorder = _QueryRecorder()
+    proj, cfg, _ = _built_map(tmp_path, monkeypatch, recorder)
+
+    result = await floorplan.query_map(proj, 'search', 'x', home=cfg)
+
+    assert result.ok is False
+    for verb in floorplan.QUERY_VERBS:
+        assert verb in result.text
+    assert recorder.calls == []
+
+
+async def test_a_map_that_was_never_built_says_build_one_first(tmp_path, monkeypatch):
+    recorder = _QueryRecorder()
+    proj, cfg = _wired(tmp_path, monkeypatch, recorder)
+
+    result = await floorplan.query_map(proj, 'overview', home=cfg)
+
+    assert result.ok is False
+    assert 'build one' in result.text
+    assert recorder.calls == []
+
+
+async def test_a_map_without_its_cli_says_the_payload_changed_shape(tmp_path, monkeypatch):
+    """The two absences are different answers: sending a reader to rebuild a map
+    that already exists is a wild goose chase."""
+    recorder = _QueryRecorder()
+    proj, cfg, target = _built_map(tmp_path, monkeypatch, recorder, cli=False)
+
+    result = await floorplan.query_map(proj, 'overview', home=cfg)
+
+    assert result.ok is False
+    assert 'payload changed shape' in result.text
+    assert str(target) in result.text
+    # Nothing was spawned to answer a question about a missing file.
+    assert recorder.calls == []
+
+
+async def test_a_failed_query_hands_back_the_clis_own_words(tmp_path, monkeypatch):
+    recorder = _QueryRecorder('{"error": "Unknown id; use find first."}', code=1)
+    proj, cfg, _ = _built_map(tmp_path, monkeypatch, recorder)
+
+    result = await floorplan.query_map(proj, 'show', 'n:nowhere', home=cfg)
+
+    assert result.ok is False
+    assert 'Unknown id' in result.text
+
+
+async def test_a_query_that_needs_an_argument_says_so(tmp_path, monkeypatch):
+    recorder = _QueryRecorder()
+    proj, cfg, _ = _built_map(tmp_path, monkeypatch, recorder)
+
+    missing = await floorplan.query_map(proj, 'find', '', home=cfg)
+    one_id = await floorplan.query_map(proj, 'path', 'only', home=cfg)
+
+    assert 'needs a query' in missing.text
+    assert 'needs two ids' in one_id.text
+    assert recorder.calls == []
+
+
+async def test_a_large_answer_is_truncated_and_says_so(tmp_path, monkeypatch):
+    """Through the tool, not a helper: a clipped JSON document that looks
+    complete is worse than one that says it was cut."""
+    huge = json.dumps({'files': ['x' * (floorplan.QUERY_MAX_CHARS + 500)]})
+    recorder = _QueryRecorder(huge)
+    proj, cfg, _ = _built_map(tmp_path, monkeypatch, recorder)
+
+    result = await floorplan.query_map(proj, 'show', 'n:big', home=cfg)
+
+    assert result.ok is True
+    assert len(result.text) < len(huge)
+    assert 'truncated' in result.text
+
+
+async def test_a_small_answer_is_passed_through_untouched(tmp_path, monkeypatch):
+    recorder = _QueryRecorder('{"a": 1}')
+    proj, cfg, _ = _built_map(tmp_path, monkeypatch, recorder)
+
+    assert (await floorplan.query_map(proj, 'overview', home=cfg)).text == '{"a": 1}'
+
+
+async def test_the_query_tool_reads_a_real_built_map(tmp_path, monkeypatch):
+    """Against a real build, not a fake: `find` and `path` must return parseable
+    JSON from the graph the builder wrote."""
+    if shutil.which('node') is None:
+        pytest.skip('node is not installed')
+    if floorplan.floorplan_home() is None:
+        pytest.skip('floorplan is not vendored')
+    repo = tmp_path / 'fixture'
+    (repo / 'src' / 'demo').mkdir(parents=True)
+    (repo / 'tools').mkdir()
+    (repo / 'pyproject.toml').write_text(
+        '[project]\nname = "demo"\ndescription = "A demo repo."\n', encoding='utf-8')
+    (repo / 'src' / 'demo' / 'core.py').write_text(
+        '"""Holds the core things in a store."""\n', encoding='utf-8')
+    (repo / 'tools' / 'thing.py').write_text(
+        '"""Runs the thing."""\n', encoding='utf-8')
+    monkeypatch.setattr('codingdude.floorplan_inputs.git_changes', lambda root: ({}, ''))
+    home = tmp_path / 'home'
+    built = await floorplan.build_map(repo, home=home)
+    assert built.ok is True, built.error
+
+    found = await floorplan.query_map(repo, 'find', 'core', home=home)
+    overview = await floorplan.query_map(repo, 'overview', home=home)
+    shown = await floorplan.query_map(repo, 'show', 'n:src', home=home)
+
+    assert found.ok is True, found.text
+    assert json.loads(found.text)
+    assert json.loads(overview.text)['project'] == 'demo'
+    # `path` needs two ids, which only a real graph can supply; a node and one of
+    # its own files is the shortest honest pair.
+    assert json.loads(shown.text)['id'] == 'n:src'
+    chained = await floorplan.query_map(repo, 'path', 'n:src f:src/demo/core.py', home=home)
+    assert json.loads(chained.text) is not None

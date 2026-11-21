@@ -16,6 +16,9 @@
 import { describe, expect, it } from 'vitest'
 import { createElement } from 'react'
 import { renderToString } from 'react-dom/server'
+import { readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { MapView, mapSrc } from './panels/dock/Map.jsx'
 
 // R103 #377: the map is the one surface in this app that runs third-party
@@ -185,5 +188,69 @@ describe('Map panel', () => {
 
   it('shows no notice when the last build had nothing to say', () => {
     expect(render(ABSENT)).not.toContain('data-map="notice"')
+  })
+})
+
+// #380: `import { Map } from './Map.jsx'` shadowed the built-in `Map` that
+// panels.jsx uses further down (`new Map()` for the structure list), so that
+// line constructed a React component with no arguments and threw
+// "Cannot destructure property 'sessionId' of 'undefined'" the moment the list
+// rendered. Nothing in the suite caught it: `no-undef` is satisfied (the name
+// IS defined) and eslint's `no-redeclare` with `builtinGlobals` covers the
+// global scope, not a module's - verified against both shapes before writing
+// this. So the shadow itself is what gets pinned.
+
+const BUILTINS = new Set([
+  'Array', 'Boolean', 'Date', 'Error', 'Map', 'Number', 'Object', 'Promise',
+  'RegExp', 'Set', 'String', 'Symbol', 'WeakMap', 'WeakSet',
+])
+
+const SRC = fileURLToPath(new URL('.', import.meta.url))
+
+function sourceFiles(): string[] {
+  return readdirSync(SRC, { recursive: true, encoding: 'utf8' })
+    .filter((rel) => /\.(jsx?|tsx?)$/.test(rel))
+    .map((rel) => rel.split('\\').join('/'))
+}
+
+/** Comments describe the bug this pins; they are not imports. */
+function stripComments(text: string): string {
+  return text
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '')
+}
+
+/** The names an import clause binds locally, alias-aware. */
+function boundNames(source: string): string[] {
+  const text = stripComments(source)
+  const names: string[] = []
+  for (const match of text.matchAll(/import\s+([^'"]+?)\s+from\s+['"]/g)) {
+    const clause = match[1]
+    for (const group of clause.match(/\{([^}]*)\}/g) ?? []) {
+      for (const part of group.slice(1, -1).split(',')) {
+        const bits = part.trim().split(/\s+as\s+/)
+        const local = (bits.length === 2 ? bits[1] : bits[0]).trim()
+        if (local) names.push(local)
+      }
+    }
+    for (const ns of clause.match(/\*\s+as\s+([A-Za-z_$][\w$]*)/g) ?? []) {
+      names.push(ns.replace(/\*\s+as\s+/, ''))
+    }
+    const head = clause.split('{')[0].replace(/[*,]/g, ' ').trim()
+    if (/^[A-Za-z_$][\w$]*$/.test(head)) names.push(head)
+  }
+  return names
+}
+
+describe('module bindings', () => {
+  it('never shadow a JavaScript built-in', () => {
+    const shadows: string[] = []
+    for (const rel of sourceFiles()) {
+      const text = readFileSync(join(SRC, rel), 'utf8')
+      for (const name of boundNames(text)) {
+        if (BUILTINS.has(name)) shadows.push(`${rel}: ${name}`)
+      }
+    }
+    expect(shadows).toEqual([])
   })
 })

@@ -95,7 +95,11 @@ export const PANELS: readonly PanelSpec[] = [
   // palette like graph/planning/notes, and a 2.6 MB page is not first-boot work.
   // `renderer: 'always'` keeps it mounted, so switching tabs does not re-run the
   // layout and lose the reader's zoom.
-  { id: 'map', title: 'Map', component: 'map', renderer: 'always' },
+  // #380: titled "Architecture map", not "Map" — the gate's own table and the
+  // command palette both address a panel by this title, and "Map" next to
+  // "Graph" read as the call graph to everyone who saw it (the map's iframe has
+  // carried `title="Architecture map"` since #377). One name for one thing.
+  { id: 'map', title: 'Architecture map', component: 'map', renderer: 'always' },
 ]
 
 export function panelSpec(id: string): PanelSpec | undefined {

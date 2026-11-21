@@ -2235,22 +2235,97 @@ answering one question is the drift, and one bounded probe per panel open is not
 worth a second name. The missing-node message is one constant (`NODE_MISSING`),
 not the four copies it had grown into, and a test asserts it appears exactly once.
 
-*Honest degradation.* `build_map` checks for `<map dir>/architecture.json` **by
-name, before the scan** and says "#376 has not authored it yet". Letting
-`build.mjs` answer "No architecture file at ..." would spend a scan to say what
-we already know, and would report a missing input as a build failure.
+*The inputs author themselves (#376).* `build_map` used to check for
+`<map dir>/architecture.json` by name, before the scan, and answer "#376 has not
+authored it yet". That went with the ticket: `_build_pair` now runs scan ?
+author ? build, and `floorplan_inputs.author()` writes the three files floorplan
+cannot derive. Authoring *after* the scan is the design, not merely the order:
+the scan is the list of files the builder assigns, so every glob written into
+`<map dir>/architecture.json` is a measurement instead of a guess, and `validate()` mirrors
+`build.mjs:236`'s "matches no included file" check as an **error before the build
+is spent** ? the builder only *warns*, and a warning is how the first probe of
+this feature shipped 5 paths that claimed nothing, with 30.5% of files left
+unassigned. The pair refuses to build inputs it could not author, so a scan with
+nothing on the board stops at the author rather than drawing an empty board.
+
+*What the author is allowed to say.* Every field traces to a fact on disk; the
+ones that do not are left out, and the builder's per-field report names them:
+
+- `project.name`, `summary`, `entrypoints` ? `pyproject.toml`'s own `[project]`
+  block, and `[project.scripts]` targets resolved to files that are in the scan
+  rather than assumed to exist.
+- Chips ? one per directory that actually owns files, at depths 1?3, each depth
+  with a file count that earns it. Deeper directories stay folders: floorplan
+  groups a node's own folders past ~24 files, so a chip per leaf directory would
+  say the same thing twice. Two passes, because a directory big enough to earn a
+  chip can still own nothing once deeper chips claim its files ? `src` does
+  exactly that on this repo.
+- `label` ? the repository's own word, mechanically (`src` ? Source, `cli` ? CLI,
+  `.codingdude-seed` ? Codingdude Seed). A label never asserts a purpose the
+  directory does not have.
+- `summary` ? the area's `__init__.py` docstring, or nothing at all. An absent
+  summary is reported by the builder; an invented one is a sentence nobody wrote.
+- `<map dir>/descriptions/repo.json` ? module and handler docstrings, first
+  sentence, Python only: every JS file here opens with the licence header, so
+  "first comment" is the licence. No handler in `server.py` has a docstring, so
+  the file carries no routes and the builder's report says so.
+- `<map dir>/recent-work.json` ? the included files `git status` reports as
+  changed, titled with the chip that owns most of them, so the card names the
+  part the reader is looking at. A failing `git status` becomes a note on the
+  receipt, never an empty file that would read as "nothing changed".
+
+One file for descriptions rather than one per module: upstream splits them so
+parallel agents can write without colliding, and this author writes them all in
+one pass, so a second file would only add a way for two of them to disagree.
+
+*The agent's half (#378).* `map_query(verb, query, kind)` wraps the CLI the
+builder generates into the map dir (`build.mjs:655`), over the `<map dir>/graph.json` beside
+it, so the tool resolves one directory through `map_dir()` rather than a second
+copy of the layout. Four verbs, all read-only, bounded like every other call and
+capped at `QUERY_MAX_CHARS` with the cut announced. The two ways it can be absent
+are separate answers, because one of them is a wild goose chase: no graph means
+"build one first", a graph without its CLI means the payload changed shape. An
+unknown verb is answered from `QUERY_VERBS` without spending a subprocess, and
+the generated CLI's own `{"error": ...}` (it exits 1 on a miss) is handed back rather
+than dressed up as our failure.
+
+*What the UI walk found (#380).* Two of its three findings were real, and both
+were mine. The Memory-panel "crash" was `frontend/src/workspace/panels.jsx`
+importing the map component as `Map` while using `new Map()` for the structure
+list further down the same file: that line constructed a React component with no
+arguments and threw "Cannot destructure property 'sessionId' of 'undefined'".
+The import is aliased now, and `frontend/src/map.test.ts` pins the class by
+scanning every module in `src` for an import binding that shadows a JavaScript
+built-in. eslint cannot do it: `no-undef` is satisfied because the name *is*
+defined, and `no-redeclare` with `builtinGlobals` covers the global scope, not a
+module's ? both shapes were probed against the real config before the test was
+written. The third finding was wrong about its cause: the walk was authenticated
+(8 sessions, `tree_ready` true, Explorer 10,430 chars), and what it graded as a
+network failure was the designed boot 401 ? filtered from that list now and still
+recorded in the raw one, which is the "reported, not fatal" distinction the file
+always described. The walk also stopped at the first crashing panel, which is
+why the map was never opened; it records the crash and carries on.
+
+The panel is titled `Architecture map` (`frontend/src/workspace/catalogue.ts`),
+matching the gate's table and the frame's `title`. An untitled drift between the
+two is what made the gate report `panel_drift` in the first place.
 
 **Placement.** `map` is in `PANELS` with `renderer: 'always'` (switching tabs
 must not re-run the layout) and is deliberately absent from `DEFAULT_PRESET`:
 reachable from the sidebar and the palette like graph/planning/notes, and 2.6 MB
 is not first-boot work.
 
-**Evidence.** `tests/test_floorplan.py` 47 passed (including a real-node run
-against the vendored copy); `tests/test_map_panel.py` 14 passed;
-`frontend/src/map.test.ts` 11 passed; `frontend/src/workspace/catalogue.test.ts`
-21 passed (its `REGISTERED` list is the guard that a catalogue entry without a
-component cannot ship).
+**Evidence.** `tests/test_floorplan.py` 56 passed (including real-node runs
+against the vendored copy and a fixture repo); `tests/test_floorplan_inputs.py`
+35 passed; `tests/test_map_panel.py` 14 passed; `tests/test_ui_smoke_verdict.py`
+37 passed; `frontend/src/map.test.ts` 14 passed;
+`frontend/src/workspace/catalogue.test.ts` 21 passed (its `REGISTERED` list is
+the guard that a catalogue entry without a component cannot ship). On this repo
+the map builds itself with `errors` 0, `warnings` 0 and `unassigned` 0 of 364
+shown files, and the UI walk opens 22 of 22 panels with no crashed tab and no
+`panel_drift`.
 
 
 
 
+

@@ -98,7 +98,7 @@ LOCK_STALE_AFTER = SCAN_TIMEOUT + BUILD_TIMEOUT + 60
 REQUIRED_SCRIPTS = ('scan.mjs', 'build.mjs')
 
 #: The one input `build.mjs` cannot do without — floorplan has no default. Named
-#: here so the missing-input answer and #376's author both use one spelling.
+#: here so the author in `floorplan_inputs` and this module's default share one spelling.
 ARCH_NAME = 'architecture.json'
 
 #: `<map dir>/build.json` — the last settled build (#379).
@@ -107,6 +107,25 @@ ARCH_NAME = 'architecture.json'
 #: and 202 when it does not; the file is what lets the polling reader say *why*
 #: a build failed either way.
 RECEIPT_NAME = 'build.json'
+
+#: `<map dir>/graph.json` — the built graph, and the test for "a map exists".
+#: `query.mjs` reads it from beside itself, so the two live or die together.
+GRAPH_NAME = 'graph.json'
+
+#: `<map dir>/query.mjs` — generated *by* the builder (`build.mjs:655`), which
+#: is why `REQUIRED_SCRIPTS` does not list it: it only exists after a build.
+QUERY_CLI = 'query.mjs'
+
+#: One bounded call: a graph query is index-like, not analysis.
+QUERY_TIMEOUT = 30
+
+#: The verbs `query.mjs` answers, in its own spelling. Answered here so a typo
+#: costs no subprocess, and so the error can list what is available.
+QUERY_VERBS = ('overview', 'find', 'show', 'path')
+
+#: `show` on a large node prints a lot; this is the tool-output discipline the
+#: other tools follow, announced rather than silent when it bites.
+QUERY_MAX_CHARS = 20_000
 
 
 @dataclass(frozen=True)
@@ -141,6 +160,20 @@ class BuildResult:
     health: dict = field(default_factory=dict)
     index_html: Path | None = None
     graph_json: Path | None = None
+
+
+@dataclass(frozen=True)
+class QueryResult:
+    """The answer to one map query: floorplan's JSON, or the sentence why not.
+
+    `ok` is about *our* call (did the CLI answer), not about the graph's
+    contents: a verb whose query matched nothing is a successful query with an
+    empty result, and reporting it as a failure would teach a caller to retry
+    something that is working.
+    """
+
+    ok: bool
+    text: str = ''
 
 
 def _vendor_default() -> Path:
@@ -574,20 +607,40 @@ async def _build_pair(
     workdir: Path, out_dir: Path, home: str | Path | None,
     arch: str | Path | None,
 ) -> MapBuild:
-    """The scan+build pair itself, with the lock already held (#379)."""
+    """The scan+build pair itself, with the lock already held (#379).
+
+    The order is the contract: scan, then *author* floorplan's three inputs from
+    what the scan found, then build (#376). Authoring before the scan would have
+    to guess the file list; authoring after it makes every glob in
+    `architecture.json` a measurement, which is why "matches no included file"
+    is now an authoring error instead of a receipt warning nobody reads.
+
+    `arch` stays a caller's override for the rare reader that has its own
+    architecture file: given one, the other two inputs are the caller's too,
+    because half a map from one author and half from another is worse than
+    either.
+    """
     usable, detail = await available()
     if not usable:
         return MapBuild(ok=False, error=detail)
-    arch_path = Path(arch) if arch is not None else out_dir / ARCH_NAME
-    if not arch_path.is_file():
-        return MapBuild(ok=False, error=(
-            f'cannot build the map: floorplan reads {arch_path} and nothing '
-            'has authored it yet (#376). The map is an aid — everything '
-            'else works without it.'
-        ))
     scanned = await scan(workdir, out_dir, home=home)
     if not scanned.ok:
         return MapBuild(ok=False, error=scanned.error)
+    arch_path = Path(arch) if arch is not None else out_dir / ARCH_NAME
+    # The same five sizes the scan published, through the same projection that
+    # filled `ScanResult` - one mapping, not a third copy of `_COUNT_KEYS`.
+    counts = _scan_counts(scanned.scan_path, {}) if scanned.scan_path else {}
+    notes: tuple[str, ...] = ()
+    if arch is None:
+        # Imported here rather than at module scope: `floorplan_inputs` reads
+        # this module's map dir and arch filename, so a second module-scope
+        # import would be a cycle.
+        from .floorplan_inputs import author
+
+        authored = author(workdir, home)
+        if not authored.ok:
+            return MapBuild(ok=False, error=authored.summary(), counts=counts)
+        notes = authored.notes
     built = await build(
         workdir, out_dir, home=home, arch=arch_path,
         scan_path=scanned.scan_path,
@@ -595,12 +648,10 @@ async def _build_pair(
     return MapBuild(
         ok=built.ok,
         error=built.error,
-        warnings=built.warnings,
-        counts={
-            'files': scanned.files, 'edges': scanned.edges,
-            'routes': scanned.routes, 'externals': scanned.externals,
-            'hosts': scanned.hosts,
-        },
+        # Authored notes first: a reader asking "why is nothing highlighted"
+        # should not have to scroll past the builder's own warnings to find out.
+        warnings=(*notes, *built.warnings),
+        counts=counts,
         files=built.files,
         page=built.index_html if built.ok else None,
     )
@@ -616,9 +667,9 @@ async def build_map(
     or a sentence back to the agent is the caller's decision, and neither is a
     failure of this function.
 
-    The architecture file is checked by name before the scan is spent. #376
-    authors it; until something does, floorplan's own answer ("No architecture
-    file at ...") would cost a scan to say what is already known. Every settled
+    Nothing needs preparing first: `floorplan_inputs` authors the three files
+    floorplan cannot derive (#376) as part of the pair, so the map is a
+    capability of the checkout rather than a configuration step. Every settled
     attempt is recorded at `<map dir>/build.json`, because the caller may stop
     waiting long before this returns.
     """
@@ -645,12 +696,107 @@ def read_receipt(workdir: str | Path, home: str | Path | None = None) -> dict | 
     return payload if isinstance(payload, dict) else None
 
 
-def build_floorplan_toolset(workdir: Path):
-    """The `map_build` tool: refresh the map before pointing a human at it.
+# --- #378: querying the built map --------------------------------------------
 
-    The panel's button is for the reader; this is for the turn that already
-    knows the map is stale, because a map built before the edit describes code
-    that no longer exists.
+async def query_map(
+    workdir: str | Path, verb: str, text: str = '', kind: str = '',
+    home: str | Path | None = None, timeout: int = QUERY_TIMEOUT,
+) -> QueryResult:
+    """One read-only lookup in the built map, through floorplan's own CLI.
+
+    `query.mjs` is generated *into the map dir* by the builder, over
+    `graph.json` beside it (decision #107), so this resolves one directory
+    rather than a second copy of the layout. The two ways it can be missing are
+    kept apart on purpose: no map means "build one", while a map without its
+    CLI means the payload changed shape — answering "build one" there would
+    send the reader to rebuild something that already exists.
+
+    Read-only by construction: `query.mjs` has four verbs and every one of them
+    reads. An unknown verb is answered here, from `QUERY_VERBS`, so a typo costs
+    no subprocess.
+    """
+    wanted = (verb or '').strip().lower()
+    if wanted not in QUERY_VERBS:
+        return QueryResult(ok=False, text=(
+            f'unknown verb "{verb}": the map answers '
+            + ', '.join(QUERY_VERBS) + '.'))
+    target = map_dir(workdir, home)
+    graph = target / GRAPH_NAME
+    cli = target / QUERY_CLI
+    if not graph.is_file():
+        return QueryResult(ok=False, text=(
+            f'no map has been built for {Path(workdir).resolve()} yet — build one '
+            'first (map_build, or Build in the Map panel).'))
+    if not cli.is_file():
+        return QueryResult(ok=False, text=(
+            f'the built map has no {QUERY_CLI} at {cli}: the payload changed shape. '
+            'Rebuild the map first; if the CLI is still missing, this floorplan '
+            'copy no longer generates one.'))
+    args, problem = _query_args(wanted, text, kind)
+    if problem:
+        return QueryResult(ok=False, text=problem)
+    node = node_binary()
+    if node is None:
+        return QueryResult(ok=False, text=NODE_MISSING)
+    cap = await run_captured(
+        [node, str(cli), *args], cwd=target, timeout=timeout)
+    if cap is None:
+        return QueryResult(
+            ok=False, text=f'the map query timed out after {timeout}s')
+    if cap.code != 0:
+        # `query.mjs` prints `{"error": ...}` and exits 1 when the graph query
+        # itself fails, so that sentence is the answer, not a crash of ours.
+        payload = _parse_receipt(cap.stdout)
+        if payload is not None and 'error' in payload:
+            return QueryResult(ok=False, text=json.dumps(payload))
+        return QueryResult(
+            ok=False,
+            text=f'the map query failed (exit {cap.code}): {cap.combined[:400]}')
+    return QueryResult(ok=True, text=_cap_text(cap.stdout))
+
+
+def _query_args(verb: str, text: str, kind: str) -> tuple[list[str], str]:
+    """The CLI argv for one verb, or the sentence saying what it needs."""
+    words = (text or '').split()
+    if verb == 'overview':
+        return ['overview'], ''
+    if verb == 'path':
+        if len(words) != 2:
+            return [], ('path needs two ids: pass them space-separated, '
+                        '"path <from> <to>".')
+        return ['path', *words], ''
+    if not words:
+        return [], f'{verb} needs a query: the node or file to look up.'
+    if verb == 'show':
+        return ['show', words[0]], ''
+    args = ['find', ' '.join(words)]
+    if kind:
+        args += ['--kind', kind]
+    return args, ''
+
+
+def _cap_text(text: str) -> str:
+    """The CLI's JSON, capped: `show` on a big node can be large.
+
+    Truncation is announced rather than silent — a clipped JSON document that
+    looks complete is worse than one that says it was cut.
+    """
+    body = text.strip()
+    if len(body) <= QUERY_MAX_CHARS:
+        return body
+    return (body[:QUERY_MAX_CHARS].rstrip()
+            + f'\n… truncated at {QUERY_MAX_CHARS} characters; ask for a narrower '
+              'verb (find or show) to see the rest.')
+
+
+def build_floorplan_toolset(workdir: Path):
+    """The map tools: refresh the map, then read it without a browser.
+
+    `map_build` is for the turn that already knows the map is stale, because a
+    map built before the edit describes code that no longer exists. `map_query`
+    is the half that makes *the agent* cheaper as well as the human better
+    informed: the same graph that draws the picture answers "where does this
+    live" in one call, instead of a search loop over the source.
     """
     from pydantic_ai.toolsets import FunctionToolset
 
@@ -671,4 +817,19 @@ def build_floorplan_toolset(workdir: Path):
             return f'not started: {exc}'
         return outcome.summary()
 
-    return FunctionToolset([map_build])
+    async def map_query(verb: str, query: str = '', kind: str = '') -> str:
+        """Look something up in this project's built architecture map.
+
+        Read-only. `verb` is one of overview, find, show, path:
+        overview is hosts, nodes and file counts; find locates a node or file by
+        text (optionally `kind` = module | file | endpoint | symbol); show
+        details one id's files, routes and dependencies; path traces the
+        dependency chain between two ids, passed space-separated as
+        "from to". Answers in JSON. Passes through to floorplan's own graph
+        query, so it is the same answer the map renders.
+        """
+        result = await query_map(workdir, verb, query, kind)
+        return result.text
+
+    return FunctionToolset([map_build, map_query])
+

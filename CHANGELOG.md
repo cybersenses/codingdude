@@ -4,6 +4,32 @@
 
 ### Added
 
+- **The map authors its own inputs (#376, R103)**: floorplan cannot know what a
+  part of the codebase is for, so it expects three authored files ? and until now
+  nothing wrote them, which is why `build.mjs` had nothing to draw.
+  `src/codingdude/floorplan_inputs.py` writes all three from facts already on
+  disk, in the map dir beside the scan (decision #107): `<map dir>/architecture.json` with
+  one chip per directory that actually owns files, `<map dir>/descriptions/repo.json`
+  quoting each Python module's own docstring, and `<map dir>/recent-work.json`
+  listing the files `git status` reports as changed. The order is the design ?
+  scan, then author, then build ? because the scan is the file list the builder
+  assigns, so every glob is a measurement rather than a guess, and a path that
+  claims no included file is refused before the build instead of warned about
+  after it (`build.mjs` only warns, and the first probe of this feature shipped 5
+  such paths with 30.5% of files unassigned). Names are the repository's own
+  words and a directory summary is its `__init__.py` docstring or nothing at all,
+  so the map never states a purpose nobody wrote. On this repo the whole thing
+  now builds itself with 0 errors, 0 warnings and 0 unassigned files.
+
+- **`map_query`: the map answers the agent too (#378, R103)**: `map_query(verb,
+  query, kind)` wraps the CLI the builder generates into the map dir, so the same
+  graph that draws the picture answers `overview`, `find`, `show` and `path` in
+  one call instead of a search loop over the source. Read-only by construction,
+  bounded, and capped with the truncation announced. The two ways it can be
+  missing are separate answers: no map means "build one first", a map without its
+  CLI means the payload changed shape ? sending a reader to rebuild something
+  that already exists is a wild goose chase.
+
 - **Human-in-the-loop repo map, foundation (#375, R103)**: the map comes from
   floorplan, an upstream node project that draws a repo map and never calls a
   model, so the integration is a process boundary rather than a
@@ -67,6 +93,20 @@
   matched no file, which is the only signal that the authored input is wrong.
 
 ### Fixed
+
+- **A panel could construct a React component instead of a Map (#380)**: the
+  Graph panel's structure list calls `new Map()`, and the map panel's component
+  was imported into the same file as `Map`, so that line constructed the
+  component with no arguments and threw "Cannot destructure property 'sessionId'
+  of 'undefined'" as soon as the list rendered. Invisible to the test suite ?
+  `no-undef` is satisfied because the name is defined, and eslint's
+  `no-redeclare` with `builtinGlobals` covers the global scope rather than a
+  module's ? so it is pinned by scanning every module in `frontend/src` for an
+  import binding that shadows a JavaScript built-in. The UI walk also stopped at
+  the first crashing panel, which meant the architecture map was never opened:
+  it now records the crash and keeps walking, and the designed boot 401 is no
+  longer graded as a network failure. The walk walks 22 of 22 panels with no
+  crashed tab and no catalogue drift.
 
 - **Ten walkers were half a rule away from the truth (#374)**: `tools.skip_dir`
   is the shared answer to "is this directory outside the project?" — it covers
