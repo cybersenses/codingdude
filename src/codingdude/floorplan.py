@@ -59,7 +59,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .tools import _replace_with_retry, run_captured
+from .tools import ATOMIC_TEMP_SUFFIX, _replace_with_retry, run_captured
 
 #: Where a reader points us at a floorplan checkout, repo root or skills dir.
 ENV_VAR = 'CODINGDUDE_FLOORPLAN_HOME'
@@ -140,10 +140,6 @@ QUERY_MAX_CHARS = 20_000
 #: adapter never runs, so served as built it renders a permanently disabled
 #: control reading "Asking is unavailable" across the bottom of the diagram.
 EXPORT_NAME = 'index.export.html'
-
-#: What the sidecar is called. Same suffix `tools._atomic_write` uses (R24 #38),
-#: so "a file we are mid-way through" has one spelling in this codebase.
-EXPORT_TEMP_SUFFIX = '.codingdude-tmp'
 
 #: What travels in that copy. `health` is left out on purpose: floorplan's
 #: health scan is heuristic and flags a HIGH "unprotected-endpoint" on routes
@@ -296,11 +292,12 @@ def map_dir(workdir: str | Path, home: str | Path | None = None) -> Path:
 
 
 def map_page(workdir: str | Path, home: str | Path | None = None) -> Path:
-    """`<map dir>/index.html` — where a build puts the map (#377).
+    """`<map dir>/index.html` — the page a build writes (#377).
 
-    One definition, because three places depend on the layout: the build itself,
-    the server route that serves the page to the Map panel, and the query tool
-    that reads the graph written beside it.
+    One definition, because two places depend on the layout: the build that
+    writes it, and `map_frame_page()` (#381), which falls back to it when the
+    exported copy beside it is not provably current. `map_graph()` names the
+    sibling the query tool reads.
     """
     return map_dir(workdir, home) / 'index.html'
 
@@ -496,13 +493,15 @@ async def _run_script(
 def export_temp(out_dir: str | Path) -> Path:
     """A fresh sidecar path for the export to write before it is published (#381).
 
-    Unique per call, and shaped like the one `tools._atomic_write` uses (R24
-    #38): a uuid so no two writers — this build, a leftover from a killed one —
-    can collide on the name, and a suffix that is recognisably ours so litter
-    can be told from a copy. Nothing is cleared on the way in, because clearing
-    would be a step that can fail before the work starts (see `_export_page`).
+    Unique per call, and named the way `tools._atomic_write` names its own
+    sidecar (R24 #38): a uuid so no two writers — this build, a leftover from a
+    killed one — can collide on the name, and `tools.ATOMIC_TEMP_SUFFIX`, the
+    suffix that layer owns, so "a file we are mid-way through" has exactly one
+    spelling in this codebase. Nothing is cleared on the way in, because
+    clearing would be a step that can fail before the work starts (see
+    `_export_page`).
     """
-    return Path(out_dir) / f'{EXPORT_NAME}.{uuid.uuid4().hex}{EXPORT_TEMP_SUFFIX}'
+    return Path(out_dir) / f'{EXPORT_NAME}.{uuid.uuid4().hex}{ATOMIC_TEMP_SUFFIX}'
 
 
 async def _export_page(out_dir: Path, timeout: int = EXPORT_TIMEOUT) -> str:

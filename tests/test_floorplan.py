@@ -32,7 +32,7 @@ from pathlib import Path
 import pytest
 
 from codingdude import floorplan
-from codingdude.tools import Captured
+from codingdude.tools import ATOMIC_TEMP_SUFFIX, Captured
 
 
 def _copy_tree(root: Path) -> Path:
@@ -972,7 +972,7 @@ async def test_the_query_tool_reads_a_real_built_map(tmp_path, monkeypatch):
 
 def _sidecars(out: Path) -> list[Path]:
     """The half-written copies left in a map dir — none, once a build settled."""
-    return sorted(p for p in out.iterdir() if p.name.endswith(floorplan.EXPORT_TEMP_SUFFIX))
+    return sorted(p for p in out.iterdir() if p.name.endswith(ATOMIC_TEMP_SUFFIX))
 
 
 def _both_pages(tmp_path, *, export_newer: bool = True):
@@ -1061,7 +1061,7 @@ async def test_the_pair_writes_the_copy_the_frame_serves(tmp_path, monkeypatch):
     sidecar = Path(export_argv[export_argv.index('--export') + 1])
     assert sidecar.parent == map_dir
     assert sidecar.name.startswith(floorplan.EXPORT_NAME)
-    assert sidecar.name.endswith(floorplan.EXPORT_TEMP_SUFFIX)
+    assert sidecar.name.endswith(ATOMIC_TEMP_SUFFIX)
     assert (map_dir / floorplan.EXPORT_NAME).is_file()
     assert _sidecars(map_dir) == []
     # `health` is left out on purpose: floorplan's health scan is heuristic and
