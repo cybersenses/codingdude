@@ -2163,13 +2163,26 @@ absence of `allow-same-origin`, so "add same-origin so a fetch works" fails a
 test rather than quietly widening the boundary.
 
 **The page is served, not stored.** `GET /sessions/{id}/map` streams
-`<workdir>/floorplan/index.html` with `no-cache`; `/map/state` returns
+`<config home>/maps/<slug>-<hash8>/index.html` with `no-cache`; `/map/state` returns
 `{built, reason, path, bytes, built_at}`. An artifact payload would be
 re-serialized on every artifacts poll (2.6 MB), and a sandboxed frame reports no
 load failure to its parent — hence the JSON state, which is what lets the panel
-say "no map yet, expected floorplan/index.html" instead of showing a blank
-rectangle. `floorplan.map_page()` / `map_graph()` are the single definition of
-where a build lands, shared by the adapter, the route and (later) the tool.
+say "no map yet, expected `<config home>/maps/<slug>-<hash8>/index.html`" instead
+of showing a blank rectangle. `floorplan.map_page()` / `map_graph()` are the single
+definition of where a build lands, shared by the adapter, the route and (later) the
+tool.
+
+**Where that directory is (decision #107).** The map dir sits under the config
+home, keyed on the resolved workdir (`slug-sha256[:8]`), not in the project.
+Upstream co-locates everything in `<root>/floorplan/` and gitignores the whole
+folder; a derived 3 MB page has no business inside someone's repository, and with
+`--out` given floorplan never touches the scanned root (`build.mjs:44`
+short-circuits, `scan.mjs:229` skips its own gitignore). All four of its inputs —
+`<map dir>/architecture.json`, `<map dir>/descriptions/`,
+`<map dir>/recent-work.json`, `<map dir>/scan.json` — are read from the out dir,
+so the map dir is self-contained and moving it moves everything.
+`MAP_DIRNAME` was retired: `SKILL_DIRNAME` now names only the upstream packaging
+directory that checkout discovery probes.
 
 **Placement.** `map` is in `PANELS` with `renderer: 'always'` (switching tabs
 must not re-run the layout) and is deliberately absent from `DEFAULT_PRESET`:

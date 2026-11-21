@@ -29,17 +29,19 @@ import { MapView, mapSrc } from './panels/dock/Map.jsx'
 //
 // A future "just add allow-same-origin so a fetch works" edit fails test 2.
 
+const MAP_PAGE = '/home/.codingdude/maps/proj-1a2b3c4d/index.html'
+
 const BUILT = {
   built: true,
   reason: '',
-  path: 'floorplan/index.html',
+  path: MAP_PAGE,
   bytes: 2611097,
   built_at: '2026-11-20T19:00:00+00:00',
 }
 
 const ABSENT = {
   built: false,
-  reason: 'no map has been built for this project yet: expected floorplan/index.html',
+  reason: `no map has been built for this project yet: expected ${MAP_PAGE}`,
   path: null,
   bytes: 0,
   built_at: null,
@@ -68,7 +70,9 @@ describe('Map panel', () => {
 
   it('names why there is nothing to show instead of rendering a blank frame', () => {
     const html = render(ABSENT)
-    expect(html).toContain('floorplan/index.html')
+    // The reason names the path it looked in: the config home's map dir since
+    // decision #107, not the project root the fixtures used to model.
+    expect(html).toContain(MAP_PAGE)
     expect(html).not.toContain('<iframe')
   })
 

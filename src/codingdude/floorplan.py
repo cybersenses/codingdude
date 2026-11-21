@@ -35,9 +35,21 @@ Its scanner is heuristic. On this repo in 2026-11-20 it reported a HIGH
 "unprotected-endpoint" finding for an app whose 82 authorizing routes carry
 `Depends(authorize)`, because its rule cannot see FastAPI dependency
 injection. Callers surface its verdicts as *advisory* text.
+
+**Where the map lives (decision #107).** Under the config home, not in the
+project: `map_dir()` is `<config home>/maps/<slug>-<hash8>/`, keyed on the
+resolved workdir. Upstream co-locates everything in `<root>/floorplan/` and
+gitignores the whole folder, but a derived 3 MB page has no business inside
+someone's repository — and with `--out` given, floorplan does not touch the
+scanned root at all (`build.mjs:44` short-circuits, `scan.mjs:229` skips its own
+gitignore). All four inputs (`architecture.json`, `descriptions/`,
+`recent-work.json`, `scan.json`) are read from the out dir, so the map dir is
+self-contained and moving it moves everything.
 """
 
+import hashlib
 import json
+import re
 import shutil
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -47,8 +59,13 @@ from .tools import run_captured
 #: Where a reader points us at a floorplan checkout, repo root or skills dir.
 ENV_VAR = 'CODINGDUDE_FLOORPLAN_HOME'
 
-#: floorplan's own map dir name (its `MAP_DIR`), relative to the scanned root.
-MAP_DIRNAME = 'floorplan'
+#: Upstream's *packaging* directory name (`skills/floorplan`). It is not where a
+#: build lands — see `map_dir()`. One constant, one meaning: this one describes
+#: only the shape a checkout may arrive in.
+SKILL_DIRNAME = 'floorplan'
+
+#: Where every workdir's map dir lives, under the config home (decision #107).
+MAPS_DIRNAME = 'maps'
 
 SCAN_TIMEOUT = 120
 BUILD_TIMEOUT = 180
@@ -111,7 +128,7 @@ def _floorplan_dir(candidate: Path) -> Path | None:
     floorplan checkout itself, or the `skills/floorplan` directory upstream
     packages its scripts in (a plain directory here — our copy is not a skill).
     """
-    for base in (candidate, candidate / 'skills' / MAP_DIRNAME):
+    for base in (candidate, candidate / 'skills' / SKILL_DIRNAME):
         if all((base / 'scripts' / name).is_file() for name in REQUIRED_SCRIPTS):
             return base
     return None
@@ -160,19 +177,52 @@ def node_binary() -> str | None:
     return shutil.which('node')
 
 
-def map_page(workdir: str | Path) -> Path:
-    """`<workdir>/floorplan/index.html` — where a build puts the map (#377).
+def maps_home(home: str | Path | None = None) -> Path:
+    """`<config home>/maps` — the parent of every workdir's map dir (#107).
+
+    `home` is the *config* home, matching `config.worker_log_path`'s parameter:
+    callers that already hold one pass it, everything else gets the resolved
+    default. Derived state does not go in the user's repository.
+    """
+    if home is not None:
+        return Path(home) / MAPS_DIRNAME
+    from .config import config_home
+
+    return config_home() / MAPS_DIRNAME
+
+
+def map_dir(workdir: str | Path, home: str | Path | None = None) -> Path:
+    """`<config home>/maps/<slug>-<hash8>` — this workdir's map dir (#107).
+
+    Keyed on the *resolved* path, case-folded before hashing, because Windows
+    would otherwise give `G:\\Repo` and `g:\\repo` two map dirs — and a rebuild
+    silently landing in a second directory is exactly the confusion a rebuild
+    is meant to clear. The slug keeps it legible when a human lists the folder;
+    the hash keeps it unique.
+    """
+    project = Path(workdir).resolve()
+    digest = hashlib.sha256(str(project).casefold().encode('utf-8')).hexdigest()[:8]
+    slug = re.sub(r'[^a-z0-9]+', '-', project.name.casefold()).strip('-') or 'workdir'
+    return maps_home(home) / f'{slug}-{digest}'
+
+
+def map_page(workdir: str | Path, home: str | Path | None = None) -> Path:
+    """`<map dir>/index.html` — where a build puts the map (#377).
 
     One definition, because three places depend on the layout: the build itself,
     the server route that serves the page to the Map panel, and the query tool
     that reads the graph written beside it.
     """
-    return Path(workdir) / MAP_DIRNAME / 'index.html'
+    return map_dir(workdir, home) / 'index.html'
 
 
-def map_graph(workdir: str | Path) -> Path:
-    """`<workdir>/floorplan/graph.json` — the data behind the map (#378)."""
-    return Path(workdir) / MAP_DIRNAME / 'graph.json'
+def map_graph(workdir: str | Path, home: str | Path | None = None) -> Path:
+    """`<map dir>/graph.json` — the data behind the map (#378).
+
+    `query.mjs` is generated beside it by the same build (`build.mjs:655,717`),
+    so #378 reads one directory rather than re-deriving the layout.
+    """
+    return map_dir(workdir, home) / 'graph.json'
 
 
 async def available(probe_timeout: int = PROBE_TIMEOUT) -> tuple[bool, str]:
@@ -256,7 +306,6 @@ def _scan_counts(scan_path: Path, receipt: dict) -> dict:
     }
 
 
-
 async def _run_script(
     home: Path, script: str, argv: list[str], workdir: Path, timeout: int,
 ):
@@ -321,8 +370,8 @@ async def build(
 ) -> BuildResult:
     """Run floorplan's builder, writing `out_dir/index.html` + `graph.json`.
 
-    `arch` defaults to the `architecture.json` floorplan expects inside the
-    scanned root's map dir; callers that generate it (#376) pass their own.
+    `arch` and `scan` default to the files floorplan expects inside `out_dir`;
+    a caller that writes an architecture file elsewhere (#376) passes its own.
     `--check` is deliberately not used: a caller wants the artifacts, and the
     receipt already carries `ok`/`errors`, so a separate dry run would only
     double the floorplan invocations.
@@ -340,7 +389,7 @@ async def build(
             error='node is not on PATH — floorplan needs Node 18 or newer '
                   '(https://nodejs.org)')
     argv = [str(workdir), '--out', str(out_dir), '--json', '--unattended']
-    arch_path = Path(arch) if arch is not None else Path(workdir) / MAP_DIRNAME / 'architecture.json'
+    arch_path = Path(arch) if arch is not None else out_dir / 'architecture.json'
     if arch_path.is_file():
         argv += ['--arch', str(arch_path)]
     scan_file = Path(scan_path) if scan_path is not None else out_dir / 'scan.json'

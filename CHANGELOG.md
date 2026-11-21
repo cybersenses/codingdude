@@ -32,7 +32,9 @@
   the map declares its own sandbox instead: `allow-scripts`, and deliberately
   not `allow-same-origin`, which leaves the frame on an opaque origin that
   cannot reach this app's DOM, storage or session cookie. The page is served by
-  `GET /sessions/{id}/map` from the project's own floorplan output directory
+  `GET /sessions/{id}/map` from `<config home>/maps/<slug>-<hash8>/index.html`,
+  the derived-state home (decision #107) rather than the project's own tree, so
+  a build cannot dirty the repo it maps
   rather than carried as a payload - the artifacts endpoint is polled, so a
   payload route would re-serialize 2.6 MB continuously - with `no-cache` so a
   rebuild reaches the frame without a hard refresh, while `/map/state` answers

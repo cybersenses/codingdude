@@ -292,6 +292,27 @@ async def test_build_points_at_the_files_it_wrote(tmp_path, monkeypatch):
     assert result.graph_json == out / 'graph.json'
 
 
+async def test_build_reads_its_architecture_from_the_out_dir(tmp_path, monkeypatch):
+    """`build.mjs:45` defaults `--arch` to `outDir/architecture.json`, and the
+    out dir is the map dir (decision #107). The adapter must agree with it, or
+    the inputs #376 writes would never be found."""
+    home = _copy_tree(tmp_path / 'fp')
+    out = tmp_path / 'out'
+    out.mkdir()
+    recorder = _Recorder(stdout=_build_receipt())
+    monkeypatch.setattr(floorplan, 'run_captured', recorder)
+
+    await floorplan.build(tmp_path, out, home=home)
+    argv, _ = recorder.calls[0]
+    # Nothing authored yet: pass no flag and let floorplan name the file it wants.
+    assert '--arch' not in argv
+
+    (out / 'architecture.json').write_text('{}', encoding='utf-8')
+    await floorplan.build(tmp_path, out, home=home)
+    argv, _ = recorder.calls[1]
+    assert argv[argv.index('--arch') + 1] == str(out / 'architecture.json')
+
+
 # --- the real thing ---------------------------------------------------------
 
 def _real_home() -> Path | None:
@@ -330,3 +351,43 @@ async def test_available_without_node_names_the_dependency(monkeypatch):
     ok, detail = await floorplan.available()
     assert ok is False
     assert 'node' in detail.lower()
+
+
+# --- where the map lives (decision #107) ------------------------------------
+
+def test_the_map_dir_is_under_the_config_home_and_never_in_the_project(tmp_path):
+    """A build must not be able to dirty the repository it maps."""
+    project = tmp_path / 'proj'
+    project.mkdir()
+    home = tmp_path / 'home'
+
+    page = floorplan.map_page(project, home)
+    assert page.parent.parent == home / 'maps'
+    assert page.name == 'index.html'
+    assert project not in page.parents
+    assert floorplan.map_graph(project, home) == page.parent / 'graph.json'
+
+
+def test_the_map_dir_key_is_stable_and_case_folded(tmp_path):
+    """One workdir, one map dir. On Windows `G:\\Repo` and `g:\\repo` are the
+    same project, and two map dirs would make a rebuild look like a no-op."""
+    home = tmp_path / 'home'
+    project = tmp_path / 'Repo'
+    project.mkdir()
+
+    first = floorplan.map_dir(project, home)
+    assert floorplan.map_dir(project, home) == first
+    assert floorplan.map_dir(Path(str(project).upper()), home) == first
+    assert first.name.startswith('repo-')
+    assert len(first.name.rsplit('-', 1)[1]) == 8
+
+
+def test_same_named_projects_in_different_places_get_different_map_dirs(tmp_path):
+    home = tmp_path / 'home'
+    one = tmp_path / 'a' / 'proj'
+    two = tmp_path / 'b' / 'proj'
+    one.mkdir(parents=True)
+    two.mkdir(parents=True)
+
+    assert floorplan.map_dir(one, home) != floorplan.map_dir(two, home)
+    assert floorplan.map_dir(one, home).name.startswith('proj-')

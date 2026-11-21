@@ -860,18 +860,19 @@ def create_app(
 
         return StreamingResponse(sse(), media_type='text/event-stream')
 
-    def _map_absent_reason() -> str:
+    def _map_absent_reason(workdir: str, home: Path) -> str:
         """Why the Map panel has nothing to show (#377).
 
-        Names the file it looked for, because "no map yet" alone sends the
-        reader looking in the wrong place — floorplan writes into the scanned
-        project, not into our home dir.
+        Names the directory it looked in, because "no map yet" alone sends the
+        reader looking in the wrong place — and since decision #107 that place
+        is the config home, not the project (`floorplan writes into the scanned
+        project` was true before #107 and is corrected here, not dropped).
         """
-        from .floorplan import MAP_DIRNAME
+        from .floorplan import map_page
 
         return (
             'no map has been built for this project yet: expected '
-            f'{MAP_DIRNAME}/index.html at the project root. '
+            f'{map_page(workdir, home)}. '
             'Ask the agent to build the map.'
         )
 
@@ -886,17 +887,17 @@ def create_app(
         workdir = db.session_workdir(session_id)
         if not workdir:
             raise HTTPException(status_code=404, detail='no such session')
-        from .floorplan import MAP_DIRNAME, map_page
+        from .floorplan import map_page
 
-        page = map_page(workdir)
+        page = map_page(workdir, home)
         if not page.is_file():
-            return {'built': False, 'reason': _map_absent_reason(),
+            return {'built': False, 'reason': _map_absent_reason(workdir, home),
                     'path': None, 'bytes': 0, 'built_at': None}
         stat = page.stat()
         return {
             'built': True,
             'reason': '',
-            'path': f'{MAP_DIRNAME}/index.html',
+            'path': str(page),
             'bytes': stat.st_size,
             'built_at': datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat(),
         }
@@ -915,9 +916,9 @@ def create_app(
             raise HTTPException(status_code=404, detail='no such session')
         from .floorplan import map_page
 
-        page = map_page(workdir)
+        page = map_page(workdir, home)
         if not page.is_file():
-            raise HTTPException(status_code=404, detail=_map_absent_reason())
+            raise HTTPException(status_code=404, detail=_map_absent_reason(workdir, home))
         return FileResponse(
             page, media_type='text/html', headers={'cache-control': 'no-cache'}
         )
