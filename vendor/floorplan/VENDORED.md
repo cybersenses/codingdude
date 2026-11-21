@@ -44,6 +44,15 @@ update that drops them breaks the licence obligation.
 4. Re-run `uv run pytest -q tests/test_floorplan.py` — the real-node test
    drives `scan.mjs` and `build.mjs` and fails loudly on a payload change.
 
+`vendor/floorplan/** -text` in `.gitattributes` is part of the pin, not
+housekeeping: without it git rewrites these files' line endings on checkout
+whenever `core.autocrlf` is on, so the checksums would describe the reader's
+git config instead of the payload. That is exactly how the first CI run of
+R103 failed — 49 of the 55 text files arrived as CRLF in the runner and every
+hash mismatched, while the same commit passed on a checkout with autocrlf off.
+Keep the rule when you re-vendor, and regenerate the checksums from the bytes
+in this directory rather than from a fresh checkout.
+
 ## What it does with a repo
 
 Nothing until asked: these scripts never run at import time, never call a

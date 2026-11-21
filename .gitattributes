@@ -1,0 +1,13 @@
+# CodingDude — a personal coding agent.
+# Copyright (C) 2025 Cyberflex (https://www.cyberflex.io)
+#
+# Vendor pins are byte-exact: `vendor/floorplan/CHECKSUMS.sha256` is checked
+# against the working-tree bytes by `tests/test_floorplan.py`, and git's own
+# end-of-line conversion would make that hash depend on the reader's
+# `core.autocrlf` rather than on the payload. A CI checkout with autocrlf on
+# turned 49 of the 55 text files into CRLF and failed the pin, while a local
+# checkout with it off passed: the same commit, two different byte streams.
+#
+# `-text` tells git to store and check these files out exactly as they are, so
+# the checksums describe the payload and not the clone.
+vendor/floorplan/** -text
