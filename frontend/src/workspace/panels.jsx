@@ -41,6 +41,12 @@ import { MEMORY_LIMIT } from '../limits'
 import { Terminal } from '../panels/dock/Terminal.jsx'
 import { Notes } from '../panels/dock/Notes.jsx'
 import { Artifacts } from '../panels/dock/Artifacts.jsx'
+// Aliased, not a style choice: `new Map()` is a JavaScript built-in and
+// appears further down this file. Importing the component as `Map` shadowed
+// it, so the structure list below constructed a React component instead and
+// threw "Cannot destructure property 'sessionId' of 'undefined'" the moment
+// it rendered - invisible to vitest, which renders no panel here (#380).
+import { Map as ArchitectureMap } from '../panels/dock/Map.jsx'
 import { Planning } from '../panels/dock/Planning.jsx'
 import { Standards } from '../panels/dock/Standards.jsx'
 import { ModelsConfig } from '../panels/dock/ModelsConfig.jsx'
@@ -678,6 +684,18 @@ export function ArtifactsPanel() {
   return (
     <div data-panel="artifacts" className="h-full min-h-0 overflow-y-auto p-2 text-xs">
       <Artifacts sessionId={sessionId} />
+    </div>
+  )
+}
+
+// R103 #377: no scroll container here on purpose — the map is a full-bleed
+// interactive canvas, and `overflow-y-auto p-2` would put a scrollbar around a
+// page that manages its own pan and zoom.
+export function MapPanel() {
+  const { sessionId } = useShell()
+  return (
+    <div data-panel="map" className="h-full min-h-0">
+      <ArchitectureMap sessionId={sessionId} />
     </div>
   )
 }

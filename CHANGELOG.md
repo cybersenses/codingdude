@@ -2,7 +2,111 @@
 
 ## Unreleased
 
+### Added
+
+- **The map authors its own inputs (#376, R103)**: floorplan cannot know what a
+  part of the codebase is for, so it expects three authored files ? and until now
+  nothing wrote them, which is why `build.mjs` had nothing to draw.
+  `src/codingdude/floorplan_inputs.py` writes all three from facts already on
+  disk, in the map dir beside the scan (decision #107): `<map dir>/architecture.json` with
+  one chip per directory that actually owns files, `<map dir>/descriptions/repo.json`
+  quoting each Python module's own docstring, and `<map dir>/recent-work.json`
+  listing the files `git status` reports as changed. The order is the design ?
+  scan, then author, then build ? because the scan is the file list the builder
+  assigns, so every glob is a measurement rather than a guess, and a path that
+  claims no included file is refused before the build instead of warned about
+  after it (`build.mjs` only warns, and the first probe of this feature shipped 5
+  such paths with 30.5% of files unassigned). Names are the repository's own
+  words and a directory summary is its `__init__.py` docstring or nothing at all,
+  so the map never states a purpose nobody wrote. On this repo the whole thing
+  now builds itself with 0 errors, 0 warnings and 0 unassigned files.
+
+- **`map_query`: the map answers the agent too (#378, R103)**: `map_query(verb,
+  query, kind)` wraps the CLI the builder generates into the map dir, so the same
+  graph that draws the picture answers `overview`, `find`, `show` and `path` in
+  one call instead of a search loop over the source. Read-only by construction,
+  bounded, and capped with the truncation announced. The two ways it can be
+  missing are separate answers: no map means "build one first", a map without its
+  CLI means the payload changed shape ? sending a reader to rebuild something
+  that already exists is a wild goose chase.
+
+- **Human-in-the-loop repo map, foundation (#375, R103)**: the map comes from
+  floorplan, an upstream node project that draws a repo map and never calls a
+  model, so the integration is a process boundary rather than a
+  re-implementation. `src/codingdude/floorplan.py` is that whole boundary at
+  this stage: locate it (explicit path, then `CODINGDUDE_FLOORPLAN_HOME`, then
+  the copy vendored at `vendor/floorplan`), run its scanner and builder with
+  `--json --unattended` under a timeout, and hand back their receipts. The
+  payload ships with the repo rather than resolving from a path, because a core
+  surface must not be absent by default: `vendor/floorplan` is pinned to
+  upstream commit 94f81b4, with a checksum file that a test re-hashes, so an
+  upstream update cannot drift from its stated pin in silence. A missing copy, a
+  missing node and a timeout are all readable reasons, never an escaping
+  exception: the map is an aid, never a precondition for a run. Two shapes were
+  measured rather than assumed - the `--json` receipt carries `counts` plus repo
+  and skip lists, while the scan artifact it writes carries the graph - so sizes
+  come from the graph and fall back to the receipt. Twenty tests; the
+  integration one drives the real scanner over a fixture repo.
+
+- **The map gets its own panel (#377, R103)**: a catalogue panel (`map`,
+  `renderer: 'always'`) rather than an artifact card, and the reason is
+  mechanical. floorplan's output is a JavaScript app - 2.6 MB with the ELK
+  layout engine and the fonts inlined, so it loads nothing and works offline -
+  while the Artifacts viewer runs every artifact under `sandbox=""`, scripts
+  disabled. Widening that shared viewer to `allow-scripts` would hand script
+  execution to every artifact ever emitted, including chat-authored HTML, so
+  the map declares its own sandbox instead: `allow-scripts`, and deliberately
+  not `allow-same-origin`, which leaves the frame on an opaque origin that
+  cannot reach this app's DOM, storage or session cookie. The page is served by
+  `GET /sessions/{id}/map` from `<config home>/maps/<slug>-<hash8>/index.html`,
+  the derived-state home (decision #107) rather than the project's own tree, so
+  a build cannot dirty the repo it maps
+  rather than carried as a payload - the artifacts endpoint is polled, so a
+  payload route would re-serialize 2.6 MB continuously - with `no-cache` so a
+  rebuild reaches the frame without a hard refresh, while `/map/state` answers
+  "is there a map" in JSON because a sandboxed frame reports no load failure to
+  its parent. Absent from `DEFAULT_PRESET` on purpose: reachable from the
+  sidebar and the palette like graph/planning/notes, and a 2.6 MB page is not
+  first-boot work.
+
+- **Something can finally build the map (#379, R103)**: the panel could only ever
+  say "not built" — `scan`, `build` and `available()` had no production caller at
+  all, so its one action, *Check again*, re-asked a question whose answer could
+  not change. `POST /sessions/{id}/map/build` now runs the scan and the build into
+  the map dir, the empty state gains a **Build map** button that shows the receipt
+  verbatim, and `map_build` gives the agent the same call so it can refresh the map
+  before pointing a human at it. The route waits 20 s and then answers 202 rather
+  than holding a request open for minutes on a large tree — the pair settles well
+  inside that here (2.1 s + 1.0 s at 621 files), and when it does not, the build
+  carries on while the panel polls `/map/state`, recording its outcome at
+  `<map dir>/build.json` so a failure that finished after the request can still be
+  explained. Status is 200 whatever the build did, because the reason *is* the
+  payload — a non-2xx would make the panel render an exception instead of
+  floorplan's own words. One build at a time per project (`<map dir>/build.lock`,
+  409 on conflict), and a lock older than both timeouts is taken over rather than
+  honoured, because a lock nobody releases would refuse every later build for
+  ever. `/map/state` also reports `available`, `detail`, `running` and `build` now,
+  so "node is not on PATH" is never rendered as "no map yet — expected `<path>`",
+  and `available()` is the single answer to that question — the state route awaits
+  it, so the panel and the adapter cannot disagree. Build warnings reach the page
+  on both outcomes: each one names a field of `<map dir>/architecture.json` that
+  matched no file, which is the only signal that the authored input is wrong.
+
 ### Fixed
+
+- **A panel could construct a React component instead of a Map (#380)**: the
+  Graph panel's structure list calls `new Map()`, and the map panel's component
+  was imported into the same file as `Map`, so that line constructed the
+  component with no arguments and threw "Cannot destructure property 'sessionId'
+  of 'undefined'" as soon as the list rendered. Invisible to the test suite ?
+  `no-undef` is satisfied because the name is defined, and eslint's
+  `no-redeclare` with `builtinGlobals` covers the global scope rather than a
+  module's ? so it is pinned by scanning every module in `frontend/src` for an
+  import binding that shadows a JavaScript built-in. The UI walk also stopped at
+  the first crashing panel, which meant the architecture map was never opened:
+  it now records the crash and keeps walking, and the designed boot 401 is no
+  longer graded as a network failure. The walk walks 22 of 22 panels with no
+  crashed tab and no catalogue drift.
 
 - **Ten walkers were half a rule away from the truth (#374)**: `tools.skip_dir`
   is the shared answer to "is this directory outside the project?" — it covers

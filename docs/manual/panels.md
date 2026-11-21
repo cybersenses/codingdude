@@ -38,8 +38,8 @@ Two modes. With a file open in the editor: its **call graph**, **test
 evidence** ("trust" — which test files reference it, property tests, and the
 mutation kill rate if one has been run), and for Python files a
 **control-flow graph** with a function picker (green blocks reachable, red
-blocks dead code). Without a file: the **architecture map** (modules as
-nodes, imports as edges), the project structure outline, and a **repo Q&A**
+blocks dead code). Without a file: the **module map** (modules as nodes,
+imports as edges), the project structure outline, and a **repo Q&A**
 box — questions are answered by the agent with file+line citations.
 
 ## Planning
@@ -171,5 +171,25 @@ The directives editor (always-injected rules), the skills editor
 
 Running and exited processes the agent spawned this session: pid, status,
 exit code, background flag, command line.
+
+## Architecture map
+
+The whole repository as one picture: subsystems as chips, files and HTTP routes
+under each, imports as edges, plus a **Recent work** card listing the files the
+working tree has changed since the last commit. Each chip lists the files and
+routes behind it; the panel's own Health list is floorplan's static guess and
+is advisory — it cannot see FastAPI's dependency injection, so read its verdicts
+as questions.
+
+**Build map** (or the agent's `map_build` tool) scans and builds it; the first
+open of a project has nothing to show until you build. Everything is written
+under the CodingDude config home, in `maps/<project>-<hash>/`, never inside your
+repository, and it is regenerated on each build — editing the map by hand is not
+a thing.
+
+The page runs in its own sandbox with scripts and **without** same-origin, so
+the map's JavaScript cannot reach this app's data. Keep that: it is why the map
+is a panel of its own rather than an artifact card (`sandbox=""` there, so a
+scripted page would be a blank rectangle).
 
 Next: [Daily workflows](workflows.md)

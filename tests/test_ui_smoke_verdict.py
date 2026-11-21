@@ -172,6 +172,38 @@ def test_benign_console_error_passes_but_a_real_one_fails():
     assert verdict(clean(console_errors=["TypeError: x is undefined"])) == 1
 
 
+def test_the_designed_401_is_reported_but_not_filed_as_a_network_failure():
+    """#380: the walk's own docstring promises designed console noise is
+    "reported, not fatal", but the 401 landed in `console_errors_network`, and
+    that list was read as proof the walk ran unauthenticated. The panels had
+    real data all along (`tree_ready`, eight sessions); what was wrong was the
+    list's meaning."""
+    benign = "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+    real = "Failed to load resource: the server responded with a status of 422 (Unprocessable Entity)"
+    report = clean(console_errors=[benign, real])
+
+    assert verdict(report) == 0
+
+    # Still recorded in the raw list — reported, as the docstring says.
+    assert benign in report["console_errors"]
+    # But "network failures" now means failures the app did not intend.
+    assert report["console_errors_network"] == [real]
+
+
+def test_one_crashed_panel_does_not_end_the_walk():
+    """#380: the walk used to `break` on the first crash, so one broken panel
+    hid every panel after it. The Memory crash meant `mcp`, `config`,
+    `standards`, `processes` and the architecture map were never opened, and the
+    run reported 17 of 22 panels as if that were the whole catalogue."""
+    src = (Path(__file__).resolve().parents[1] / "tools" / "ui_smoke.py").read_text(
+        encoding="utf-8"
+    )
+    walk = src.split("def _walk_dock", 1)[1].split("\ndef ", 1)[0]
+
+    assert "break" not in walk
+    assert 'report["tabs"][title]' in walk
+
+
 def test_page_error_and_sessions_error_fail():
     assert verdict(clean(page_errors=["ReferenceError: x is not defined"])) == 1
     assert verdict(clean(sessions_error="GET /api/sessions -> 500")) == 1

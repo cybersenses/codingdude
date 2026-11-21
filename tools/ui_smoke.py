@@ -109,6 +109,9 @@ DOCK_PANELS = {
     "config": "Config",
     "standards": "Standards",
     "processes": "Processes",
+    # R103 #377: the architecture map. Homonym warning for the gate: the *Graph*
+    # panel's banner is the call graph, this one is floorplan's map.
+    "map": "Architecture map",
 }
 PLACEHOLDER = "Select a session to see diffs, files, cost and trace."
 # The panels the default preset mounts on boot (catalogue.ts DEFAULT_PRESET);
@@ -394,8 +397,11 @@ def _walk_dock(page, report: dict, base: str, workdir: str, shots: Path | None) 
         }
         if shots:
             page.screenshot(path=str(shots / f"dock-{panel_id}.png"))
-        if crashed:
-            break
+        # Recorded and walked on. A crash used to end the walk here (#380), so a
+        # single broken panel hid every panel after it: the Memory crash meant
+        # `mcp`, `config`, `standards`, `processes` and the architecture map
+        # were never opened and the run reported 17 of 22 panels as if that
+        # were the whole catalogue. One finding must not mask the rest.
 
     report["tab_count"] = found
     if not report.get("crashed"):
@@ -921,7 +927,17 @@ def verdict(report: dict) -> int:
         if not any(b in e for b in BENIGN_CONSOLE) and NETWORK_NOISE not in e
     ]
     report["console_errors_unexpected"] = unexpected
-    report["console_errors_network"] = [e for e in console_errors if NETWORK_NOISE in e]
+    # The designed ones are filtered here too: the boot's auth-cookie probe logs
+    # a 401 "Failed to load resource", and grading that as a network failure made
+    # the walk red on the app working as intended (#380). It stays in the raw
+    # `console_errors` list above, which is reported but not fatal — the
+    # distinction this file's docstring promises, which only held for the
+    # *unexpected* list before.
+    report["console_errors_network"] = [
+        e
+        for e in console_errors
+        if NETWORK_NOISE in e and not any(b in e for b in BENIGN_CONSOLE)
+    ]
     has_session = bool(report.get("sessions"))
 
     def tab_failed(v: object) -> bool:

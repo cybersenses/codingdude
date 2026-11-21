@@ -2121,5 +2121,211 @@ needed. The durable
 outcome is the docstring correction in `tracing.py` naming the evaluator
 explicitly, so the next reader does not re-derive the same false negative.
 
+## R103 — the map: a vendored payload, its own panel, and two sandboxes that must stay apart
+
+**Decision: floorplan is core, and core means it ships.** The adapter was
+written first with a path-resolved payload (`floorplan_home()`: explicit > env >
+`vendor/floorplan`), and resolving from a path while the copy is optional leaves
+a core surface whose only possible answer on a fresh install is "not available".
+So `vendor/floorplan` is a verbatim copy of upstream `skills/floorplan` at
+upstream commit 94f81b4 (57 files, 2,969,661 B) with
+`vendor/floorplan/CHECKSUMS.sha256`, its licence files and
+`vendor/floorplan/VENDORED.md`. `tests/test_floorplan.py::test_the_vendored_copy_is_the_default_and_matches_its_checksums`
+proves both halves: with no argument and no env var the vendored copy is what
+resolves, and every hash in the file still matches the bytes on disk.
+
+Vocabulary note, because it was a real defect rather than a nit: the module and
+its messages used to call this "a node skill" and the helper was `_skills_dir`.
+That is upstream's packaging talking — floorplan ships its scripts as a Claude
+skill directory, and our adapter resolves that *shape*, not the concept. In our
+tree it is a core module, so the wording, the docstring and the helper name now
+say floorplan.
+
+**The query CLI is generated, not shipped.** The builder writes it into the map
+output dir (21,784 B, from `vendor/floorplan/assets/query-cli.mjs`) beside a
+small viewer server. So `REQUIRED_SCRIPTS` stays the scanner and the builder —
+a fresh copy has no generated CLI, and requiring one at locate time would reject
+every legitimate copy. The `map_query` tool (#378) reads it from the built
+output.
+
+**Two sandboxes, deliberately different.**
+- `frontend/src/panels/dock/Artifacts.jsx` renders every artifact with
+  `sandbox=""` — no scripts. That is the right posture for chat-authored HTML.
+- `frontend/src/panels/dock/Map.jsx` renders the map with
+  `sandbox="allow-scripts"` and no `allow-same-origin`: the page's own inlined
+  JS runs on an opaque origin, so it cannot touch this app's DOM, localStorage
+  or session cookie.
+
+They must never be merged. Merging means either the map is a blank rectangle
+(floorplan draws with JS) or every artifact gains script execution.
+`frontend/src/map.test.ts` pins both the presence of `allow-scripts` and the
+absence of `allow-same-origin`, so "add same-origin so a fetch works" fails a
+test rather than quietly widening the boundary.
+
+**The page is served, not stored.** `GET /sessions/{id}/map` streams
+`<config home>/maps/<slug>-<hash8>/index.html` with `no-cache`; `/map/state` returns
+`{built, reason, path, bytes, built_at, available, detail, running}`. An artifact
+payload would be re-serialized on every artifacts poll (2.6 MB), and a sandboxed
+frame reports no load failure to its parent — hence the JSON state, which is what
+lets the panel say "no map yet, expected `<config home>/maps/<slug>-<hash8>/index.html`"
+instead of showing a blank rectangle. `floorplan.map_page()` / `map_graph()` are the
+single definition of where a build lands, shared by the adapter, the routes and the
+`map_build` tool. `_map_state()` is that answer written once: `/map/state` returns it
+and `POST /map/build` returns it again as the build's settled `state`, so a success
+draws the frame without a second round trip.
+
+**Where that directory is (decision #107).** The map dir sits under the config
+home, keyed on the resolved workdir (`slug-sha256[:8]`), not in the project.
+Upstream co-locates everything in `<root>/floorplan/` and gitignores the whole
+folder; a derived 3 MB page has no business inside someone's repository, and with
+`--out` given floorplan never touches the scanned root (`build.mjs:44`
+short-circuits, `scan.mjs:229` skips its own gitignore). All four of its inputs —
+`<map dir>/architecture.json`, `<map dir>/descriptions/`,
+`<map dir>/recent-work.json`, `<map dir>/scan.json` — are read from the out dir,
+so the map dir is self-contained and moving it moves everything.
+`MAP_DIRNAME` was retired: `SKILL_DIRNAME` now names only the upstream packaging
+directory that checkout discovery probes.
+
+**The trigger (#379).** A panel that can only say "not built" is not a seam, it is
+a dead end: `scan`, `build` and `available()` had zero production callers, so the
+empty state's only action ("Check again") re-asked a question whose answer could
+not change. Three surfaces close it, and they exist because a map the agent just
+changed is the map worth reading:
+
+- `POST /sessions/{id}/map/build` — the human's button;
+- `map_build` (`floorplan.build_floorplan_toolset`) — the agent's, so it can
+  refresh *before* pointing a human at the map;
+- `/map/state`'s `available`/`detail`/`running` — so "node is not on PATH" is
+  never rendered as "no map yet", which would send the reader to a button that
+  cannot work.
+
+*A bounded wait, then 202.* The pair is two bounded subprocess calls (measured
+2.1 s scan + 1.0 s build on this repo at 621 files, against `SCAN_TIMEOUT` 120 s
+plus `BUILD_TIMEOUT` 180 s), so the ordinary answer is the receipt itself. The
+route still refuses to hold a request open for minutes on a large tree: it waits
+`MAP_SETTLE_BUDGET_S` (20 s) and answers **202** with `started` and the current
+state if the pair is still running, leaving the build on a tracked task and the
+panel polling `/map/state` — the surface it already has. `<map dir>/build.json`
+exists for exactly that path: after a 202 the request is gone, so the finished
+build's outcome has to be on disk or the poll could only ever say "not built",
+which is what the reader already knew. Status is 200 whatever the build did,
+because the reason is the payload; a non-2xx becomes an exception string
+(`frontend/src/api.ts:134` composes `status statusText: body`), so the panel
+would show a composed line where floorplan's own words belong. The 409 is the
+one exception, and it is handled rather than rendered as a dead end: its
+message goes to the panel's notice slot above a still-usable panel, and is
+cleared when a page exists. 404 for an unknown session.
+
+*One build at a time, and a lock that cannot wedge.* Two builds write the same
+output paths, so the second is refused (409) rather than queued behind a wait
+nobody can bound. `<map dir>/build.lock` is claimed with `touch(exist_ok=False)` —
+check and claim in one operation, so simultaneous requests cannot both win. A lock
+older than `LOCK_STALE_AFTER` (both timeouts plus a margin) is **taken over**, not
+honoured: a build that died between the touch and the unlink would otherwise
+refuse every later build for ever, and the map is derived state, so rebuilding it
+is always safe. That is the wedge class #368 removed, applied before it could
+appear here. The tool turns the conflict into a sentence rather than an exception —
+the agent may simply have raced the panel's button.
+
+*One availability answer.* `available()` answers "is node on PATH and is there a
+copy to drive", bounded, and `/map/state` awaits it — so the panel's view and the
+adapter's precondition cannot drift into two answers. It was briefly split into a
+spawn-free twin for the polled route and that was the wrong trade: two functions
+answering one question is the drift, and one bounded probe per panel open is not
+worth a second name. The missing-node message is one constant (`NODE_MISSING`),
+not the four copies it had grown into, and a test asserts it appears exactly once.
+
+*The inputs author themselves (#376).* `build_map` used to check for
+`<map dir>/architecture.json` by name, before the scan, and answer "#376 has not
+authored it yet". That went with the ticket: `_build_pair` now runs scan ?
+author ? build, and `floorplan_inputs.author()` writes the three files floorplan
+cannot derive. Authoring *after* the scan is the design, not merely the order:
+the scan is the list of files the builder assigns, so every glob written into
+`<map dir>/architecture.json` is a measurement instead of a guess, and `validate()` mirrors
+`build.mjs:236`'s "matches no included file" check as an **error before the build
+is spent** ? the builder only *warns*, and a warning is how the first probe of
+this feature shipped 5 paths that claimed nothing, with 30.5% of files left
+unassigned. The pair refuses to build inputs it could not author, so a scan with
+nothing on the board stops at the author rather than drawing an empty board.
+
+*What the author is allowed to say.* Every field traces to a fact on disk; the
+ones that do not are left out, and the builder's per-field report names them:
+
+- `project.name`, `summary`, `entrypoints` ? `pyproject.toml`'s own `[project]`
+  block, and `[project.scripts]` targets resolved to files that are in the scan
+  rather than assumed to exist.
+- Chips ? one per directory that actually owns files, at depths 1?3, each depth
+  with a file count that earns it. Deeper directories stay folders: floorplan
+  groups a node's own folders past ~24 files, so a chip per leaf directory would
+  say the same thing twice. Two passes, because a directory big enough to earn a
+  chip can still own nothing once deeper chips claim its files ? `src` does
+  exactly that on this repo.
+- `label` ? the repository's own word, mechanically (`src` ? Source, `cli` ? CLI,
+  `.codingdude-seed` ? Codingdude Seed). A label never asserts a purpose the
+  directory does not have.
+- `summary` ? the area's `__init__.py` docstring, or nothing at all. An absent
+  summary is reported by the builder; an invented one is a sentence nobody wrote.
+- `<map dir>/descriptions/repo.json` ? module and handler docstrings, first
+  sentence, Python only: every JS file here opens with the licence header, so
+  "first comment" is the licence. No handler in `server.py` has a docstring, so
+  the file carries no routes and the builder's report says so.
+- `<map dir>/recent-work.json` ? the included files `git status` reports as
+  changed, titled with the chip that owns most of them, so the card names the
+  part the reader is looking at. A failing `git status` becomes a note on the
+  receipt, never an empty file that would read as "nothing changed".
+
+One file for descriptions rather than one per module: upstream splits them so
+parallel agents can write without colliding, and this author writes them all in
+one pass, so a second file would only add a way for two of them to disagree.
+
+*The agent's half (#378).* `map_query(verb, query, kind)` wraps the CLI the
+builder generates into the map dir (`build.mjs:655`), over the `<map dir>/graph.json` beside
+it, so the tool resolves one directory through `map_dir()` rather than a second
+copy of the layout. Four verbs, all read-only, bounded like every other call and
+capped at `QUERY_MAX_CHARS` with the cut announced. The two ways it can be absent
+are separate answers, because one of them is a wild goose chase: no graph means
+"build one first", a graph without its CLI means the payload changed shape. An
+unknown verb is answered from `QUERY_VERBS` without spending a subprocess, and
+the generated CLI's own `{"error": ...}` (it exits 1 on a miss) is handed back rather
+than dressed up as our failure.
+
+*What the UI walk found (#380).* Two of its three findings were real, and both
+were mine. The Memory-panel "crash" was `frontend/src/workspace/panels.jsx`
+importing the map component as `Map` while using `new Map()` for the structure
+list further down the same file: that line constructed a React component with no
+arguments and threw "Cannot destructure property 'sessionId' of 'undefined'".
+The import is aliased now, and `frontend/src/map.test.ts` pins the class by
+scanning every module in `src` for an import binding that shadows a JavaScript
+built-in. eslint cannot do it: `no-undef` is satisfied because the name *is*
+defined, and `no-redeclare` with `builtinGlobals` covers the global scope, not a
+module's ? both shapes were probed against the real config before the test was
+written. The third finding was wrong about its cause: the walk was authenticated
+(8 sessions, `tree_ready` true, Explorer 10,430 chars), and what it graded as a
+network failure was the designed boot 401 ? filtered from that list now and still
+recorded in the raw one, which is the "reported, not fatal" distinction the file
+always described. The walk also stopped at the first crashing panel, which is
+why the map was never opened; it records the crash and carries on.
+
+The panel is titled `Architecture map` (`frontend/src/workspace/catalogue.ts`),
+matching the gate's table and the frame's `title`. An untitled drift between the
+two is what made the gate report `panel_drift` in the first place.
+
+**Placement.** `map` is in `PANELS` with `renderer: 'always'` (switching tabs
+must not re-run the layout) and is deliberately absent from `DEFAULT_PRESET`:
+reachable from the sidebar and the palette like graph/planning/notes, and 2.6 MB
+is not first-boot work.
+
+**Evidence.** `tests/test_floorplan.py` 56 passed (including real-node runs
+against the vendored copy and a fixture repo); `tests/test_floorplan_inputs.py`
+35 passed; `tests/test_map_panel.py` 14 passed; `tests/test_ui_smoke_verdict.py`
+37 passed; `frontend/src/map.test.ts` 14 passed;
+`frontend/src/workspace/catalogue.test.ts` 21 passed (its `REGISTERED` list is
+the guard that a catalogue entry without a component cannot ship). On this repo
+the map builds itself with `errors` 0, `warnings` 0 and `unassigned` 0 of 364
+shown files, and the UI walk opens 22 of 22 panels with no crashed tab and no
+`panel_drift`.
 
 
+
+
+
